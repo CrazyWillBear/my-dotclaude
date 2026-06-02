@@ -1,3 +1,4 @@
+<!-- Reserved for a future /scaffold-* project skill; not wired into the setup scripts (which are user-scope). -->
 # STYLEGUIDE.md
 
 Code conventions for this repo. Follow these on every change. CLAUDE.md covers

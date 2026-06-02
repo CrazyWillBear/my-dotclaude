@@ -1,7 +1,7 @@
 ---
 name: explain
-description: Explain the whole codebase in plain English — architecture overview, major components, how they fit together, and where a newcomer should start. Maps the repo with the Explore agent first, then synthesizes on Sonnet.
-model: sonnet
+description: Explain the whole codebase in plain English — architecture overview, major components, how they fit together, and where a newcomer should start. Maps the repo with the Explore agent first, then synthesizes on the session model.
+model: inherit
 ---
 
 Give a plain-English architecture overview of this entire codebase.

@@ -20,12 +20,17 @@ what the code actually does.
 ## How to work
 
 1. Read the rubric file if a path was provided.
-2. For each changed file: Read it. Use `git diff` (via Bash) when a repo is
+2. Find and read the local project rules — `STYLEGUIDE.md`, `CLAUDE.md`, and
+   `AGENTS.md` — at the repo root and in the changed files' directories (use
+   Glob to locate them). They define project-specific conventions and commands;
+   honor them over generic defaults and treat a violation of a local rule as a
+   real finding.
+3. For each changed file: Read it. Use `git diff` (via Bash) when a repo is
    present to see *what changed* rather than reviewing the whole file from
    scratch — reviewing the delta is the goal. Use Grep/Glob to check how changed
    symbols are used elsewhere (callers, tests, related defs).
-3. Evaluate against the four focus areas. Verify, don't assume.
-4. Report.
+4. Evaluate against the four focus areas. Verify, don't assume.
+5. Report.
 
 ## Built-in checklist (fallback if no rubric file)
 

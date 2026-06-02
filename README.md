@@ -1,14 +1,14 @@
 # my-dotclaude
 
 My Claude Code setup, version-controlled so I can drop it back onto a fresh machine in
-one command. It's also packaged so anyone can install the same code-review setup in
-their own projects.
+one command. It's also packaged so anyone can install the same kit, with the review output
+tuned for either a developer or a non-coder.
 
 ## What's in here
 
 - **Global `CLAUDE.md`** (`home/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
-  commit secrets.
+  commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
 - **`team-code-review`** plugin — runs an automatic code review on every turn (plus an
   on-demand `/review`), routed through one shared, tunable rubric. *This is the repo
   root, installed as a plugin.*
@@ -17,77 +17,58 @@ their own projects.
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
-  official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed by
-  `setup-personal` alongside the above.
-- **Setup scripts** (`setup/`) — one to restore my whole setup, two to bootstrap a
-  project for anyone who wants the code-review combo.
+  official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed
+  alongside the above.
+- **Setup scripts** (`setup/`) — two user-wide installers: `setup-dev` (developer) and
+  `setup-simple` (non-developer). Both install the same kit into `~/.claude`.
 
-## Restore my setup (me)
+## Install
 
-On a new machine, install the global `CLAUDE.md`, all my plugins, and my default model
-in one go (user scope — not tied to any project):
+Both setups are **user-wide** — they install into `~/.claude`, not a project folder, so the
+kit follows you across every project. They install the same plugins, the Playwright MCP, and
+a read-only `gh` allowlist; they differ only in audience:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.sh | bash
-```
-
-It backs up any existing `~/.claude/CLAUDE.md` and `~/.claude/settings.json` before
-touching them, and won't overwrite an existing global `CLAUDE.md` without `--force`.
-Restart Claude Code afterward.
-
-It also adds the **Playwright MCP** server and a **read-only `gh` (GitHub CLI) allowlist**
-(user scope). **For GitHub I use `gh`, not a GitHub MCP server** — on a machine with `gh`,
-the CLI plus Bash already cover the whole GitHub API (`gh api` reaches any endpoint), so a
-GitHub MCP would only add a managed token and per-session tool-schema overhead for
-structured-tool ergonomics I don't need. So `setup-personal` instead allowlists the common
-read-only `gh` commands (PR / issue / repo / run reads — deliberately **not** `gh api`,
-which can mutate) so they don't prompt, and warns if `gh` isn't installed or logged in.
-Playwright stays an MCP because it has no CLI equivalent.
-
-<details>
-<summary>Windows (PowerShell) — untested, use at your own risk</summary>
-
-The `.ps1` scripts print a warning and **do nothing unless you pass `-Continue`**.
-Because `irm | iex` can't forward parameters, invoke as a scriptblock:
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.ps1))) -Continue
-```
-</details>
-
-## Use it yourself (anyone)
-
-You don't have to be me to use the code-review setup. These bootstrap a **single
-project** (in the current directory) with `team-code-review` + caveman and a starting
-`CLAUDE.md`. They do **not** install my global config or `personal-tools`.
-
-There are two audiences:
-
-| | Developer | Non-developer |
+| | Developer (`setup-dev`) | Non-developer (`setup-simple`) |
 |---|---|---|
-| `CLAUDE.md` | technical conventions | plain-English, no-jargon contract |
-| `STYLEGUIDE.md` | yes (language-agnostic template) | — |
+| global `CLAUDE.md` | technical conventions (`home/CLAUDE.md`) | plain-English, no-jargon contract |
+| `model` | `opus` | Claude Code's default |
 | caveman level | `full` (terse) | `lite` (a little more readable) |
 | review output | severity-grouped (blocker / warning / nit) | "what I found, fixed, and why" |
 
+Review output is technical by default; the non-developer setup writes `~/.claude/review-audience`
+= `plain` to switch it. Any single project can override the user-wide default by writing
+`plain` or `technical` to its own `<project>/.claude/review-audience`.
+
+The installers back up any existing `~/.claude/CLAUDE.md` and `~/.claude/settings.json` before
+touching them, and won't overwrite an existing global `CLAUDE.md` without `--force`. Restart
+Claude Code afterward.
+
+They also add the **Playwright MCP** server and a **read-only `gh` (GitHub CLI) allowlist**.
+**For GitHub I use `gh`, not a GitHub MCP server** — on a machine with `gh`, the CLI plus Bash
+already cover the whole GitHub API (`gh api` reaches any endpoint), so a GitHub MCP would only
+add a managed token and per-session tool-schema overhead for structured-tool ergonomics I don't
+need. So the setup instead allowlists the common read-only `gh` commands (PR / issue / repo /
+run reads — deliberately **not** `gh api`, which can mutate) so they don't prompt, and warns if
+`gh` isn't installed or logged in. Playwright stays an MCP because it has no CLI equivalent.
+
 ### Option A — let Claude Code do it (no terminal needed)
 
-Open Claude Code in your project folder and paste one of these:
+Open Claude Code and paste one of these:
 
 **Non-developer:**
 
-> I'm not a programmer and I want to start a project with your help. Please set up this
-> folder for me: read the setup instructions at
+> I'm not a programmer and I want to start a project with your help. Please set up Claude
+> Code for me: read the setup instructions at
 > https://github.com/CrazyWillBear/my-dotclaude/blob/main/AGENT_SETUP.md and follow
 > the **non-developer** steps. Install everything, set it up so you automatically check
 > your own work, and explain what you're doing in plain English.
 
 **Developer:**
 
-> Set up this project with the team-code-review plugin. Read
+> Set up Claude Code with my full kit. Read
 > https://github.com/CrazyWillBear/my-dotclaude/blob/main/AGENT_SETUP.md and follow
-> the **developer** steps: install the team-code-review and caveman plugins, add CLAUDE.md
-> and STYLEGUIDE.md, and enable automatic code review on every turn.
+> the **developer** steps: install the plugins, the Playwright MCP, and the `gh` allowlist,
+> write the global CLAUDE.md, and enable automatic code review on every turn.
 
 ### Option B — run a script
 
@@ -103,7 +84,7 @@ curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/set
 
 The `.ps1` scripts print a warning and **do nothing unless you pass `-Continue`**.
 Because `irm | iex` can't forward parameters, invoke as a scriptblock (add `-Force` to
-overwrite an existing `CLAUDE.md`):
+overwrite an existing `~/.claude/CLAUDE.md`):
 
 ```powershell
 # developer
@@ -134,9 +115,10 @@ team rubric, covering **correctness & bugs**, **security**, **style & convention
 
 > Hooks are plain shell commands and can't spawn a subagent themselves — so the hook
 > *prompts the main agent* to launch the subagent. It only fires when files were
-> actually edited, and won't re-review the same file twice in a session. For a
-> non-developer project (`.claude/review-audience` = `plain`) the hook tells Claude to
-> fix what it finds and report back in plain English instead of a severity list.
+> actually edited, and won't re-review the same file twice in a session. When the review
+> audience is `plain` (the non-developer setup writes `~/.claude/review-audience` = `plain`,
+> or a project can set its own) the hook tells Claude to fix what it finds and report back
+> in plain English instead of a severity list.
 
 ## Layout
 
@@ -150,18 +132,18 @@ my-dotclaude/
 ├── agents/code-reviewer.md      # the fresh-context reviewer subagent
 ├── skills/review-rubric/SKILL.md# the shared, tunable rubric (source of truth)
 ├── commands/review.md           # on-demand /review command
-├── home/CLAUDE.md               # my global ~/.claude/CLAUDE.md
+├── home/CLAUDE.md               # my global ~/.claude/CLAUDE.md (developer setup)
 ├── plugins/personal-tools/      # my personal commands + agents (a second plugin)
-├── templates/                   # CLAUDE.md / STYLEGUIDE.md dropped into a project
+├── templates/                   # simple/CLAUDE.md = non-dev global; dev/* reserved for a future scaffold skill
 │   ├── dev/  └── simple/
-├── setup/                       # setup-personal / setup-dev / setup-simple (.sh + .ps1) + lib
+├── setup/                       # setup-dev / setup-simple (.sh + .ps1) + lib
 └── AGENT_SETUP.md               # instructions Claude follows for the paste-a-prompt path
 ```
 
 **Requirements:** `bash` and `python3` (the review hook uses python3 to parse the
 transcript; if it's missing the hook fails open — it does nothing rather than blocking).
-The setup scripts also need `git` and the `claude` CLI; the shell (`.sh`) scripts use
-`curl`, while the PowerShell (`.ps1`) scripts use the built-in `Invoke-WebRequest`.
+The setup scripts also need the `claude` CLI; the shell (`.sh`) scripts use `curl`, while
+the PowerShell (`.ps1`) scripts use the built-in `Invoke-WebRequest`.
 Caveman and the Playwright MCP both need Node ≥ 18 (Playwright runs via `npx`). GitHub
 access is optional and uses the [`gh` CLI](https://cli.github.com) — install it and run
 `gh auth login` to enable the allowlisted commands; the setup just warns if it's absent.

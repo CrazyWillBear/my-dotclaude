@@ -12,6 +12,13 @@ hook and the manual `/review` command stay in sync.
 Review the **change**, not the whole codebase. Prefer reviewing a diff. Verify
 claims against the code; do not assume the author got it right.
 
+**Read the local rules first.** Before you start, look for and read any
+`STYLEGUIDE.md`, `CLAUDE.md`, or `AGENTS.md` you can find — at the repo root and
+in the directories of the files you're reviewing. They carry project-specific
+conventions, required commands (test/lint/typecheck), and constraints this
+rubric can't know about. This rubric is the floor; where a local rule is more
+specific it wins, and a violation of one is a real finding.
+
 ---
 
 ## 1. Correctness & bugs  (highest priority)

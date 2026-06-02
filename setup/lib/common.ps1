@@ -1,4 +1,4 @@
-# Shared helpers for the my-dotclaude setup scripts (setup-personal.ps1 / setup-dev.ps1 / setup-simple.ps1).
+# Shared helpers for the my-dotclaude setup scripts (setup-dev.ps1 / setup-simple.ps1).
 #
 # Dot-source this from an entry script. Functions take what they need as parameters
 # so they don't depend on the caller's variable scope.
@@ -39,6 +39,7 @@ function Test-TcrDeps {
 }
 
 # Copy-TcrTemplate -Rel <path under templates/> -Dest <file> -LocalRoot <root or ''> -Force
+# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill).
 function Copy-TcrTemplate {
     param([string]$Rel, [string]$Dest, [string]$LocalRoot, [switch]$Force)
     if ((Test-Path $Dest) -and -not $Force) {
@@ -60,6 +61,7 @@ function Copy-TcrTemplate {
     Write-TcrOk "wrote $Dest"
 }
 
+# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill).
 function Initialize-TcrGit {
     git rev-parse --is-inside-work-tree *> $null
     if ($LASTEXITCODE -eq 0) {
@@ -143,6 +145,8 @@ function Install-TcrPersonalTools {
 }
 
 # Set-TcrAudience <plain|technical>
+# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill;
+# the user-wide default lives at ~/.claude via Set-TcrGlobalAudience).
 function Set-TcrAudience {
     param([string]$Audience)
     if (-not (Test-Path '.claude')) { New-Item -ItemType Directory -Force -Path '.claude' | Out-Null }
@@ -179,10 +183,11 @@ function Backup-TcrFile {
     }
 }
 
-# Install-TcrGlobalClaudeMd - write home/CLAUDE.md to ~/.claude/CLAUDE.md.
+# Install-TcrGlobalClaudeMd -Source <relpath> - write a CLAUDE.md source (default
+# home/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to ~/.claude/CLAUDE.md.
 # Backs up and skips an existing file unless -Force.
 function Install-TcrGlobalClaudeMd {
-    param([string]$LocalRoot, [switch]$Force)
+    param([string]$LocalRoot, [string]$Source = 'home/CLAUDE.md', [switch]$Force)
     $dest = Join-Path $HOME '.claude/CLAUDE.md'
     $destDir = Split-Path -Parent $dest
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
@@ -191,17 +196,30 @@ function Install-TcrGlobalClaudeMd {
         return
     }
     Backup-TcrFile $dest
-    $localFile = if ($LocalRoot) { Join-Path $LocalRoot 'home/CLAUDE.md' } else { $null }
+    $localFile = if ($LocalRoot) { Join-Path $LocalRoot $Source } else { $null }
     if ($localFile -and (Test-Path $localFile)) {
         Copy-Item -Path $localFile -Destination $dest -Force
     } else {
         try {
-            Invoke-WebRequest -Uri "$($script:TcrRawBase)/home/CLAUDE.md" -OutFile $dest -UseBasicParsing
+            Invoke-WebRequest -Uri "$($script:TcrRawBase)/$Source" -OutFile $dest -UseBasicParsing
         } catch {
-            Stop-TcrError "Could not download home/CLAUDE.md from $($script:TcrRawBase)."
+            Stop-TcrError "Could not download $Source from $($script:TcrRawBase)."
         }
     }
     Write-TcrOk "wrote $dest"
+}
+
+# Set-TcrGlobalAudience <plain|technical> - write ~/.claude/review-audience, the
+# user-wide review-output default (the review hook falls back to it when a project
+# has no .claude/review-audience). Backs up an existing marker.
+function Set-TcrGlobalAudience {
+    param([string]$Audience)
+    $dest = Join-Path $HOME '.claude/review-audience'
+    $destDir = Split-Path -Parent $dest
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+    Backup-TcrFile $dest
+    Write-TcrTextNoBom $dest "$Audience`n"
+    Write-TcrOk "set user-wide review style to '$Audience' ($dest)"
 }
 
 # Merge-TcrJsonString <cfg> <key> <string-value> - merge one string key into a

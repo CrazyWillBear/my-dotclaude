@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
-# Developer setup for the team-code-review plugin.
-# Run inside the project directory you want to set up:
+# Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
+# the global CLAUDE.md (technical), model=opus, the team-code-review +
+# personal-tools + caveman + agent-sdk-dev plugins, the Playwright MCP server,
+# and a read-only gh (GitHub CLI) allowlist. User scope — not tied to any one
+# project (review output defaults to the technical, severity-grouped report).
 #
 #   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 #
@@ -9,11 +12,8 @@
 #
 #   bash setup/setup-dev.sh [--force] [--no-color]
 #
-# What it does (in the current directory):
-#   - initializes a git repo if there isn't one
-#   - writes technical CLAUDE.md + STYLEGUIDE.md (won't overwrite without --force)
-#   - installs the team-code-review plugin and the caveman plugin (full mode)
-#   - marks this project for technical review output
+# --force overwrites an existing ~/.claude/CLAUDE.md (a timestamped backup is
+# always kept either way).
 
 set -euo pipefail
 
@@ -48,29 +48,36 @@ for arg in "$@"; do
     --force) TCR_FORCE=1 ;;
     --no-color) : ;;  # already handled before sourcing (see top)
     -h|--help)
-      printf 'setup-dev.sh — developer setup for the team-code-review plugin.\n'
-      printf 'Run inside the project directory you want to set up.\n'
-      printf 'Options: --force (overwrite existing CLAUDE.md/STYLEGUIDE.md), --no-color\n'
+      printf 'setup-dev.sh — install the full user-wide Claude Code kit (user scope).\n'
+      printf 'Writes ~/.claude/CLAUDE.md (technical), sets model=opus, installs the plugins, the Playwright MCP, and a gh allowlist.\n'
+      printf 'Options: --force (overwrite an existing ~/.claude/CLAUDE.md), --no-color\n'
       exit 0 ;;
     *) tcr_warn "ignoring unknown option: $arg" ;;
   esac
 done
 export TCR_FORCE TCR_LOCAL_ROOT
 
-tcr_check_deps
-tcr_step "Developer setup in: $(pwd)"
-tcr_git_init
-tcr_write_template dev/CLAUDE.md CLAUDE.md
-tcr_write_template dev/STYLEGUIDE.md STYLEGUIDE.md
-tcr_write_audience technical
-tcr_install_review_plugin
+# This path is user-scope (~/.claude), so it only needs claude (and curl when remote).
+tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
+  tcr_require curl "Install curl, or run this script from a local checkout of the repo."
+fi
+
+tcr_step "Developer setup into: $HOME/.claude"
+tcr_install_global_claudemd
+tcr_set_setting model opus
+tcr_install_review_plugin       # also adds our marketplace
+tcr_install_personal_tools      # reuses the marketplace added above
 tcr_install_caveman
+tcr_install_agent_sdk_dev
+tcr_install_playwright_mcp
+tcr_setup_gh
 
 if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
   tcr_warn "a plugin did not install automatically — run the 'claude plugin install' command(s) shown above, then restart Claude Code."
 fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
-printf '  1. Restart Claude Code so it loads the plugins.\n'
-printf '  2. Fill in the <...> placeholders in CLAUDE.md and STYLEGUIDE.md.\n'
-printf '  3. Edit a file and finish a turn — the code review runs automatically.\n'
+printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
+printf '  2. Run /plugin to confirm team-code-review, personal-tools, caveman, and agent-sdk-dev are enabled.\n'
+printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

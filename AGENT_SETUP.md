@@ -1,55 +1,36 @@
 # Setup instructions for Claude Code
 
 You are reading this because a user asked you to set up their Claude Code environment
-from the **my-dotclaude** repo. Pick the section that matches what they asked for and
-keep them informed in plain language as you go:
+from the **my-dotclaude** repo. Both paths install the same full kit **user-wide** (into
+`~/.claude`, not a project folder); they differ only in audience. Keep the user informed
+in plain language as you go:
 
-- **Personal restore** — the repo owner restoring their own global setup on a machine.
-- **Developer setup** — bootstrap a single project with the code-review plugins + docs.
-- **Non-developer setup** — same, but plain-English and hands-off for a non-coder.
+- **Developer setup** — global technical `CLAUDE.md`, the code-review + personal-tools +
+  caveman + agent-sdk-dev plugins, the Playwright MCP, a read-only `gh` allowlist,
+  `model=opus`, and technical (severity-grouped) review output.
+- **Non-developer setup** — the same kit, but with a plain-English global `CLAUDE.md`,
+  caveman set to `lite`, plain-language review summaries, and the model left at Claude
+  Code's default.
+
+### Pick the path — ask first
+
+**Do not guess.** Unless the user has already made it unambiguous, **ask one plain
+question** and wait for the answer:
+
+> Do you write code yourself, or would you rather I handle all the technical
+> parts for you?
+>
+> - **I write code** → developer setup (technical review reports, `model=opus`).
+> - **Handle it for me** → non-developer setup (plain-English summaries, no jargon).
+
+Map their answer: writes code → **Developer setup**; wants it handled → **Non-developer
+setup**. If they only say "set me up" with no other signal, ask this question first.
 
 **Repository:** `https://github.com/CrazyWillBear/my-dotclaude`
 **Raw base:** `https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main`
 
-The **developer** and **non-developer** setups work in the user's **current project
-directory** — do not create a new subfolder unless they ask. The **personal restore**
-is user-scope and touches `~/.claude`, not the project.
-
----
-
-## Personal restore
-
-The owner is reinstalling their global Claude Code setup (global `CLAUDE.md`, both of
-their plugins, caveman, and default model). This is user-scope.
-
-**Preferred — run the script:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.sh | bash
-```
-
-On Windows PowerShell (untested; `-Continue` accepts that risk, scriptblock form):
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.ps1))) -Continue
-```
-
-**Fallback — if you cannot run that script**, do these yourself:
-
-1. Back up `~/.claude/CLAUDE.md` and `~/.claude/settings.json` if they exist, then
-   write `~/.claude/CLAUDE.md` from `<raw base>/home/CLAUDE.md` (don't overwrite an
-   existing one without asking).
-2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys.
-3. Install the plugins (prefer the `claude` CLI):
-   ```bash
-   claude plugin marketplace add CrazyWillBear/my-dotclaude
-   claude plugin install team-code-review@my-dotclaude
-   claude plugin install personal-tools@my-dotclaude
-   claude plugin marketplace add JuliusBrussee/caveman
-   claude plugin install caveman@caveman
-   ```
-
-Finish by telling them to **restart Claude Code**.
+Both setups are **user-scope** — they touch `~/.claude`, not the current project. They do
+not run `git init` or write any project files.
 
 ---
 
@@ -68,28 +49,37 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.ps1))) -Continue
 ```
 
-**Fallback — if you cannot run that script**, do these steps yourself with your tools:
+**Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
-1. If the directory is not a git repo, run `git init`.
-2. Write `CLAUDE.md` from `<raw base>/templates/dev/CLAUDE.md` (don't overwrite an
-   existing one without asking).
-3. Write `STYLEGUIDE.md` from `<raw base>/templates/dev/STYLEGUIDE.md`.
-4. Create `.claude/review-audience` containing the single word `technical`.
-5. Install the plugins (prefer the `claude` CLI):
+1. Back up `~/.claude/CLAUDE.md` and `~/.claude/settings.json` if they exist, then write
+   `~/.claude/CLAUDE.md` from `<raw base>/home/CLAUDE.md` (don't overwrite an existing one
+   without asking).
+2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys.
+3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
    claude plugin install team-code-review@my-dotclaude
+   claude plugin install personal-tools@my-dotclaude
    claude plugin marketplace add JuliusBrussee/caveman
    claude plugin install caveman@caveman
+   claude plugin marketplace add anthropics/claude-plugins-official
+   claude plugin install agent-sdk-dev@claude-plugins-official
    ```
-   If the `claude` CLI is unavailable, enable them by editing the user's
-   `~/.claude/settings.json`: add both marketplaces under `extraKnownMarketplaces`
-   and set `"team-code-review@my-dotclaude": true` and `"caveman@caveman": true`
-   under `enabledPlugins`.
+   If the `claude` CLI is unavailable, enable the plugins by editing
+   `~/.claude/settings.json`: add the marketplaces under `extraKnownMarketplaces` and set
+   each plugin to `true` under `enabledPlugins`.
+4. Add the Playwright MCP server at user scope:
+   ```bash
+   claude mcp add playwright -s user -- npx @playwright/mcp@latest
+   ```
+5. For GitHub, allowlist the common read-only `gh` commands under `permissions.allow` in
+   `~/.claude/settings.json` (e.g. `Bash(gh pr view:*)`, `Bash(gh pr list:*)`,
+   `Bash(gh issue view:*)`, `Bash(gh repo view:*)`, `Bash(gh run view:*)` — **not**
+   `gh api`, which can mutate), and tell them to install `gh` and run `gh auth login` if
+   it isn't set up. (Claude uses `gh`, not a GitHub MCP.)
 
-Finish by telling the user to **restart Claude Code**, and to fill in the `<...>`
-placeholders in `CLAUDE.md` / `STYLEGUIDE.md` with their project's real test, lint,
-and typecheck commands.
+Review output defaults to technical with no marker, so there is nothing else to write.
+Finish by telling the user to **restart Claude Code**.
 
 ---
 
@@ -111,19 +101,20 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1))) -Continue
 ```
 
-**Fallback — if you cannot run that script**, do these steps yourself:
+**Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
-1. If the directory is not a git repo, run `git init` (so their work is always saved).
-2. Write `CLAUDE.md` from `<raw base>/templates/simple/CLAUDE.md`. Do **not** add a
-   STYLEGUIDE.md.
-3. Create `.claude/review-audience` containing the single word `plain`.
-4. Install the plugins (same commands as the developer fallback above:
-   `team-code-review@my-dotclaude` and `caveman@caveman`).
-5. Make caveman a little less terse for them: set its default level to `lite` by
-   writing `{"defaultMode":"lite"}` (merging if the file exists) into
+1. Back up `~/.claude/CLAUDE.md` if it exists, then write `~/.claude/CLAUDE.md` from
+   `<raw base>/templates/simple/CLAUDE.md`. Leave the model at Claude Code's default
+   (don't set `model=opus`).
+2. Install the same plugins and the Playwright MCP as the developer fallback above (steps
+   3–4), and set up the read-only `gh` allowlist (step 5).
+3. Make caveman a little less terse: set its default level to `lite` by writing
+   `{"defaultMode":"lite"}` (merging if the file exists) into
    `~/.config/caveman/config.json` (on Windows: `%APPDATA%\caveman\config.json`; if
    `$XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/caveman/config.json`).
+4. Write `~/.claude/review-audience` containing the single word `plain` so reviews come
+   back in plain language.
 
-Finish by telling the user, in plain words, that everything is ready: they should
-close and reopen Claude Code, then just describe what they want to build — you'll
-handle the rest and double-check your own work for them.
+Finish by telling the user, in plain words, that everything is ready: they should close
+and reopen Claude Code, then just describe what they want to build — you'll handle the
+rest and double-check your own work for them.

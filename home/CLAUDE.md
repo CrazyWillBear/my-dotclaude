@@ -30,6 +30,8 @@ question, propose a short plan, or make the smallest change that lets us discuss
   files over adding new ones.
 - Run the full done-check before declaring completion. Report failures honestly — if
   tests fail or a step was skipped, say so.
+- Commit your work before ending a turn — don't leave edits uncommitted when the Stop
+  hook fires. Use a clear message. (Push only when asked.)
 
 **Ask first**
 - Anything destructive or hard to undo, or outward-facing — deleting, publishing,

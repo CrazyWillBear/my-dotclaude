@@ -1,7 +1,7 @@
 ---
 description: Review code changes with the team code-reviewer subagent
 argument-hint: "[files | git ref | nothing for current changes]"
-allowed-tools: Task, Bash(git status:*), Bash(git diff:*), Read, Grep, Glob
+allowed-tools: Task, Bash(git status:*), Bash(git diff:*), Bash(bash:*), Read, Grep, Glob
 ---
 
 Run a team code review by delegating to the `code-reviewer` subagent.
@@ -21,3 +21,16 @@ Run a team code review by delegating to the `code-reviewer` subagent.
 
 When it returns, show me its verdict and findings grouped by severity. Do not
 edit any files — this is review only.
+
+**Then record it** so the project keeps a review history. Pipe a compact JSON
+object to the recorder with a quoted heredoc:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/record-review.sh" <<'REVIEW'
+{"verdict": "APPROVE", "files": ["/abs/path"], "findings": [{"severity": "blocker", "path": "/abs/path", "line": 0, "note": "one sentence"}]}
+REVIEW
+```
+
+Use the real verdict (APPROVE / APPROVE WITH NITS / CHANGES REQUESTED), one
+findings entry per issue (empty array if none), and keep each note to one
+sentence. Review history is viewable any time with `/review-history`.

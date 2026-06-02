@@ -1,17 +1,19 @@
 <#
 .SYNOPSIS
-  Non-developer setup for the team-code-review plugin. Run inside your project folder.
+  Non-developer setup - the full Claude Code kit at ~/.claude with plain-English output. Run from anywhere.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1 | iex
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1))) -Continue
 
 .EXAMPLE
-  pwsh -File setup/setup-simple.ps1 -Force
+  pwsh -File setup/setup-simple.ps1 -Continue -Force
 
 .DESCRIPTION
-  In the current directory: initializes git, writes a plain-English CLAUDE.md,
-  installs the team-code-review and caveman plugins (caveman lite mode), and marks
-  the project for plain-language review summaries.
+  Installs the global ~/.claude/CLAUDE.md (plain-English), the plugins (team-code-review,
+  personal-tools, caveman, agent-sdk-dev), the Playwright MCP server, a read-only gh (GitHub CLI)
+  allowlist, sets caveman to its gentler "lite" level, and writes ~/.claude/review-audience=plain so
+  reviews come back in plain language. Not tied to any project; model is left at Claude Code's default.
+  -Force overwrites an existing ~/.claude/CLAUDE.md (a timestamped backup is always kept either way).
 #>
 param([switch]$Force, [switch]$Continue)
 
@@ -41,14 +43,19 @@ if ($localLib -and (Test-Path $localLib)) {
     } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
 }
 
-Test-TcrDeps
-Write-TcrStep "Setting up your project in: $((Get-Location).Path)"
-Initialize-TcrGit
-Copy-TcrTemplate -Rel 'simple/CLAUDE.md' -Dest 'CLAUDE.md' -LocalRoot $LocalRoot -Force:$Force
-Set-TcrAudience 'plain'
-Install-TcrReviewPlugin -LocalRoot $LocalRoot
+# This path is user-scope (~/.claude), so it only needs the claude CLI.
+if (-not (Test-TcrCommand 'claude')) { Stop-TcrError "Claude Code's 'claude' CLI is required but not found on PATH." }
+
+Write-TcrStep "Setting up your Claude Code in: $(Join-Path $HOME '.claude')"
+Install-TcrGlobalClaudeMd -LocalRoot $LocalRoot -Source 'templates/simple/CLAUDE.md' -Force:$Force
+Install-TcrReviewPlugin -LocalRoot $LocalRoot   # also adds our marketplace
+Install-TcrPersonalTools                        # reuses the marketplace added above
 Install-TcrCaveman
+Install-TcrAgentSdkDev
+Install-TcrPlaywrightMcp
+Set-TcrGhAccess
 Set-TcrCavemanLevel 'lite'
+Set-TcrGlobalAudience 'plain'
 
 if ($script:TcrInstallFailed) {
     Write-TcrWarn "a helper did not install automatically - run the 'claude plugin install' command(s) shown above, then restart Claude Code."

@@ -1,3 +1,4 @@
+<!-- Reserved for a future /scaffold-* project skill; not wired into the setup scripts (which are user-scope). -->
 # CLAUDE.md
 
 > **Read first:** [`STYLEGUIDE.md`](./STYLEGUIDE.md) — code conventions, follow on every change.

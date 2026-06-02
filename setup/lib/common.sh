@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for the my-dotclaude setup scripts (setup-personal.sh / setup-dev.sh / setup-simple.sh).
+# Shared helpers for the my-dotclaude setup scripts (setup-dev.sh / setup-simple.sh).
 #
 # Source this from an entry script. Before sourcing, the entry script should set:
 #   TCR_LOCAL_ROOT  - absolute path to a local repo checkout, or "" when unknown
@@ -56,6 +56,8 @@ tcr_check_deps() {
 }
 
 # --- templates ---------------------------------------------------------------
+# Project-scope helper. Unused by the shipped user-wide setup; retained for a
+# future project-scope /scaffold-* skill (see templates/dev/).
 
 # tcr_write_template <relpath-under-templates/> <dest-file>
 # Copies from a local checkout when available, else downloads from GitHub.
@@ -77,6 +79,8 @@ tcr_write_template() {
 }
 
 # --- git ---------------------------------------------------------------------
+# Project-scope helper, unused by the shipped user-wide setup (retained for a
+# future /scaffold-* skill).
 
 tcr_git_init() {
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -188,6 +192,9 @@ tcr_install_personal_tools() {
 }
 
 # --- project marker ----------------------------------------------------------
+# Project-scope helper, unused by the shipped user-wide setup (retained for a
+# future /scaffold-* skill). The user-wide default lives at ~/.claude (see
+# tcr_write_global_audience).
 
 # tcr_write_audience <plain|technical>
 tcr_write_audience() {
@@ -224,9 +231,11 @@ tcr_backup_file() {
   fi
 }
 
-# tcr_install_global_claudemd — write home/CLAUDE.md to ~/.claude/CLAUDE.md.
-# Backs up and skips an existing file unless TCR_FORCE=1.
+# tcr_install_global_claudemd [<source-relpath>] — write a CLAUDE.md source
+# (default home/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to
+# ~/.claude/CLAUDE.md. Backs up and skips an existing file unless TCR_FORCE=1.
 tcr_install_global_claudemd() {
+  local src="${1:-home/CLAUDE.md}"
   local dest="$HOME/.claude/CLAUDE.md"
   mkdir -p "$HOME/.claude"
   if [ -e "$dest" ] && [ "${TCR_FORCE:-0}" != "1" ]; then
@@ -234,13 +243,24 @@ tcr_install_global_claudemd() {
     return 0
   fi
   tcr_backup_file "$dest"
-  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/home/CLAUDE.md" ]; then
-    cp "$TCR_LOCAL_ROOT/home/CLAUDE.md" "$dest"
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/$src" ]; then
+    cp "$TCR_LOCAL_ROOT/$src" "$dest"
   else
-    curl -fsSL "$RAW_BASE/home/CLAUDE.md" -o "$dest" \
-      || tcr_die "Could not download home/CLAUDE.md from $RAW_BASE."
+    curl -fsSL "$RAW_BASE/$src" -o "$dest" \
+      || tcr_die "Could not download $src from $RAW_BASE."
   fi
   tcr_ok "wrote $dest"
+}
+
+# tcr_write_global_audience <plain|technical> — write ~/.claude/review-audience,
+# the user-wide review-output default (the review hook falls back to it when a
+# project has no .claude/review-audience). Backs up an existing marker.
+tcr_write_global_audience() {
+  local dest="$HOME/.claude/review-audience"
+  mkdir -p "$HOME/.claude"
+  tcr_backup_file "$dest"
+  printf '%s\n' "$1" > "$dest"
+  tcr_ok "set user-wide review style to '$1' ($dest)"
 }
 
 # tcr_merge_json_string <cfg> <key> <string-value>
