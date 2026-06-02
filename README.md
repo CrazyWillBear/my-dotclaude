@@ -13,9 +13,12 @@ their own projects.
   on-demand `/review`), routed through one shared, tunable rubric. *This is the repo
   root, installed as a plugin.*
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents (`/recap`, the `explainer` agent).
+  subagents (`/explain` for a whole-codebase overview, `/explain-dir` for one directory).
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
+- **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
+  official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed by
+  `setup-personal` alongside the above.
 - **Setup scripts** (`setup/`) — one to restore my whole setup, two to bootstrap a
   project for anyone who wants the code-review combo.
 
@@ -31,6 +34,15 @@ curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/set
 It backs up any existing `~/.claude/CLAUDE.md` and `~/.claude/settings.json` before
 touching them, and won't overwrite an existing global `CLAUDE.md` without `--force`.
 Restart Claude Code afterward.
+
+It also adds the **Playwright MCP** server and a **read-only `gh` (GitHub CLI) allowlist**
+(user scope). **For GitHub I use `gh`, not a GitHub MCP server** — on a machine with `gh`,
+the CLI plus Bash already cover the whole GitHub API (`gh api` reaches any endpoint), so a
+GitHub MCP would only add a managed token and per-session tool-schema overhead for
+structured-tool ergonomics I don't need. So `setup-personal` instead allowlists the common
+read-only `gh` commands (PR / issue / repo / run reads — deliberately **not** `gh api`,
+which can mutate) so they don't prompt, and warns if `gh` isn't installed or logged in.
+Playwright stays an MCP because it has no CLI equivalent.
 
 <details>
 <summary>Windows (PowerShell) — untested, use at your own risk</summary>
@@ -150,7 +162,9 @@ my-dotclaude/
 transcript; if it's missing the hook fails open — it does nothing rather than blocking).
 The setup scripts also need `git` and the `claude` CLI; the shell (`.sh`) scripts use
 `curl`, while the PowerShell (`.ps1`) scripts use the built-in `Invoke-WebRequest`.
-Caveman needs Node ≥ 18.
+Caveman and the Playwright MCP both need Node ≥ 18 (Playwright runs via `npx`). GitHub
+access is optional and uses the [`gh` CLI](https://cli.github.com) — install it and run
+`gh auth login` to enable the allowlisted commands; the setup just warns if it's absent.
 
 > **Note:** caveman's verbosity level is set per *machine*, not per project (it has no
 > per-project setting). The non-developer setup sets the machine default to `lite`.

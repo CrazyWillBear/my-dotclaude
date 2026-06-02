@@ -10,6 +10,9 @@ $script:TcrPlugin         = "team-code-review@$($script:TcrMarketplace)"
 $script:TcrPersonalPlugin = "personal-tools@$($script:TcrMarketplace)"
 $script:TcrCavemanRepo   = 'JuliusBrussee/caveman'
 $script:TcrCavemanPlugin = 'caveman@caveman'
+$script:TcrOfficialMarketplaceRepo = 'anthropics/claude-plugins-official'
+$script:TcrAgentSdkPlugin          = 'agent-sdk-dev@claude-plugins-official'
+$script:TcrPlaywrightMcpPkg        = '@playwright/mcp@latest'
 $script:TcrInstallFailed = $false
 
 function Write-TcrStep { param([string]$Message) Write-Host "==> $Message" -ForegroundColor Blue }
@@ -89,6 +92,45 @@ function Install-TcrCaveman {
     claude plugin install $script:TcrCavemanPlugin *> $null
     if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrCavemanPlugin)" }
     else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrCavemanPlugin)" }
+}
+
+# Installs agent-sdk-dev from Anthropic's official marketplace (Claude Agent SDK scaffolder).
+function Install-TcrAgentSdkDev {
+    Write-TcrStep 'Installing the agent-sdk-dev plugin'
+    Add-TcrMarketplace $script:TcrOfficialMarketplaceRepo
+    claude plugin install $script:TcrAgentSdkPlugin *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrAgentSdkPlugin)" }
+    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrAgentSdkPlugin)" }
+}
+
+# Adds the Playwright MCP server (browser automation) at user scope. Idempotent.
+function Install-TcrPlaywrightMcp {
+    Write-TcrStep 'Adding the Playwright MCP server (user scope)'
+    claude mcp get playwright *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk 'playwright MCP already configured'; return }
+    claude mcp add playwright -s user -- npx $script:TcrPlaywrightMcpPkg *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk 'added playwright MCP' }
+    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not add the playwright MCP automatically - run: claude mcp add playwright -s user -- npx $($script:TcrPlaywrightMcpPkg)" }
+}
+
+# GitHub access uses the gh CLI, not a GitHub MCP server (see README). Adds a read-only
+# gh allowlist so common reads do not prompt, and checks gh is installed + authenticated.
+function Set-TcrGhAccess {
+    Write-TcrStep 'Configuring gh (GitHub CLI) access'
+    # Read-only subcommands only. gh api is intentionally omitted - it can POST/DELETE.
+    Add-TcrPermissions @(
+        'Bash(gh pr view:*)', 'Bash(gh pr list:*)', 'Bash(gh pr diff:*)', 'Bash(gh pr checks:*)',
+        'Bash(gh issue view:*)', 'Bash(gh issue list:*)', 'Bash(gh repo view:*)',
+        'Bash(gh run view:*)', 'Bash(gh run list:*)', 'Bash(gh release view:*)',
+        'Bash(gh search:*)', 'Bash(gh auth status:*)'
+    )
+    if (Test-TcrCommand 'gh') {
+        gh auth status *> $null
+        if ($LASTEXITCODE -eq 0) { Write-TcrOk 'gh is installed and authenticated' }
+        else { Write-TcrWarn 'gh is installed but not logged in - run: gh auth login' }
+    } else {
+        Write-TcrWarn "gh (GitHub CLI) not found - install it from https://cli.github.com and run 'gh auth login'. Claude uses gh for GitHub (there is no GitHub MCP)."
+    }
 }
 
 # Installs personal-tools. Assumes our marketplace is already added (call
@@ -198,4 +240,45 @@ function Merge-TcrJsonString {
 function Set-TcrSetting {
     param([string]$Key, [string]$Value)
     Merge-TcrJsonString (Join-Path $HOME '.claude/settings.json') $Key $Value
+}
+
+# Add-TcrPermissions <string[]> - merge permission strings into .permissions.allow of
+# ~/.claude/settings.json, preserving every other key, the permissions object's other
+# keys (deny, etc.), and existing allow entries (union, de-duped). Same safety as
+# Merge-TcrJsonString: never clobbers a non-empty file it cannot parse; backs up first.
+function Add-TcrPermissions {
+    param([string[]]$Permissions)
+    $cfg = Join-Path $HOME '.claude/settings.json'
+    $dir = Split-Path -Parent $cfg
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+
+    $data = [ordered]@{}
+    if (Test-Path $cfg) {
+        $raw = Get-Content -Raw $cfg
+        if ($raw -and $raw.Trim()) {
+            try { $existing = $raw | ConvertFrom-Json }
+            catch { Write-TcrWarn "$cfg isn't plain JSON (comments or a trailing comma?) - left it untouched; add these to permissions.allow manually: $($Permissions -join ', ')"; return }
+            if ($existing -isnot [System.Management.Automation.PSCustomObject]) {
+                Write-TcrWarn "$cfg is not a JSON object - left it untouched; add these to permissions.allow manually: $($Permissions -join ', ')"; return
+            }
+            Backup-TcrFile $cfg
+            foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
+        }
+    }
+
+    # Collect existing allow entries (if any), then append the new ones, de-duped.
+    $allow = [System.Collections.Generic.List[string]]::new()
+    $permOut = [ordered]@{}
+    if ($data.Contains('permissions') -and $data['permissions'] -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($pp in $data['permissions'].PSObject.Properties) {
+            if ($pp.Name -eq 'allow') { if ($pp.Value) { foreach ($a in $pp.Value) { if (-not $allow.Contains($a)) { $allow.Add($a) } } } }
+            else { $permOut[$pp.Name] = $pp.Value }
+        }
+    }
+    foreach ($p in $Permissions) { if (-not $allow.Contains($p)) { $allow.Add($p) } }
+    $permOut['allow'] = $allow.ToArray()
+    $data['permissions'] = $permOut
+
+    Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
+    Write-TcrOk "added $($Permissions.Count) gh permission(s) to permissions.allow ($cfg)"
 }

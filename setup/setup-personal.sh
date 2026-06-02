@@ -2,8 +2,9 @@
 #
 # Personal setup — restores my Claude Code config on a fresh machine.
 # This is the "drop my dotfiles back in" path: it installs my global
-# ~/.claude/CLAUDE.md, my plugins (team-code-review, personal-tools, caveman),
-# and my default model. It is user-scope, not tied to any one project.
+# ~/.claude/CLAUDE.md, my plugins (team-code-review, personal-tools, caveman,
+# agent-sdk-dev), the Playwright MCP server, a read-only gh (GitHub CLI) allowlist, and my
+# default model. It is user-scope, not tied to any one project.
 #
 #   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.sh | bash
 #
@@ -68,6 +69,9 @@ tcr_set_setting model opus
 tcr_install_review_plugin       # also adds our marketplace
 tcr_install_personal_tools      # reuses the marketplace added above
 tcr_install_caveman
+tcr_install_agent_sdk_dev
+tcr_install_playwright_mcp
+tcr_setup_gh
 
 if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
   tcr_warn "a plugin did not install automatically — run the 'claude plugin install' command(s) shown above, then restart Claude Code."
@@ -75,4 +79,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm team-code-review, personal-tools, and caveman are enabled.\n'
+printf '  2. Run /plugin to confirm team-code-review, personal-tools, caveman, and agent-sdk-dev are enabled.\n'
+printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'
