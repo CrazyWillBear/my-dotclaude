@@ -1,5 +1,6 @@
 {
-  "name": "team-code-review",
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "my-dotclaude",
   "owner": {
     "name": "William Chastain",
     "url": "https://github.com/CrazyWillBear"
@@ -9,6 +10,11 @@
       "name": "team-code-review",
       "source": "./",
       "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared team rubric."
+    },
+    {
+      "name": "personal-tools",
+      "source": "./plugins/personal-tools",
+      "description": "My personal Claude Code slash commands and subagents."
     }
   ]
 }

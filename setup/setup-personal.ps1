@@ -1,17 +1,17 @@
 <#
 .SYNOPSIS
-  Developer setup for the team-code-review plugin. Run inside the project directory.
+  Personal setup - restores my global Claude Code config (user scope). Run from anywhere.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.ps1 | iex
+  & ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.ps1))) -Continue
 
 .EXAMPLE
-  pwsh -File setup/setup-dev.ps1 -Force
+  pwsh -File setup/setup-personal.ps1 -Continue -Force
 
 .DESCRIPTION
-  In the current directory: initializes git, writes technical CLAUDE.md + STYLEGUIDE.md
-  (won't overwrite without -Force), installs the team-code-review and caveman plugins
-  (caveman full mode), and marks the project for technical review output.
+  Installs my global ~/.claude/CLAUDE.md, my plugins (team-code-review, personal-tools,
+  caveman), and my default model. Not tied to any project. -Force overwrites an existing
+  ~/.claude/CLAUDE.md (a timestamped backup is always kept either way).
 #>
 param([switch]$Force, [switch]$Continue)
 
@@ -41,13 +41,14 @@ if ($localLib -and (Test-Path $localLib)) {
     } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
 }
 
-Test-TcrDeps
-Write-TcrStep "Developer setup in: $((Get-Location).Path)"
-Initialize-TcrGit
-Copy-TcrTemplate -Rel 'dev/CLAUDE.md' -Dest 'CLAUDE.md' -LocalRoot $LocalRoot -Force:$Force
-Copy-TcrTemplate -Rel 'dev/STYLEGUIDE.md' -Dest 'STYLEGUIDE.md' -LocalRoot $LocalRoot -Force:$Force
-Set-TcrAudience 'technical'
-Install-TcrReviewPlugin -LocalRoot $LocalRoot
+# This path doesn't touch a project, so it only needs the claude CLI.
+if (-not (Test-TcrCommand 'claude')) { Stop-TcrError "Claude Code's 'claude' CLI is required but not found on PATH." }
+
+Write-TcrStep "Restoring personal Claude Code setup into: $(Join-Path $HOME '.claude')"
+Install-TcrGlobalClaudeMd -LocalRoot $LocalRoot -Force:$Force
+Set-TcrSetting 'model' 'opus'
+Install-TcrReviewPlugin -LocalRoot $LocalRoot   # also adds our marketplace
+Install-TcrPersonalTools                        # reuses the marketplace added above
 Install-TcrCaveman
 
 if ($script:TcrInstallFailed) {
@@ -56,6 +57,5 @@ if ($script:TcrInstallFailed) {
 
 Write-Host ''
 Write-Host 'Done. Next:' -ForegroundColor White
-Write-Host '  1. Restart Claude Code so it loads the plugins.'
-Write-Host '  2. Fill in the <...> placeholders in CLAUDE.md and STYLEGUIDE.md.'
-Write-Host '  3. Edit a file and finish a turn - the code review runs automatically.'
+Write-Host '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.'
+Write-Host '  2. Run /plugin to confirm team-code-review, personal-tools, and caveman are enabled.'

@@ -3,7 +3,7 @@
   Non-developer setup for the team-code-review plugin. Run inside your project folder.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/CrazyWillBear/code-review-plugin/main/setup/setup-simple.ps1 | iex
+  irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1 | iex
 
 .EXAMPLE
   pwsh -File setup/setup-simple.ps1 -Force
@@ -22,7 +22,7 @@ if (-not $Continue) {
 }
 
 $ErrorActionPreference = 'Stop'
-$Repo = 'CrazyWillBear/code-review-plugin'
+$Repo = 'CrazyWillBear/my-dotclaude'
 $RawBase = "https://raw.githubusercontent.com/$Repo/main"
 
 # Resolve our location so we can run from a checkout or via `irm | iex`.

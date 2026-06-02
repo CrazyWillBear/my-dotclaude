@@ -3,7 +3,7 @@
 # Non-developer setup for the team-code-review plugin.
 # Run inside the (possibly empty) folder you want your project to live in:
 #
-#   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/code-review-plugin/main/setup/setup-simple.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 #
 # or, from a local checkout:
 #
@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-REPO="CrazyWillBear/code-review-plugin"
+REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 
 # Honor --no-color before sourcing the library (it picks colors at source time).

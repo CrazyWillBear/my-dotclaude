@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 #
-# Developer setup for the team-code-review plugin.
-# Run inside the project directory you want to set up:
+# Personal setup — restores my Claude Code config on a fresh machine.
+# This is the "drop my dotfiles back in" path: it installs my global
+# ~/.claude/CLAUDE.md, my plugins (team-code-review, personal-tools, caveman),
+# and my default model. It is user-scope, not tied to any one project.
 #
-#   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-personal.sh | bash
 #
 # or, from a local checkout:
 #
-#   bash setup/setup-dev.sh [--force] [--no-color]
+#   bash setup/setup-personal.sh [--force] [--no-color]
 #
-# What it does (in the current directory):
-#   - initializes a git repo if there isn't one
-#   - writes technical CLAUDE.md + STYLEGUIDE.md (won't overwrite without --force)
-#   - installs the team-code-review plugin and the caveman plugin (full mode)
-#   - marks this project for technical review output
+# --force overwrites an existing ~/.claude/CLAUDE.md (a timestamped backup is
+# always kept either way).
 
 set -euo pipefail
 
@@ -48,22 +47,26 @@ for arg in "$@"; do
     --force) TCR_FORCE=1 ;;
     --no-color) : ;;  # already handled before sourcing (see top)
     -h|--help)
-      printf 'setup-dev.sh — developer setup for the team-code-review plugin.\n'
-      printf 'Run inside the project directory you want to set up.\n'
-      printf 'Options: --force (overwrite existing CLAUDE.md/STYLEGUIDE.md), --no-color\n'
+      printf 'setup-personal.sh — restore my global Claude Code setup (user scope).\n'
+      printf 'Installs ~/.claude/CLAUDE.md, my plugins, and my default model.\n'
+      printf 'Options: --force (overwrite an existing ~/.claude/CLAUDE.md), --no-color\n'
       exit 0 ;;
     *) tcr_warn "ignoring unknown option: $arg" ;;
   esac
 done
 export TCR_FORCE TCR_LOCAL_ROOT
 
-tcr_check_deps
-tcr_step "Developer setup in: $(pwd)"
-tcr_git_init
-tcr_write_template dev/CLAUDE.md CLAUDE.md
-tcr_write_template dev/STYLEGUIDE.md STYLEGUIDE.md
-tcr_write_audience technical
-tcr_install_review_plugin
+# This path doesn't touch a project, so it only needs claude (and curl when remote).
+tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
+  tcr_require curl "Install curl, or run this script from a local checkout of the repo."
+fi
+
+tcr_step "Restoring personal Claude Code setup into: $HOME/.claude"
+tcr_install_global_claudemd
+tcr_set_setting model opus
+tcr_install_review_plugin       # also adds our marketplace
+tcr_install_personal_tools      # reuses the marketplace added above
 tcr_install_caveman
 
 if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
@@ -71,6 +74,5 @@ if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
 fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
-printf '  1. Restart Claude Code so it loads the plugins.\n'
-printf '  2. Fill in the <...> placeholders in CLAUDE.md and STYLEGUIDE.md.\n'
-printf '  3. Edit a file and finish a turn — the code review runs automatically.\n'
+printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
+printf '  2. Run /plugin to confirm team-code-review, personal-tools, and caveman are enabled.\n'

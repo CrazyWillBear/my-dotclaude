@@ -1,7 +1,7 @@
 {
-  "name": "team-code-review",
+  "name": "personal-tools",
   "version": "0.1.0",
-  "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared, tunable team rubric.",
+  "description": "My personal Claude Code slash commands and subagents.",
   "author": {
     "name": "William Chastain",
     "url": "https://github.com/CrazyWillBear"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/CrazyWillBear/my-dotclaude",
   "repository": "https://github.com/CrazyWillBear/my-dotclaude",
   "license": "MIT",
-  "keywords": ["code-review", "quality", "security", "hooks", "subagent"]
+  "keywords": ["personal", "commands", "agents"]
 }

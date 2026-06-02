@@ -3,10 +3,11 @@
 # Dot-source this from an entry script. Functions take what they need as parameters
 # so they don't depend on the caller's variable scope.
 
-$script:TcrRepo          = 'CrazyWillBear/code-review-plugin'
+$script:TcrRepo          = 'CrazyWillBear/my-dotclaude'
 $script:TcrRawBase       = "https://raw.githubusercontent.com/$($script:TcrRepo)/main"
-$script:TcrMarketplace   = 'team-code-review'
-$script:TcrPlugin        = "team-code-review@$($script:TcrMarketplace)"
+$script:TcrMarketplace    = 'my-dotclaude'
+$script:TcrPlugin         = "team-code-review@$($script:TcrMarketplace)"
+$script:TcrPersonalPlugin = "personal-tools@$($script:TcrMarketplace)"
 $script:TcrCavemanRepo   = 'JuliusBrussee/caveman'
 $script:TcrCavemanPlugin = 'caveman@caveman'
 $script:TcrInstallFailed = $false
@@ -90,6 +91,15 @@ function Install-TcrCaveman {
     else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrCavemanPlugin)" }
 }
 
+# Installs personal-tools. Assumes our marketplace is already added (call
+# Install-TcrReviewPlugin or Add-TcrMarketplace before this).
+function Install-TcrPersonalTools {
+    Write-TcrStep 'Installing the personal-tools plugin'
+    claude plugin install $script:TcrPersonalPlugin *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrPersonalPlugin)" }
+    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrPersonalPlugin)" }
+}
+
 # Set-TcrAudience <plain|technical>
 function Set-TcrAudience {
     param([string]$Audience)
@@ -130,4 +140,63 @@ function Set-TcrCavemanLevel {
     $data['defaultMode'] = $Level
     Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
     Write-TcrOk "set caveman default level to '$Level' ($cfg)"
+}
+
+# --- global (~/.claude) install ----------------------------------------------
+
+# Backup-TcrFile <path> - copy to <path>.bak.<timestamp> when it exists.
+function Backup-TcrFile {
+    param([string]$Path)
+    if (Test-Path $Path) {
+        $bak = "$Path.bak.$(Get-Date -Format 'yyyyMMddHHmmss')"
+        Copy-Item -Path $Path -Destination $bak -Force
+        Write-TcrOk "backed up $Path -> $bak"
+    }
+}
+
+# Install-TcrGlobalClaudeMd - write home/CLAUDE.md to ~/.claude/CLAUDE.md.
+# Backs up and skips an existing file unless -Force.
+function Install-TcrGlobalClaudeMd {
+    param([string]$LocalRoot, [switch]$Force)
+    $dest = Join-Path $HOME '.claude/CLAUDE.md'
+    $destDir = Split-Path -Parent $dest
+    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+    if ((Test-Path $dest) -and -not $Force) {
+        Write-TcrWarn "$dest already exists - leaving it untouched (use -Force to overwrite)."
+        return
+    }
+    Backup-TcrFile $dest
+    $localFile = if ($LocalRoot) { Join-Path $LocalRoot 'home/CLAUDE.md' } else { $null }
+    if ($localFile -and (Test-Path $localFile)) {
+        Copy-Item -Path $localFile -Destination $dest -Force
+    } else {
+        try {
+            Invoke-WebRequest -Uri "$($script:TcrRawBase)/home/CLAUDE.md" -OutFile $dest -UseBasicParsing
+        } catch {
+            Stop-TcrError "Could not download home/CLAUDE.md from $($script:TcrRawBase)."
+        }
+    }
+    Write-TcrOk "wrote $dest"
+}
+
+# Set-TcrSetting <key> <string-value> - merge one string setting into
+# ~/.claude/settings.json, preserving everything else. Backs up first.
+function Set-TcrSetting {
+    param([string]$Key, [string]$Value)
+    $cfg = Join-Path $HOME '.claude/settings.json'
+    $dir = Split-Path -Parent $cfg
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    Backup-TcrFile $cfg
+    $data = [ordered]@{}
+    if (Test-Path $cfg) {
+        try {
+            $existing = Get-Content -Raw $cfg | ConvertFrom-Json
+            if ($existing -is [System.Management.Automation.PSCustomObject]) {
+                foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
+            }
+        } catch { $data = [ordered]@{} }
+    }
+    $data[$Key] = $Value
+    Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
+    Write-TcrOk "set $Key = `"$Value`" ($cfg)"
 }

@@ -8,10 +8,11 @@
 #
 # All functions are prefixed `tcr_` to avoid clobbering the caller's namespace.
 
-REPO="CrazyWillBear/code-review-plugin"
+REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
-OUR_MARKETPLACE="team-code-review"
+OUR_MARKETPLACE="my-dotclaude"
 OUR_PLUGIN="team-code-review@${OUR_MARKETPLACE}"
+PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
 CAVEMAN_REPO="JuliusBrussee/caveman"
 CAVEMAN_PLUGIN="caveman@caveman"
 
@@ -114,6 +115,18 @@ tcr_install_caveman() {
   fi
 }
 
+# Installs personal-tools. Assumes our marketplace is already added (call
+# tcr_install_review_plugin first, or tcr_add_marketplace, before this).
+tcr_install_personal_tools() {
+  tcr_step "Installing the personal-tools plugin"
+  if claude plugin install "$PERSONAL_PLUGIN" >/dev/null 2>&1; then
+    tcr_ok "enabled $PERSONAL_PLUGIN"
+  else
+    TCR_INSTALL_FAILED=1
+    tcr_warn "could not install $PERSONAL_PLUGIN automatically — run: claude plugin install $PERSONAL_PLUGIN"
+  fi
+}
+
 # --- project marker ----------------------------------------------------------
 
 # tcr_write_audience <plain|technical>
@@ -164,4 +177,66 @@ PY
     return 0
   fi
   tcr_ok "set caveman default level to '$level' ($cfg)"
+}
+
+# --- global (~/.claude) install ----------------------------------------------
+
+# tcr_backup_file <path> — copy to <path>.bak.<timestamp> when it exists.
+tcr_backup_file() {
+  if [ -e "$1" ]; then
+    local bak
+    bak="$1.bak.$(date +%Y%m%d%H%M%S)"
+    cp "$1" "$bak"
+    tcr_ok "backed up $1 -> $bak"
+  fi
+}
+
+# tcr_install_global_claudemd — write home/CLAUDE.md to ~/.claude/CLAUDE.md.
+# Backs up and skips an existing file unless TCR_FORCE=1.
+tcr_install_global_claudemd() {
+  local dest="$HOME/.claude/CLAUDE.md"
+  mkdir -p "$HOME/.claude"
+  if [ -e "$dest" ] && [ "${TCR_FORCE:-0}" != "1" ]; then
+    tcr_warn "$dest already exists — leaving it untouched (use --force to overwrite)."
+    return 0
+  fi
+  tcr_backup_file "$dest"
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/home/CLAUDE.md" ]; then
+    cp "$TCR_LOCAL_ROOT/home/CLAUDE.md" "$dest"
+  else
+    curl -fsSL "$RAW_BASE/home/CLAUDE.md" -o "$dest" \
+      || tcr_die "Could not download home/CLAUDE.md from $RAW_BASE."
+  fi
+  tcr_ok "wrote $dest"
+}
+
+# tcr_set_setting <key> <string-value> — merge one string setting into
+# ~/.claude/settings.json, preserving everything else. Backs up first.
+tcr_set_setting() {
+  local key="$1" value="$2" cfg="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+  tcr_backup_file "$cfg"
+  if command -v python3 >/dev/null 2>&1; then
+    TCR_CFG="$cfg" TCR_KEY="$key" TCR_VALUE="$value" python3 - <<'PY'
+import json, os
+cfg = os.environ["TCR_CFG"]
+key = os.environ["TCR_KEY"]
+value = os.environ["TCR_VALUE"]
+data = {}
+try:
+    with open(cfg) as fh:
+        data = json.load(fh)
+    if not isinstance(data, dict):
+        data = {}
+except Exception:
+    data = {}
+data[key] = value
+with open(cfg, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+    tcr_ok "set $key = \"$value\" ($cfg)"
+  else
+    tcr_warn "python3 not found — set \"$key\": \"$value\" in $cfg manually."
+  fi
 }
