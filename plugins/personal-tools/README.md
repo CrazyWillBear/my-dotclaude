@@ -7,7 +7,8 @@ with the rest of my setup on any machine.
 plugins/personal-tools/
 ├── .claude-plugin/plugin.json   # manifest
 ├── commands/recap.md            # /recap — recap work-in-progress in a repo
-└── agents/explainer.md          # explainer — plain-English code walkthroughs
+├── agents/explainer.md          # explainer — plain-English code walkthroughs
+└── README.md                    # this file
 ```
 
 - **Commands** (`commands/*.md`) become slash commands named after the file:

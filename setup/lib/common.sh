@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared helpers for the team-code-review setup scripts (setup-dev.sh / setup-simple.sh).
+# Shared helpers for the my-dotclaude setup scripts (setup-personal.sh / setup-dev.sh / setup-simple.sh).
 #
 # Source this from an entry script. Before sourcing, the entry script should set:
 #   TCR_LOCAL_ROOT  - absolute path to a local repo checkout, or "" when unknown
@@ -211,32 +211,60 @@ tcr_install_global_claudemd() {
 }
 
 # tcr_set_setting <key> <string-value> — merge one string setting into
-# ~/.claude/settings.json, preserving everything else. Backs up first.
+# ~/.claude/settings.json, preserving everything else. Refuses to overwrite a
+# non-empty file it cannot parse (so it never silently eats existing hooks or
+# permissions), and backs up the file before a successful merge.
 tcr_set_setting() {
   local key="$1" value="$2" cfg="$HOME/.claude/settings.json"
   mkdir -p "$HOME/.claude"
-  tcr_backup_file "$cfg"
-  if command -v python3 >/dev/null 2>&1; then
-    TCR_CFG="$cfg" TCR_KEY="$key" TCR_VALUE="$value" python3 - <<'PY'
-import json, os
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    if [ ! -s "$cfg" ]; then
+      printf '{\n  "%s": "%s"\n}\n' "$key" "$value" > "$cfg"
+      tcr_ok "set $key = \"$value\" ($cfg)"
+    else
+      tcr_warn "python3 not found and $cfg already exists — set \"$key\": \"$value\" in it manually."
+    fi
+    return 0
+  fi
+
+  # python3 reads the existing file, backs it up only when it's about to
+  # overwrite real content, and prints the backup path (if any) on stdout.
+  local bak rc=0
+  bak="$(TCR_CFG="$cfg" TCR_KEY="$key" TCR_VALUE="$value" python3 - <<'PY'
+import json, os, shutil, sys, time
+
 cfg = os.environ["TCR_CFG"]
 key = os.environ["TCR_KEY"]
 value = os.environ["TCR_VALUE"]
+
 data = {}
-try:
+if os.path.exists(cfg):
     with open(cfg) as fh:
-        data = json.load(fh)
-    if not isinstance(data, dict):
-        data = {}
-except Exception:
-    data = {}
+        raw = fh.read()
+    if raw.strip():
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            sys.exit(3)  # non-empty but unparseable — do not clobber
+        if not isinstance(data, dict):
+            sys.exit(3)
+        bak = cfg + ".bak." + time.strftime("%Y%m%d%H%M%S")
+        shutil.copy2(cfg, bak)
+        print(bak)
+
 data[key] = value
 with open(cfg, "w") as fh:
     json.dump(data, fh, indent=2)
     fh.write("\n")
 PY
-    tcr_ok "set $key = \"$value\" ($cfg)"
-  else
-    tcr_warn "python3 not found — set \"$key\": \"$value\" in $cfg manually."
+)" || rc=$?
+
+  if [ "$rc" -eq 3 ]; then
+    tcr_die "existing $cfg isn't plain JSON (comments or a trailing comma?) — refusing to overwrite it. Add \"$key\": \"$value\" to it yourself."
+  elif [ "$rc" -ne 0 ]; then
+    tcr_die "failed to update $cfg (python3 exit $rc)."
   fi
+  [ -n "$bak" ] && tcr_ok "backed up $cfg -> $bak"
+  tcr_ok "set $key = \"$value\" ($cfg)"
 }

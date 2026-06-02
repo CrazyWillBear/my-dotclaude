@@ -1,4 +1,4 @@
-# Shared helpers for the team-code-review setup scripts (setup-dev.ps1 / setup-simple.ps1).
+# Shared helpers for the my-dotclaude setup scripts (setup-personal.ps1 / setup-dev.ps1 / setup-simple.ps1).
 #
 # Dot-source this from an entry script. Functions take what they need as parameters
 # so they don't depend on the caller's variable scope.
@@ -180,21 +180,29 @@ function Install-TcrGlobalClaudeMd {
 }
 
 # Set-TcrSetting <key> <string-value> - merge one string setting into
-# ~/.claude/settings.json, preserving everything else. Backs up first.
+# ~/.claude/settings.json, preserving everything else. Refuses to overwrite a
+# non-empty file it cannot parse (so it never silently eats existing hooks or
+# permissions), and backs up the file before a successful merge.
 function Set-TcrSetting {
     param([string]$Key, [string]$Value)
     $cfg = Join-Path $HOME '.claude/settings.json'
     $dir = Split-Path -Parent $cfg
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    Backup-TcrFile $cfg
     $data = [ordered]@{}
     if (Test-Path $cfg) {
-        try {
-            $existing = Get-Content -Raw $cfg | ConvertFrom-Json
-            if ($existing -is [System.Management.Automation.PSCustomObject]) {
-                foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
+        $raw = Get-Content -Raw $cfg
+        if ($raw -and $raw.Trim()) {
+            try {
+                $existing = $raw | ConvertFrom-Json
+            } catch {
+                Stop-TcrError "existing $cfg isn't plain JSON (comments or a trailing comma?) - refusing to overwrite it. Add `"$Key`": `"$Value`" to it yourself."
             }
-        } catch { $data = [ordered]@{} }
+            if ($existing -isnot [System.Management.Automation.PSCustomObject]) {
+                Stop-TcrError "existing $cfg is not a JSON object - refusing to overwrite it. Add `"$Key`": `"$Value`" to it yourself."
+            }
+            Backup-TcrFile $cfg
+            foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
+        }
     }
     $data[$Key] = $Value
     Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
