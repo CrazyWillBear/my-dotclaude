@@ -1,0 +1,13 @@
+{
+  "name": "team-code-review",
+  "version": "0.1.0",
+  "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared, tunable team rubric.",
+  "author": {
+    "name": "William Chastain",
+    "url": "https://github.com/CrazyWillBear"
+  },
+  "homepage": "https://github.com/CrazyWillBear/code-review-plugin",
+  "repository": "https://github.com/CrazyWillBear/code-review-plugin",
+  "license": "MIT",
+  "keywords": ["code-review", "quality", "security", "hooks", "subagent"]
+}
