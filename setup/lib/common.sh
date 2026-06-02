@@ -149,34 +149,7 @@ tcr_caveman_config_path() {
 # tcr_set_caveman_level <lite|full|ultra|...>
 # Sets caveman's machine-wide default mode by merging into its config.json.
 tcr_set_caveman_level() {
-  local level="$1" cfg
-  cfg="$(tcr_caveman_config_path)"
-  mkdir -p "$(dirname "$cfg")"
-  if command -v python3 >/dev/null 2>&1; then
-    TCR_CFG="$cfg" TCR_LEVEL="$level" python3 - <<'PY'
-import json, os
-cfg = os.environ["TCR_CFG"]
-level = os.environ["TCR_LEVEL"]
-data = {}
-try:
-    with open(cfg) as fh:
-        data = json.load(fh)
-    if not isinstance(data, dict):
-        data = {}
-except Exception:
-    data = {}
-data["defaultMode"] = level
-with open(cfg, "w") as fh:
-    json.dump(data, fh, indent=2)
-    fh.write("\n")
-PY
-  elif [ ! -e "$cfg" ]; then
-    printf '{\n  "defaultMode": "%s"\n}\n' "$level" > "$cfg"
-  else
-    tcr_warn "python3 not found and $cfg already exists — set caveman level manually: add \"defaultMode\": \"$level\"."
-    return 0
-  fi
-  tcr_ok "set caveman default level to '$level' ($cfg)"
+  tcr_merge_json_string "$(tcr_caveman_config_path)" defaultMode "$1"
 }
 
 # --- global (~/.claude) install ----------------------------------------------
@@ -210,13 +183,15 @@ tcr_install_global_claudemd() {
   tcr_ok "wrote $dest"
 }
 
-# tcr_set_setting <key> <string-value> — merge one string setting into
-# ~/.claude/settings.json, preserving everything else. Refuses to overwrite a
-# non-empty file it cannot parse (so it never silently eats existing hooks or
-# permissions), and backs up the file before a successful merge.
-tcr_set_setting() {
-  local key="$1" value="$2" cfg="$HOME/.claude/settings.json"
-  mkdir -p "$HOME/.claude"
+# tcr_merge_json_string <cfg> <key> <string-value>
+# Merge one string key into a JSON object file, preserving every other key.
+# Creates the file when absent. Never overwrites a non-empty file it cannot
+# parse — it warns and leaves that file untouched, so it can't silently eat an
+# existing config (settings.json hooks/permissions, caveman settings, …). Backs
+# up before a successful overwrite.
+tcr_merge_json_string() {
+  local cfg="$1" key="$2" value="$3"
+  mkdir -p "$(dirname "$cfg")"
 
   if ! command -v python3 >/dev/null 2>&1; then
     if [ ! -s "$cfg" ]; then
@@ -228,7 +203,7 @@ tcr_set_setting() {
     return 0
   fi
 
-  # python3 reads the existing file, backs it up only when it's about to
+  # python3 merges the key in, backs the file up only when it's about to
   # overwrite real content, and prints the backup path (if any) on stdout.
   local bak rc=0
   bak="$(TCR_CFG="$cfg" TCR_KEY="$key" TCR_VALUE="$value" python3 - <<'PY'
@@ -261,10 +236,16 @@ PY
 )" || rc=$?
 
   if [ "$rc" -eq 3 ]; then
-    tcr_die "existing $cfg isn't plain JSON (comments or a trailing comma?) — refusing to overwrite it. Add \"$key\": \"$value\" to it yourself."
+    tcr_warn "$cfg isn't plain JSON (comments or a trailing comma?) — left it untouched; set \"$key\": \"$value\" in it manually."
+    return 0
   elif [ "$rc" -ne 0 ]; then
     tcr_die "failed to update $cfg (python3 exit $rc)."
   fi
   [ -n "$bak" ] && tcr_ok "backed up $cfg -> $bak"
   tcr_ok "set $key = \"$value\" ($cfg)"
+}
+
+# tcr_set_setting <key> <string-value> — merge a setting into ~/.claude/settings.json.
+tcr_set_setting() {
+  tcr_merge_json_string "$HOME/.claude/settings.json" "$1" "$2"
 }

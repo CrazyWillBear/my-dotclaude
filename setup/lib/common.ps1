@@ -122,24 +122,7 @@ function Get-TcrCavemanConfigPath {
 # Set-TcrCavemanLevel <lite|full|ultra|...>
 function Set-TcrCavemanLevel {
     param([string]$Level)
-    $cfg = Get-TcrCavemanConfigPath
-    $dir = Split-Path -Parent $cfg
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $data = [ordered]@{}
-    if (Test-Path $cfg) {
-        try {
-            $existing = Get-Content -Raw $cfg | ConvertFrom-Json
-            # Only merge when the existing config is a JSON object; an array or
-            # scalar has no real properties to carry over (mirrors the shell side,
-            # which resets non-dict input to {}).
-            if ($existing -is [System.Management.Automation.PSCustomObject]) {
-                foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
-            }
-        } catch { $data = [ordered]@{} }
-    }
-    $data['defaultMode'] = $Level
-    Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
-    Write-TcrOk "set caveman default level to '$Level' ($cfg)"
+    Merge-TcrJsonString (Get-TcrCavemanConfigPath) 'defaultMode' $Level
 }
 
 # --- global (~/.claude) install ----------------------------------------------
@@ -179,32 +162,40 @@ function Install-TcrGlobalClaudeMd {
     Write-TcrOk "wrote $dest"
 }
 
-# Set-TcrSetting <key> <string-value> - merge one string setting into
-# ~/.claude/settings.json, preserving everything else. Refuses to overwrite a
-# non-empty file it cannot parse (so it never silently eats existing hooks or
-# permissions), and backs up the file before a successful merge.
-function Set-TcrSetting {
-    param([string]$Key, [string]$Value)
-    $cfg = Join-Path $HOME '.claude/settings.json'
-    $dir = Split-Path -Parent $cfg
+# Merge-TcrJsonString <cfg> <key> <string-value> - merge one string key into a
+# JSON object file, preserving every other key. Creates the file when absent.
+# Never overwrites a non-empty file it cannot parse - it warns and leaves that
+# file untouched, so it can't silently eat an existing config. Backs up before a
+# successful overwrite.
+function Merge-TcrJsonString {
+    param([string]$Cfg, [string]$Key, [string]$Value)
+    $dir = Split-Path -Parent $Cfg
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $data = [ordered]@{}
-    if (Test-Path $cfg) {
-        $raw = Get-Content -Raw $cfg
+    if (Test-Path $Cfg) {
+        $raw = Get-Content -Raw $Cfg
         if ($raw -and $raw.Trim()) {
             try {
                 $existing = $raw | ConvertFrom-Json
             } catch {
-                Stop-TcrError "existing $cfg isn't plain JSON (comments or a trailing comma?) - refusing to overwrite it. Add `"$Key`": `"$Value`" to it yourself."
+                Write-TcrWarn "$Cfg isn't plain JSON (comments or a trailing comma?) - left it untouched; set `"$Key`": `"$Value`" in it manually."
+                return
             }
             if ($existing -isnot [System.Management.Automation.PSCustomObject]) {
-                Stop-TcrError "existing $cfg is not a JSON object - refusing to overwrite it. Add `"$Key`": `"$Value`" to it yourself."
+                Write-TcrWarn "$Cfg is not a JSON object - left it untouched; set `"$Key`": `"$Value`" in it manually."
+                return
             }
-            Backup-TcrFile $cfg
+            Backup-TcrFile $Cfg
             foreach ($p in $existing.PSObject.Properties) { $data[$p.Name] = $p.Value }
         }
     }
     $data[$Key] = $Value
-    Write-TcrTextNoBom $cfg (($data | ConvertTo-Json -Depth 10) + "`n")
-    Write-TcrOk "set $Key = `"$Value`" ($cfg)"
+    Write-TcrTextNoBom $Cfg (($data | ConvertTo-Json -Depth 10) + "`n")
+    Write-TcrOk "set $Key = `"$Value`" ($Cfg)"
+}
+
+# Set-TcrSetting <key> <string-value> - merge a setting into ~/.claude/settings.json.
+function Set-TcrSetting {
+    param([string]$Key, [string]$Value)
+    Merge-TcrJsonString (Join-Path $HOME '.claude/settings.json') $Key $Value
 }
