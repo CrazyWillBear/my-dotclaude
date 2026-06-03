@@ -150,11 +150,11 @@ tcr_install_playwright_mcp() {
     tcr_ok "playwright MCP already configured"
     return 0
   fi
-  if claude mcp add playwright -s user -- npx "$PLAYWRIGHT_MCP_PKG" >/dev/null 2>&1; then
-    tcr_ok "added playwright MCP"
+  if claude mcp add playwright -s user -- npx "$PLAYWRIGHT_MCP_PKG" --headless >/dev/null 2>&1; then
+    tcr_ok "added playwright MCP (headless)"
   else
     TCR_INSTALL_FAILED=1
-    tcr_warn "could not add the playwright MCP automatically — run: claude mcp add playwright -s user -- npx $PLAYWRIGHT_MCP_PKG"
+    tcr_warn "could not add the playwright MCP automatically — run: claude mcp add playwright -s user -- npx $PLAYWRIGHT_MCP_PKG --headless"
   fi
 }
 

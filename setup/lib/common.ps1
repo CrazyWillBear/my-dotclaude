@@ -110,9 +110,9 @@ function Install-TcrPlaywrightMcp {
     Write-TcrStep 'Adding the Playwright MCP server (user scope)'
     claude mcp get playwright *> $null
     if ($LASTEXITCODE -eq 0) { Write-TcrOk 'playwright MCP already configured'; return }
-    claude mcp add playwright -s user -- npx $script:TcrPlaywrightMcpPkg *> $null
-    if ($LASTEXITCODE -eq 0) { Write-TcrOk 'added playwright MCP' }
-    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not add the playwright MCP automatically - run: claude mcp add playwright -s user -- npx $($script:TcrPlaywrightMcpPkg)" }
+    claude mcp add playwright -s user -- npx $script:TcrPlaywrightMcpPkg --headless *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk 'added playwright MCP (headless)' }
+    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not add the playwright MCP automatically - run: claude mcp add playwright -s user -- npx $($script:TcrPlaywrightMcpPkg) --headless" }
 }
 
 # GitHub access uses the gh CLI, not a GitHub MCP server (see README). Adds a read-only
