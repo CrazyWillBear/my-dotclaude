@@ -38,40 +38,6 @@ function Test-TcrDeps {
     if (-not (Test-TcrCommand 'claude')) { Stop-TcrError "Claude Code's 'claude' CLI is required but not found on PATH." }
 }
 
-# Copy-TcrTemplate -Rel <path under templates/> -Dest <file> -LocalRoot <root or ''> -Force
-# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill).
-function Copy-TcrTemplate {
-    param([string]$Rel, [string]$Dest, [string]$LocalRoot, [switch]$Force)
-    if ((Test-Path $Dest) -and -not $Force) {
-        Write-TcrWarn "$Dest already exists - leaving it untouched (use -Force to overwrite)."
-        return
-    }
-    $destDir = Split-Path -Parent $Dest
-    if ($destDir -and -not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-    $localFile = if ($LocalRoot) { Join-Path $LocalRoot "templates/$Rel" } else { $null }
-    if ($localFile -and (Test-Path $localFile)) {
-        Copy-Item -Path $localFile -Destination $Dest -Force
-    } else {
-        try {
-            Invoke-WebRequest -Uri "$($script:TcrRawBase)/templates/$Rel" -OutFile $Dest -UseBasicParsing
-        } catch {
-            Stop-TcrError "Could not download template '$Rel' from $($script:TcrRawBase)."
-        }
-    }
-    Write-TcrOk "wrote $Dest"
-}
-
-# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill).
-function Initialize-TcrGit {
-    git rev-parse --is-inside-work-tree *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-TcrOk 'git repository already present'
-    } else {
-        git init -q
-        Write-TcrOk 'initialized a git repository'
-    }
-}
-
 function Add-TcrMarketplace {
     param([string]$Source)
     claude plugin marketplace add $Source *> $null

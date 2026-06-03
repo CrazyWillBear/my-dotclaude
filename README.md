@@ -9,9 +9,9 @@ tuned for either a developer or a non-coder.
 - **Global `CLAUDE.md`** (`global/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
-- **`team-code-review`** plugin — runs an automatic code review on every turn (plus an
-  on-demand `/review`), routed through one shared, tunable rubric. *This is the repo
-  root, installed as a plugin.*
+- **`team-code-review`** plugin (`plugins/team-code-review/`) — runs an automatic code
+  review on every turn (plus an on-demand `/review`), routed through one shared, tunable
+  rubric.
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
   subagents (`/explain` for a whole-codebase overview, `/explain-dir` for one directory,
   `/commit` to review-and-commit the current changes).
@@ -121,7 +121,7 @@ team rubric, covering **correctness & bugs**, **security**, **style & convention
 > or a project can set its own) the hook tells Claude to fix what it finds and report back
 > in plain English instead of a severity list.
 
-A second `Stop` hook (`scripts/suggest-commit.sh`) runs **before** the reviewer and is
+A second `Stop` hook (`plugins/team-code-review/scripts/suggest-commit.sh`) runs **before** the reviewer and is
 purely advisory: when the uncommitted tracked work looks worth a commit — a large diff
 (≥ 3 files or ≥ 80 changed lines) **or** a plan that was approved and then implemented — it
 softly suggests committing the batch (run `/commit` or commit by hand). The two signals
@@ -135,20 +135,22 @@ back to `git show HEAD` when it's clean.
 
 ```
 my-dotclaude/
-├── .claude-plugin/
-│   ├── plugin.json              # team-code-review manifest (repo root IS this plugin)
-│   └── marketplace.json         # lists team-code-review + personal-tools
-├── hooks/hooks.json             # registers the Stop hooks (suggest-commit, then review)
-├── scripts/suggest-commit.sh    # advisory: nudges to commit a big/completed batch (runs first)
-├── scripts/review.sh            # finds edited files, emits the review prompt (audience-aware)
-├── agents/code-reviewer.md      # the fresh-context reviewer subagent
-├── skills/review-rubric/SKILL.md# the shared, tunable rubric (source of truth)
-├── commands/review.md           # on-demand /review command
-├── global/CLAUDE.md             # my global ~/.claude/CLAUDE.md (developer setup)
-├── plugins/personal-tools/      # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
-├── templates/simple/CLAUDE.md   # plain-English global CLAUDE.md (installed by setup-simple)
-├── setup/                       # setup-dev / setup-simple (.sh + .ps1) + lib
-└── AGENT_SETUP.md               # instructions Claude follows for the paste-a-prompt path
+├── .claude-plugin/marketplace.json  # lists team-code-review + personal-tools
+├── plugins/
+│   ├── team-code-review/            # the auto-review plugin (a plugin)
+│   │   ├── .claude-plugin/plugin.json
+│   │   ├── hooks/hooks.json         # registers the Stop hooks (suggest-commit, then review)
+│   │   ├── scripts/suggest-commit.sh# advisory: nudges to commit a big/completed batch (runs first)
+│   │   ├── scripts/review.sh        # finds edited files, emits the review prompt (audience-aware)
+│   │   ├── agents/code-reviewer.md  # the fresh-context reviewer subagent
+│   │   ├── skills/review-rubric/SKILL.md  # the shared, tunable rubric (source of truth)
+│   │   ├── commands/review.md       # on-demand /review command
+│   │   └── tests/                   # hook + history tests
+│   └── personal-tools/             # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
+├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)
+├── templates/simple/CLAUDE.md       # plain-English global CLAUDE.md (installed by setup-simple)
+├── setup/                           # setup-dev / setup-simple (.sh + .ps1) + lib
+└── AGENT_SETUP.md                   # instructions Claude follows for the paste-a-prompt path
 ```
 
 **Requirements:** `bash` and `python3` (the review hook uses python3 to parse the
@@ -164,7 +166,7 @@ access is optional and uses the [`gh` CLI](https://cli.github.com) — install i
 
 ## Tuning the rubric
 
-`skills/review-rubric/SKILL.md` is the single source of truth. Add rules (architecture
+`plugins/team-code-review/skills/review-rubric/SKILL.md` is the single source of truth. Add rules (architecture
 conventions, banned patterns, required test coverage) under the relevant section. Both
 the auto-review and `/review` pick up the change immediately.
 

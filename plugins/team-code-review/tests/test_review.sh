@@ -13,13 +13,13 @@
 # stop_hook_active (the commit->review chain needs this), audience selection,
 # and the fail-open silent paths.
 #
-# Run: bash tests/test_review.sh   (exits non-zero if any test fails)
+# Run: bash plugins/team-code-review/tests/test_review.sh   (exits non-zero if any test fails)
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HOOK="$REPO_ROOT/scripts/review.sh"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HOOK="$PLUGIN_ROOT/scripts/review.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -72,7 +72,7 @@ commit_file() {
 run_hook() {
     local sid="$1" active="${2:-false}"
     printf '{"session_id":"%s","stop_hook_active":%s}' "$sid" "$active" \
-        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
             bash "$HOOK"
 }
 
@@ -245,7 +245,7 @@ echo "test: not a git repo stays silent"
 NONGIT="$WORK/nongit"
 mkdir -p "$NONGIT"
 out=$(printf '{"session_id":"x","stop_hook_active":false}' \
-    | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$NONGIT" CLAUDE_PLUGIN_ROOT="$REPO_ROOT" bash "$HOOK")
+    | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$NONGIT" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$HOOK")
 assert_empty "no decision outside a git work tree" "$out"
 
 # ---------------------------------------------------------------------------
