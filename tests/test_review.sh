@@ -79,6 +79,17 @@ run_hook() {
 # First hook call of a session records the baseline HEAD silently.
 seed() { run_hook "$1" >/dev/null; }
 
+# state_file <session_id> — the per-session state path the hook computes, so a
+# test can plant a known (or bogus) reviewed marker. Mirrors review.sh: it keys
+# on sha1(session_id)[:16] under python's tempfile dir (honors $TMPDIR).
+state_file() {
+    python3 - "$1" <<'PY'
+import sys, hashlib, tempfile, os
+key = hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16]
+print(os.path.join(tempfile.gettempdir(), "team-code-review-head-" + key + ".json"))
+PY
+}
+
 # ---------------------------------------------------------------------------
 echo "test: first sight of a session seeds the baseline silently"
 init_repo
@@ -168,6 +179,28 @@ seed sid-chain
 commit_file src/app.py "print(1)"
 out=$(run_hook sid-chain true)
 assert_contains "does NOT short-circuit on stop_hook_active" "$out" '"decision": "block"'
+
+# ---------------------------------------------------------------------------
+echo "test: reviews every commit in a multi-commit reviewed..HEAD range"
+init_repo
+seed sid-multi
+commit_file src/a.py "a = 1"
+commit_file src/b.py "b = 2"
+out=$(run_hook sid-multi)
+assert_contains "lists the first commit's file" "$out" "src/a.py"
+assert_contains "lists the second commit's file" "$out" "src/b.py"
+
+# ---------------------------------------------------------------------------
+echo "test: falls back to HEAD's own change when the marker is unreachable"
+init_repo
+commit_file src/c.py "c = 3"                      # HEAD is c.py's commit
+# Plant a bogus (never-existed) reviewed SHA so reviewed..HEAD fails in git and
+# the diff-tree fallback has to carry the review.
+printf '{"reviewed":"%s"}' "0000000000000000000000000000000000000000" \
+    >"$(state_file sid-fallback)"
+out=$(run_hook sid-fallback)
+assert_contains "fallback emits a review" "$out" '"decision": "block"'
+assert_contains "fallback lists HEAD's file" "$out" "src/c.py"
 
 # ---------------------------------------------------------------------------
 echo "test: plain audience produces a non-technical instruction"

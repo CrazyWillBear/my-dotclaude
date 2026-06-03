@@ -111,12 +111,13 @@ reviewed = state.get("reviewed")
 if reviewed == current_head:
     sys.exit(0)  # nothing new committed since the last review
 
-# Files touched by the new commit(s), reviewed..HEAD. Fall back to the last
-# commit if the old marker is no longer reachable (e.g. a rebase/amend rewrote
-# history out from under us).
+# Files touched by the new commit(s), reviewed..HEAD. If the old marker is no
+# longer reachable (a rebase / amend / gc rewrote history out from under us),
+# fall back to just HEAD's own change. diff-tree --root keeps that working even
+# when HEAD is the repo's very first commit, where HEAD~1 has no parent.
 names = git("diff", "--name-only", str(reviewed) + ".." + current_head)
 if names is None:
-    names = git("diff", "--name-only", "HEAD~1..HEAD") or ""
+    names = git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", current_head) or ""
 changed = [p for p in names.splitlines() if p.strip()]
 
 # Drop files that are not worth a code review: documentation, dependency
@@ -166,8 +167,13 @@ def skip(path):
 abs_changed = [os.path.join(project_dir, p) for p in changed]
 reviewable = [p for p in abs_changed if os.path.exists(p) and not skip(p)]
 
-# Mark this commit reviewed up front: we nudge at most once per commit, even if
-# everything was filtered out or the agent ignores the block.
+# Mark this commit reviewed up front, BEFORE we emit the block. This bounds us
+# to one nudge per commit (even when every file was filtered out), and it is a
+# deliberate no-retry trade-off: if the agent ignores or drops the block, or the
+# session ends right after this stop, the commit stays recorded as reviewed and
+# is never re-flagged. We accept that over advancing the marker only after a
+# successful record-review.sh, which would couple the marker to the agent and
+# could wedge the session if recording never lands.
 state["reviewed"] = current_head
 save_state()
 
