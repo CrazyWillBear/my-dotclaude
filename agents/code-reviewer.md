@@ -25,10 +25,16 @@ what the code actually does.
    Glob to locate them). They define project-specific conventions and commands;
    honor them over generic defaults and treat a violation of a local rule as a
    real finding.
-3. For each changed file: Read it. Use `git diff` (via Bash) when a repo is
-   present to see *what changed* rather than reviewing the whole file from
-   scratch — reviewing the delta is the goal. Use Grep/Glob to check how changed
-   symbols are used elsewhere (callers, tests, related defs).
+3. For each changed file: Read it, and inspect *what changed* via `git diff`
+   (via Bash) when a repo is present — reviewing the delta, not the whole file,
+   is the goal. Pick the diff that matches the state of the tree:
+   - **Working tree dirty** (uncommitted edits): `git diff HEAD` for the
+     unstaged + staged delta against the last commit.
+   - **Working tree clean** (the batch was already committed this session, e.g.
+     via `/commit`): review the latest commit(s) instead — `git show HEAD`, or
+     `git diff HEAD~1 HEAD` for the full delta of the most recent commit.
+   Use Grep/Glob to check how changed symbols are used elsewhere (callers, tests,
+   related defs).
 4. Evaluate against the four focus areas. Verify, don't assume.
 5. Report.
 

@@ -13,7 +13,8 @@ tuned for either a developer or a non-coder.
   on-demand `/review`), routed through one shared, tunable rubric. *This is the repo
   root, installed as a plugin.*
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents (`/explain` for a whole-codebase overview, `/explain-dir` for one directory).
+  subagents (`/explain` for a whole-codebase overview, `/explain-dir` for one directory,
+  `/commit` to review-and-commit the current changes).
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
@@ -120,6 +121,16 @@ team rubric, covering **correctness & bugs**, **security**, **style & convention
 > or a project can set its own) the hook tells Claude to fix what it finds and report back
 > in plain English instead of a severity list.
 
+A second `Stop` hook (`scripts/suggest-commit.sh`) runs **before** the reviewer and is
+purely advisory: when the uncommitted tracked work looks worth a commit — a large diff
+(≥ 3 files or ≥ 80 changed lines) **or** a plan that was approved and then implemented — it
+softly suggests committing the batch (run `/commit` or commit by hand). The two signals
+collapse into **one** suggestion, and it's deduped **once per batch** (silent until the next
+commit moves `HEAD`). It never commits anything itself, and never suppresses the review —
+they're independent concerns. Because the batch may already be committed by the time the
+reviewer runs, the `code-reviewer` reads `git diff HEAD` when the tree is dirty and falls
+back to `git show HEAD` when it's clean.
+
 ## Layout
 
 ```
@@ -127,7 +138,8 @@ my-dotclaude/
 ├── .claude-plugin/
 │   ├── plugin.json              # team-code-review manifest (repo root IS this plugin)
 │   └── marketplace.json         # lists team-code-review + personal-tools
-├── hooks/hooks.json             # registers the Stop hook
+├── hooks/hooks.json             # registers the Stop hooks (suggest-commit, then review)
+├── scripts/suggest-commit.sh    # advisory: nudges to commit a big/completed batch (runs first)
 ├── scripts/review.sh            # finds edited files, emits the review prompt (audience-aware)
 ├── agents/code-reviewer.md      # the fresh-context reviewer subagent
 ├── skills/review-rubric/SKILL.md# the shared, tunable rubric (source of truth)
