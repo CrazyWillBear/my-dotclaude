@@ -4,14 +4,14 @@
 # review-history recorder and its metrics viewer.
 #
 # Black-box: feed the recorder JSON on stdin, then read back the JSONL it wrote
-# and the viewer's formatted report. Run: bash tests/test_history.sh
+# and the viewer's formatted report. Run: bash plugins/team-code-review/tests/test_history.sh
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RECORD="$REPO_ROOT/scripts/record-review.sh"
-VIEW="$REPO_ROOT/scripts/review-history.sh"
+PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RECORD="$PLUGIN_ROOT/scripts/record-review.sh"
+VIEW="$PLUGIN_ROOT/scripts/review-history.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

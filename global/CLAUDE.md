@@ -28,6 +28,9 @@ question, propose a short plan, or make the smallest change that lets us discuss
   already in the file and repo.
 - Keep diffs small and focused — one logical change at a time. Prefer editing existing
   files over adding new ones.
+- Never duplicate code. Before writing new code, search the repo for an existing
+  function, helper, or pattern that already does it and reuse or extend that. If you
+  find near-duplicate logic, factor out the shared part instead of copy-pasting.
 - Run the full done-check before declaring completion. Report failures honestly — if
   tests fail or a step was skipped, say so.
 - Commit your work before ending a turn — don't leave edits uncommitted when the Stop

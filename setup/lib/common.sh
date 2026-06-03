@@ -55,45 +55,6 @@ tcr_check_deps() {
   fi
 }
 
-# --- templates ---------------------------------------------------------------
-# Project-scope helper for copying a file out of templates/. Currently unused
-# (no caller): the project-scaffold templates moved into the personal-tools
-# plugin (plugins/personal-tools/templates/), and the /init-python-project skill
-# reads them directly via ${CLAUDE_PLUGIN_ROOT}. Kept for a possible future
-# setup-time scaffold path.
-
-# tcr_write_template <relpath-under-templates/> <dest-file>
-# Copies from a local checkout when available, else downloads from GitHub.
-# Never overwrites an existing dest unless TCR_FORCE=1.
-tcr_write_template() {
-  local rel="$1" dest="$2"
-  if [ -e "$dest" ] && [ "${TCR_FORCE:-0}" != "1" ]; then
-    tcr_warn "$dest already exists — leaving it untouched (use --force to overwrite)."
-    return 0
-  fi
-  mkdir -p "$(dirname "$dest")"
-  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/templates/$rel" ]; then
-    cp "$TCR_LOCAL_ROOT/templates/$rel" "$dest"
-  else
-    curl -fsSL "$RAW_BASE/templates/$rel" -o "$dest" \
-      || tcr_die "Could not download template '$rel' from $RAW_BASE."
-  fi
-  tcr_ok "wrote $dest"
-}
-
-# --- git ---------------------------------------------------------------------
-# Project-scope helper, unused by the shipped user-wide setup (retained for a
-# future /scaffold-* skill).
-
-tcr_git_init() {
-  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    tcr_ok "git repository already present"
-  else
-    git init -q
-    tcr_ok "initialized a git repository"
-  fi
-}
-
 # --- plugins -----------------------------------------------------------------
 
 # tcr_add_marketplace <name-or-repo-or-path>
@@ -150,11 +111,11 @@ tcr_install_playwright_mcp() {
     tcr_ok "playwright MCP already configured"
     return 0
   fi
-  if claude mcp add playwright -s user -- npx "$PLAYWRIGHT_MCP_PKG" >/dev/null 2>&1; then
-    tcr_ok "added playwright MCP"
+  if claude mcp add playwright -s user -- npx "$PLAYWRIGHT_MCP_PKG" --headless >/dev/null 2>&1; then
+    tcr_ok "added playwright MCP (headless)"
   else
     TCR_INSTALL_FAILED=1
-    tcr_warn "could not add the playwright MCP automatically — run: claude mcp add playwright -s user -- npx $PLAYWRIGHT_MCP_PKG"
+    tcr_warn "could not add the playwright MCP automatically — run: claude mcp add playwright -s user -- npx $PLAYWRIGHT_MCP_PKG --headless"
   fi
 }
 

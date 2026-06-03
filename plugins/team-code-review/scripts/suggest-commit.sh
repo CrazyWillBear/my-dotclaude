@@ -2,11 +2,15 @@
 #
 # Stop hook for the team-code-review plugin.
 #
-# Advisory commit nudge. Reads the hook payload from stdin and — when the
-# uncommitted tracked work looks worth a commit (a large diff, or a plan that
-# was approved and then implemented) — emits a soft "block" decision suggesting
-# the agent commit the batch (via /commit or by hand). It never commits anything
-# itself; it only suggests.
+# Commit gate + nudge. Reads the hook payload from stdin and — when the
+# uncommitted tracked work looks worth a commit — emits a "block" decision that
+# hands the agent a commit instruction. Two strengths:
+#   * Plan completed (ExitPlanMode approved + tracked changes exist): an
+#     imperative gate — "commit before you stop, run /commit now."
+#   * Large diff only (no plan): a soft "consider committing" nudge.
+# It never commits anything itself: a Stop hook can only refuse the stop and
+# instruct the agent — it cannot run /commit (or any tool) for the user. The
+# block + stop_hook_active guard means the gate fires at most once per batch.
 #
 # This hook is registered BEFORE scripts/review.sh in hooks.json. Both are soft
 # and independent: neither suppresses the other, and "consider committing" plus
@@ -162,24 +166,32 @@ try:
 except Exception:
     pass
 
-# Build one message that folds both signals into a single suggestion.
+# Build the message. A completed plan is a hard gate (imperative); a bare size
+# signal stays an advisory nudge. Both ride out on the same "block" decision —
+# the strongest a Stop hook has is refusing the stop and handing over an
+# instruction; it cannot run /commit itself.
 if line_count:
     churn = str(file_count) + " file(s), ~" + str(line_count) + " changed line(s)"
 else:
     churn = str(file_count) + " file(s)"
 
 if plan_signal:
-    lead = "A planned change looks implemented and " + churn + " of tracked work is uncommitted."
+    reason = (
+        "team-code-review commit gate: a plan was approved and implemented, and "
+        + churn + " of tracked work is uncommitted. Commit this batch before you "
+        + "stop — run /commit now to have the committer subagent write the message "
+        + "and commit the tracked changes. Do not end your turn with the planned "
+        + "work left uncommitted."
+    )
 else:
-    lead = churn + " of tracked work is uncommitted."
-
-reason = (
-    "Heads up (team-code-review commit nudge): " + lead
-    + " If this is a good stopping point, consider committing this batch — run "
-    + "/commit to have the committer subagent write the message and commit the "
-    + "tracked changes, or commit yourself. If it is not a good stopping point, "
-    + "ignore this and keep going; you will not be nudged again until the next commit."
-)
+    reason = (
+        "Heads up (team-code-review commit nudge): " + churn + " of tracked work "
+        + "is uncommitted. If this is a good stopping point, consider committing "
+        + "this batch — run /commit to have the committer subagent write the message "
+        + "and commit the tracked changes, or commit yourself. If it is not a good "
+        + "stopping point, ignore this and keep going; you will not be nudged again "
+        + "until the next commit."
+    )
 
 print(json.dumps({"decision": "block", "reason": reason}))
 sys.exit(0)
