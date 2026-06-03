@@ -7,17 +7,27 @@ with the rest of my setup on any machine.
 plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
+│   ├── commit/SKILL.md            # /commit — review changes, write message, commit, summarize
 │   ├── debug/SKILL.md             # /debug — root-cause debugging workflow
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
 │   └── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
-├── agents/explain-dir.md          # explain-dir — isolated haiku worker for /explain-dir
+├── agents/
+│   ├── commit.md                  # commit — isolated committer for /commit (model: inherit)
+│   └── explain-dir.md             # explain-dir — isolated haiku worker for /explain-dir
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
 
 ## What's here
 
+- **`/commit [context]`** — review the changes since the last commit, write a detailed
+  Conventional-Commits message, commit them, and summarize the diff. The skill is a thin
+  shim whose `agent:` field runs it inside the `commit` agent (`model: inherit`), so the
+  diff reading stays out of your main conversation. It stages **tracked changes only**
+  (`git add -u` — untracked files are mentioned but left alone), ends the message with a
+  `Co-Authored-By: Claude` trailer, and writes the message + summary in **normal English**
+  (not caveman, even when caveman mode is on). No push/amend/rebase; no empty commits.
 - **`/debug [bug]`** — systematic root-cause debugging: reproduce → isolate →
   hypothesize → confirm-before-fix → verify → regression test. Runs on the main thread
   (your model); reuses the project's TDD + done-check rather than restating them.
