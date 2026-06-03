@@ -6,7 +6,7 @@ tuned for either a developer or a non-coder.
 
 ## What's in here
 
-- **Global `CLAUDE.md`** (`home/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
+- **Global `CLAUDE.md`** (`global/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
 - **`team-code-review`** plugin — runs an automatic code review on every turn (plus an
@@ -30,7 +30,7 @@ a read-only `gh` allowlist; they differ only in audience:
 
 | | Developer (`setup-dev`) | Non-developer (`setup-simple`) |
 |---|---|---|
-| global `CLAUDE.md` | technical conventions (`home/CLAUDE.md`) | plain-English, no-jargon contract |
+| global `CLAUDE.md` | technical conventions (`global/CLAUDE.md`) | plain-English, no-jargon contract |
 | `model` | `opus` | Claude Code's default |
 | caveman level | `full` (terse) | `lite` (a little more readable) |
 | review output | severity-grouped (blocker / warning / nit) | "what I found, fixed, and why" |
@@ -132,10 +132,9 @@ my-dotclaude/
 ├── agents/code-reviewer.md      # the fresh-context reviewer subagent
 ├── skills/review-rubric/SKILL.md# the shared, tunable rubric (source of truth)
 ├── commands/review.md           # on-demand /review command
-├── home/CLAUDE.md               # my global ~/.claude/CLAUDE.md (developer setup)
-├── plugins/personal-tools/      # my personal commands + agents (a second plugin)
-├── templates/                   # simple/CLAUDE.md = non-dev global; dev/* reserved for a future scaffold skill
-│   ├── dev/  └── simple/
+├── global/CLAUDE.md             # my global ~/.claude/CLAUDE.md (developer setup)
+├── plugins/personal-tools/      # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
+├── templates/simple/CLAUDE.md   # plain-English global CLAUDE.md (installed by setup-simple)
 ├── setup/                       # setup-dev / setup-simple (.sh + .ps1) + lib
 └── AGENT_SETUP.md               # instructions Claude follows for the paste-a-prompt path
 ```

@@ -9,8 +9,10 @@ plugins/personal-tools/
 ├── skills/
 │   ├── debug/SKILL.md             # /debug — root-cause debugging workflow
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
-│   └── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
+│   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
+│   └── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 ├── agents/explain-dir.md          # explain-dir — isolated haiku worker for /explain-dir
+├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
 
@@ -27,6 +29,12 @@ plugins/personal-tools/
   thin shim whose `agent:` field runs it inside the `explain-dir` agent: a fresh,
   isolated **haiku** context. The file reading stays in that subagent, so it never floods
   your main conversation — only the summary comes back.
+- **`/init-python-project [dir]`** — minimal scaffold for a Python project: drops a filled
+  `CLAUDE.md`, `STYLEGUIDE.md`, and a Python `.gitignore` into the target dir, wired for a
+  **uv + ruff + mypy + pytest** toolchain. It reads the language-neutral base in
+  `templates/` and substitutes the Python commands; it does *not* create a
+  `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
+  `init-node` / `init-go` can fill the same files for another stack.
 
 ## How the pieces map to Claude Code
 

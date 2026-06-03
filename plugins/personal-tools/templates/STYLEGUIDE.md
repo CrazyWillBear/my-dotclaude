@@ -1,4 +1,4 @@
-<!-- Reserved for a future /scaffold-* project skill; not wired into the setup scripts (which are user-scope). -->
+<!-- Base project STYLEGUIDE.md filled by the personal-tools init-*-project skills. The <...> placeholders are substituted per language; this header and the "Language-neutral defaults" note below are stripped from the generated file. -->
 # STYLEGUIDE.md
 
 Code conventions for this repo. Follow these on every change. CLAUDE.md covers

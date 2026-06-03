@@ -56,8 +56,11 @@ tcr_check_deps() {
 }
 
 # --- templates ---------------------------------------------------------------
-# Project-scope helper. Unused by the shipped user-wide setup; retained for a
-# future project-scope /scaffold-* skill (see templates/dev/).
+# Project-scope helper for copying a file out of templates/. Currently unused
+# (no caller): the project-scaffold templates moved into the personal-tools
+# plugin (plugins/personal-tools/templates/), and the /init-python-project skill
+# reads them directly via ${CLAUDE_PLUGIN_ROOT}. Kept for a possible future
+# setup-time scaffold path.
 
 # tcr_write_template <relpath-under-templates/> <dest-file>
 # Copies from a local checkout when available, else downloads from GitHub.
@@ -232,10 +235,10 @@ tcr_backup_file() {
 }
 
 # tcr_install_global_claudemd [<source-relpath>] — write a CLAUDE.md source
-# (default home/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to
+# (default global/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to
 # ~/.claude/CLAUDE.md. Backs up and skips an existing file unless TCR_FORCE=1.
 tcr_install_global_claudemd() {
-  local src="${1:-home/CLAUDE.md}"
+  local src="${1:-global/CLAUDE.md}"
   local dest="$HOME/.claude/CLAUDE.md"
   mkdir -p "$HOME/.claude"
   if [ -e "$dest" ] && [ "${TCR_FORCE:-0}" != "1" ]; then

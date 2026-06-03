@@ -52,7 +52,7 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
 1. Back up `~/.claude/CLAUDE.md` and `~/.claude/settings.json` if they exist, then write
-   `~/.claude/CLAUDE.md` from `<raw base>/home/CLAUDE.md` (don't overwrite an existing one
+   `~/.claude/CLAUDE.md` from `<raw base>/global/CLAUDE.md` (don't overwrite an existing one
    without asking).
 2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys.
 3. Install the plugins (prefer the `claude` CLI):

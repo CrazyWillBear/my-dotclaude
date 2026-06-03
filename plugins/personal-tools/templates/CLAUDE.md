@@ -1,4 +1,4 @@
-<!-- Reserved for a future /scaffold-* project skill; not wired into the setup scripts (which are user-scope). -->
+<!-- Base project CLAUDE.md filled by the personal-tools init-*-project skills. The <...> placeholders are substituted per language; this header and the "Fill in the <...>" note below are stripped from the generated file. -->
 # CLAUDE.md
 
 > **Read first:** [`STYLEGUIDE.md`](./STYLEGUIDE.md) — code conventions, follow on every change.

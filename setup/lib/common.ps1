@@ -184,10 +184,10 @@ function Backup-TcrFile {
 }
 
 # Install-TcrGlobalClaudeMd -Source <relpath> - write a CLAUDE.md source (default
-# home/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to ~/.claude/CLAUDE.md.
+# global/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to ~/.claude/CLAUDE.md.
 # Backs up and skips an existing file unless -Force.
 function Install-TcrGlobalClaudeMd {
-    param([string]$LocalRoot, [string]$Source = 'home/CLAUDE.md', [switch]$Force)
+    param([string]$LocalRoot, [string]$Source = 'global/CLAUDE.md', [switch]$Force)
     $dest = Join-Path $HOME '.claude/CLAUDE.md'
     $destDir = Split-Path -Parent $dest
     if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
