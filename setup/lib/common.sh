@@ -11,7 +11,7 @@
 REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
-OUR_PLUGIN="team-code-review@${OUR_MARKETPLACE}"
+OUR_PLUGIN="my-code-review@${OUR_MARKETPLACE}"
 PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
 CAVEMAN_REPO="JuliusBrussee/caveman"
 CAVEMAN_PLUGIN="caveman@caveman"
@@ -64,7 +64,7 @@ tcr_add_marketplace() {
 }
 
 tcr_install_review_plugin() {
-  tcr_step "Installing the team-code-review plugin"
+  tcr_step "Installing the my-code-review plugin"
   if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
     tcr_add_marketplace "$TCR_LOCAL_ROOT"
   else

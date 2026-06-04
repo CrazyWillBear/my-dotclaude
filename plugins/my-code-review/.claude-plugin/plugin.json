@@ -1,5 +1,5 @@
 {
-  "name": "team-code-review",
+  "name": "my-code-review",
   "version": "0.1.0",
   "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared, tunable team rubric.",
   "author": {

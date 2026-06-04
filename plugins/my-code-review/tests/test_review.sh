@@ -13,7 +13,7 @@
 # stop_hook_active (the commit->review chain needs this), audience selection,
 # and the fail-open silent paths.
 #
-# Run: bash plugins/team-code-review/tests/test_review.sh   (exits non-zero if any test fails)
+# Run: bash plugins/my-code-review/tests/test_review.sh   (exits non-zero if any test fails)
 
 set -u
 
@@ -95,7 +95,7 @@ state_file() {
     python3 - "$1" <<'PY'
 import sys, hashlib, tempfile, os
 key = hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16]
-print(os.path.join(tempfile.gettempdir(), "team-code-review-head-" + key + ".json"))
+print(os.path.join(tempfile.gettempdir(), "my-code-review-head-" + key + ".json"))
 PY
 }
 

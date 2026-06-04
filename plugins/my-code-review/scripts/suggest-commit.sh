@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Stop hook for the team-code-review plugin.
+# Stop hook for the my-code-review plugin.
 #
 # Commit gate + nudge. Reads the hook payload from stdin and — when the
 # uncommitted tracked work looks worth a commit — emits a "block" decision that
@@ -149,7 +149,7 @@ if not (size_signal or plan_signal):
 # A commit moves HEAD, so the next batch is eligible again.
 session_id = str(data.get("session_id") or "default")
 key = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-state_path = os.path.join(tempfile.gettempdir(), "team-code-review-commit-" + key + ".json")
+state_path = os.path.join(tempfile.gettempdir(), "my-code-review-commit-" + key + ".json")
 
 try:
     with open(state_path) as fh:
@@ -177,7 +177,7 @@ else:
 
 if plan_signal:
     reason = (
-        "team-code-review commit gate: a plan was approved and implemented, and "
+        "my-code-review commit gate: a plan was approved and implemented, and "
         + churn + " of tracked work is uncommitted. Commit this batch before you "
         + "stop — run /commit now to have the committer subagent write the message "
         + "and commit the tracked changes. Do not end your turn with the planned "
@@ -185,7 +185,7 @@ if plan_signal:
     )
 else:
     reason = (
-        "Heads up (team-code-review commit nudge): " + churn + " of tracked work "
+        "Heads up (my-code-review commit nudge): " + churn + " of tracked work "
         + "is uncommitted. If this is a good stopping point, consider committing "
         + "this batch — run /commit to have the committer subagent write the message "
         + "and commit the tracked changes, or commit yourself. If it is not a good "

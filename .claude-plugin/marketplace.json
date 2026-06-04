@@ -7,8 +7,8 @@
   },
   "plugins": [
     {
-      "name": "team-code-review",
-      "source": "./plugins/team-code-review",
+      "name": "my-code-review",
+      "source": "./plugins/my-code-review",
       "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared team rubric."
     },
     {

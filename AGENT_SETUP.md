@@ -58,7 +58,7 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
-   claude plugin install team-code-review@my-dotclaude
+   claude plugin install my-code-review@my-dotclaude
    claude plugin install personal-tools@my-dotclaude
    claude plugin marketplace add JuliusBrussee/caveman
    claude plugin install caveman@caveman
