@@ -84,6 +84,16 @@ def save_state():
     except Exception:
         pass
 
+# SessionStart: seed the baseline at the pre-work HEAD so a commit made before
+# the first Stop still gets reviewed (kills the "first stop already sits on a
+# fresh commit" edge). Idempotent — never moves an existing marker, so it is
+# safe on resume/compact, which rerun SessionStart under the same session_id.
+if data.get("hook_event_name") == "SessionStart":
+    if "reviewed" not in state:
+        state["reviewed"] = current_head
+        save_state()
+    sys.exit(0)
+
 # First sight this session: record the baseline HEAD and bow out. Commits that
 # predate the session are not ours to review. (Edge: if the very first stop of
 # the session already sits on a fresh post-work commit, that one batch is not

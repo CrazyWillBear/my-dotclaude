@@ -79,6 +79,15 @@ run_hook() {
 # First hook call of a session records the baseline HEAD silently.
 seed() { run_hook "$1" >/dev/null; }
 
+# run_session_start <session_id>  — drive review.sh on a SessionStart event,
+# which seeds the pre-work baseline so a commit made before the first Stop is
+# still reviewed. Print the hook's stdout (expected: nothing).
+run_session_start() {
+    printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" \
+        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+            bash "$HOOK"
+}
+
 # state_file <session_id> — the per-session state path the hook computes, so a
 # test can plant a known (or bogus) reviewed marker. Mirrors review.sh: it keys
 # on sha1(session_id)[:16] under python's tempfile dir (honors $TMPDIR).
@@ -95,6 +104,29 @@ echo "test: first sight of a session seeds the baseline silently"
 init_repo
 out=$(run_hook sid-seed)
 assert_empty "no review on the seeding call" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: SessionStart seeds silently"
+init_repo
+out=$(run_session_start sid-ss-silent)
+assert_empty "SessionStart emits nothing" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: SessionStart baseline reviews a commit made before the first Stop"
+init_repo
+run_session_start sid-ss-regress >/dev/null   # seed at pre-work HEAD
+commit_file src/app.py "print(1)"             # work committed BEFORE any Stop
+out=$(run_hook sid-ss-regress)                # first Stop must review it
+assert_contains "first Stop reviews the pre-Stop commit" "$out" "src/app.py"
+
+# ---------------------------------------------------------------------------
+echo "test: a second SessionStart does not advance the baseline (resume-safe)"
+init_repo
+run_session_start sid-ss-idem >/dev/null      # seed at pre-work HEAD
+commit_file src/a.py "a = 1"                  # an unreviewed commit lands
+run_session_start sid-ss-idem >/dev/null      # resume/compact reruns SessionStart
+out=$(run_hook sid-ss-idem)
+assert_contains "marker held; commit still reviewed" "$out" "src/a.py"
 
 # ---------------------------------------------------------------------------
 echo "test: reviews a source file committed after the baseline"
