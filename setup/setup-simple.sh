@@ -2,7 +2,7 @@
 #
 # Non-developer setup — installs the full Claude Code kit into ~/.claude, tuned
 # for someone who does not write code: the global CLAUDE.md (plain-English), the
-# team-code-review + personal-tools + caveman + agent-sdk-dev plugins, the
+# my-code-review + personal-tools + caveman + agent-sdk-dev plugins, the
 # Playwright MCP server, a read-only gh (GitHub CLI) allowlist, caveman set to
 # its gentler "lite" level, and review summaries written in plain language. User
 # scope — not tied to any one project. (Model is left at Claude Code's default.)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
-# the global CLAUDE.md (technical), model=opus, the team-code-review +
+# the global CLAUDE.md (technical), model=opus, the my-code-review +
 # personal-tools + caveman + agent-sdk-dev plugins, the Playwright MCP server,
 # and a read-only gh (GitHub CLI) allowlist. User scope — not tied to any one
 # project (review output defaults to the technical, severity-grouped report).
@@ -79,5 +79,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm team-code-review, personal-tools, caveman, and agent-sdk-dev are enabled.\n'
+printf '  2. Run /plugin to confirm my-code-review, personal-tools, caveman, and agent-sdk-dev are enabled.\n'
 printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

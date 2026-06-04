@@ -9,7 +9,7 @@
   pwsh -File setup/setup-simple.ps1 -Continue -Force
 
 .DESCRIPTION
-  Installs the global ~/.claude/CLAUDE.md (plain-English), the plugins (team-code-review,
+  Installs the global ~/.claude/CLAUDE.md (plain-English), the plugins (my-code-review,
   personal-tools, caveman, agent-sdk-dev), the Playwright MCP server, a read-only gh (GitHub CLI)
   allowlist, sets caveman to its gentler "lite" level, and writes ~/.claude/review-audience=plain so
   reviews come back in plain language. Not tied to any project; model is left at Claude Code's default.

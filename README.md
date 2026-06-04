@@ -9,7 +9,7 @@ tuned for either a developer or a non-coder.
 - **Global `CLAUDE.md`** (`global/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
-- **`team-code-review`** plugin (`plugins/team-code-review/`) — runs an automatic code
+- **`my-code-review`** plugin (`plugins/my-code-review/`) — runs an automatic code
   review on every turn (plus an on-demand `/review`), routed through one shared, tunable
   rubric.
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
@@ -99,11 +99,11 @@ Then **restart Claude Code** so it loads the plugins.
 
 ### Option C — just the review plugin (manual)
 
-If you only want `team-code-review` and will write your own `CLAUDE.md`:
+If you only want `my-code-review` and will write your own `CLAUDE.md`:
 
 ```
 /plugin marketplace add CrazyWillBear/my-dotclaude
-/plugin install team-code-review@my-dotclaude
+/plugin install my-code-review@my-dotclaude
 ```
 
 ## How the auto-review works
@@ -121,7 +121,7 @@ team rubric, covering **correctness & bugs**, **security**, **style & convention
 > or a project can set its own) the hook tells Claude to fix what it finds and report back
 > in plain English instead of a severity list.
 
-A second `Stop` hook (`plugins/team-code-review/scripts/suggest-commit.sh`) runs **before** the reviewer and is
+A second `Stop` hook (`plugins/my-code-review/scripts/suggest-commit.sh`) runs **before** the reviewer and is
 purely advisory: when the uncommitted tracked work looks worth a commit — a large diff
 (≥ 3 files or ≥ 80 changed lines) **or** a plan that was approved and then implemented — it
 softly suggests committing the batch (run `/commit` or commit by hand). The two signals
@@ -135,9 +135,9 @@ back to `git show HEAD` when it's clean.
 
 ```
 my-dotclaude/
-├── .claude-plugin/marketplace.json  # lists team-code-review + personal-tools
+├── .claude-plugin/marketplace.json  # lists my-code-review + personal-tools
 ├── plugins/
-│   ├── team-code-review/            # the auto-review plugin (a plugin)
+│   ├── my-code-review/            # the auto-review plugin (a plugin)
 │   │   ├── .claude-plugin/plugin.json
 │   │   ├── hooks/hooks.json         # registers the Stop hooks (suggest-commit, then review)
 │   │   ├── scripts/suggest-commit.sh# advisory: nudges to commit a big/completed batch (runs first)
@@ -166,7 +166,7 @@ access is optional and uses the [`gh` CLI](https://cli.github.com) — install i
 
 ## Tuning the rubric
 
-`plugins/team-code-review/skills/review-rubric/SKILL.md` is the single source of truth. Add rules (architecture
+`plugins/my-code-review/skills/review-rubric/SKILL.md` is the single source of truth. Add rules (architecture
 conventions, banned patterns, required test coverage) under the relevant section. Both
 the auto-review and `/review` pick up the change immediately.
 

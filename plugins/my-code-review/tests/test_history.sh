@@ -4,7 +4,7 @@
 # review-history recorder and its metrics viewer.
 #
 # Black-box: feed the recorder JSON on stdin, then read back the JSONL it wrote
-# and the viewer's formatted report. Run: bash plugins/team-code-review/tests/test_history.sh
+# and the viewer's formatted report. Run: bash plugins/my-code-review/tests/test_history.sh
 
 set -u
 

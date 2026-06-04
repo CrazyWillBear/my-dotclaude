@@ -6,7 +6,7 @@
 $script:TcrRepo          = 'CrazyWillBear/my-dotclaude'
 $script:TcrRawBase       = "https://raw.githubusercontent.com/$($script:TcrRepo)/main"
 $script:TcrMarketplace    = 'my-dotclaude'
-$script:TcrPlugin         = "team-code-review@$($script:TcrMarketplace)"
+$script:TcrPlugin         = "my-code-review@$($script:TcrMarketplace)"
 $script:TcrPersonalPlugin = "personal-tools@$($script:TcrMarketplace)"
 $script:TcrCavemanRepo   = 'JuliusBrussee/caveman'
 $script:TcrCavemanPlugin = 'caveman@caveman'
@@ -46,7 +46,7 @@ function Add-TcrMarketplace {
 
 function Install-TcrReviewPlugin {
     param([string]$LocalRoot)
-    Write-TcrStep 'Installing the team-code-review plugin'
+    Write-TcrStep 'Installing the my-code-review plugin'
     $localMarket = if ($LocalRoot) { Join-Path $LocalRoot '.claude-plugin/marketplace.json' } else { $null }
     if ($localMarket -and (Test-Path $localMarket)) { Add-TcrMarketplace $LocalRoot } else { Add-TcrMarketplace $script:TcrRepo }
     claude plugin install $script:TcrPlugin *> $null

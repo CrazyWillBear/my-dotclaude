@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Stop hook for the team-code-review plugin.
+# Stop hook for the my-code-review plugin.
 #
 # Commit-gated code review. Fires only AFTER a commit lands: when the work tree
 # is clean of tracked changes and HEAD has advanced past the last commit we
@@ -66,7 +66,7 @@ if not current_head:
 # session's starting HEAD so we never review pre-session history.
 session_id = str(data.get("session_id") or "default")
 key = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-state_path = os.path.join(tempfile.gettempdir(), "team-code-review-head-" + key + ".json")
+state_path = os.path.join(tempfile.gettempdir(), "my-code-review-head-" + key + ".json")
 
 state = {}
 try:
@@ -186,7 +186,7 @@ if plugin_root:
     recorder = os.path.join(plugin_root, "scripts", "record-review.sh")
 else:
     rubric = "the team review rubric (skills/review-rubric/SKILL.md in this plugin)"
-    recorder = "scripts/record-review.sh (in the team-code-review plugin)"
+    recorder = "scripts/record-review.sh (in the my-code-review plugin)"
 
 record_note = (
     "\n\nAfter you report, record the result so this project keeps a review "
@@ -225,7 +225,7 @@ audience = (
 
 if audience == "plain":
     reason = (
-        "Automatic code review (team-code-review plugin). These file(s) were "
+        "Automatic code review (my-code-review plugin). These file(s) were "
         "just committed and have not been reviewed yet:\n"
         + file_list
         + "\n\nUse the Task tool to launch the `code-reviewer` subagent. Give it "
@@ -242,7 +242,7 @@ if audience == "plain":
     )
 else:
     reason = (
-        "Auto code-review (team-code-review plugin). These file(s) were just "
+        "Auto code-review (my-code-review plugin). These file(s) were just "
         "committed and have not been reviewed yet:\n"
         + file_list
         + "\n\nUse the Task tool to launch the `code-reviewer` subagent. Give it "
