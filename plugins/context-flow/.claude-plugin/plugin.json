@@ -1,0 +1,13 @@
+{
+  "name": "context-flow",
+  "version": "0.1.0",
+  "description": "Threshold-driven context management: a watchdog nudges a clean wrap-up as the context window fills, saves a handoff, and auto-resumes the in-flight plan on the next session — keeping code review quiet across the restart seam.",
+  "author": {
+    "name": "William Chastain",
+    "url": "https://github.com/CrazyWillBear"
+  },
+  "homepage": "https://github.com/CrazyWillBear/my-dotclaude",
+  "repository": "https://github.com/CrazyWillBear/my-dotclaude",
+  "license": "MIT",
+  "keywords": ["context", "handoff", "compaction", "session", "hooks"]
+}

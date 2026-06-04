@@ -15,6 +15,11 @@
       "name": "personal-tools",
       "source": "./plugins/personal-tools",
       "description": "My personal Claude Code slash commands and subagents."
+    },
+    {
+      "name": "context-flow",
+      "source": "./plugins/context-flow",
+      "description": "Threshold-driven context management: a watchdog nudges a clean wrap-up as the context window fills, saves a handoff, and auto-resumes the in-flight plan on the next session — keeping code review quiet across the restart."
     }
   ]
 }
