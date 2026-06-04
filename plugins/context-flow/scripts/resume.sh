@@ -103,16 +103,21 @@ if plan:
     add = (
         "Resume (context-flow): implement the plan @" + str(plan) + " on "
         + str(branch) + ". Prior work is committed — continue from where the plan "
-        "and the commits leave off; do not redo completed steps. Code review has "
-        "been re-enabled and will run once over everything committed since the "
-        "handoff."
+        "and the commits leave off; do not redo completed steps."
     )
 else:
     add = (
         "Resume (context-flow): continue the prior in-progress work on "
-        + str(branch) + ". It is committed — pick up from the latest commits. "
-        "Code review has been re-enabled."
+        + str(branch) + ". It is committed — pick up from the latest commits."
     )
+
+# Review was only deferred (batched) when the handoff armed it (the Stop path).
+# The plan-accept gate hands off WITHOUT arming, so review runs normally there.
+if ho.get("armed"):
+    add += (" Code review has been re-enabled and will run once over everything "
+            "committed since the handoff.")
+else:
+    add += " Code review has been re-enabled."
 
 # A manual /handoff can attach a prose summary; surface it for continuity.
 summary = ho.get("summary")

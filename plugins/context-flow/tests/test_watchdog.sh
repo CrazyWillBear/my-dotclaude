@@ -211,6 +211,7 @@ out=$(run_watchdog UserPromptSubmit sid-gate "$WORK/gate.jsonl")
 assert_contains "tells the user to relaunch" "$out" "Relaunch to execute"
 assert_contains "tells the agent a plan was approved" "$out" "plan was just approved"
 assert_file "writes the handoff" "$HANDOFF"
+assert_equals "plan-gate handoff is not armed" "$(read_field "$HANDOFF" armed)" "False"
 assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate)"
 assert_nofile "plan-gate does NOT arm the review deferral" "$(plan_state_file)"
 
@@ -254,6 +255,7 @@ assert_file "Stop wrote the handoff" "$HANDOFF"
 assert_equals "handoff baseline = the reviewed marker" "$(read_field "$HANDOFF" baseline_head)" "$base"
 assert_equals "handoff records the repo toplevel" "$(read_field "$HANDOFF" git_toplevel)" "$(g rev-parse --show-toplevel)"
 assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
+assert_equals "Stop handoff marks the deferral armed" "$(read_field "$HANDOFF" armed)" "True"
 
 # ---------------------------------------------------------------------------
 echo "test: a missing transcript path fails open (silent)"

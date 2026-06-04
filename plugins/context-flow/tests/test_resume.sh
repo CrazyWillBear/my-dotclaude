@@ -44,6 +44,7 @@ ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
 no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; esac; }
+assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected silence, got: $2)"; fi; }
 assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
 assert_file() { if [ -f "$2" ]; then ok "$1"; else no "$1 (missing file $2)"; fi; }
@@ -70,13 +71,14 @@ commit_file() {
     g commit -q -m "change $1"
 }
 
-# make_handoff <toplevel> <baseline> <branch> <plan> [summary]
+# make_handoff <toplevel> <baseline> <branch> <plan> [summary] [armed]
 make_handoff() {
-    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" "${5:-}" <<'PY'
+    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" "${5:-}" "${6:-}" <<'PY'
 import sys, json
-path, top, base, branch, plan, summary = sys.argv[1:7]
+path, top, base, branch, plan, summary, armed = sys.argv[1:8]
 obj = {"plan_path": plan or None, "branch": branch, "git_toplevel": top,
-       "baseline_head": base, "session_id": "old-sid", "context_tokens": 200000, "ts": 0}
+       "baseline_head": base, "armed": bool(armed), "session_id": "old-sid",
+       "context_tokens": 200000, "ts": 0}
 if summary:
     obj["summary"] = summary
 with open(path, "w") as fh:
@@ -199,6 +201,25 @@ base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "main" "$PLAN" "Finished step 1; next is step 2; mind the migration."
 out=$(run_resume sid-r7)
 assert_contains "surfaces the prose summary" "$out" "next is step 2"
+
+# ---------------------------------------------------------------------------
+echo "test: an armed handoff (Stop path) promises the batched once-after-resume review"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+base="$(g rev-parse HEAD)"
+make_handoff "$top" "$base" "main" "$PLAN" "" "1"
+out=$(run_resume sid-armed)
+assert_contains "armed handoff promises the batched review" "$out" "run once over everything"
+
+# ---------------------------------------------------------------------------
+echo "test: an unarmed handoff (plan-gate path) makes no batched-review promise"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+base="$(g rev-parse HEAD)"
+make_handoff "$top" "$base" "main" "$PLAN"
+out=$(run_resume sid-unarmed)
+assert_not_contains "unarmed handoff: no batched-review promise" "$out" "run once over everything"
+assert_contains "unarmed handoff: plain re-enable note" "$out" "Code review has been re-enabled."
 
 # ---------------------------------------------------------------------------
 echo "test: end-to-end — deferred wrap-up commit is reviewed once after resume"

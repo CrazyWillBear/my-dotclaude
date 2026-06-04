@@ -26,10 +26,12 @@ set -u
 export SH_SESSION="" SH_SIZE="" SH_SUMMARY="" SH_ARM=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --session) SH_SESSION="${2:-}"; shift 2 ;;
-        --size)    SH_SIZE="${2:-}";    shift 2 ;;
-        --summary) SH_SUMMARY="${2:-}"; shift 2 ;;
-        --arm)     SH_ARM="1";          shift ;;
+        # Value flags guard against a missing/flag-like value so a bare
+        # `--session --size 5` cannot swallow `--size` as the session id.
+        --session) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SESSION="$2"; shift 2 ;; esac ;;
+        --size)    case "${2:-}" in ""|--*) shift 1 ;; *) SH_SIZE="$2";    shift 2 ;; esac ;;
+        --summary) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SUMMARY="$2"; shift 2 ;; esac ;;
+        --arm)     SH_ARM="1"; shift ;;
         *)         shift ;;
     esac
 done
@@ -102,6 +104,7 @@ obj = {
     "branch":         git("rev-parse", "--abbrev-ref", "HEAD"),
     "git_toplevel":   git("rev-parse", "--show-toplevel"),
     "baseline_head":  baseline(),
+    "armed":          bool(os.environ.get("SH_ARM")),
     "session_id":     session_id or None,
     "context_tokens": size or None,
     "ts":             int(time.time()),
