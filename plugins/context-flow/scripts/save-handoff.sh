@@ -3,27 +3,25 @@
 # Shared handoff writer for the context-flow plugin.
 #
 # Single source of the ~/.claude/.pending-handoff JSON schema that resume.sh
-# reads. Used by both the automatic Stop path (watchdog.sh) and the manual
-# /handoff skill, so the schema lives in exactly one place.
+# reads. Used by the watchdog's Phase-A plan-start gate and Phase-C post-wrap
+# compact prompt, and by the manual /handoff skill, so the schema lives in
+# exactly one place.
 #
-#   save-handoff.sh [--session ID] [--size N] [--summary TEXT] [--arm]
+#   save-handoff.sh [--session ID] [--size N] [--summary TEXT]
 #
-#     --session ID   session id; used to read review.sh's reviewed-HEAD marker
-#                    so the resumed session reviews FROM the right baseline.
-#                    Absent (e.g. from agent Bash, where it is unset) -> HEAD.
+#     --session ID   session id; recorded for debugging (informational).
 #     --size N       context-token occupancy to record (informational).
 #     --summary TEXT optional prose summary; resume.sh appends it to the resume
 #                    instruction. The manual /handoff path uses this.
-#     --arm          also defer code review (checkpoint.sh arm) so the resumed
-#                    session reviews the wrap-up commits as one batch. The Stop
-#                    path and the skill arm; the plan-accept gate does NOT.
 #
-# Git state is read from CLAUDE_PROJECT_DIR (else cwd). Fail open: any error
-# exits 0 so a handoff attempt never wedges the session.
+# Git state is read from CLAUDE_PROJECT_DIR (else cwd). The baseline is simply the
+# current HEAD — prior work is committed before a handoff. context-flow no longer
+# defers code review, so there is no review state to read or arm here. Fail open:
+# any error exits 0 so a handoff attempt never wedges the session.
 
 set -u
 
-export SH_SESSION="" SH_SIZE="" SH_SUMMARY="" SH_ARM=""
+export SH_SESSION="" SH_SIZE="" SH_SUMMARY=""
 while [ $# -gt 0 ]; do
     case "$1" in
         # Value flags guard against a missing/flag-like value so a bare
@@ -31,7 +29,6 @@ while [ $# -gt 0 ]; do
         --session) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SESSION="$2"; shift 2 ;; esac ;;
         --size)    case "${2:-}" in ""|--*) shift 1 ;; *) SH_SIZE="$2";    shift 2 ;; esac ;;
         --summary) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SUMMARY="$2"; shift 2 ;; esac ;;
-        --arm)     SH_ARM="1"; shift ;;
         *)         shift ;;
     esac
 done
@@ -39,17 +36,8 @@ done
 command -v python3 >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 
-# Defer review first (reuse my-code-review's checkpoint.sh). It keys on the repo
-# toplevel from its cwd, so run it inside the project dir to match review.sh.
-if [ -n "$SH_ARM" ]; then
-    ckpt="${CONTEXT_FLOW_CHECKPOINT_SH:-${CLAUDE_PLUGIN_ROOT:-}/../my-code-review/scripts/checkpoint.sh}"
-    if [ -f "$ckpt" ]; then
-        ( cd "${CLAUDE_PROJECT_DIR:-$PWD}" && bash "$ckpt" arm >/dev/null 2>&1 ) || true
-    fi
-fi
-
 python3 <<"PY" || exit 0
-import os, json, sys, time, glob, hashlib, tempfile, subprocess
+import os, json, sys, time, glob, subprocess
 
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
@@ -84,27 +72,11 @@ def resolve_plan():
         return None
 
 
-def baseline():
-    # review.sh's per-session reviewed marker = oldest unreviewed commit = the
-    # baseline the resumed session must review FROM. Falls back to HEAD.
-    if session_id:
-        key = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-        p = os.path.join(tempfile.gettempdir(), "my-code-review-head-" + key + ".json")
-        try:
-            d = json.load(open(p))
-            if isinstance(d, dict) and d.get("reviewed"):
-                return d["reviewed"]
-        except Exception:
-            pass
-    return git("rev-parse", "HEAD")
-
-
 obj = {
     "plan_path":      resolve_plan(),
     "branch":         git("rev-parse", "--abbrev-ref", "HEAD"),
     "git_toplevel":   git("rev-parse", "--show-toplevel"),
-    "baseline_head":  baseline(),
-    "armed":          bool(os.environ.get("SH_ARM")),
+    "baseline_head":  git("rev-parse", "HEAD"),
     "session_id":     session_id or None,
     "context_tokens": size or None,
     "ts":             int(time.time()),

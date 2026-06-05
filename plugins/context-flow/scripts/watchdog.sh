@@ -2,36 +2,36 @@
 #
 # Context watchdog for the context-flow plugin.
 #
-# Wired on UserPromptSubmit + PostToolUse (detect mid-work) and Stop (the
-# handoff). It reads the LIVE context occupancy from the transcript and, as the
-# window fills, drives a clean handoff + session-restart instead of an in-place
-# /compact (which no hook can trigger). Three jobs, by event:
+# Wired on UserPromptSubmit + PostToolUse (detect mid-work) and Stop (the wrap
+# seam). It reads the LIVE context occupancy from the transcript and drives a
+# deliberate, EARLY /clear or /compact as the window fills — the user types the
+# one command, the hook handles everything around it. (No hook or agent can run
+# /clear or /compact itself; they are user-typed REPL input only.) Three phases:
 #
-#   * UserPromptSubmit / PostToolUse, over CONTEXT_FLOW_NUDGE_TOKENS (default
-#     150k), once per session: inject a "wrap up + commit the current sub-task,
-#     don't start new work" nudge, and arm the my-code-review deferral
-#     (checkpoint.sh arm) so review stays quiet through the coming restart seam.
-#   * Plan-accept gate — the first event after an ExitPlanMode acceptance: if
-#     context is already over CONTEXT_FLOW_PLANGATE_TOKENS (default 60k), save a
-#     handoff and tell the user to relaunch BEFORE executing, so the plan runs
-#     with fresh context. One-shot per session. Does NOT defer review (no work
-#     has happened yet — deferring would suppress review all session if ignored).
-#   * Stop, if armed this session and still over budget: write the handoff (plan
-#     path, branch, pre-handoff reviewed baseline) and tell the user to relaunch.
-#     resume.sh auto-resumes on the next launch.
+#   * Phase A — plan-start clear gate (active events, on an ExitPlanMode accept,
+#     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): one-shot per session. Save a
+#     handoff and HALT the agent (decision: block) with "do NOT implement yet;
+#     run /clear, then send `go`". resume.sh re-injects the plan after the /clear.
+#   * Phase B — mid-execution wrap nudge (active events, >= CONTEXT_FLOW_NUDGE_
+#     TOKENS, default 160k): once per cycle, ask the agent to wrap up at a natural
+#     breaking point and commit. Records HEAD so Phase C can tell a wrap landed.
+#     Does NOT touch code review — the reviewer runs normally on the wrap commit.
+#   * Phase C — post-wrap compact prompt (Stop, the next clean stop after the
+#     nudge once a wrap commit exists): one-shot per cycle. Save a handoff and
+#     tell the user to run /compact (once the review and fixes are in), then send
+#     `continue`. resume.sh re-injects the plan and resets the Phase-B/C sentinels
+#     after the /compact so a later climb can re-nudge in the same long session.
 #
 # Metric = the LAST assistant transcript entry's
 #   usage.input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-# i.e. the tokens the model just saw = current occupancy. (Not caveman-stats'
-# cumulative output_tokens — different number, wrong signal here.)
+# i.e. the tokens the model just saw = current occupancy.
 #
-# Design notes (mirrors my-code-review's review.sh / suggest-commit.sh):
-#   * Hooks are plain shell; they cannot run /compact, /clear, or any tool. So
-#     we inject instructions and write files; the only manual step is relaunch.
-#   * Fail open: any error / missing dependency exits 0 so we never wedge a
-#     session.
-#   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal
-#     to once per session, mirroring review.sh's reviewed-HEAD marker.
+# Design notes (mirrors my-code-review's review.sh):
+#   * Hooks are plain shell; they cannot run /compact, /clear, or any tool. So we
+#     inject instructions and write files; the only manual step is the one command.
+#   * Fail open: any error / missing dependency exits 0 so we never wedge a session.
+#   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal,
+#     mirroring review.sh's reviewed-HEAD marker.
 #   * The handoff JSON is written by the shared scripts/save-handoff.sh (single
 #     schema writer, also used by the /handoff skill) — we never build it here.
 
@@ -53,14 +53,14 @@ try:
 except Exception:
     sys.exit(0)
 
-# Thresholds (env-overridable). Defaults: nudge at 150k, plan-accept gate at 60k.
+# Thresholds (env-overridable). Defaults: nudge at 160k, plan-accept gate at 60k.
 def _int_env(name, default):
     try:
         return int(os.environ.get(name) or default)
     except Exception:
         return default
 
-NUDGE    = _int_env("CONTEXT_FLOW_NUDGE_TOKENS", 150000)
+NUDGE    = _int_env("CONTEXT_FLOW_NUDGE_TOKENS", 160000)
 PLANGATE = _int_env("CONTEXT_FLOW_PLANGATE_TOKENS", 60000)
 
 event       = data.get("hook_event_name", "")
@@ -71,8 +71,9 @@ plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
 
 tmp = tempfile.gettempdir()
 skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-nudged_path   = os.path.join(tmp, "context-flow-nudged-"   + skey + ".json")
-plangate_path = os.path.join(tmp, "context-flow-plangate-" + skey + ".json")
+nudged_path    = os.path.join(tmp, "context-flow-nudged-"    + skey + ".json")
+plangate_path  = os.path.join(tmp, "context-flow-plangate-"  + skey + ".json")
+compacted_path = os.path.join(tmp, "context-flow-compacted-" + skey + ".json")
 
 
 def context_tokens(path):
@@ -141,31 +142,53 @@ def plan_accepted(path):
     return False
 
 
-def touch(path):
+def touch(path, extra=None):
+    obj = {"ts": int(time.time())}
+    if extra:
+        obj.update(extra)
     try:
         with open(path, "w") as fh:
-            json.dump({"ts": int(time.time())}, fh)
+            json.dump(obj, fh)
     except Exception:
         pass
 
 
-def run_checkpoint(action):
-    # Reuse my-code-review's sibling checkpoint.sh to arm/clear the per-repo
-    # review deferral. It keys on `git rev-parse --show-toplevel` from its cwd,
-    # so run it inside the project dir to match review.sh's key.
-    ckpt = os.environ.get("CONTEXT_FLOW_CHECKPOINT_SH")
-    if not ckpt and plugin_root:
-        ckpt = os.path.join(plugin_root, "..", "my-code-review", "scripts", "checkpoint.sh")
-    if not ckpt or not os.path.isfile(ckpt):
-        return
+def read_json(path):
     try:
-        subprocess.run(["bash", ckpt, action], cwd=project_dir,
-                       capture_output=True, timeout=10)
+        with open(path) as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
     except Exception:
-        pass
+        return {}
 
 
-def save_handoff(size, arm):
+def git(*args):
+    try:
+        out = subprocess.run(
+            ["git", "-C", project_dir, *args],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip()
+
+
+def tree_dirty():
+    # git diff --quiet HEAD exits nonzero when tracked changes differ from HEAD.
+    # On any error treat as dirty so Phase C never fires on an unclear state.
+    try:
+        rc = subprocess.run(
+            ["git", "-C", project_dir, "diff", "--quiet", "HEAD"],
+            capture_output=True, timeout=10,
+        ).returncode
+    except Exception:
+        return True
+    return rc != 0
+
+
+def save_handoff(size):
     # Delegate to the shared writer so the handoff schema lives in one place.
     sh = os.environ.get("CONTEXT_FLOW_SAVE_HANDOFF_SH")
     if not sh and plugin_root:
@@ -173,8 +196,6 @@ def save_handoff(size, arm):
     if not sh or not os.path.isfile(sh):
         return
     args = ["bash", sh, "--session", session_id, "--size", str(size)]
-    if arm:
-        args.append("--arm")
     try:
         subprocess.run(args, cwd=project_dir, capture_output=True, timeout=10)
     except Exception:
@@ -188,58 +209,65 @@ def emit(obj):
 
 size = context_tokens(transcript)
 
-# --- Stop: hand off if armed this session and still over budget. -------------
+# --- Phase C — Stop: prompt /compact once the wrap-up commit has landed. ------
 if event == "Stop":
-    if not os.path.exists(nudged_path):
+    if not os.path.exists(nudged_path):       # no nudge this cycle -> nothing to do
         sys.exit(0)
-    if size is None or size < NUDGE:
+    if os.path.exists(compacted_path):        # already prompted this cycle
         sys.exit(0)
-    save_handoff(size, arm=True)
-    kb = size // 1000
+    head = git("rev-parse", "HEAD")
+    nudge_head = read_json(nudged_path).get("head")
+    if not head or not nudge_head or head == nudge_head:
+        sys.exit(0)                           # no wrap commit landed yet
+    if tree_dirty():
+        sys.exit(0)                           # still mid-work; wait for a clean stop
+    save_handoff(size or 0)
+    touch(compacted_path)
     emit({"systemMessage":
-          "context-flow: handoff saved (~%dk tokens in context). `exit` then "
-          "`claude` to continue with fresh context — I'll auto-resume." % kb})
+          "context-flow: wrap-up committed. Once the code review and any fixes "
+          "are in, run `/compact`, then send `continue` — I'll re-inject the "
+          "plan and keep going in compacted context."})
 
 # --- Active events (UserPromptSubmit / PostToolUse). -------------------------
-# Plan-accept gate: one-shot at the first event after an ExitPlanMode accept.
+# Phase A — plan-start clear gate: one-shot at the first event after an
+# ExitPlanMode accept. Over the gate, HALT the agent and ask for a /clear.
 if not os.path.exists(plangate_path) and plan_accepted(transcript):
     touch(plangate_path)  # mark observed regardless of action: one gate/session
     if size is not None and size >= PLANGATE:
-        save_handoff(size, arm=False)
+        save_handoff(size)
         kb = size // 1000
         emit({
+            "decision": "block",
+            "reason":
+                "A plan was just approved, but the context window is already "
+                "~%dk tokens — too full to execute the plan cleanly. Do NOT begin "
+                "implementing. Tell the user to run `/clear`, then send `go`: "
+                "context-flow saved a handoff and will re-inject the plan into the "
+                "fresh session automatically, so no work is lost. Only continue "
+                "without clearing if the user explicitly insists." % kb,
             "systemMessage":
-                "context-flow: context already ~%dk tokens at plan start. "
-                "Relaunch to execute with fresh context — `exit` then `claude`; "
-                "plan saved, I'll auto-resume." % kb,
-            "hookSpecificOutput": {
-                "hookEventName": event,
-                "additionalContext":
-                    "A plan was just approved, but the context window is already "
-                    "~%dk tokens. Recommend the user relaunch (`exit` then "
-                    "`claude`) before executing: a handoff is saved that will "
-                    "auto-resume this plan with fresh context. If they prefer to "
-                    "push on anyway, you may continue." % kb,
-            },
+                "context-flow: context already ~%dk tokens at plan start. Run "
+                "`/clear`, then send `go` — the plan will auto-resume in fresh "
+                "context." % kb,
         })
 
-# Budget nudge: once per session, arm review deferral + ask to wrap up.
+# Phase B — mid-execution wrap nudge: once per cycle, ask to wrap up + commit.
+# Record HEAD so Phase C can detect that a wrap commit later advanced it.
 if size is not None and size >= NUDGE and not os.path.exists(nudged_path):
-    touch(nudged_path)
-    run_checkpoint("arm")
+    touch(nudged_path, {"head": git("rev-parse", "HEAD")})
     kb = size // 1000
     emit({
         "systemMessage":
-            "context-flow: ~%dk tokens in context — wrapping up at the next "
-            "stopping point." % kb,
+            "context-flow: ~%dk tokens in context — wrap up at the next stopping "
+            "point and commit." % kb,
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext":
                 "Context over budget (~%dk tokens). Stop at the next natural "
-                "stopping point: finish and COMMIT the current sub-task, and "
-                "don't start new work. When you stop I'll save a handoff so you "
-                "can relaunch with fresh context and auto-resume. Code review is "
-                "paused until then." % kb,
+                "breaking point: finish and COMMIT the current sub-task, and "
+                "don't start new work. Once it is committed and reviewed I'll "
+                "prompt the user to run /compact and you'll continue from "
+                "there — do not start new work before then." % kb,
         },
     })
 

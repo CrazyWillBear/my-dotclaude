@@ -2,23 +2,24 @@
 #
 # SessionStart auto-resume for the context-flow plugin.
 #
-# The other half of the handoff loop: when a session that was over budget ended,
-# watchdog.sh wrote ~/.claude/.pending-handoff. On the next launch this hook
-# reads it and, if we're in the same repo it came from:
+# The other half of the handoff loop. When the watchdog gates a plan start
+# (Phase A) or prompts a post-wrap compact (Phase C), it writes
+# ~/.claude/.pending-handoff and tells the user to run /clear or /compact. Both
+# of those fire SessionStart (source=clear / source=compact). This hook reads the
+# handoff and, if we are in the same repo it came from, re-injects the plan so the
+# user only ever has to type the one command plus a kickoff word:
 #
-#   1. Seeds review.sh's per-session reviewed-HEAD marker for THIS (new) session
-#      to the pre-handoff baseline, OVERWRITING it. review.sh's own SessionStart
-#      seed only writes when the marker is absent, so overwriting here makes the
-#      result independent of SessionStart hook order across the two plugins —
-#      either way the marker ends at the baseline, and the first clean Stop
-#      reviews the whole baseline..HEAD range at once (the commits made during
-#      the pre-restart wrap-up).
-#   2. Runs checkpoint.sh done to clear the review deferral the watchdog armed.
-#   3. Clears the handoff (resume exactly once) and injects a resume instruction.
+#   * source=clear   (Phase A) -> "implement the plan @path" wording. Fresh
+#     context, so the agent starts the plan from the committed baseline.
+#   * source=compact (Phase C) -> "continue the plan @path" wording, AND reset the
+#     Phase-B/C sentinels for this session so a later climb back over the nudge
+#     threshold can drive a SECOND wrap -> /compact cycle in the same long session.
+#   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
 #
-# Fail open: any error exits 0. If we're NOT in the handoff's repo, leave the
-# handoff untouched and stay silent, so a relaunch in another project never
-# steals or drops it.
+# Fail open: any error exits 0. If we are NOT in the handoff's repo, leave the
+# handoff untouched and stay silent, so a launch in another project never steals
+# or drops it. context-flow no longer touches my-code-review state — the reviewer
+# is never deferred now, so my-code-review's own SessionStart seeding suffices.
 
 export HOOK_INPUT="$(cat)"
 
@@ -46,6 +47,7 @@ if not isinstance(ho, dict):
     sys.exit(0)
 
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+source = data.get("source") or ""
 
 
 def git(*args):
@@ -65,59 +67,45 @@ toplevel = git("rev-parse", "--show-toplevel")
 if not toplevel or toplevel != ho.get("git_toplevel"):
     sys.exit(0)
 
-# 1. Seed review.sh's reviewed marker for the NEW session to the baseline.
-baseline = ho.get("baseline_head")
-session_id = str(data.get("session_id") or "default")
-if baseline:
+# On a /compact resume, reset this session's Phase-B/C sentinels so a later climb
+# back over the nudge threshold can drive a second wrap -> /compact cycle. (If
+# /compact keeps the same session_id these clear the live sentinels; if it mints
+# a new one the new session simply has none — either way the cycle can repeat.)
+if source == "compact":
+    session_id = str(data.get("session_id") or "default")
     skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-    head_state = os.path.join(tempfile.gettempdir(), "my-code-review-head-" + skey + ".json")
-    try:
-        with open(head_state, "w") as fh:
-            json.dump({"reviewed": baseline}, fh)
-    except Exception:
-        pass
+    for prefix in ("context-flow-nudged-", "context-flow-compacted-"):
+        try:
+            os.remove(os.path.join(tempfile.gettempdir(), prefix + skey + ".json"))
+        except Exception:
+            pass
 
-# 2. Clear the review deferral (checkpoint.sh done), keyed on the repo toplevel.
-ckpt = os.environ.get("CONTEXT_FLOW_CHECKPOINT_SH")
-if not ckpt:
-    root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
-    if root:
-        ckpt = os.path.join(root, "..", "my-code-review", "scripts", "checkpoint.sh")
-if ckpt and os.path.isfile(ckpt):
-    try:
-        subprocess.run(["bash", ckpt, "done"], cwd=project_dir,
-                       capture_output=True, timeout=10)
-    except Exception:
-        pass
-
-# 3. Clear the handoff so we resume exactly once.
+# Clear the handoff so we resume exactly once.
 try:
     os.remove(handoff_path)
 except Exception:
     pass
 
-# Tell the fresh session what to continue.
+# Tell the fresh/compacted session what to do. /clear means fresh context, so the
+# agent implements the plan from the committed baseline; /compact (and the
+# fallback) means continue from where the plan and commits leave off.
 plan = ho.get("plan_path")
 branch = ho.get("branch") or git("rev-parse", "--abbrev-ref", "HEAD") or "the current branch"
+verb = "implement" if source == "clear" else "continue"
 if plan:
     add = (
-        "Resume (context-flow): implement the plan @" + str(plan) + " on "
-        + str(branch) + ". Prior work is committed — continue from where the plan "
-        "and the commits leave off; do not redo completed steps."
+        "Resume (context-flow): " + verb + " the plan @" + str(plan) + " on "
+        + str(branch) + ". Prior work is committed — "
+        + ("start from the committed baseline; do not redo any completed steps."
+           if source == "clear" else
+           "continue from where the plan and the commits leave off; do not redo "
+           "completed steps.")
     )
 else:
     add = (
         "Resume (context-flow): continue the prior in-progress work on "
         + str(branch) + ". It is committed — pick up from the latest commits."
     )
-
-# Review was only deferred (batched) when the handoff armed it (the Stop path).
-# The plan-accept gate hands off WITHOUT arming, so review runs normally there.
-if ho.get("armed"):
-    add += (" Code review has been re-enabled and will run once over everything "
-            "committed since the handoff.")
-else:
-    add += " Code review has been re-enabled."
 
 # A manual /handoff can attach a prose summary; surface it for continuity.
 summary = ho.get("summary")

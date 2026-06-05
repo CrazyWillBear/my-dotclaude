@@ -3,16 +3,17 @@
 # Tests for scripts/resume.sh — the SessionStart auto-resume hook.
 #
 # Black-box: we plant a ~/.claude/.pending-handoff, run the actual hook in a real
-# git repo, and assert on the resume instruction it injects, the review baseline
-# it seeds, the deferral it clears, and the handoff it removes. The review
-# continuity is the subtle part: resume OVERWRITES review.sh's per-session marker
-# to the recorded baseline so the order of the two SessionStart hooks doesn't
-# matter, and the resumed session reviews the whole baseline..HEAD range once.
+# git repo, and assert on the resume instruction it injects, the handoff it
+# removes, and (on a /compact resume) the Phase-B/C sentinels it resets. The hook
+# is source-aware: /clear -> "implement the plan" wording (fresh context),
+# /compact -> "continue the plan" wording + sentinel reset (so a later climb can
+# re-nudge), and any other source falls back to "continue".
 #
-# Covers: the happy-path round-trip; the wrong-repo no-op (handoff preserved);
-# no-handoff silence; order-independent overwrite; checkpoint.sh-done clearing an
-# armed deferral; the no-plan and summary message variants; and the end-to-end
-# arm -> defer -> resume -> review-fires integration with review.sh.
+# Covers: the clear/compact/startup wording variants; the wrong-repo no-op
+# (handoff preserved); no-handoff silence; the no-plan and summary variants; the
+# /compact sentinel reset proven by a subsequent re-nudge; and that context-flow
+# no longer touches my-code-review state (it neither seeds the review marker nor
+# clears a deferral).
 #
 # Run: bash plugins/context-flow/tests/test_resume.sh   (non-zero if any fail)
 
@@ -21,9 +22,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESUME="$PLUGIN_ROOT/scripts/resume.sh"
-MCR_ROOT="$(cd "$PLUGIN_ROOT/../my-code-review" && pwd)"
-CKPT="$MCR_ROOT/scripts/checkpoint.sh"
-REVIEW="$MCR_ROOT/scripts/review.sh"
+WATCHDOG="$PLUGIN_ROOT/scripts/watchdog.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -64,20 +63,13 @@ init_repo() {
     g commit -q -m base
 }
 
-commit_file() {
-    mkdir -p "$(dirname "$PROJECT_DIR/$1")"
-    printf '%s\n' "$2" >"$PROJECT_DIR/$1"
-    g add -A
-    g commit -q -m "change $1"
-}
-
-# make_handoff <toplevel> <baseline> <branch> <plan> [summary] [armed]
+# make_handoff <toplevel> <baseline> <branch> <plan> [summary]
 make_handoff() {
-    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" "${5:-}" "${6:-}" <<'PY'
+    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" "${5:-}" <<'PY'
 import sys, json
-path, top, base, branch, plan, summary, armed = sys.argv[1:8]
+path, top, base, branch, plan, summary = sys.argv[1:7]
 obj = {"plan_path": plan or None, "branch": branch, "git_toplevel": top,
-       "baseline_head": base, "armed": bool(armed), "session_id": "old-sid",
+       "baseline_head": base, "session_id": "old-sid",
        "context_tokens": 200000, "ts": 0}
 if summary:
     obj["summary"] = summary
@@ -86,21 +78,32 @@ with open(path, "w") as fh:
 PY
 }
 
+# run_resume <source> <sid> — run the SessionStart hook with the given source.
 run_resume() {
-    printf '{"hook_event_name":"SessionStart","session_id":"%s"}' "$1" \
+    printf '{"hook_event_name":"SessionStart","source":"%s","session_id":"%s"}' "$1" "$2" \
         | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
-            CONTEXT_FLOW_CHECKPOINT_SH="$CKPT" bash "$RESUME"
+            bash "$RESUME"
 }
 
-run_review() {
-    printf '{"session_id":"%s","stop_hook_active":false}' "$1" \
-        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$MCR_ROOT" \
-            bash "$REVIEW"
+# make_transcript <file> <total> — last assistant entry sums to <total> tokens.
+make_transcript() {
+    python3 - "$1" "$2" <<'PY'
+import sys, json
+path, total = sys.argv[1], int(sys.argv[2])
+rows = [
+    {"type": "assistant", "message": {"role": "assistant", "usage": {
+        "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
+]
+with open(path, "w") as fh:
+    for r in rows:
+        fh.write(json.dumps(r) + "\n")
+PY
 }
-run_review_ss() {
-    printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$1" \
-        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$MCR_ROOT" \
-            bash "$REVIEW"
+
+run_watchdog() {
+    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false}' "$1" "$2" "$3" \
+        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+            bash "$WATCHDOG"
 }
 
 sentinel_path() {
@@ -111,7 +114,9 @@ key = hashlib.sha1(sid.encode()).hexdigest()[:16]
 print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
-head_state() { sentinel_path "my-code-review-head-" "$1"; }
+nudged_path()    { sentinel_path "context-flow-nudged-"    "$1"; }
+compacted_path() { sentinel_path "context-flow-compacted-" "$1"; }
+head_state()     { sentinel_path "my-code-review-head-"    "$1"; }
 
 plan_state_file() {
     local root; root="$(g rev-parse --show-toplevel)"
@@ -134,55 +139,61 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-echo "test: resume in the handoff's repo injects the resume instruction and clears the handoff"
+echo "test: source=clear injects the 'implement' wording and clears the handoff"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "feat/ctx" "$PLAN"
-out=$(run_resume sid-r1)
+out=$(run_resume clear sid-r1)
 assert_contains "emits a SessionStart additionalContext" "$out" '"hookEventName": "SessionStart"'
+assert_contains "uses the implement wording" "$out" "implement the plan"
 assert_contains "names the plan to resume" "$out" "active.md"
 assert_contains "names the branch" "$out" "feat/ctx"
-assert_equals "seeds the review marker to the baseline" "$(read_field "$(head_state sid-r1)" reviewed)" "$base"
+assert_contains "tells the agent not to redo work" "$out" "do not redo"
 assert_nofile "clears the handoff (resume once)" "$HANDOFF"
+assert_nofile "does NOT seed a my-code-review marker" "$(head_state sid-r1)"
+
+# ---------------------------------------------------------------------------
+echo "test: source=compact injects the 'continue' wording and resets Phase-B/C sentinels"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+base="$(g rev-parse HEAD)"
+: >"$(nudged_path sid-r2)"            # pretend Phase B/C already fired this session
+: >"$(compacted_path sid-r2)"
+make_handoff "$top" "$base" "main" "$PLAN"
+out=$(run_resume compact sid-r2)
+assert_contains "uses the continue wording" "$out" "continue the plan"
+assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
+assert_nofile "resets the compacted sentinel" "$(compacted_path sid-r2)"
+assert_nofile "clears the handoff" "$HANDOFF"
+# Proof the reset re-arms the cycle: a fresh >=160k transcript re-nudges.
+make_transcript "$WORK/renudge.jsonl" 200000
+rout=$(run_watchdog UserPromptSubmit sid-r2 "$WORK/renudge.jsonl")
+assert_contains "a later climb re-nudges after the reset" "$rout" "Context over budget"
+
+# ---------------------------------------------------------------------------
+echo "test: an unknown source falls back to the 'continue' wording"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+base="$(g rev-parse HEAD)"
+make_handoff "$top" "$base" "main" "$PLAN"
+out=$(run_resume startup sid-r3)
+assert_contains "fallback uses the continue wording" "$out" "continue the plan"
 
 # ---------------------------------------------------------------------------
 echo "test: a handoff from another repo is a no-op (preserved, silent)"
 init_repo
 base="$(g rev-parse HEAD)"
 make_handoff "/some/other/repo" "$base" "main" ""
-out=$(run_resume sid-r2)
+out=$(run_resume clear sid-r4)
 assert_empty "wrong repo: silent" "$out"
 assert_file "wrong repo: handoff preserved" "$HANDOFF"
-assert_nofile "wrong repo: no review marker seeded" "$(head_state sid-r2)"
 
 # ---------------------------------------------------------------------------
 echo "test: no handoff present stays silent"
 init_repo
-out=$(run_resume sid-r3)
+out=$(run_resume clear sid-r5)
 assert_empty "no handoff: silent" "$out"
-
-# ---------------------------------------------------------------------------
-echo "test: resume overwrites an already-seeded marker (order-independent vs review.sh)"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
-commit_file src/a.py "a = 1"                                   # HEAD now != base
-printf '{"reviewed":"%s"}' "$(g rev-parse HEAD)" >"$(head_state sid-r4)"  # as if review.sh seeded first
-make_handoff "$top" "$base" "main" ""
-run_resume sid-r4 >/dev/null
-assert_equals "marker overwritten back to the baseline" "$(read_field "$(head_state sid-r4)" reviewed)" "$base"
-
-# ---------------------------------------------------------------------------
-echo "test: resume clears an armed review deferral (checkpoint done)"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
-( cd "$PROJECT_DIR" && HOME="$GLOBAL_HOME" bash "$CKPT" arm >/dev/null )
-assert_file "deferral armed before resume" "$(plan_state_file)"
-make_handoff "$top" "$base" "main" ""
-run_resume sid-r5 >/dev/null
-assert_nofile "resume cleared the deferral" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: a handoff without a plan path uses the no-plan phrasing"
@@ -190,7 +201,7 @@ init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "main" ""
-out=$(run_resume sid-r6)
+out=$(run_resume clear sid-r6)
 assert_contains "uses the no-plan resume phrasing" "$out" "continue the prior in-progress work"
 
 # ---------------------------------------------------------------------------
@@ -199,41 +210,18 @@ init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "main" "$PLAN" "Finished step 1; next is step 2; mind the migration."
-out=$(run_resume sid-r7)
+out=$(run_resume compact sid-r7)
 assert_contains "surfaces the prose summary" "$out" "next is step 2"
 
 # ---------------------------------------------------------------------------
-echo "test: an armed handoff (Stop path) promises the batched once-after-resume review"
+echo "test: resume does not touch a my-code-review deferral (decoupled)"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-make_handoff "$top" "$base" "main" "$PLAN" "" "1"
-out=$(run_resume sid-armed)
-assert_contains "armed handoff promises the batched review" "$out" "run once over everything"
-
-# ---------------------------------------------------------------------------
-echo "test: an unarmed handoff (plan-gate path) makes no batched-review promise"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
+printf '{"defer_review":true,"armed_at":0}' >"$(plan_state_file)"   # a live deferral
 make_handoff "$top" "$base" "main" "$PLAN"
-out=$(run_resume sid-unarmed)
-assert_not_contains "unarmed handoff: no batched-review promise" "$out" "run once over everything"
-assert_contains "unarmed handoff: plain re-enable note" "$out" "Code review has been re-enabled."
-
-# ---------------------------------------------------------------------------
-echo "test: end-to-end — deferred wrap-up commit is reviewed once after resume"
-init_repo
-run_review_ss sid-rt >/dev/null                                # review baseline seeded at base
-base="$(g rev-parse HEAD)"
-( cd "$PROJECT_DIR" && HOME="$GLOBAL_HOME" bash "$CKPT" arm >/dev/null )   # defer during wrap-up
-commit_file src/app.py "print(1)"                              # committed while deferred
-assert_empty "review stays silent during the deferred wrap-up" "$(run_review sid-rt)"
-top="$(g rev-parse --show-toplevel)"
-make_handoff "$top" "$base" "main" ""                          # hand off at the pre-wrap baseline
-run_resume sid-rt-new >/dev/null                               # resume under a fresh session id
-rout=$(run_review sid-rt-new)
-assert_contains "after resume, the wrap-up commit is reviewed" "$rout" "src/app.py"
+run_resume compact sid-r8 >/dev/null
+assert_file "leaves the my-code-review deferral untouched" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
