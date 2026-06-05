@@ -231,9 +231,14 @@ if event == "Stop":
 # --- Active events (UserPromptSubmit / PostToolUse). -------------------------
 # Phase A — plan-start clear gate: one-shot at the first event after an
 # ExitPlanMode accept. Over the gate, HALT the agent and ask for a /clear.
-if not os.path.exists(plangate_path) and plan_accepted(transcript):
-    touch(plangate_path)  # mark observed regardless of action: one gate/session
-    if size is not None and size >= PLANGATE:
+# plan_accepted() detects a *proposed* plan (an ExitPlanMode tool_use) — normally
+# an accept, but like suggest-commit.sh it cannot truly tell accept from reject.
+# Only consume the one-shot once the metric is readable: a transient transcript
+# read miss (size is None) must NOT burn the gate, or the plan-start halt would
+# be disabled for the rest of the session.
+if not os.path.exists(plangate_path) and plan_accepted(transcript) and size is not None:
+    touch(plangate_path)  # one gate per session, now that the metric is readable
+    if size >= PLANGATE:
         save_handoff(size)
         kb = size // 1000
         emit({
@@ -254,6 +259,9 @@ if not os.path.exists(plangate_path) and plan_accepted(transcript):
 # Phase B — mid-execution wrap nudge: once per cycle, ask to wrap up + commit.
 # Record HEAD so Phase C can detect that a wrap commit later advanced it.
 if size is not None and size >= NUDGE and not os.path.exists(nudged_path):
+    # A null HEAD (no commits / git failed) records head: null, which Phase C's
+    # `not nudge_head` guard treats as "no wrap detectable" -> Phase C stays off
+    # this cycle. Acceptable: we never falsely fire the /compact prompt.
     touch(nudged_path, {"head": git("rev-parse", "HEAD")})
     kb = size // 1000
     emit({

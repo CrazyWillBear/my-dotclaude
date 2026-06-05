@@ -225,6 +225,23 @@ assert_nofile "no handoff under the gate threshold" "$HANDOFF"
 assert_file "still records the gate sentinel (one-shot)" "$(plangate_path sid-gate-under)"
 
 # ---------------------------------------------------------------------------
+echo "test: Phase A — an unreadable metric at plan accept defers the gate (does not burn it)"
+init_repo
+# A plan-accept transcript whose entries carry NO usage -> context_tokens() is
+# None while plan_accepted() is True. The gate must NOT consume its one-shot,
+# so a later readable+large event can still fire the /clear halt.
+python3 - "$WORK/gate-nosize.jsonl" <<'PY'
+import sys, json
+with open(sys.argv[1], "w") as fh:
+    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
+        "content": [{"type": "tool_use", "name": "ExitPlanMode", "input": {}}]}}) + "\n")
+PY
+out=$(run_watchdog UserPromptSubmit sid-gate-nosize "$WORK/gate-nosize.jsonl")
+assert_empty "unreadable metric at plan accept: silent" "$out"
+assert_nofile "does NOT burn the gate one-shot when the metric is unreadable" "$(plangate_path sid-gate-nosize)"
+assert_nofile "no handoff when the metric is unreadable" "$HANDOFF"
+
+# ---------------------------------------------------------------------------
 echo "test: Phase C — clean tree + wrap commit after the nudge prompts /compact"
 init_repo
 make_transcript "$WORK/cycle.jsonl" 200000

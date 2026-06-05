@@ -71,6 +71,8 @@ if not toplevel or toplevel != ho.get("git_toplevel"):
 # back over the nudge threshold can drive a second wrap -> /compact cycle. (If
 # /compact keeps the same session_id these clear the live sentinels; if it mints
 # a new one the new session simply has none — either way the cycle can repeat.)
+# The plangate sentinel is intentionally NOT reset here: Phase A is once per
+# session (one plan start), and it does not recur within a long execution.
 if source == "compact":
     session_id = str(data.get("session_id") or "default")
     skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
