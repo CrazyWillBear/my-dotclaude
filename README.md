@@ -15,6 +15,9 @@ tuned for either a developer or a non-coder.
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
   subagents (`/explain` for a whole-codebase overview, `/explain-dir` for one directory,
   `/commit` to review-and-commit the current changes).
+- **`context-flow`** plugin (`plugins/context-flow/`) — a context watchdog that drives
+  deliberate, early `/clear` and `/compact` as the window fills, and auto-resumes the
+  in-flight plan around each command (plus an on-demand `/handoff`).
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
@@ -131,11 +134,35 @@ they're independent concerns. Because the batch may already be committed by the 
 reviewer runs, the `code-reviewer` reads `git diff HEAD` when the tree is dirty and falls
 back to `git show HEAD` when it's clean.
 
+## Keeping context fresh (context-flow)
+
+The `context-flow` plugin (`plugins/context-flow/`) manages the context window with
+deliberate, **early** `/clear` and `/compact` instead of waiting for Claude Code's
+near-the-limit auto-compact. No hook or agent can type a slash command, so the watchdog
+halts the agent and tells you the one command to type, then handles everything around it.
+Three steps over a long plan:
+
+1. **Plan start (`/clear`).** When you approve a plan and the window is already large
+   (≥ 60k tokens), the watchdog saves a handoff and halts *before* any code is written:
+   run `/clear`, then send `go`. The plan re-injects into fresh context.
+2. **Mid-plan wrap (commit).** Once the window crosses ~160k, it nudges you to wrap up at
+   a natural breaking point and commit — the code review runs normally on that wrap-up
+   commit (context-flow no longer defers it).
+3. **After review (`/compact`).** On the next clean stop after the wrap commit, it prompts
+   you to run `/compact` (once the review and any fixes are in), then send `continue`. The
+   plan re-injects into the compacted thread, and a later climb back over the threshold
+   repeats the wrap → `/compact` cycle.
+
+Thresholds are env-overridable (`CONTEXT_FLOW_PLANGATE_TOKENS`,
+`CONTEXT_FLOW_NUDGE_TOKENS`). `/handoff` is the manual version of the same handoff — wrap
+up now and attach a prose summary the resumed session reads. As with the review hook, it
+fails open: missing `python3`/`git` or any error just means it does nothing.
+
 ## Layout
 
 ```
 my-dotclaude/
-├── .claude-plugin/marketplace.json  # lists my-code-review + personal-tools
+├── .claude-plugin/marketplace.json  # lists my-code-review + personal-tools + context-flow
 ├── plugins/
 │   ├── my-code-review/            # the auto-review plugin (a plugin)
 │   │   ├── .claude-plugin/plugin.json
@@ -146,6 +173,12 @@ my-dotclaude/
 │   │   ├── skills/review-rubric/SKILL.md  # the shared, tunable rubric (source of truth)
 │   │   ├── commands/review.md       # on-demand /review command
 │   │   └── tests/                   # hook + history tests
+│   ├── context-flow/              # the context watchdog (early /clear + /compact, plan auto-resume)
+│   │   ├── scripts/watchdog.sh      # thresholds: plan-start /clear gate, wrap nudge, post-wrap /compact prompt
+│   │   ├── scripts/resume.sh        # SessionStart: re-injects the plan after /clear or /compact
+│   │   ├── scripts/save-handoff.sh  # shared handoff writer (also used by /handoff)
+│   │   ├── skills/handoff/SKILL.md  # on-demand /handoff with a prose summary
+│   │   └── tests/                   # watchdog + resume tests
 │   └── personal-tools/             # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
 ├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)
 ├── templates/simple/CLAUDE.md       # plain-English global CLAUDE.md (installed by setup-simple)
