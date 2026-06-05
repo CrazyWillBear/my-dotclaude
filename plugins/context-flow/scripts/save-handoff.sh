@@ -4,7 +4,8 @@
 #
 # Single source of the ~/.claude/.pending-handoff JSON schema that resume.sh
 # reads. Used by the watchdog's Phase-A plan-start gate and Phase-C post-wrap
-# compact prompt, so the schema lives in exactly one place.
+# compact prompt, and by the PreCompact hook (which calls it with NO args before
+# every compaction), so the schema lives in exactly one place.
 #
 #   save-handoff.sh [--session ID] [--size N]
 #
@@ -76,6 +77,13 @@ obj = {
     "context_tokens": size or None,
     "ts":             int(time.time()),
 }
+
+# Outside a git repo there is nothing to resume — git_toplevel is null and
+# resume.sh's repo guard would reject the handoff anyway. Skip writing so a
+# PreCompact firing in a non-repo dir leaves no junk handoff for a later session
+# to spuriously consume.
+if not obj.get("git_toplevel"):
+    sys.exit(0)
 
 path = os.path.expanduser("~/.claude/.pending-handoff")
 try:

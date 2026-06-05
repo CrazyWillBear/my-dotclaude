@@ -83,6 +83,15 @@ run_resume() {
             bash "$RESUME"
 }
 
+# run_save_handoff <project_dir> — run the shared writer the way the PreCompact
+# hook does: no stdin, no args. It derives plan/branch/toplevel from git + the
+# ~/.claude/plans dir under $GLOBAL_HOME.
+SAVE="$PLUGIN_ROOT/scripts/save-handoff.sh"
+run_save_handoff() {
+    HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+        bash "$SAVE"
+}
+
 # make_transcript <file> <total> — last assistant entry sums to <total> tokens.
 make_transcript() {
     python3 - "$1" "$2" <<'PY'
@@ -229,6 +238,44 @@ printf '{"defer_review":true,"armed_at":0}' >"$(plan_state_file)"   # a live def
 make_handoff "$top" "$base" "main" "$PLAN"
 run_resume compact sid-r8 >/dev/null
 assert_file "leaves the my-code-review deferral untouched" "$(plan_state_file)"
+
+# ---------------------------------------------------------------------------
+echo "test: a PreCompact-written handoff makes a manual /compact re-inject the plan + re-arm"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+: >"$(nudged_path sid-pc)"             # Phase B already fired this session
+: >"$(compacted_path sid-pc)"
+run_save_handoff "$PROJECT_DIR"        # simulate the PreCompact hook (no args)
+assert_file "PreCompact writes a handoff" "$HANDOFF"
+assert_equals "handoff records this repo" "$(read_field "$HANDOFF" git_toplevel)" "$top"
+assert_contains "handoff records the active plan" "$(read_field "$HANDOFF" plan_path)" "active.md"
+out=$(run_resume compact sid-pc)
+assert_contains "manual compact re-injects the plan" "$out" "continue the plan"
+assert_nofile "manual compact clears the handoff" "$HANDOFF"
+assert_nofile "manual compact resets the nudge sentinel" "$(nudged_path sid-pc)"
+assert_nofile "manual compact resets the compacted sentinel" "$(compacted_path sid-pc)"
+
+# ---------------------------------------------------------------------------
+echo "test: a manual /compact with NO handoff still re-arms Phase B (silent reset)"
+init_repo
+: >"$(nudged_path sid-nh)"             # Phase B already fired this session
+: >"$(compacted_path sid-nh)"
+out=$(run_resume compact sid-nh)       # no handoff present
+assert_empty "no handoff: silent" "$out"
+assert_nofile "no-handoff compact resets the nudge sentinel" "$(nudged_path sid-nh)"
+assert_nofile "no-handoff compact resets the compacted sentinel" "$(compacted_path sid-nh)"
+# Proof the reset re-armed the cycle: a fresh >=120k transcript re-nudges.
+make_transcript "$WORK/renudge-nh.jsonl" 200000
+rout=$(run_watchdog UserPromptSubmit sid-nh "$WORK/renudge-nh.jsonl")
+assert_contains "a later climb re-nudges after the no-handoff reset" "$rout" "Context over budget"
+
+# ---------------------------------------------------------------------------
+echo "test: save-handoff in a non-git dir writes no handoff (PreCompact junk guard)"
+init_repo
+NONREPO="$WORK/nonrepo"
+mkdir -p "$NONREPO"
+run_save_handoff "$NONREPO"
+assert_nofile "no handoff is written outside a git repo" "$HANDOFF"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

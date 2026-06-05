@@ -155,6 +155,10 @@ Three steps over a long plan:
    plan re-injects into the compacted thread, and a later climb back over the threshold
    repeats the wrap → `/compact` cycle.
 
+**Any `/compact` is safe.** A `PreCompact` hook writes a handoff before *every* compaction
+— a manual `/compact` you run yourself or Claude Code's auto-compact, not just the
+context-flow-prompted one — so the plan re-injects and the wrap cycle re-arms either way.
+
 A separate **docs-staleness** Stop hook (`scripts/suggest-docs.sh`) gives a soft nudge when
 a batch changed code but touched no docs (`*.md`), so usage/behavior docs get folded into
 the same commit. It's advisory, deduped once per `HEAD`, and silent the moment any `.md` is

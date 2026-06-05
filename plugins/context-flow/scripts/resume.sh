@@ -4,27 +4,39 @@
 #
 # The other half of the handoff loop. When the watchdog gates a plan start
 # (Phase A) or prompts a post-wrap compact (Phase C), it writes
-# ~/.claude/.pending-handoff and tells the user to run /clear or /compact. Both
-# of those fire SessionStart (source=clear / source=compact). This hook reads the
-# handoff and, if we are in the same repo it came from, re-injects the plan so the
-# user only ever has to type the one command plus a kickoff word:
+# ~/.claude/.pending-handoff and tells the user to run /clear or /compact. A
+# PreCompact hook also writes a handoff before EVERY compaction (a manual /compact
+# or a harness auto-compact), so a user-initiated or harness compact re-injects the
+# plan too — not only context-flow-driven ones. All of those fire SessionStart
+# (source=clear / source=compact). This hook reads the handoff and, if we are in
+# the same repo it came from, re-injects the plan so the user only ever has to type
+# the one command plus a kickoff word:
 #
 #   * source=clear   (Phase A) -> "implement the plan @path" wording. Fresh
 #     context, so the agent starts the plan from the committed baseline.
 #   * source=compact (Phase C) -> "continue the plan @path" wording.
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
 #
-# On BOTH clear and compact we also reset this session's Phase-B/C wrap sentinels,
-# so a later climb back over the nudge threshold can drive another wrap -> /compact
-# cycle in the same long session. (On /clear with a new session_id this is a
-# harmless no-op against a fresh namespace; on a same-id resume it re-arms the
-# cycle.) The Phase-A plangate sentinel is left alone — it is keyed by the last-
-# gated plan id and re-fires on a new plan without a reset.
+# On ANY clear or compact we reset this session's Phase-B/C wrap sentinels FIRST —
+# before the handoff lookup and repo guard below — so a later climb back over the
+# nudge threshold can drive another wrap -> /compact cycle. This runs even when no
+# context-flow handoff exists (a manual /compact or a harness auto-compact writes
+# none), which is exactly the case where the old handoff-gated reset was
+# unreachable. (On /clear with a new session_id this is a harmless no-op against a
+# fresh namespace; on a same-id resume it re-arms the cycle.) The Phase-A plangate
+# sentinel is left alone — keyed by the last-gated plan id, it re-fires on a new
+# plan without a reset.
 #
 # Fail open: any error exits 0. If we are NOT in the handoff's repo, leave the
 # handoff untouched and stay silent, so a launch in another project never steals
 # or drops it. context-flow no longer touches my-code-review state — the reviewer
 # is never deferred now, so my-code-review's own SessionStart seeding suffices.
+#
+# Caveat: the handoff is one global file, and PreCompact now writes it before EVERY
+# compaction, so across concurrent repos it is last-writer-wins — a /compact in
+# repo B overwrites an unconsumed handoff from repo A. Acceptable: B's handoff is
+# correct for B, and a dropped cross-repo handoff costs at most one plan
+# re-injection (the repo guard still prevents B from consuming A's plan).
 
 export HOOK_INPUT="$(cat)"
 
@@ -40,6 +52,25 @@ try:
 except Exception:
     sys.exit(0)
 
+source = data.get("source") or ""
+
+# Reset this session's Phase-B/C wrap sentinels on ANY compact/clear, independent
+# of whether a context-flow handoff exists. A manual /compact or a harness
+# auto-compact writes no handoff, so the old reset (which lived after the handoff
+# early-return) never ran for them and Phase B stayed silent for the rest of the
+# session. Keyed by session_id; writes no stdout, so the no-handoff / wrong-repo
+# silence contracts below are preserved. The plangate sentinel is intentionally
+# left alone — Phase A re-fires on a genuinely new plan id on its own, and
+# resetting it would refire on the same plan right after a compact/clear.
+if source in ("compact", "clear"):
+    session_id = str(data.get("session_id") or "default")
+    skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
+    for prefix in ("context-flow-nudged-", "context-flow-compacted-"):
+        try:
+            os.remove(os.path.join(tempfile.gettempdir(), prefix + skey + ".json"))
+        except Exception:
+            pass
+
 handoff_path = os.path.expanduser("~/.claude/.pending-handoff")
 if not os.path.isfile(handoff_path):
     sys.exit(0)
@@ -52,7 +83,6 @@ if not isinstance(ho, dict):
     sys.exit(0)
 
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-source = data.get("source") or ""
 
 
 def git(*args):
@@ -71,23 +101,6 @@ def git(*args):
 toplevel = git("rev-parse", "--show-toplevel")
 if not toplevel or toplevel != ho.get("git_toplevel"):
     sys.exit(0)
-
-# On a /compact OR /clear resume, reset this session's Phase-B/C sentinels so a
-# later climb back over the nudge threshold can drive another wrap -> /compact
-# cycle. (If the resume keeps the same session_id these clear the live sentinels;
-# if it mints a new one the new session simply has none — either way the cycle can
-# repeat.) The plangate sentinel is intentionally NOT reset here: Phase A is keyed
-# by the last-gated ExitPlanMode tool_use id, so it re-fires on a genuinely new
-# plan on its own and resetting it would refire on the same plan right after a
-# compact/clear.
-if source in ("compact", "clear"):
-    session_id = str(data.get("session_id") or "default")
-    skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-    for prefix in ("context-flow-nudged-", "context-flow-compacted-"):
-        try:
-            os.remove(os.path.join(tempfile.gettempdir(), prefix + skey + ".json"))
-        except Exception:
-            pass
 
 # Clear the handoff so we resume exactly once.
 try:
