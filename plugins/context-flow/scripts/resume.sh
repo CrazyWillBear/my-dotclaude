@@ -11,10 +11,15 @@
 #
 #   * source=clear   (Phase A) -> "implement the plan @path" wording. Fresh
 #     context, so the agent starts the plan from the committed baseline.
-#   * source=compact (Phase C) -> "continue the plan @path" wording, AND reset the
-#     Phase-B/C sentinels for this session so a later climb back over the nudge
-#     threshold can drive a SECOND wrap -> /compact cycle in the same long session.
+#   * source=compact (Phase C) -> "continue the plan @path" wording.
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
+#
+# On BOTH clear and compact we also reset this session's Phase-B/C wrap sentinels,
+# so a later climb back over the nudge threshold can drive another wrap -> /compact
+# cycle in the same long session. (On /clear with a new session_id this is a
+# harmless no-op against a fresh namespace; on a same-id resume it re-arms the
+# cycle.) The Phase-A plangate sentinel is left alone — it is keyed by the last-
+# gated plan id and re-fires on a new plan without a reset.
 #
 # Fail open: any error exits 0. If we are NOT in the handoff's repo, leave the
 # handoff untouched and stay silent, so a launch in another project never steals
@@ -67,13 +72,15 @@ toplevel = git("rev-parse", "--show-toplevel")
 if not toplevel or toplevel != ho.get("git_toplevel"):
     sys.exit(0)
 
-# On a /compact resume, reset this session's Phase-B/C sentinels so a later climb
-# back over the nudge threshold can drive a second wrap -> /compact cycle. (If
-# /compact keeps the same session_id these clear the live sentinels; if it mints
-# a new one the new session simply has none — either way the cycle can repeat.)
-# The plangate sentinel is intentionally NOT reset here: Phase A is once per
-# session (one plan start), and it does not recur within a long execution.
-if source == "compact":
+# On a /compact OR /clear resume, reset this session's Phase-B/C sentinels so a
+# later climb back over the nudge threshold can drive another wrap -> /compact
+# cycle. (If the resume keeps the same session_id these clear the live sentinels;
+# if it mints a new one the new session simply has none — either way the cycle can
+# repeat.) The plangate sentinel is intentionally NOT reset here: Phase A is keyed
+# by the last-gated ExitPlanMode tool_use id, so it re-fires on a genuinely new
+# plan on its own and resetting it would refire on the same plan right after a
+# compact/clear.
+if source in ("compact", "clear"):
     session_id = str(data.get("session_id") or "default")
     skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
     for prefix in ("context-flow-nudged-", "context-flow-compacted-"):

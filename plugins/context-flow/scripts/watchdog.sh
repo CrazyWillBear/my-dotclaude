@@ -9,14 +9,16 @@
 # /clear or /compact itself; they are user-typed REPL input only.) Three phases:
 #
 #   * Phase A — plan-start clear gate (active events, on an ExitPlanMode accept,
-#     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): one-shot per session. Save a
-#     handoff and tell the agent "do NOT implement yet; run /clear, then send
-#     `go`". On PostToolUse this is an enforced decision:"block"; on
-#     UserPromptSubmit it is the same instruction as advisory
-#     hookSpecificOutput.additionalContext (not an enforced stop) — a block there
-#     would discard the user's typed prompt. resume.sh re-injects after the /clear.
+#     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): fires once per new plan
+#     accept, keyed by the ExitPlanMode tool_use id (re-fires on a genuinely new
+#     plan, even across compact/clear, without a sentinel reset). Save a handoff
+#     and tell the agent "do NOT implement yet; run /clear, then send `go`". On
+#     PostToolUse this is an enforced decision:"block"; on UserPromptSubmit it is
+#     the same instruction as advisory hookSpecificOutput.additionalContext (not
+#     an enforced stop) — a block there would discard the user's typed prompt.
+#     resume.sh re-injects after the /clear.
 #   * Phase B — mid-execution wrap nudge (active events, >= CONTEXT_FLOW_NUDGE_
-#     TOKENS, default 160k): once per cycle, ask the agent to wrap up at a natural
+#     TOKENS, default 120k): once per cycle, ask the agent to wrap up at a natural
 #     breaking point and commit. Records HEAD so Phase C can tell a wrap landed.
 #     Does NOT touch code review — the reviewer runs normally on the wrap commit.
 #   * Phase C — post-wrap compact prompt (Stop, the next clean stop after the
@@ -56,14 +58,14 @@ try:
 except Exception:
     sys.exit(0)
 
-# Thresholds (env-overridable). Defaults: nudge at 160k, plan-accept gate at 60k.
+# Thresholds (env-overridable). Defaults: nudge at 120k, plan-accept gate at 60k.
 def _int_env(name, default):
     try:
         return int(os.environ.get(name) or default)
     except Exception:
         return default
 
-NUDGE    = _int_env("CONTEXT_FLOW_NUDGE_TOKENS", 160000)
+NUDGE    = _int_env("CONTEXT_FLOW_NUDGE_TOKENS", 120000)
 PLANGATE = _int_env("CONTEXT_FLOW_PLANGATE_TOKENS", 60000)
 
 event       = data.get("hook_event_name", "")
@@ -114,11 +116,17 @@ def context_tokens(path):
         return None
 
 
-def plan_accepted(path):
-    # True if an ExitPlanMode tool_use appears anywhere in the transcript
-    # (mirrors suggest-commit.sh's detection).
+def last_plan_id(path):
+    # Return the id of the MOST RECENT ExitPlanMode tool_use in the transcript,
+    # or None if there is none. Keying the Phase-A dedupe on this id (instead of
+    # session-existence) lets the gate re-fire on each genuinely new plan: a new
+    # plan always carries a fresh unique id, while an old retained one matches the
+    # last-gated id and stays silent. Survives transcript truncation, needs no
+    # resume.sh reset. Defensive fallback: a block with no id degrades to the
+    # constant "noid" -> old one-shot-per-session behaviour, which is safe.
     if not path or not os.path.isfile(path):
-        return False
+        return None
+    found = None
     try:
         with open(path, "r", errors="ignore") as fh:
             for line in fh:
@@ -139,10 +147,10 @@ def plan_accepted(path):
                     if (isinstance(block, dict)
                             and block.get("type") == "tool_use"
                             and block.get("name") == "ExitPlanMode"):
-                        return True
+                        found = block.get("id") or "noid"
     except Exception:
-        return False
-    return False
+        return None
+    return found
 
 
 def touch(path, extra=None):
@@ -232,15 +240,21 @@ if event == "Stop":
           "plan and keep going in compacted context."})
 
 # --- Active events (UserPromptSubmit / PostToolUse). -------------------------
-# Phase A — plan-start clear gate: one-shot at the first event after an
-# ExitPlanMode accept. Over the gate, HALT the agent and ask for a /clear.
-# plan_accepted() detects a *proposed* plan (an ExitPlanMode tool_use) — normally
-# an accept, but like suggest-commit.sh it cannot truly tell accept from reject.
-# Only consume the one-shot once the metric is readable: a transient transcript
-# read miss (size is None) must NOT burn the gate, or the plan-start halt would
-# be disabled for the rest of the session.
-if not os.path.exists(plangate_path) and plan_accepted(transcript) and size is not None:
-    touch(plangate_path)  # one gate per session, now that the metric is readable
+# Phase A — plan-start clear gate: fires once per NEW plan accept, keyed by the
+# id of the most recent ExitPlanMode tool_use. Over the gate, HALT the agent and
+# ask for a /clear. last_plan_id() detects a *proposed* plan (an ExitPlanMode
+# tool_use) — normally an accept, but like suggest-commit.sh it cannot truly tell
+# accept from reject. We re-fire only when the current plan id differs from the
+# last-gated one: a 2nd/3rd plan in a long session (or after compact/clear) brings
+# a fresh id and re-gates, while a retained old id matches and stays silent — so
+# no resume.sh reset is needed and no post-compact false fire occurs. Only advance
+# the gate once the metric is readable: a transient transcript read miss (size is
+# None) must NOT burn the gate, or the plan-start halt would be disabled until the
+# next new plan.
+gated_id = read_json(plangate_path).get("plan_id")
+current_id = last_plan_id(transcript)
+if current_id and current_id != gated_id and size is not None:
+    touch(plangate_path, {"plan_id": current_id})  # advance only when readable
     if size >= PLANGATE:
         save_handoff(size)
         kb = size // 1000

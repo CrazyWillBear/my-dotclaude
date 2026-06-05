@@ -96,16 +96,16 @@ with open(path, "w") as fh:
 PY
 }
 
-# make_plan_transcript <file> <total>  — like make_transcript but with an
-# ExitPlanMode tool_use early on, so plan_accepted() fires while the last entry
-# still carries <total> tokens.
+# make_plan_transcript <file> <total> [plan_id]  — like make_transcript but with
+# an ExitPlanMode tool_use early on (carrying id <plan_id>, default "p1"), so
+# last_plan_id() returns that id while the last entry still carries <total> tokens.
 make_plan_transcript() {
-    python3 - "$1" "$2" <<'PY'
+    python3 - "$1" "$2" "${3:-p1}" <<'PY'
 import sys, json
-path, total = sys.argv[1], int(sys.argv[2])
+path, total, pid = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 rows = [
     {"type": "assistant", "message": {"role": "assistant",
-        "content": [{"type": "tool_use", "name": "ExitPlanMode", "input": {}}],
+        "content": [{"type": "tool_use", "name": "ExitPlanMode", "id": pid, "input": {}}],
         "usage": {"input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}},
     {"type": "assistant", "message": {"role": "assistant", "usage": {
         "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
@@ -204,6 +204,13 @@ out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-env","tran
 assert_contains "a lowered threshold trips on a small transcript" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
+echo "test: Phase B — the default nudge threshold is 120k (no env override)"
+init_repo
+make_transcript "$WORK/default120.jsonl" 130000
+out=$(run_watchdog UserPromptSubmit sid-default120 "$WORK/default120.jsonl")
+assert_contains "130k over the 120k default nudges" "$out" "Context over budget"
+
+# ---------------------------------------------------------------------------
 echo "test: Phase A — on PostToolUse the plan-accept gate halts with a block decision"
 init_repo
 make_plan_transcript "$WORK/gate.jsonl" 70000
@@ -257,6 +264,22 @@ out=$(run_watchdog UserPromptSubmit sid-gate-nosize "$WORK/gate-nosize.jsonl")
 assert_empty "unreadable metric at plan accept: silent" "$out"
 assert_nofile "does NOT burn the gate one-shot when the metric is unreadable" "$(plangate_path sid-gate-nosize)"
 assert_nofile "no handoff when the metric is unreadable" "$HANDOFF"
+
+# ---------------------------------------------------------------------------
+echo "test: Phase A — the clear gate re-fires per new plan, deduped by plan id"
+init_repo
+make_plan_transcript "$WORK/refire-p1.jsonl" 70000 p1
+out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p1.jsonl")
+assert_contains "first plan (p1) over the gate fires" "$out" '"decision": "block"'
+assert_equals "stores the gated plan id" "$(read_field "$(plangate_path sid-refire)" plan_id)" "p1"
+# Same transcript (same plan id) again -> already gated -> silent.
+out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p1.jsonl")
+assert_empty "same plan id again stays silent (id dedupe)" "$out"
+# A new plan (later ExitPlanMode id p2) in the SAME session re-fires the gate.
+make_plan_transcript "$WORK/refire-p2.jsonl" 70000 p2
+out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p2.jsonl")
+assert_contains "a new plan id (p2) re-fires the gate" "$out" '"decision": "block"'
+assert_equals "advances the gated plan id to p2" "$(read_field "$(plangate_path sid-refire)" plan_id)" "p2"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase C — clean tree + wrap commit after the nudge prompts /compact"

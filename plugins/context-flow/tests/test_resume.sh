@@ -164,10 +164,28 @@ assert_contains "uses the continue wording" "$out" "continue the plan"
 assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
 assert_nofile "resets the compacted sentinel" "$(compacted_path sid-r2)"
 assert_nofile "clears the handoff" "$HANDOFF"
-# Proof the reset re-arms the cycle: a fresh >=160k transcript re-nudges.
+# Proof the reset re-arms the cycle: a fresh >=120k transcript re-nudges.
 make_transcript "$WORK/renudge.jsonl" 200000
 rout=$(run_watchdog UserPromptSubmit sid-r2 "$WORK/renudge.jsonl")
 assert_contains "a later climb re-nudges after the reset" "$rout" "Context over budget"
+
+# ---------------------------------------------------------------------------
+echo "test: source=clear also resets Phase-B/C sentinels (re-arms the wrap cycle)"
+init_repo
+top="$(g rev-parse --show-toplevel)"
+base="$(g rev-parse HEAD)"
+: >"$(nudged_path sid-r2c)"            # pretend Phase B/C already fired this session
+: >"$(compacted_path sid-r2c)"
+make_handoff "$top" "$base" "main" "$PLAN"
+out=$(run_resume clear sid-r2c)
+assert_contains "uses the implement wording" "$out" "implement the plan"
+assert_nofile "clear resets the nudge sentinel" "$(nudged_path sid-r2c)"
+assert_nofile "clear resets the compacted sentinel" "$(compacted_path sid-r2c)"
+assert_nofile "clears the handoff" "$HANDOFF"
+# Proof the reset re-arms the cycle: a fresh >=120k transcript re-nudges.
+make_transcript "$WORK/renudge-clear.jsonl" 130000
+rout=$(run_watchdog UserPromptSubmit sid-r2c "$WORK/renudge-clear.jsonl")
+assert_contains "a later climb re-nudges after the clear reset" "$rout" "Context over budget"
 
 # ---------------------------------------------------------------------------
 echo "test: an unknown source falls back to the 'continue' wording"

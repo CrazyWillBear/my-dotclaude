@@ -144,8 +144,10 @@ Three steps over a long plan:
 
 1. **Plan start (`/clear`).** When you approve a plan and the window is already large
    (≥ 60k tokens), the watchdog saves a handoff and halts *before* any code is written:
-   run `/clear`, then send `go`. The plan re-injects into fresh context.
-2. **Mid-plan wrap (commit).** Once the window crosses ~160k, it nudges you to wrap up at
+   run `/clear`, then send `go`. The plan re-injects into fresh context. The gate is keyed
+   by the plan's `ExitPlanMode` id, so it re-fires for each *new* plan you approve later in
+   the same session (and across `/clear` / `/compact`), not just the first.
+2. **Mid-plan wrap (commit).** Once the window crosses ~120k, it nudges you to wrap up at
    a natural breaking point and commit — the code review runs normally on that wrap-up
    commit (context-flow no longer defers it).
 3. **After review (`/compact`).** On the next clean stop after the wrap commit, it prompts
@@ -153,8 +155,14 @@ Three steps over a long plan:
    plan re-injects into the compacted thread, and a later climb back over the threshold
    repeats the wrap → `/compact` cycle.
 
+A separate **docs-staleness** Stop hook (`scripts/suggest-docs.sh`) gives a soft nudge when
+a batch changed code but touched no docs (`*.md`), so usage/behavior docs get folded into
+the same commit. It's advisory, deduped once per `HEAD`, and silent the moment any `.md` is
+in the batch.
+
 Thresholds are env-overridable (`CONTEXT_FLOW_PLANGATE_TOKENS`,
-`CONTEXT_FLOW_NUDGE_TOKENS`). As with the review hook, it
+`CONTEXT_FLOW_NUDGE_TOKENS`; the docs nudge takes optional `DOCS_FILE_THRESHOLD` /
+`DOCS_LINE_THRESHOLD`, off by default). As with the review hook, it
 fails open: missing `python3`/`git` or any error just means it does nothing.
 
 ## Layout
@@ -175,8 +183,9 @@ my-dotclaude/
 │   ├── context-flow/              # the context watchdog (early /clear + /compact, plan auto-resume)
 │   │   ├── scripts/watchdog.sh      # thresholds: plan-start /clear gate, wrap nudge, post-wrap /compact prompt
 │   │   ├── scripts/resume.sh        # SessionStart: re-injects the plan after /clear or /compact
+│   │   ├── scripts/suggest-docs.sh  # Stop: soft nudge when a batch changed code but no docs
 │   │   ├── scripts/save-handoff.sh  # shared handoff writer
-│   │   └── tests/                   # watchdog + resume tests
+│   │   └── tests/                   # watchdog + resume + suggest-docs tests
 │   └── personal-tools/             # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
 ├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)
 ├── templates/simple/CLAUDE.md       # plain-English global CLAUDE.md (installed by setup-simple)
