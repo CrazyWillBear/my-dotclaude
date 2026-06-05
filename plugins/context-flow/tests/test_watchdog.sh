@@ -8,8 +8,10 @@
 # occupancy from the LAST assistant transcript entry's input-side usage.
 #
 # Covers the three phases of the manual-command flow:
-#   * Phase A — plan-start clear gate: ExitPlanMode accept >= gate -> decision
-#     block + /clear instruction + handoff; under gate -> silent one-shot.
+#   * Phase A — plan-start clear gate: ExitPlanMode accept >= gate -> /clear
+#     instruction + handoff, event-branched (PostToolUse -> enforced decision
+#     block; UserPromptSubmit -> advisory additionalContext, no block, so the
+#     prompt survives); under gate -> silent one-shot.
 #   * Phase B — wrap nudge: >= nudge -> wrap-up nudge, once per cycle, per-event
 #     label, env-overridable; asserts it writes NO my-code-review deferral state.
 #   * Phase C — post-wrap compact prompt (Stop): clean tree + wrap commit after

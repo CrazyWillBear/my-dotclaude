@@ -10,10 +10,11 @@
 #
 #   * Phase A — plan-start clear gate (active events, on an ExitPlanMode accept,
 #     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): one-shot per session. Save a
-#     handoff and HALT the agent with "do NOT implement yet; run /clear, then send
-#     `go`". On PostToolUse this is decision:"block"; on UserPromptSubmit it is the
-#     same halt via hookSpecificOutput.additionalContext — a block there would
-#     discard the user's typed prompt. resume.sh re-injects after the /clear.
+#     handoff and tell the agent "do NOT implement yet; run /clear, then send
+#     `go`". On PostToolUse this is an enforced decision:"block"; on
+#     UserPromptSubmit it is the same instruction as advisory
+#     hookSpecificOutput.additionalContext (not an enforced stop) — a block there
+#     would discard the user's typed prompt. resume.sh re-injects after the /clear.
 #   * Phase B — mid-execution wrap nudge (active events, >= CONTEXT_FLOW_NUDGE_
 #     TOKENS, default 160k): once per cycle, ask the agent to wrap up at a natural
 #     breaking point and commit. Records HEAD so Phase C can tell a wrap landed.
