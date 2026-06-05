@@ -4,15 +4,12 @@
 #
 # Single source of the ~/.claude/.pending-handoff JSON schema that resume.sh
 # reads. Used by the watchdog's Phase-A plan-start gate and Phase-C post-wrap
-# compact prompt, and by the manual /handoff skill, so the schema lives in
-# exactly one place.
+# compact prompt, so the schema lives in exactly one place.
 #
-#   save-handoff.sh [--session ID] [--size N] [--summary TEXT]
+#   save-handoff.sh [--session ID] [--size N]
 #
 #     --session ID   session id; recorded for debugging (informational).
 #     --size N       context-token occupancy to record (informational).
-#     --summary TEXT optional prose summary; resume.sh appends it to the resume
-#                    instruction. The manual /handoff path uses this.
 #
 # Git state is read from CLAUDE_PROJECT_DIR (else cwd). The baseline is simply the
 # current HEAD — prior work is committed before a handoff. context-flow no longer
@@ -21,14 +18,13 @@
 
 set -u
 
-export SH_SESSION="" SH_SIZE="" SH_SUMMARY=""
+export SH_SESSION="" SH_SIZE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         # Value flags guard against a missing/flag-like value so a bare
         # `--session --size 5` cannot swallow `--size` as the session id.
         --session) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SESSION="$2"; shift 2 ;; esac ;;
         --size)    case "${2:-}" in ""|--*) shift 1 ;; *) SH_SIZE="$2";    shift 2 ;; esac ;;
-        --summary) case "${2:-}" in ""|--*) shift 1 ;; *) SH_SUMMARY="$2"; shift 2 ;; esac ;;
         *)         shift ;;
     esac
 done
@@ -56,7 +52,6 @@ def git(*args):
 
 
 session_id = os.environ.get("SH_SESSION") or ""
-summary = os.environ.get("SH_SUMMARY") or ""
 try:
     size = int(os.environ.get("SH_SIZE") or 0)
 except Exception:
@@ -64,7 +59,7 @@ except Exception:
 
 
 def resolve_plan():
-    # Plan being executed: newest *.md in ~/.claude/plans (checkpoint.sh's rule).
+    # Plan being executed: newest *.md in ~/.claude/plans.
     try:
         plans = glob.glob(os.path.join(os.path.expanduser("~/.claude/plans"), "*.md"))
         return max(plans, key=os.path.getmtime) if plans else None
@@ -81,8 +76,6 @@ obj = {
     "context_tokens": size or None,
     "ts":             int(time.time()),
 }
-if summary:
-    obj["summary"] = summary
 
 path = os.path.expanduser("~/.claude/.pending-handoff")
 try:

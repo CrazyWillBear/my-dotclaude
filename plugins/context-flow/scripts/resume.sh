@@ -109,11 +109,6 @@ else:
         + str(branch) + ". It is committed — pick up from the latest commits."
     )
 
-# A manual /handoff can attach a prose summary; surface it for continuity.
-summary = ho.get("summary")
-if summary:
-    add += "\n\nHandoff summary from the prior session:\n" + str(summary)
-
 sys.stdout.write(json.dumps({
     "hookSpecificOutput": {
         "hookEventName": "SessionStart",

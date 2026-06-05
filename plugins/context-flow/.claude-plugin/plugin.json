@@ -9,5 +9,5 @@
   "homepage": "https://github.com/CrazyWillBear/my-dotclaude",
   "repository": "https://github.com/CrazyWillBear/my-dotclaude",
   "license": "MIT",
-  "keywords": ["context", "handoff", "compaction", "session", "hooks"]
+  "keywords": ["context", "compaction", "session", "hooks"]
 }

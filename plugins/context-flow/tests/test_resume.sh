@@ -10,7 +10,7 @@
 # re-nudge), and any other source falls back to "continue".
 #
 # Covers: the clear/compact/startup wording variants; the wrong-repo no-op
-# (handoff preserved); no-handoff silence; the no-plan and summary variants; the
+# (handoff preserved); no-handoff silence; the no-plan variant; the
 # /compact sentinel reset proven by a subsequent re-nudge; and that context-flow
 # no longer touches my-code-review state (it neither seeds the review marker nor
 # clears a deferral).
@@ -63,16 +63,14 @@ init_repo() {
     g commit -q -m base
 }
 
-# make_handoff <toplevel> <baseline> <branch> <plan> [summary]
+# make_handoff <toplevel> <baseline> <branch> <plan>
 make_handoff() {
-    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" "${5:-}" <<'PY'
+    python3 - "$HANDOFF" "$1" "$2" "$3" "$4" <<'PY'
 import sys, json
-path, top, base, branch, plan, summary = sys.argv[1:7]
+path, top, base, branch, plan = sys.argv[1:6]
 obj = {"plan_path": plan or None, "branch": branch, "git_toplevel": top,
        "baseline_head": base, "session_id": "old-sid",
        "context_tokens": 200000, "ts": 0}
-if summary:
-    obj["summary"] = summary
 with open(path, "w") as fh:
     json.dump(obj, fh)
 PY
@@ -203,15 +201,6 @@ base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "main" ""
 out=$(run_resume clear sid-r6)
 assert_contains "uses the no-plan resume phrasing" "$out" "continue the prior in-progress work"
-
-# ---------------------------------------------------------------------------
-echo "test: a manual handoff summary is surfaced to the resumed session"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
-make_handoff "$top" "$base" "main" "$PLAN" "Finished step 1; next is step 2; mind the migration."
-out=$(run_resume compact sid-r7)
-assert_contains "surfaces the prose summary" "$out" "next is step 2"
 
 # ---------------------------------------------------------------------------
 echo "test: resume does not touch a my-code-review deferral (decoupled)"

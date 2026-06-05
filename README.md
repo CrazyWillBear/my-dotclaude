@@ -17,7 +17,7 @@ tuned for either a developer or a non-coder.
   `/commit` to review-and-commit the current changes).
 - **`context-flow`** plugin (`plugins/context-flow/`) — a context watchdog that drives
   deliberate, early `/clear` and `/compact` as the window fills, and auto-resumes the
-  in-flight plan around each command (plus an on-demand `/handoff`).
+  in-flight plan around each command.
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
@@ -154,8 +154,7 @@ Three steps over a long plan:
    repeats the wrap → `/compact` cycle.
 
 Thresholds are env-overridable (`CONTEXT_FLOW_PLANGATE_TOKENS`,
-`CONTEXT_FLOW_NUDGE_TOKENS`). `/handoff` is the manual version of the same handoff — wrap
-up now and attach a prose summary the resumed session reads. As with the review hook, it
+`CONTEXT_FLOW_NUDGE_TOKENS`). As with the review hook, it
 fails open: missing `python3`/`git` or any error just means it does nothing.
 
 ## Layout
@@ -176,8 +175,7 @@ my-dotclaude/
 │   ├── context-flow/              # the context watchdog (early /clear + /compact, plan auto-resume)
 │   │   ├── scripts/watchdog.sh      # thresholds: plan-start /clear gate, wrap nudge, post-wrap /compact prompt
 │   │   ├── scripts/resume.sh        # SessionStart: re-injects the plan after /clear or /compact
-│   │   ├── scripts/save-handoff.sh  # shared handoff writer (also used by /handoff)
-│   │   ├── skills/handoff/SKILL.md  # on-demand /handoff with a prose summary
+│   │   ├── scripts/save-handoff.sh  # shared handoff writer
 │   │   └── tests/                   # watchdog + resume tests
 │   └── personal-tools/             # my personal skills + agents (a second plugin); holds the project-scaffold templates + /init-python-project
 ├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)

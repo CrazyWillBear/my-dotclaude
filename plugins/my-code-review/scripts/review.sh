@@ -31,7 +31,7 @@ command -v git >/dev/null 2>&1 || exit 0
 # Quoted heredoc so literal punctuation/apostrophes in the body can never break
 # shell quoting. HOOK_INPUT travels via the environment, so stdin stays free.
 python3 <<"PY" || exit 0
-import os, json, sys, re, time, tempfile, hashlib, posixpath, subprocess
+import os, json, sys, re, tempfile, hashlib, posixpath, subprocess
 
 raw = os.environ.get("HOOK_INPUT", "")
 try:
@@ -102,34 +102,6 @@ if "reviewed" not in state:
     state["reviewed"] = current_head
     save_state()
     sys.exit(0)
-
-# Deferred review for a checkpointed plan (the /checkpoint command). While a
-# plan is armed we stay silent AND do NOT advance the reviewed marker, so the
-# eventual review covers the whole plan's diff at once instead of per commit.
-# State is the per-repo file written by checkpoint.sh, keyed sha1(git toplevel).
-# A forgotten `checkpoint.sh done` self-heals after TTL_SECONDS: a stale flag is
-# cleared and normal per-commit review resumes, so review can never wedge.
-TTL_SECONDS = 86400  # 24h
-toplevel = git("rev-parse", "--show-toplevel")
-if toplevel:
-    plan_key = hashlib.sha1(toplevel.encode()).hexdigest()[:16]
-    plan_state_path = os.path.join(tempfile.gettempdir(), "my-code-review-plan-" + plan_key + ".json")
-    try:
-        with open(plan_state_path) as fh:
-            plan_state = json.load(fh)
-    except Exception:
-        plan_state = None
-    if isinstance(plan_state, dict) and plan_state.get("defer_review"):
-        try:
-            fresh = (time.time() - float(plan_state.get("armed_at", 0))) < TTL_SECONDS
-        except Exception:
-            fresh = False
-        if fresh:
-            sys.exit(0)  # review deferred to end of plan; marker intentionally frozen
-        try:
-            os.remove(plan_state_path)  # stale: self-heal and review normally
-        except Exception:
-            pass
 
 # Defer to the commit gate while tracked changes are still uncommitted: review
 # only ever runs on a clean tree, so the two stop hooks never block the same

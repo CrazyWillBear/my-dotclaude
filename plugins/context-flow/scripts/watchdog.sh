@@ -33,7 +33,7 @@
 #   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal,
 #     mirroring review.sh's reviewed-HEAD marker.
 #   * The handoff JSON is written by the shared scripts/save-handoff.sh (single
-#     schema writer, also used by the /handoff skill) — we never build it here.
+#     schema writer) — we never build it here.
 
 # Capture the hook JSON into an env var (avoids stdin/quoting headaches in python).
 export HOOK_INPUT="$(cat)"

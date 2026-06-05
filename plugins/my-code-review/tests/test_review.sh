@@ -213,6 +213,25 @@ out=$(run_hook sid-chain true)
 assert_contains "does NOT short-circuit on stop_hook_active" "$out" '"decision": "block"'
 
 # ---------------------------------------------------------------------------
+echo "test: a fresh defer_review plan file no longer suppresses review"
+init_repo
+seed sid-nodefer
+commit_file src/app.py "print(1)"
+# Plant the per-repo defer file the removed /checkpoint command used to write,
+# with a current armed_at so the old 24h TTL would NOT have self-healed it. The
+# defer block is gone, so review must ignore the file and fire normally.
+plan_key=$(python3 - "$(g rev-parse --show-toplevel)" <<'PY'
+import sys, hashlib
+print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16])
+PY
+)
+printf '{"defer_review":true,"armed_at":%s}' "$(date +%s)" \
+    >"$TMPDIR/my-code-review-plan-$plan_key.json"
+out=$(run_hook sid-nodefer)
+assert_contains "stale defer flag is ignored; review still fires" "$out" '"decision": "block"'
+assert_contains "stale defer flag: still lists the committed file" "$out" "src/app.py"
+
+# ---------------------------------------------------------------------------
 echo "test: reviews every commit in a multi-commit reviewed..HEAD range"
 init_repo
 seed sid-multi
