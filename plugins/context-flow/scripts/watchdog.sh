@@ -10,8 +10,10 @@
 #
 #   * Phase A — plan-start clear gate (active events, on an ExitPlanMode accept,
 #     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): one-shot per session. Save a
-#     handoff and HALT the agent (decision: block) with "do NOT implement yet;
-#     run /clear, then send `go`". resume.sh re-injects the plan after the /clear.
+#     handoff and HALT the agent with "do NOT implement yet; run /clear, then send
+#     `go`". On PostToolUse this is decision:"block"; on UserPromptSubmit it is the
+#     same halt via hookSpecificOutput.additionalContext — a block there would
+#     discard the user's typed prompt. resume.sh re-injects after the /clear.
 #   * Phase B — mid-execution wrap nudge (active events, >= CONTEXT_FLOW_NUDGE_
 #     TOKENS, default 160k): once per cycle, ask the agent to wrap up at a natural
 #     breaking point and commit. Records HEAD so Phase C can tell a wrap landed.
@@ -241,20 +243,42 @@ if not os.path.exists(plangate_path) and plan_accepted(transcript) and size is n
     if size >= PLANGATE:
         save_handoff(size)
         kb = size // 1000
-        emit({
-            "decision": "block",
-            "reason":
-                "A plan was just approved, but the context window is already "
-                "~%dk tokens — too full to execute the plan cleanly. Do NOT begin "
-                "implementing. Tell the user to run `/clear`, then send `go`: "
-                "context-flow saved a handoff and will re-inject the plan into the "
-                "fresh session automatically, so no work is lost. Only continue "
-                "without clearing if the user explicitly insists." % kb,
-            "systemMessage":
-                "context-flow: context already ~%dk tokens at plan start. Run "
-                "`/clear`, then send `go` — the plan will auto-resume in fresh "
-                "context." % kb,
-        })
+        halt_instruction = (
+            "A plan was just approved, but the context window is already "
+            "~%dk tokens — too full to execute the plan cleanly. Do NOT begin "
+            "implementing. Tell the user to run `/clear`, then send `go`: "
+            "context-flow saved a handoff and will re-inject the plan into the "
+            "fresh session automatically, so no work is lost. Only continue "
+            "without clearing if the user explicitly insists." % kb
+        )
+        halt_message = (
+            "context-flow: context already ~%dk tokens at plan start. Run "
+            "`/clear`, then send `go` — the plan will auto-resume in fresh "
+            "context." % kb
+        )
+        # The watchdog is wired on both UserPromptSubmit and PostToolUse, so the
+        # plan-accept gate can fire on either. Branch the emit by event:
+        if event == "UserPromptSubmit":
+            # On UserPromptSubmit, decision:"block" DISCARDS the user's typed
+            # message and surfaces only `reason` — so typing `go` right after a
+            # plan would be silently eaten. Inject the same halt as
+            # additionalContext instead: it lands as context without discarding
+            # the prompt.
+            emit({
+                "systemMessage": halt_message,
+                "hookSpecificOutput": {
+                    "hookEventName": event,
+                    "additionalContext": halt_instruction,
+                },
+            })
+        else:
+            # PostToolUse (the natural plan-accept seam): decision:"block" feeds
+            # `reason` to the model with nothing to discard — the intended halt.
+            emit({
+                "decision": "block",
+                "reason": halt_instruction,
+                "systemMessage": halt_message,
+            })
 
 # Phase B — mid-execution wrap nudge: once per cycle, ask to wrap up + commit.
 # Record HEAD so Phase C can detect that a wrap commit later advanced it.

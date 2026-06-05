@@ -202,10 +202,10 @@ out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-env","tran
 assert_contains "a lowered threshold trips on a small transcript" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase A — plan-accept gate over the gate threshold halts and asks for /clear"
+echo "test: Phase A — on PostToolUse the plan-accept gate halts with a block decision"
 init_repo
 make_plan_transcript "$WORK/gate.jsonl" 70000
-out=$(run_watchdog UserPromptSubmit sid-gate "$WORK/gate.jsonl")
+out=$(run_watchdog PostToolUse sid-gate "$WORK/gate.jsonl")
 assert_contains "halts the agent with a block decision" "$out" '"decision": "block"'
 assert_contains "tells the user to run /clear" "$out" '/clear'
 assert_contains "tells the user the kickoff word" "$out" 'send `go`'
@@ -214,6 +214,21 @@ assert_file "writes the handoff" "$HANDOFF"
 assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
 assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate)"
 assert_nofile "Phase A does NOT arm any my-code-review deferral" "$(plan_state_file)"
+
+# ---------------------------------------------------------------------------
+echo "test: Phase A — on UserPromptSubmit the gate halts non-destructively (no block, keeps the prompt)"
+init_repo
+make_plan_transcript "$WORK/gate-ups.jsonl" 70000
+out=$(run_watchdog UserPromptSubmit sid-gate-ups "$WORK/gate-ups.jsonl")
+assert_not_contains "does NOT block (a block would discard the user's prompt)" "$out" '"decision": "block"'
+assert_contains "injects the halt as UserPromptSubmit additionalContext" "$out" '"hookEventName": "UserPromptSubmit"'
+assert_contains "additionalContext tells the agent not to implement" "$out" "Do NOT begin implementing"
+assert_contains "tells the user to run /clear" "$out" '/clear'
+assert_contains "tells the user the kickoff word" "$out" 'send `go`'
+assert_contains "shows a user-facing systemMessage" "$out" "context already"
+assert_file "writes the handoff" "$HANDOFF"
+assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
+assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate-ups)"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase A — gate under the gate threshold is a silent one-shot"
