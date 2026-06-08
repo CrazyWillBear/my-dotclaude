@@ -44,10 +44,11 @@ push.
    one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute base-repo path** and
    its **base branch**, the **ordered list of completed issues** (each: `#N`, branch `issue-<N>`,
    and its **absolute worktree path**) in **ascending issue number**, and the project's
-   **done-check command**. The picked issues are **mutually independent** (every member's blockers
-   were already closed), so ascending issue number is a safe merge order. The merger merges serially,
-   **attempts to resolve conflicts gated by the done-check**, and returns per-issue results plus the
-   final done-check result and any conflict-stops. Act on its result:
+   **done-check command**. Ascending issue number is the **deterministic** merge order; the picked
+   issues' blockers were already closed, but file-level overlap can still collide — **conflicts are
+   expected and the merger resolves them under the done-check**. The merger merges serially,
+   **resolves conflicts by default (gated by the done-check)**, and returns per-issue results plus
+   the final done-check result and any conflict-stops. Act on its result:
    - issues it merged green → `gh issue close <N>` each (comment the commit);
    - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
      implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**

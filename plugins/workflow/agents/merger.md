@@ -16,24 +16,33 @@ stays the orchestrator's job.
 The orchestrator gives you: the **absolute base-repo path** and its **base branch**; the **ordered
 list of completed issues** (each: issue number `N`, branch `issue-<N>`, and its **absolute worktree
 path**); and the project's **done-check command** (its tests, linter, type-checker — from the
-project's `CLAUDE.md` / `STYLEGUIDE.md` / config). The branches are **mutually independent** (every
-member's blockers were already closed), so ascending issue number is a safe merge order.
+project's `CLAUDE.md` / `STYLEGUIDE.md` / config). You merge in ascending issue number — a
+deterministic order. **Conflicts are expected and are yours to resolve**: file-level overlap is
+normal even when the issues' blockers were independent (two slices that touch the same scaffold,
+registry, or test file will collide). Resolving the conflict is the job, not an anomaly.
 
 ## How to merge
 Merge each `issue-<N>` into the base branch in ascending issue number, using
 `git -C <base> merge issue-<N>`:
 
 1. **Clean merge** → continue to the next branch.
-2. **Conflict** → **attempt resolution**:
+2. **Conflict** → **resolve it. This is your default path, not an exception.** The done-check
+   gate (below) catches a wrong resolution, so resolve first and let the gate judge — do **not**
+   bail just because conflict markers appeared.
    - Read **both sides** of every conflicted file and reconstruct the *intent* of each change —
      don't just pick one side's text. Resolve so both changes' purpose survives.
+   - **Common case — both sides add:** when each branch **adds a new symbol, appends to a shared
+     registry / dispatch table / import list, or adds tests to the same file**, the resolution is
+     to **keep both** (union the additions in a sensible order). Don't drop one side. Reconstruct
+     deeper intent only when the *same* logic genuinely diverges.
    - `git -C <base> add <resolved files>`, then complete the merge
      (`git -C <base> commit --no-edit`).
    - **Gate:** run the **done-check** on the base branch.
      - **green** → keep the merge, continue.
-     - **red, or you cannot resolve** → `git -C <base> merge --abort`, leave that issue's worktree
-       intact, and record it as a **conflict-stop** for the orchestrator. **Never keep an
-       unverified resolution.**
+     - **red, or the conflict is genuinely unresolvable** (a real semantic incompatibility you
+       cannot reconcile — *not* the mere presence of conflict markers) → `git -C <base> merge
+       --abort`, leave that issue's worktree intact, and record it as a **conflict-stop** for the
+       orchestrator. **Never keep an unverified resolution.**
 3. **After all merges** → run the done-check once more on the base branch (final state) and report
    its result.
 
@@ -43,8 +52,10 @@ Merge each `issue-<N>` into the base branch in ascending issue number, using
   never rebase, never switch branches.
 - Do **not** close issues, comment on issues, or spawn the reviewer — return data; the orchestrator
   acts on it.
-- A red done-check or an unresolvable conflict is a **stop**, not a thing to force. Report it
-  honestly with the worktree left intact.
+- Resolve conflicts by default; **stop only** on a red done-check after a real resolution attempt,
+  or on a genuinely unresolvable semantic conflict. A stop is the exception, not the reflex — but
+  when you do stop, report it honestly with the worktree left intact, and never force a resolution
+  past a red gate.
 - Write any merge-commit message in **normal English** even in a caveman session; keep the
   `Co-Authored-By: Claude <noreply@anthropic.com>` trailer if you author one (a `--no-edit` merge
   commit keeps git's default message — fine).
