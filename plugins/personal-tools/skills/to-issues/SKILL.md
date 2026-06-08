@@ -3,6 +3,7 @@ name: to-issues
 description: Break a PRD into tracer-bullet vertical-slice GitHub issues via gh — each slice cuts every layer and is demoable alone, published in dependency order so Blocked by refs resolve, labeled for the agent loop. Use for "/to-issues", "break the PRD into issues", "slice this PRD".
 argument-hint: "<PRD issue number or URL>"
 model: inherit
+effort: xhigh
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
 

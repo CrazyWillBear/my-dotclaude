@@ -3,6 +3,7 @@ name: to-prd
 description: Turn an aligned task into a Product Requirements Doc and publish it as a labeled GitHub issue via gh — explore the repo, map the testing seam with me, fill the PRD template verbatim, then file it as a `prd`-labeled tracking issue (sliced later by /to-issues). Use for "/to-prd", "write a PRD", "turn this into a PRD issue".
 argument-hint: "[shared-understanding summary or task; defaults to the current discussion]"
 model: inherit
+effort: xhigh
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
 
@@ -11,9 +12,11 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PRs.
 
 ## Steps
 
-1. **Start from the shared understanding.** If `/grill-me` produced a `## Shared understanding`
-   block, use it as the spine. Otherwise interrogate just enough (prefer `AskUserQuestion`) to
-   fill every PRD section — don't write a PRD on top of unanswered questions.
+1. **Start from the shared understanding — don't interview.** Synthesize the PRD from what's
+   already in the conversation; `/grill-me` is the interrogation step and should have run first.
+   If a `## Shared understanding` block exists, use it as the spine. If the context is too thin to
+   fill every PRD section, **stop and tell me to run `/grill-me` first** rather than interviewing
+   here — don't write a PRD on top of unanswered questions.
 2. **Explore the repo to ground the solution.** Learn what already exists so the Solution reuses
    it instead of reinventing — what modules, patterns, and seams are in play. Learn the shape;
    don't dump files.

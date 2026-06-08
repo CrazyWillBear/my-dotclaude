@@ -130,7 +130,15 @@ skipped), spins up to K isolated worktrees, fans out sonnet implementers in para
 hands the completed branches to the sonnet merger that merges them back in topological
 order (resolving conflicts under the done-check), closes the issues, and runs the opus
 reviewer that files `review-fix` follow-ups and wires them into dependents' `## Blocked by`
-so a fix always lands before its dependents start.
+so a fix always lands before its dependents start. The reviewer reads the merged diff for
+correctness, security, broken tests, and **stale docs** (a code change that left its
+README / `CLAUDE.md` describing the old behavior) — it **never edits code**.
+
+The reviewer is a backstop, not a fixer, and the feedback path is **async**: each
+`review-fix` is itself a `ready-for-agent` issue that a *fresh implementer builds in a
+later round*. So a single `/orchestrate` (N=1) **files** the follow-ups but doesn't build
+them — they show up as open issues; run another round (`/orchestrate 2`, or re-run) to let
+the loop pick them up and close them.
 
 One branch + worktree per issue (`issue-<N>` at `.worktrees/issue-<N>`); merge order is a
 topological sort of `Blocked by`. The merger attempts to resolve conflicts gated by the
@@ -152,7 +160,9 @@ plan re-injects and the wrap cycle re-arms either way.
 A separate **docs-staleness** Stop hook (`scripts/suggest-docs.sh`) gives a soft nudge when
 a batch changed code but touched no docs (`*.md`), so usage/behavior docs get folded into
 the same commit. It's advisory, deduped once per `HEAD`, and silent the moment any `.md` is
-in the batch.
+in the batch. This is the *interactive*-session counterpart to the reviewer's stale-docs
+check inside `/orchestrate`: the Stop hook nudges you while you work; the reviewer is the
+AFK backstop that files a `review-fix` when an autonomous round leaves a doc behind.
 
 Thresholds are env-overridable (`WORKFLOW_PLANGATE_TOKENS`, `WORKFLOW_NUDGE_TOKENS`; the
 docs nudge takes optional `DOCS_FILE_THRESHOLD` / `DOCS_LINE_THRESHOLD`, off by default). It
