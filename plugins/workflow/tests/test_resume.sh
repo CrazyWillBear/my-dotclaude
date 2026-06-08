@@ -5,12 +5,12 @@
 # Black-box: we plant a ~/.claude/.pending-handoff, run the actual hook in a real
 # git repo, and assert on the resume instruction it injects, the handoff it
 # removes, and (on a /compact resume) the Phase-B/C sentinels it resets. The hook
-# is source-aware: /clear -> "implement the plan" wording (fresh context),
-# /compact -> "continue the plan" wording + sentinel reset (so a later climb can
+# is source-aware: /clear -> "implement the handoff" wording (fresh context),
+# /compact -> "continue the handoff" wording + sentinel reset (so a later climb can
 # re-nudge), and any other source falls back to "continue".
 #
 # Covers: the clear/compact/startup wording variants; the wrong-repo no-op
-# (handoff preserved); no-handoff silence; the no-plan variant; and the
+# (handoff preserved); no-handoff silence; the no-handoff-path variant; and the
 # /compact sentinel reset proven by a subsequent re-nudge.
 #
 # Run: bash plugins/workflow/tests/test_resume.sh   (non-zero if any fail)
@@ -28,9 +28,9 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 GLOBAL_HOME="$WORK/home"
-mkdir -p "$GLOBAL_HOME/.claude/plans"
-printf '# Plan\n1. one\n2. two\n' >"$GLOBAL_HOME/.claude/plans/active.md"
-PLAN="$GLOBAL_HOME/.claude/plans/active.md"
+mkdir -p "$GLOBAL_HOME/.claude/handoffs"
+printf '# Handoff\n## Done\n- committed work\n## Next steps\n- resume\n' >"$GLOBAL_HOME/.claude/handoffs/feat-ctx.md"
+HANDOFF_DOC="$GLOBAL_HOME/.claude/handoffs/feat-ctx.md"
 HANDOFF="$GLOBAL_HOME/.claude/.pending-handoff"
 
 PROJECT_DIR="$WORK/proj"
@@ -61,12 +61,12 @@ init_repo() {
     g commit -q -m base
 }
 
-# make_handoff <toplevel> <baseline> <branch> <plan>
+# make_handoff <toplevel> <baseline> <branch> <handoff_path>
 make_handoff() {
     python3 - "$HANDOFF" "$1" "$2" "$3" "$4" <<'PY'
 import sys, json
-path, top, base, branch, plan = sys.argv[1:6]
-obj = {"plan_path": plan or None, "branch": branch, "git_toplevel": top,
+path, top, base, branch, hdoc = sys.argv[1:6]
+obj = {"handoff_path": hdoc or None, "branch": branch, "git_toplevel": top,
        "baseline_head": base, "session_id": "old-sid",
        "context_tokens": 200000, "ts": 0}
 with open(path, "w") as fh:
@@ -138,11 +138,11 @@ echo "test: source=clear injects the 'implement' wording and clears the handoff"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-make_handoff "$top" "$base" "feat/ctx" "$PLAN"
+make_handoff "$top" "$base" "feat/ctx" "$HANDOFF_DOC"
 out=$(run_resume clear sid-r1)
 assert_contains "emits a SessionStart additionalContext" "$out" '"hookEventName": "SessionStart"'
-assert_contains "uses the implement wording" "$out" "implement the plan"
-assert_contains "names the plan to resume" "$out" "active.md"
+assert_contains "uses the implement wording" "$out" "implement the handoff"
+assert_contains "names the handoff doc to resume" "$out" "feat-ctx.md"
 assert_contains "names the branch" "$out" "feat/ctx"
 assert_contains "tells the agent not to redo work" "$out" "do not redo"
 assert_nofile "clears the handoff (resume once)" "$HANDOFF"
@@ -154,9 +154,9 @@ top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
 : >"$(nudged_path sid-r2)"            # pretend Phase B/C already fired this session
 : >"$(compacted_path sid-r2)"
-make_handoff "$top" "$base" "main" "$PLAN"
+make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume compact sid-r2)
-assert_contains "uses the continue wording" "$out" "continue the plan"
+assert_contains "uses the continue wording" "$out" "continue the handoff"
 assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
 assert_nofile "resets the compacted sentinel" "$(compacted_path sid-r2)"
 assert_nofile "clears the handoff" "$HANDOFF"
@@ -172,9 +172,9 @@ top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
 : >"$(nudged_path sid-r2c)"            # pretend Phase B/C already fired this session
 : >"$(compacted_path sid-r2c)"
-make_handoff "$top" "$base" "main" "$PLAN"
+make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume clear sid-r2c)
-assert_contains "uses the implement wording" "$out" "implement the plan"
+assert_contains "uses the implement wording" "$out" "implement the handoff"
 assert_nofile "clear resets the nudge sentinel" "$(nudged_path sid-r2c)"
 assert_nofile "clear resets the compacted sentinel" "$(compacted_path sid-r2c)"
 assert_nofile "clears the handoff" "$HANDOFF"
@@ -188,9 +188,9 @@ echo "test: an unknown source falls back to the 'continue' wording"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-make_handoff "$top" "$base" "main" "$PLAN"
+make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume startup sid-r3)
-assert_contains "fallback uses the continue wording" "$out" "continue the plan"
+assert_contains "fallback uses the continue wording" "$out" "continue the handoff"
 
 # ---------------------------------------------------------------------------
 echo "test: a handoff from another repo is a no-op (preserved, silent)"
@@ -217,17 +217,21 @@ out=$(run_resume clear sid-r6)
 assert_contains "uses the no-plan resume phrasing" "$out" "continue the prior in-progress work"
 
 # ---------------------------------------------------------------------------
-echo "test: a PreCompact-written handoff makes a manual /compact re-inject the plan + re-arm"
+echo "test: a PreCompact-written handoff makes a manual /compact re-inject the handoff + re-arm"
 init_repo
 top="$(g rev-parse --show-toplevel)"
+pc_branch="$(g rev-parse --abbrev-ref HEAD)"
+pc_safe="${pc_branch//\//-}"
+# Pre-create the handoff doc so resolve_handoff() finds it.
+printf '# Handoff\n## Done\n- base commit\n' >"$GLOBAL_HOME/.claude/handoffs/${pc_safe}.md"
 : >"$(nudged_path sid-pc)"             # Phase B already fired this session
 : >"$(compacted_path sid-pc)"
 run_save_handoff "$PROJECT_DIR"        # simulate the PreCompact hook (no args)
 assert_file "PreCompact writes a handoff" "$HANDOFF"
 assert_equals "handoff records this repo" "$(read_field "$HANDOFF" git_toplevel)" "$top"
-assert_contains "handoff records the active plan" "$(read_field "$HANDOFF" plan_path)" "active.md"
+assert_contains "handoff records the handoff doc" "$(read_field "$HANDOFF" handoff_path)" "${pc_safe}.md"
 out=$(run_resume compact sid-pc)
-assert_contains "manual compact re-injects the plan" "$out" "continue the plan"
+assert_contains "manual compact re-injects the handoff" "$out" "continue the handoff"
 assert_nofile "manual compact clears the handoff" "$HANDOFF"
 assert_nofile "manual compact resets the nudge sentinel" "$(nudged_path sid-pc)"
 assert_nofile "manual compact resets the compacted sentinel" "$(compacted_path sid-pc)"
@@ -253,6 +257,18 @@ NONREPO="$WORK/nonrepo"
 mkdir -p "$NONREPO"
 run_save_handoff "$NONREPO"
 assert_nofile "no handoff is written outside a git repo" "$HANDOFF"
+
+# ---------------------------------------------------------------------------
+echo "test: save-handoff resolves handoff_path to null when handoffs dir is absent"
+init_repo
+# Remove all handoff docs so the resolver finds nothing.
+rm -rf "$GLOBAL_HOME/.claude/handoffs"
+run_save_handoff "$PROJECT_DIR"
+assert_file "handoff is written even with no handoffs dir" "$HANDOFF"
+assert_equals "handoff_path is null when no handoff doc exists" \
+    "$(read_field "$HANDOFF" handoff_path)" ""
+# Restore handoffs dir for subsequent tests.
+mkdir -p "$GLOBAL_HOME/.claude/handoffs"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

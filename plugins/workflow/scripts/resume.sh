@@ -109,18 +109,18 @@ except Exception:
     pass
 
 # Tell the fresh/compacted session what to do. /clear means fresh context, so the
-# agent implements the plan from the committed baseline; /compact (and the
-# fallback) means continue from where the plan and commits leave off.
-plan = ho.get("plan_path")
+# agent implements the handoff from the committed baseline; /compact (and the
+# fallback) means continue from where the handoff and commits leave off.
+handoff = ho.get("handoff_path")
 branch = ho.get("branch") or git("rev-parse", "--abbrev-ref", "HEAD") or "the current branch"
 verb = "implement" if source == "clear" else "continue"
-if plan:
+if handoff:
     add = (
-        "Resume (workflow): " + verb + " the plan @" + str(plan) + " on "
+        "Resume (workflow): " + verb + " the handoff @" + str(handoff) + " on "
         + str(branch) + ". Prior work is committed — "
         + ("start from the committed baseline; do not redo any completed steps."
            if source == "clear" else
-           "continue from where the plan and the commits leave off; do not redo "
+           "continue from where the handoff and the commits leave off; do not redo "
            "completed steps.")
     )
 else:

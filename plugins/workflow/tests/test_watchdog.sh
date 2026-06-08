@@ -35,8 +35,7 @@ trap 'rm -rf "$WORK"' EXIT
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 GLOBAL_HOME="$WORK/home"
-mkdir -p "$GLOBAL_HOME/.claude/plans"
-printf '# Plan\n1. one\n2. two\n' >"$GLOBAL_HOME/.claude/plans/active.md"
+mkdir -p "$GLOBAL_HOME/.claude/handoffs"
 HANDOFF="$GLOBAL_HOME/.claude/.pending-handoff"
 
 PROJECT_DIR="$WORK/proj"
@@ -200,6 +199,10 @@ assert_contains "110k over the 100k default nudges" "$out" "Context over budget"
 # ---------------------------------------------------------------------------
 echo "test: Phase A — on PostToolUse the plan-accept gate halts with a block decision"
 init_repo
+# Pre-create the handoff doc so save-handoff.sh's resolver finds it.
+ga_branch="$(g rev-parse --abbrev-ref HEAD)"
+ga_safe="${ga_branch//\//-}"
+printf '# Handoff\n## Next steps\n- implement plan\n' >"$GLOBAL_HOME/.claude/handoffs/${ga_safe}.md"
 make_plan_transcript "$WORK/gate.jsonl" 70000
 out=$(run_watchdog PostToolUse sid-gate "$WORK/gate.jsonl")
 assert_contains "halts the agent with a block decision" "$out" '"decision": "block"'
@@ -207,12 +210,16 @@ assert_contains "tells the user to run /clear" "$out" '/clear'
 assert_contains "tells the user the kickoff word" "$out" 'send `go`'
 assert_contains "tells the agent not to implement yet" "$out" "Do NOT begin implementing"
 assert_file "writes the handoff" "$HANDOFF"
-assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
+assert_contains "handoff records the handoff_path" "$(read_field "$HANDOFF" handoff_path)" "${ga_safe}.md"
 assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate)"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase A — on UserPromptSubmit the gate halts non-destructively (no block, keeps the prompt)"
 init_repo
+# Pre-create the handoff doc so save-handoff.sh's resolver finds it.
+ga_branch="$(g rev-parse --abbrev-ref HEAD)"
+ga_safe="${ga_branch//\//-}"
+printf '# Handoff\n## Next steps\n- implement plan\n' >"$GLOBAL_HOME/.claude/handoffs/${ga_safe}.md"
 make_plan_transcript "$WORK/gate-ups.jsonl" 70000
 out=$(run_watchdog UserPromptSubmit sid-gate-ups "$WORK/gate-ups.jsonl")
 assert_not_contains "does NOT block (a block would discard the user's prompt)" "$out" '"decision": "block"'
@@ -222,7 +229,7 @@ assert_contains "tells the user to run /clear" "$out" '/clear'
 assert_contains "tells the user the kickoff word" "$out" 'send `go`'
 assert_contains "shows a user-facing systemMessage" "$out" "context already"
 assert_file "writes the handoff" "$HANDOFF"
-assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
+assert_contains "handoff records the handoff_path" "$(read_field "$HANDOFF" handoff_path)" "${ga_safe}.md"
 assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate-ups)"
 
 # ---------------------------------------------------------------------------

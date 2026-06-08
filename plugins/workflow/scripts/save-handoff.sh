@@ -58,18 +58,25 @@ except Exception:
     size = 0
 
 
-def resolve_plan():
-    # Plan being executed: newest *.md in ~/.claude/plans.
+def resolve_handoff(branch):
+    # Handoff doc written by /handoff: ~/.claude/handoffs/<branch>.md
+    # (branch slashes replaced with dashes, same rule the skill uses).
+    if not branch:
+        return None
     try:
-        plans = glob.glob(os.path.join(os.path.expanduser("~/.claude/plans"), "*.md"))
-        return max(plans, key=os.path.getmtime) if plans else None
+        safe = branch.replace("/", "-")
+        path = os.path.expanduser(
+            os.path.join("~/.claude/handoffs", safe + ".md")
+        )
+        return path if os.path.isfile(path) else None
     except Exception:
         return None
 
 
+branch_val = git("rev-parse", "--abbrev-ref", "HEAD")
 obj = {
-    "plan_path":      resolve_plan(),
-    "branch":         git("rev-parse", "--abbrev-ref", "HEAD"),
+    "handoff_path":   resolve_handoff(branch_val),
+    "branch":         branch_val,
     "git_toplevel":   git("rev-parse", "--show-toplevel"),
     "baseline_head":  git("rev-parse", "HEAD"),
     "session_id":     session_id or None,
