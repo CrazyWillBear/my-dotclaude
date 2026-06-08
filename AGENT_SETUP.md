@@ -29,7 +29,10 @@ setup**. If they only say "set me up" with no other signal, ask this question fi
 **Raw base:** `https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main`
 
 Both setups are **user-scope** — they touch `~/.claude`, not the current project. They do
-not run `git init` or write any project files.
+not run `git init` or write any project files. They are also **non-destructive to an
+existing `~/.claude/CLAUDE.md`**: the script asks before replacing it (on "no" it keeps the
+user's file and prints the source URL), and `settings.json` is merged key-by-key with a
+timestamped backup — so the kit never silently eats config the user already has.
 
 ---
 
@@ -45,10 +48,21 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
-1. Back up `~/.claude/CLAUDE.md` and `~/.claude/settings.json` if they exist, then write
-   `~/.claude/CLAUDE.md` from `<raw base>/global/CLAUDE.md` (don't overwrite an existing one
-   without asking).
-2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys.
+1. Install the global `CLAUDE.md` from `<raw base>/global/CLAUDE.md` — **never overwrite
+   an existing one blind.**
+   - **No `~/.claude/CLAUDE.md` yet** → just write it.
+   - **One already exists** → back it up, then *add on* rather than replace. Show the user
+     the kit's rules and ask which they want:
+     - **Append** — drop the kit's rules into their file inside a marked block
+       (`<!-- BEGIN my-dotclaude -->` … `<!-- END my-dotclaude -->`), and call out any rule
+       that contradicts theirs so they can decide.
+     - **Merge** — read both and produce one coherent file, walking them through each
+       conflict as you hit it.
+     - (Or, if they say so: keep theirs untouched, or replace entirely.)
+     Resolve every conflict *in conversation* — don't silently pick a winner.
+2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys. If the
+   file already sets `model` to something else, don't silently swap it — tell the user the
+   current value vs. `opus` and ask before changing it.
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
@@ -94,9 +108,11 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
-1. Back up `~/.claude/CLAUDE.md` if it exists, then write `~/.claude/CLAUDE.md` from
-   `<raw base>/global/CLAUDE.simple.md`. Leave the model at Claude Code's default
-   (don't set `model=opus`).
+1. Install the global `CLAUDE.md` from `<raw base>/global/CLAUDE.simple.md`, following the
+   same **never-overwrite-blind** rule as the developer fallback (step 1 above): if a
+   `~/.claude/CLAUDE.md` already exists, back it up and *add on* — offer the user append vs.
+   merge and resolve any conflict in conversation, never a silent replace. Leave the model
+   at Claude Code's default (don't set `model=opus`).
 2. Install the same plugins and the Playwright MCP as the developer fallback above (steps
    3–4), and set up the `gh` allowlist (step 5).
 3. Make caveman a little less terse: set its default level to `lite` by writing

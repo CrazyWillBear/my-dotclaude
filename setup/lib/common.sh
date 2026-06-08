@@ -254,14 +254,31 @@ tcr_backup_file() {
 
 # tcr_install_global_claudemd [<source-relpath>] — write a CLAUDE.md source
 # (default global/CLAUDE.md; non-dev passes global/CLAUDE.simple.md) to
-# ~/.claude/CLAUDE.md. Backs up and skips an existing file unless TCR_FORCE=1.
+# ~/.claude/CLAUDE.md. Never overwrites an existing file blind: with TCR_FORCE=1
+# it replaces (backup kept); otherwise it asks on the terminal ($TCR_TTY, default
+# /dev/tty, so the prompt still reaches the user under `curl | bash`). On "no", or
+# when no terminal is reachable, it keeps the user's file and points them at the
+# source so they can merge what they want by hand.
 tcr_install_global_claudemd() {
   local src="${1:-global/CLAUDE.md}"
   local dest="$HOME/.claude/CLAUDE.md"
+  local tty="${TCR_TTY:-/dev/tty}"
   mkdir -p "$HOME/.claude"
   if [ -e "$dest" ] && [ "${TCR_FORCE:-0}" != "1" ]; then
-    tcr_warn "$dest already exists — leaving it untouched (use --force to overwrite)."
-    return 0
+    local reply=""
+    if [ -r "$tty" ]; then
+      # Prompt on stderr (visible even under `curl | bash`, where stdout may be
+      # piped); read the answer from the terminal, since stdin is the curl pipe.
+      printf '%s already exists. Replace it with the my-dotclaude version? A timestamped backup is kept. [y/N] ' "$dest" >&2
+      IFS= read -r reply < "$tty" || reply=""
+    fi
+    case "$reply" in
+      y|Y|yes|YES|Yes) ;;  # fall through to back up + write
+      *)
+        tcr_warn "kept your existing $dest. To add the kit's rules, see $RAW_BASE/$src and merge what you want — or ask Claude to merge it in for you."
+        return 0
+        ;;
+    esac
   fi
   tcr_backup_file "$dest"
   if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/$src" ]; then
