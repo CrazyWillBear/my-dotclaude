@@ -38,7 +38,7 @@ One human-in-the-loop front-end and one AFK loop, with **GitHub Issues as the tr
 1. **`/grill-me`** interrogates you about the task — scope, constraints, edge cases,
    acceptance criteria — and emits a shared-understanding summary shaped to feed the PRD.
 2. **`/to-prd`** explores the repo, maps the testing seams, fills the PRD template, and
-   publishes it as one GitHub issue labelled `ready-for-agent`.
+   publishes it as one GitHub issue labelled `prd`.
 3. **`/to-issues`** breaks the PRD into **tracer-bullet vertical slices** (each cuts all
    layers and is demoable alone), publishing them in dependency order so each issue's
    `## Blocked by` section carries real `#N` refs.
@@ -192,6 +192,7 @@ my-dotclaude/
 │   └── workflow/                   # the autonomous dev loop + context watchdog
 │       ├── skills/orchestrate/SKILL.md  # /orchestrate — the parallel issue-solving loop
 │       ├── agents/implementer.md   # sonnet implementer (works in one worktree)
+│       ├── agents/merger.md        # sonnet merger (merges branches in dep order, resolves conflicts)
 │       ├── agents/reviewer.md      # opus caveman-style reviewer (files follow-ups)
 │       ├── scripts/watchdog.sh     # thresholds: plan-start /clear gate, wrap nudge, /handoff prompt
 │       ├── scripts/resume.sh       # SessionStart: re-injects the plan after /clear or /compact
