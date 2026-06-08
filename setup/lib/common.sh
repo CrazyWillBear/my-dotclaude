@@ -253,7 +253,7 @@ tcr_backup_file() {
 }
 
 # tcr_install_global_claudemd [<source-relpath>] — write a CLAUDE.md source
-# (default global/CLAUDE.md; non-dev passes templates/simple/CLAUDE.md) to
+# (default global/CLAUDE.md; non-dev passes global/CLAUDE.simple.md) to
 # ~/.claude/CLAUDE.md. Backs up and skips an existing file unless TCR_FORCE=1.
 tcr_install_global_claudemd() {
   local src="${1:-global/CLAUDE.md}"

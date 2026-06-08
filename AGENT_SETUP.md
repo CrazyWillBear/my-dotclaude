@@ -95,7 +95,7 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
 1. Back up `~/.claude/CLAUDE.md` if it exists, then write `~/.claude/CLAUDE.md` from
-   `<raw base>/templates/simple/CLAUDE.md`. Leave the model at Claude Code's default
+   `<raw base>/global/CLAUDE.simple.md`. Leave the model at Claude Code's default
    (don't set `model=opus`).
 2. Install the same plugins and the Playwright MCP as the developer fallback above (steps
    3–4), and set up the `gh` allowlist (step 5).

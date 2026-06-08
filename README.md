@@ -231,7 +231,7 @@ my-dotclaude/
 │       ├── scripts/save-handoff.sh # shared handoff writer
 │       └── tests/                  # watchdog + resume + suggest-docs tests
 ├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)
-├── templates/simple/CLAUDE.md       # plain-English global CLAUDE.md (installed by setup-simple)
+├── global/CLAUDE.simple.md          # plain-English global CLAUDE.md (installed by setup-simple)
 ├── setup/                           # setup-dev.sh / setup-simple.sh + lib
 └── AGENT_SETUP.md                   # instructions Claude follows for the paste-a-prompt path
 ```

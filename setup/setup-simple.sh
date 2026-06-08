@@ -65,7 +65,7 @@ if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
 fi
 
 tcr_step "Setting up your Claude Code in: $HOME/.claude"
-tcr_install_global_claudemd templates/simple/CLAUDE.md
+tcr_install_global_claudemd global/CLAUDE.simple.md
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
 tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
