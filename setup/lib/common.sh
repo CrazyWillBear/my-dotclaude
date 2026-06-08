@@ -170,6 +170,47 @@ tcr_install_personal_tools() {
   fi
 }
 
+# --- system tools ------------------------------------------------------------
+
+# Installs universal-ctags when ctags is not already on PATH. Idempotent: when
+# ctags is found it reports "already installed" and returns 0. Detects the
+# package manager (brew / pacman / apt / dnf) and runs the right command.
+# Warns rather than aborting on failure, matching the other optional-install
+# helpers above.
+tcr_install_ctags() {
+  tcr_step "Installing universal-ctags"
+  if command -v ctags >/dev/null 2>&1; then
+    tcr_ok "ctags already installed ($(command -v ctags))"
+    return 0
+  fi
+  local pkg_mgr pkg_name cmd rc=0
+  if command -v brew >/dev/null 2>&1; then
+    pkg_mgr=brew; pkg_name=universal-ctags
+  elif command -v pacman >/dev/null 2>&1; then
+    pkg_mgr=pacman; pkg_name=ctags
+  elif command -v apt-get >/dev/null 2>&1; then
+    pkg_mgr=apt-get; pkg_name=ctags
+  elif command -v dnf >/dev/null 2>&1; then
+    pkg_mgr=dnf; pkg_name=ctags
+  else
+    tcr_warn "no supported package manager found (brew / pacman / apt-get / dnf) — install universal-ctags manually."
+    TCR_INSTALL_FAILED=1
+    return 0
+  fi
+  case "$pkg_mgr" in
+    brew)    cmd="brew install $pkg_name" ;;
+    pacman)  cmd="pacman -S --noconfirm $pkg_name" ;;
+    apt-get) cmd="apt-get install -y $pkg_name" ;;
+    dnf)     cmd="dnf install -y $pkg_name" ;;
+  esac
+  if $cmd >/dev/null 2>&1; then
+    tcr_ok "installed ctags via $pkg_mgr"
+  else
+    TCR_INSTALL_FAILED=1
+    tcr_warn "could not install ctags automatically — run: $cmd"
+  fi
+}
+
 # --- caveman level -----------------------------------------------------------
 
 tcr_caveman_config_path() {

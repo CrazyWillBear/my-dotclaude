@@ -66,6 +66,7 @@ fi
 tcr_step "Developer setup into: $HOME/.claude"
 tcr_install_global_claudemd
 tcr_set_setting model opus
+tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
 tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
