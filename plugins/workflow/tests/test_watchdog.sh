@@ -202,6 +202,37 @@ out=$(run_watchdog UserPromptSubmit sid-orch-other2 "$WORK/orch-other.jsonl" "pl
 assert_empty "natural-language orchestrate phrasing: silent" "$out"
 
 # ---------------------------------------------------------------------------
+echo "test: orchestrate gate — /orchestrate with arguments at >= 60k emits advisory"
+init_repo
+make_transcript "$WORK/orch-args.jsonl" 70000
+out=$(run_watchdog UserPromptSubmit sid-orch-args1 "$WORK/orch-args.jsonl" "/orchestrate 3")
+assert_not_contains "/orchestrate 3: no block" "$out" '"decision": "block"'
+assert_contains "/orchestrate 3: advisory hint" "$out" "workflow:"
+assert_contains "/orchestrate 3: tells user /clear" "$out" '/clear'
+out=$(run_watchdog UserPromptSubmit sid-orch-args2 "$WORK/orch-args.jsonl" "/orchestrate --max 2")
+assert_not_contains "/orchestrate --max 2: no block" "$out" '"decision": "block"'
+assert_contains "/orchestrate --max 2: advisory hint" "$out" "workflow:"
+out=$(run_watchdog UserPromptSubmit sid-orch-args3 "$WORK/orch-args.jsonl" "/orchestrate 3 --max 2")
+assert_not_contains "/orchestrate 3 --max 2: no block" "$out" '"decision": "block"'
+assert_contains "/orchestrate 3 --max 2: advisory hint" "$out" "workflow:"
+
+# ---------------------------------------------------------------------------
+echo "test: orchestrate gate — /orchestrate with arguments under 60k stays silent"
+init_repo
+make_transcript "$WORK/orch-args-under.jsonl" 1000
+out=$(run_watchdog UserPromptSubmit sid-orch-argsU1 "$WORK/orch-args-under.jsonl" "/orchestrate 3")
+assert_empty "/orchestrate 3 under threshold: silent" "$out"
+out=$(run_watchdog UserPromptSubmit sid-orch-argsU2 "$WORK/orch-args-under.jsonl" "/orchestrate --max 2")
+assert_empty "/orchestrate --max 2 under threshold: silent" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: orchestrate gate — /orchestrated-thing (no trailing-space boundary) stays silent"
+init_repo
+make_transcript "$WORK/orch-nosub.jsonl" 70000
+out=$(run_watchdog UserPromptSubmit sid-orch-nosub "$WORK/orch-nosub.jsonl" "/orchestrated-thing")
+assert_empty "/orchestrated-thing (different command): silent" "$out"
+
+# ---------------------------------------------------------------------------
 echo "test: orchestrate gate — threshold honors WORKFLOW_PLANGATE_TOKENS"
 init_repo
 make_transcript "$WORK/orch-env.jsonl" 1000

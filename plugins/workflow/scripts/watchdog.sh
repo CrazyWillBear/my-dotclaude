@@ -23,11 +23,12 @@
 #     session.
 #
 # Orchestrate gate (advisory, UserPromptSubmit only): when the user types the
-# literal /orchestrate slash command and main-thread context >= WORKFLOW_PLANGATE_
-# TOKENS (default 60k), inject an advisory hint telling them to run /clear first,
-# then /orchestrate — so the loop runs in fresh context. Never a decision:block;
-# the orchestrate prompt still runs if the user proceeds. Only exact /orchestrate
-# matches; natural-language phrasing and non-orchestrate prompts are silent.
+# /orchestrate slash command (bare or with arguments, e.g. `/orchestrate 3` or
+# `/orchestrate --max 2`) and main-thread context >= WORKFLOW_PLANGATE_TOKENS
+# (default 60k), inject an advisory hint telling them to run /clear first, then
+# /orchestrate — so the loop runs in fresh context. Never a decision:block; the
+# orchestrate prompt still runs if the user proceeds. Natural-language phrasing
+# and non-orchestrate prompts are always silent.
 #
 # Metric = the LAST assistant transcript entry's
 #   usage.input_tokens + cache_read_input_tokens + cache_creation_input_tokens
@@ -205,13 +206,16 @@ if event == "Stop":
           "you through `/clear` into fresh context, where the plan auto-resumes."})
 
 # --- Active events (UserPromptSubmit / PostToolUse). -------------------------
-# Orchestrate gate (advisory): on UserPromptSubmit, when the literal /orchestrate
-# command is typed and context >= PLANGATE, inject an advisory hint to run /clear
-# first so the loop starts in fresh context. Never a decision:block — the prompt
-# survives and /orchestrate still runs if the user proceeds. Non-orchestrate
-# prompts and /orchestrate under the threshold are always silent.
+# Orchestrate gate (advisory): on UserPromptSubmit, when the /orchestrate slash
+# command is typed (bare or with arguments like `3`, `--max 2`, `3 --max 2`) and
+# context >= PLANGATE, inject an advisory hint to run /clear first so the loop
+# starts in fresh context. Never a decision:block — the prompt survives and
+# /orchestrate still runs if the user proceeds. Non-orchestrate prompts and
+# /orchestrate under the threshold are always silent. Natural-language phrasing
+# like "please orchestrate" does NOT match (requires leading slash + word boundary).
+is_orchestrate = prompt == "/orchestrate" or prompt.startswith("/orchestrate ")
 if (event == "UserPromptSubmit"
-        and prompt == "/orchestrate"
+        and is_orchestrate
         and size is not None
         and size >= PLANGATE):
     kb = size // 1000
