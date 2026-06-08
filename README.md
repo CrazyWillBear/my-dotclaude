@@ -17,8 +17,9 @@ developer or a non-coder.
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin:
   1. **An autonomous dev loop** (`/orchestrate`) that runs rounds of *parallel*
      issue-solving — an opus orchestrator picks the ready set, fans out sonnet
-     implementers in **isolated git worktrees**, merges in dependency order, then an
-     **opus reviewer** files blocking follow-up issues.
+     implementers in **isolated git worktrees**, hands the completed branches to a
+     **sonnet merger** that merges in dependency order and resolves conflicts under the
+     done-check, then an **opus reviewer** files blocking follow-up issues.
   2. **A context watchdog** that drives deliberate, early `/clear` and `/handoff` as the
      window fills, and auto-resumes the in-flight plan around each command.
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
@@ -43,9 +44,11 @@ One human-in-the-loop front-end and one AFK loop, with **GitHub Issues as the tr
    `## Blocked by` section carries real `#N` refs.
 4. **`/orchestrate [N] [--max K]`** then runs N rounds AFK: it computes the **ready set**
    (every blocker closed, `hitl` issues skipped), spins up to K isolated worktrees, fans
-   out sonnet implementers in parallel, merges branches back in topological order, closes
-   the issues, and runs an opus reviewer that files `review-fix` follow-ups and wires them
-   into dependents' `## Blocked by` so a fix always lands before its dependents start.
+   out sonnet implementers in parallel, hands the completed branches to a sonnet merger
+   that merges them back in topological order (resolving conflicts under the done-check),
+   closes the issues, and runs an opus reviewer that files `review-fix` follow-ups and
+   wires them into dependents' `## Blocked by` so a fix always lands before its dependents
+   start.
 
 Shared conventions the pieces agree on:
 
@@ -55,8 +58,9 @@ Shared conventions the pieces agree on:
   refs (one per line) or the literal `None - can start immediately`. An issue is *ready*
   iff every blocker is **closed**.
 - **Worktrees:** one branch + worktree per issue (`issue-<N>` at `.worktrees/issue-<N>`);
-  merge order is a topological sort of `Blocked by`; conflicts **stop and report**, never
-  auto-resolve. PR merges stay a human decision — the loop never merges PRs.
+  merge order is a topological sort of `Blocked by`; the sonnet merger attempts to resolve
+  conflicts gated by the done-check, and an **unresolvable conflict or a red check stops
+  and reports**. PR merges stay a human decision — the loop never merges PRs.
 
 ## Install
 
@@ -216,8 +220,9 @@ MCP both need Node ≥ 18 (Playwright runs via `npx`). The dev pipeline (`/to-pr
 - `decision: block` (used by the watchdog's plan-start gate) is a strong instruction to the
   agent, not a hard runtime gate — it reliably halts but is driven by the model.
 - `/orchestrate` runs subagents via the Task tool on the main thread (subagents can't spawn
-  subagents); merge conflicts or a failed done-check **stop and report** rather than
-  auto-resolving, leaving the worktree for inspection.
+  subagents); the sonnet merger attempts to resolve merge conflicts gated by the done-check,
+  but an **unresolvable conflict or a failed done-check stops and reports** rather than
+  keeping an unverified resolution, leaving the worktree for inspection.
 - The PowerShell scripts are **untested** and gated behind `-Continue`.
 
 ## License

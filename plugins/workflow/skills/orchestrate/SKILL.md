@@ -1,8 +1,9 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel sonnet implementers in isolated git worktrees, merge in dependency order, run the done-check, close finished issues, then an opus reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel sonnet implementers in isolated git worktrees, hand the completed branches to a sonnet merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then an opus reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3]"
 model: opus
+effort: high
 allowed-tools: Read, Grep, Bash, Agent
 ---
 
@@ -39,15 +40,18 @@ push.
    call per picked issue (`subagent_type: workflow:implementer`), each given: the issue number,
    its full body, the **absolute** worktree path, and the branch `issue-<N>`. They run
    concurrently.
-5. **Merge + verify in dependency order (C4).** Collect the results, then merge each completed
-   `issue-<N>` into the base branch. The picked issues are **mutually independent** (every
-   member's blockers were already closed), so merge them in ascending issue number. On **any merge
-   conflict**: **STOP** — leave the worktree for inspection, `gh issue comment` the issue, and
-   report. **Never auto-resolve.** After the merges, run the project's **done-check** on the base
-   branch:
-   - green → `gh issue close <N>` each merged issue (comment the commit);
-   - implementer-reported failure or a **red done-check** → stop that issue, comment it, leave its
-     worktree, and report.
+5. **Merge + verify via the merger (C4).** Collect the results, then spawn the **sonnet merger** —
+   one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute base-repo path** and
+   its **base branch**, the **ordered list of completed issues** (each: `#N`, branch `issue-<N>`,
+   and its **absolute worktree path**) in **ascending issue number**, and the project's
+   **done-check command**. The picked issues are **mutually independent** (every member's blockers
+   were already closed), so ascending issue number is a safe merge order. The merger merges serially,
+   **attempts to resolve conflicts gated by the done-check**, and returns per-issue results plus the
+   final done-check result and any conflict-stops. Act on its result:
+   - issues it merged green → `gh issue close <N>` each (comment the commit);
+   - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
+     implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**
+     with a report. **Never keep an unverified resolution** — that discipline lives in the merger.
 6. **Review the round.** Spawn the **opus reviewer** — one `Agent` call
    (`subagent_type: workflow:reviewer`) — on the round's merged range
    (`git diff <round_base>..HEAD`) plus the merged issue numbers. It emits findings (C6), files
@@ -58,5 +62,6 @@ push.
    table**: issue `#` → title → merged? / closed? → done-check → notes (filed `review-fix`s,
    conflicts, failures).
 
-Repeat for **N** rounds or until the ready set drains. Conflicts and test failures **always stop
-the loop** with a clear report; everything else continues to the next round.
+Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
+under the done-check; an **unresolvable conflict**, a **red done-check**, or an implementer failure
+**always stops the loop** with a clear report; everything else continues to the next round.
