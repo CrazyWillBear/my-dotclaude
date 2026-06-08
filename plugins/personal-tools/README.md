@@ -11,7 +11,11 @@ plugins/personal-tools/
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
-│   └── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
+│   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
+│   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
+│   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
+│   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
+│   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
 ├── agents/
 │   ├── commit.md                  # commit — isolated committer for /commit (model: inherit)
 │   └── explain-dir.md             # explain-dir — isolated haiku worker for /explain-dir
@@ -28,9 +32,26 @@ plugins/personal-tools/
   (`git add -u` — untracked files are mentioned but left alone), ends the message with a
   `Co-Authored-By: Claude` trailer, and writes the message + summary in **normal English**
   (not caveman, even when caveman mode is on). No push/amend/rebase; no empty commits.
-- **`/debug [bug]`** — systematic root-cause debugging: reproduce → isolate →
-  hypothesize → confirm-before-fix → verify → regression test. Runs on the main thread
-  (your model); reuses the project's TDD + done-check rather than restating them.
+- **`/grill-me [task]`** — interrogate me about a task *before* any code: rounds of pointed
+  questions (preferring `AskUserQuestion`) over scope, constraints, edge cases, and acceptance
+  criteria, ending in a tight **shared-understanding summary** shaped to feed `/to-prd`.
+  Read-only; runs on the main thread.
+- **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
+  a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
+  template verbatim, and publish it labeled `ready-for-agent`. Feeds the `workflow` plugin's
+  `/orchestrate` loop.
+- **`/to-issues <#>`** — break a PRD issue into **tracer-bullet vertical slices** (each cuts all
+  layers, demoable alone): quiz me on granularity/dependencies/HITL, then file them in dependency
+  order so each issue's `## Blocked by` carries real `#N` refs. Labels slices `ready-for-agent`
+  (and `hitl` where a human is needed); never edits the parent PRD.
+- **`/handoff [note]`** — capture a rich handoff before `/clear`: write
+  `~/.claude/handoffs/<branch>.md` (work done, in-flight state, next steps, key files, gotchas)
+  plus the `~/.claude/.pending-handoff` resume pointer the `workflow` plugin reads, then tell me
+  to `/clear` and send `go`. Requires committed work first.
+- **`/diagnose [bug]`** — root-cause a bug through a disciplined 6-phase loop: build a feedback
+  loop → reproduce → rank falsifiable hypotheses → instrument → fix with a regression test →
+  clean up + post-mortem. Runs on the main thread (your model); reuses the project's TDD +
+  done-check rather than restating them.
 - **`/explain`** — a plain-English architecture overview of the *whole* codebase. It runs
   on the main thread (Sonnet) and spawns the **Explore** agent to map the repo first,
   then synthesizes. It runs in the main thread on purpose: only the main thread can spawn
