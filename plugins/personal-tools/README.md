@@ -8,6 +8,7 @@ plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
 │   ├── commit/SKILL.md            # /commit — review changes, write message, commit, summarize
+│   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
@@ -49,6 +50,12 @@ plugins/personal-tools/
   `~/.claude/handoffs/<branch>.md` (work done, in-flight state, next steps, key files, gotchas)
   plus the `~/.claude/.pending-handoff` resume pointer the `workflow` plugin reads, then tell me
   to `/clear` and send `go`. Requires committed work first.
+- **`/dedup-search [task]`** — search the repo for reusable or extendable code before writing
+  anything new. It extracts 3–8 concrete search terms from the task description, runs the
+  `scripts/dedup-search.sh` helper against the repo, and triages each candidate into
+  **reuse** (call it directly), **extend** (targeted addition needed), or **none**
+  (coincidental match). Emits a ranked reuse-candidate list, or an explicit
+  "searched, nothing reusable" statement so the caller knows the search ran.
 - **`/diagnose [bug]`** — root-cause a bug through a disciplined 6-phase loop: build a feedback
   loop → reproduce → rank falsifiable hypotheses → instrument → fix with a regression test →
   clean up + post-mortem. Runs on the main thread (your model); reuses the project's TDD +
