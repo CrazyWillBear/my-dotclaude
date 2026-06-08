@@ -130,9 +130,9 @@ tcr_install_playwright_mcp() {
 # GitHub access uses the gh CLI, not a GitHub MCP server: on a machine with gh,
 # gh + Bash already cover the whole GitHub API, so an MCP would only add a managed
 # token and per-session tool-schema overhead. This allowlists the common read-only
-# gh commands (so reads do not prompt) PLUS the four issue-write commands the dev
-# loop needs (the /to-prd, /to-issues, and /orchestrate flow files and updates
-# GitHub Issues). It deliberately does NOT allowlist `gh api` (can POST/DELETE any
+# gh commands (so reads do not prompt) PLUS the issue-write + label-create commands
+# the dev loop needs (the /to-prd, /to-issues, and /orchestrate flow files, labels,
+# and updates GitHub Issues). It deliberately does NOT allowlist `gh api` (can POST/DELETE any
 # endpoint) or `gh pr merge` — merges stay a human decision. Then it checks that gh
 # is installed and authenticated.
 tcr_setup_gh() {
@@ -146,7 +146,7 @@ tcr_setup_gh() {
     "Bash(gh run view:*)" "Bash(gh run list:*)" "Bash(gh release view:*)" \
     "Bash(gh search:*)" "Bash(gh auth status:*)" \
     "Bash(gh issue create:*)" "Bash(gh issue edit:*)" "Bash(gh issue comment:*)" \
-    "Bash(gh issue close:*)"
+    "Bash(gh issue close:*)" "Bash(gh label create:*)"
   if command -v gh >/dev/null 2>&1; then
     if gh auth status >/dev/null 2>&1; then
       tcr_ok "gh is installed and authenticated"

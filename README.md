@@ -38,20 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/set
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 ```
 
-<details>
-<summary>Windows (PowerShell) — untested, use at your own risk</summary>
-
-The `.ps1` scripts print a warning and **do nothing unless you pass `-Continue`**.
-Because `irm | iex` can't forward parameters, invoke as a scriptblock (add `-Force` to
-overwrite an existing `~/.claude/CLAUDE.md`):
-
-```powershell
-# developer
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.ps1))) -Continue
-# non-developer
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1))) -Continue
-```
-</details>
+macOS / Linux / WSL only. On Windows, run the scripts under WSL.
 
 Then **restart Claude Code** so it loads the plugins.
 
@@ -245,7 +232,7 @@ my-dotclaude/
 │       └── tests/                  # watchdog + resume + suggest-docs tests
 ├── global/CLAUDE.md                 # my global ~/.claude/CLAUDE.md (developer setup)
 ├── templates/simple/CLAUDE.md       # plain-English global CLAUDE.md (installed by setup-simple)
-├── setup/                           # setup-dev / setup-simple (.sh + .ps1) + lib
+├── setup/                           # setup-dev.sh / setup-simple.sh + lib
 └── AGENT_SETUP.md                   # instructions Claude follows for the paste-a-prompt path
 ```
 
@@ -253,8 +240,7 @@ my-dotclaude/
 
 `bash` and `python3` (the watchdog uses python3 to parse the transcript; if it's missing
 the hook fails open — it does nothing rather than blocking). The setup scripts also need
-the `claude` CLI; the shell (`.sh`) scripts use `curl`, while the PowerShell (`.ps1`)
-scripts use the built-in `Invoke-WebRequest`. Caveman and the Playwright MCP both need
+the `claude` CLI and use `curl`. Caveman and the Playwright MCP both need
 Node ≥ 18 (Playwright runs via `npx`). The dev pipeline (`/to-prd`, `/to-issues`,
 `/orchestrate`) needs the [`gh` CLI](https://cli.github.com) installed and
 `gh auth login`'d; the setup just warns if it's absent.
@@ -270,7 +256,6 @@ Node ≥ 18 (Playwright runs via `npx`). The dev pipeline (`/to-prd`, `/to-issue
   subagents); the sonnet merger attempts to resolve merge conflicts gated by the done-check,
   but an **unresolvable conflict or a failed done-check stops and reports** rather than
   keeping an unverified resolution, leaving the worktree for inspection.
-- The PowerShell scripts are **untested** and gated behind `-Continue`.
 
 ## License
 

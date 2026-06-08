@@ -41,12 +41,7 @@ not run `git init` or write any project files.
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 ```
 
-On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that risk
-— `irm | iex` can't pass parameters, so use a scriptblock):
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.ps1))) -Continue
-```
+macOS / Linux / WSL only (on Windows, run under WSL).
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
@@ -95,12 +90,7 @@ technical work yourself, and confirm before anything that can't be undone.
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 ```
 
-On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that risk
-— `irm | iex` can't pass parameters, so use a scriptblock):
-
-```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.ps1))) -Continue
-```
+macOS / Linux / WSL only (on Windows, run under WSL).
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
