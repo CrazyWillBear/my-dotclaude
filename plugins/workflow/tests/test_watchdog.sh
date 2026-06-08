@@ -7,11 +7,10 @@
 # sentinels it writes, and the handoff it saves. The watchdog reads context
 # occupancy from the LAST assistant transcript entry's input-side usage.
 #
-# Covers the three phases of the manual-command flow:
-#   * Phase A — plan-start clear gate: ExitPlanMode accept >= gate -> /clear
-#     instruction + handoff, event-branched (PostToolUse -> enforced decision
-#     block; UserPromptSubmit -> advisory additionalContext, no block, so the
-#     prompt survives); under gate -> silent one-shot.
+# Covers the phases and orchestrate gate:
+#   * Orchestrate gate — /orchestrate at >= 60k context -> advisory /clear hint
+#     (no block, prompt survives); /orchestrate under threshold -> silent;
+#     non-orchestrate at >= 60k -> silent; threshold is env-overridable.
 #   * Phase B — wrap nudge: >= nudge -> wrap-up nudge, once per cycle, per-event
 #     label, env-overridable.
 #   * Phase C — post-wrap handoff prompt (Stop): clean tree + wrap commit after
@@ -95,31 +94,11 @@ with open(path, "w") as fh:
 PY
 }
 
-# make_plan_transcript <file> <total> [plan_id]  — like make_transcript but with
-# an ExitPlanMode tool_use early on (carrying id <plan_id>, default "p1"), so
-# last_plan_id() returns that id while the last entry still carries <total> tokens.
-make_plan_transcript() {
-    python3 - "$1" "$2" "${3:-p1}" <<'PY'
-import sys, json
-path, total, pid = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-rows = [
-    {"type": "assistant", "message": {"role": "assistant",
-        "content": [{"type": "tool_use", "name": "ExitPlanMode", "id": pid, "input": {}}],
-        "usage": {"input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}},
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
-]
-with open(path, "w") as fh:
-    for r in rows:
-        fh.write(json.dumps(r) + "\n")
-PY
-}
-
 # run_watchdog <event> <sid> <transcript> — print the hook's stdout.
 run_watchdog() {
-    local event="$1" sid="$2" tr="$3"
-    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false}' \
-        "$event" "$sid" "$tr" \
+    local event="$1" sid="$2" tr="$3" prompt="${4:-}"
+    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false,"prompt":"%s"}' \
+        "$event" "$sid" "$tr" "$prompt" \
         | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
             bash "$WATCHDOG"
 }
@@ -134,7 +113,6 @@ print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
 nudged_path()    { sentinel_path "workflow-nudged-"    "$1"; }
-plangate_path()  { sentinel_path "workflow-plangate-"  "$1"; }
 compacted_path() { sentinel_path "workflow-compacted-" "$1"; }
 
 # read_field <json-file> <field> — print one top-level field.
@@ -197,82 +175,42 @@ out=$(run_watchdog UserPromptSubmit sid-default100 "$WORK/default100.jsonl")
 assert_contains "110k over the 100k default nudges" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase A — on PostToolUse the plan-accept gate halts with a block decision"
+echo "test: orchestrate gate — /orchestrate at >= 60k emits an advisory hint (no block)"
 init_repo
-# Pre-create the handoff doc so save-handoff.sh's resolver finds it.
-ga_branch="$(g rev-parse --abbrev-ref HEAD)"
-ga_safe="${ga_branch//\//-}"
-printf '# Handoff\n## Next steps\n- implement plan\n' >"$GLOBAL_HOME/.claude/handoffs/${ga_safe}.md"
-make_plan_transcript "$WORK/gate.jsonl" 70000
-out=$(run_watchdog PostToolUse sid-gate "$WORK/gate.jsonl")
-assert_contains "halts the agent with a block decision" "$out" '"decision": "block"'
-assert_contains "tells the user to run /clear" "$out" '/clear'
-assert_contains "tells the user the kickoff word" "$out" 'send `go`'
-assert_contains "tells the agent not to implement yet" "$out" "Do NOT begin implementing"
-assert_file "writes the handoff" "$HANDOFF"
-assert_contains "handoff records the handoff_path" "$(read_field "$HANDOFF" handoff_path)" "${ga_safe}.md"
-assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate)"
+make_transcript "$WORK/orch-over.jsonl" 70000
+out=$(run_watchdog UserPromptSubmit sid-orch-over "$WORK/orch-over.jsonl" "/orchestrate")
+assert_not_contains "does NOT block (prompt survives)" "$out" '"decision": "block"'
+assert_contains "injects the advisory as additionalContext" "$out" '"hookEventName": "UserPromptSubmit"'
+assert_contains "tells user to run /clear" "$out" '/clear'
+assert_contains "tells user to then /orchestrate" "$out" '/orchestrate'
+assert_contains "shows a user-facing systemMessage" "$out" "workflow:"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase A — on UserPromptSubmit the gate halts non-destructively (no block, keeps the prompt)"
+echo "test: orchestrate gate — /orchestrate under 60k stays silent"
 init_repo
-# Pre-create the handoff doc so save-handoff.sh's resolver finds it.
-ga_branch="$(g rev-parse --abbrev-ref HEAD)"
-ga_safe="${ga_branch//\//-}"
-printf '# Handoff\n## Next steps\n- implement plan\n' >"$GLOBAL_HOME/.claude/handoffs/${ga_safe}.md"
-make_plan_transcript "$WORK/gate-ups.jsonl" 70000
-out=$(run_watchdog UserPromptSubmit sid-gate-ups "$WORK/gate-ups.jsonl")
-assert_not_contains "does NOT block (a block would discard the user's prompt)" "$out" '"decision": "block"'
-assert_contains "injects the halt as UserPromptSubmit additionalContext" "$out" '"hookEventName": "UserPromptSubmit"'
-assert_contains "additionalContext tells the agent not to implement" "$out" "Do NOT begin implementing"
-assert_contains "tells the user to run /clear" "$out" '/clear'
-assert_contains "tells the user the kickoff word" "$out" 'send `go`'
-assert_contains "shows a user-facing systemMessage" "$out" "context already"
-assert_file "writes the handoff" "$HANDOFF"
-assert_contains "handoff records the handoff_path" "$(read_field "$HANDOFF" handoff_path)" "${ga_safe}.md"
-assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate-ups)"
+make_transcript "$WORK/orch-under.jsonl" 1000
+out=$(run_watchdog UserPromptSubmit sid-orch-under "$WORK/orch-under.jsonl" "/orchestrate")
+assert_empty "/orchestrate under threshold: silent" "$out"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase A — gate under the gate threshold is a silent one-shot"
+echo "test: orchestrate gate — non-orchestrate prompt at >= 60k stays silent"
 init_repo
-make_plan_transcript "$WORK/gate-under.jsonl" 1000
-out=$(run_watchdog UserPromptSubmit sid-gate-under "$WORK/gate-under.jsonl")
-assert_empty "under the gate threshold: silent" "$out"
-assert_nofile "no handoff under the gate threshold" "$HANDOFF"
-assert_file "still records the gate sentinel (one-shot)" "$(plangate_path sid-gate-under)"
+make_transcript "$WORK/orch-other.jsonl" 70000
+out=$(run_watchdog UserPromptSubmit sid-orch-other "$WORK/orch-other.jsonl" "run the loop")
+assert_empty "non-/orchestrate prompt at >= 60k: silent" "$out"
+out=$(run_watchdog UserPromptSubmit sid-orch-other2 "$WORK/orch-other.jsonl" "please orchestrate")
+assert_empty "natural-language orchestrate phrasing: silent" "$out"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase A — an unreadable metric at plan accept defers the gate (does not burn it)"
+echo "test: orchestrate gate — threshold honors WORKFLOW_PLANGATE_TOKENS"
 init_repo
-# A plan-accept transcript whose entries carry NO usage -> context_tokens() is
-# None while plan_accepted() is True. The gate must NOT consume its one-shot,
-# so a later readable+large event can still fire the /clear halt.
-python3 - "$WORK/gate-nosize.jsonl" <<'PY'
-import sys, json
-with open(sys.argv[1], "w") as fh:
-    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
-        "content": [{"type": "tool_use", "name": "ExitPlanMode", "input": {}}]}}) + "\n")
-PY
-out=$(run_watchdog UserPromptSubmit sid-gate-nosize "$WORK/gate-nosize.jsonl")
-assert_empty "unreadable metric at plan accept: silent" "$out"
-assert_nofile "does NOT burn the gate one-shot when the metric is unreadable" "$(plangate_path sid-gate-nosize)"
-assert_nofile "no handoff when the metric is unreadable" "$HANDOFF"
-
-# ---------------------------------------------------------------------------
-echo "test: Phase A — the clear gate re-fires per new plan, deduped by plan id"
-init_repo
-make_plan_transcript "$WORK/refire-p1.jsonl" 70000 p1
-out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p1.jsonl")
-assert_contains "first plan (p1) over the gate fires" "$out" '"decision": "block"'
-assert_equals "stores the gated plan id" "$(read_field "$(plangate_path sid-refire)" plan_id)" "p1"
-# Same transcript (same plan id) again -> already gated -> silent.
-out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p1.jsonl")
-assert_empty "same plan id again stays silent (id dedupe)" "$out"
-# A new plan (later ExitPlanMode id p2) in the SAME session re-fires the gate.
-make_plan_transcript "$WORK/refire-p2.jsonl" 70000 p2
-out=$(run_watchdog PostToolUse sid-refire "$WORK/refire-p2.jsonl")
-assert_contains "a new plan id (p2) re-fires the gate" "$out" '"decision": "block"'
-assert_equals "advances the gated plan id to p2" "$(read_field "$(plangate_path sid-refire)" plan_id)" "p2"
+make_transcript "$WORK/orch-env.jsonl" 1000
+out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-orch-env","transcript_path":"%s","stop_hook_active":false,"prompt":"/orchestrate"}' \
+    "$WORK/orch-env.jsonl" \
+    | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+        WORKFLOW_PLANGATE_TOKENS=500 bash "$WATCHDOG")
+assert_contains "a lowered plangate threshold trips on a small transcript" "$out" "workflow:"
+assert_not_contains "still advisory (no block)" "$out" '"decision": "block"'
 
 # ---------------------------------------------------------------------------
 echo "test: Phase C — clean tree + wrap commit after the nudge prompts /handoff"
