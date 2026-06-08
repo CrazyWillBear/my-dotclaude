@@ -2,25 +2,18 @@
 #
 # Context watchdog for the workflow plugin.
 #
-# Wired on UserPromptSubmit + PostToolUse (detect mid-work) and Stop (the wrap
-# seam). It reads the LIVE context occupancy from the transcript and drives a
-# deliberate, EARLY /clear or /handoff as the window fills — the user types the
-# one command, the hook handles everything around it. (No hook or agent can run
-# /clear, /handoff, or /compact itself; they are user-typed REPL input only.)
-# Two phases:
+# Wired on UserPromptSubmit + PostToolUse (detect mid-work). It reads the LIVE
+# context occupancy from the transcript and fires a one-shot signal when the
+# window fills — the agent wraps up, commits, and runs /handoff in one step.
+# (No hook or agent can run /clear, /handoff, or /compact itself; they are
+# user-typed REPL input only.)
 #
-#   * Phase B — mid-execution wrap nudge (active events, >= WORKFLOW_NUDGE_
-#     TOKENS, default 100k): once per cycle, ask the agent to wrap it up soon at a
-#     natural breaking point and commit. Records HEAD so Phase C can tell a wrap
-#     landed. Does NOT touch code review — the project's own checks run on the
-#     wrap commit.
-#   * Phase C — post-wrap handoff prompt (Stop, the next clean stop after the
-#     nudge once a wrap commit exists): one-shot per cycle. Save a handoff and
-#     tell the user to run /handoff (once the work is committed), which captures a
-#     rich handoff doc + resume pointer and walks them through /clear into fresh
-#     context. resume.sh re-injects the plan and resets the Phase-B/C sentinels
-#     after the /clear or /compact so a later climb can re-nudge in the same long
-#     session.
+#   * 100k signal — mid-execution wrap-and-handoff nudge (active events,
+#     >= WORKFLOW_NUDGE_TOKENS, default 100k): once per cycle, ask the agent to
+#     wrap up at the next natural breaking point, commit, and run /handoff. The
+#     signal fires on any work (not orchestrate-specific). resume.sh re-arms the
+#     sentinel on /clear or /compact so a later climb back over 100k in the same
+#     long session can re-fire.
 #
 # Orchestrate gate (advisory, UserPromptSubmit only): when the user types the
 # /orchestrate slash command (bare or with arguments, e.g. `/orchestrate 3` or
@@ -40,20 +33,18 @@
 #     one command.
 #   * Fail open: any error / missing dependency exits 0 so we never wedge a session.
 #   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal.
-#   * The handoff JSON is written by the shared scripts/save-handoff.sh (single
-#     schema writer) — we never build it here.
+#   * Subagents are never triggered — metric reads the main transcript only.
 
 # Capture the hook JSON into an env var (avoids stdin/quoting headaches in python).
 export HOOK_INPUT="$(cat)"
 
-# Need python3 and git; without either, bow out quietly (never wedge a session).
+# Need python3; without it, bow out quietly (never wedge a session).
 command -v python3 >/dev/null 2>&1 || exit 0
-command -v git >/dev/null 2>&1 || exit 0
 
 # Quoted heredoc so literal punctuation/apostrophes in the body can never break
 # shell quoting. HOOK_INPUT travels via the environment, so stdin stays free.
 python3 <<"PY" || exit 0
-import os, json, sys, time, tempfile, hashlib, subprocess
+import os, json, sys, time, tempfile, hashlib
 
 raw = os.environ.get("HOOK_INPUT", "")
 try:
@@ -75,13 +66,10 @@ event       = data.get("hook_event_name", "")
 prompt      = str(data.get("prompt") or "").strip()
 transcript  = data.get("transcript_path", "")
 session_id  = str(data.get("session_id") or "default")
-project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
-plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
 
 tmp = tempfile.gettempdir()
 skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-nudged_path    = os.path.join(tmp, "workflow-nudged-"    + skey + ".json")
-compacted_path = os.path.join(tmp, "workflow-compacted-" + skey + ".json")
+nudged_path = os.path.join(tmp, "workflow-nudged-" + skey + ".json")
 
 
 def context_tokens(path):
@@ -130,55 +118,6 @@ def touch(path, extra=None):
         pass
 
 
-def read_json(path):
-    try:
-        with open(path) as fh:
-            d = json.load(fh)
-        return d if isinstance(d, dict) else {}
-    except Exception:
-        return {}
-
-
-def git(*args):
-    try:
-        out = subprocess.run(
-            ["git", "-C", project_dir, *args],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
-        return None
-    if out.returncode != 0:
-        return None
-    return out.stdout.strip()
-
-
-def tree_dirty():
-    # git diff --quiet HEAD exits nonzero when tracked changes differ from HEAD.
-    # On any error treat as dirty so Phase C never fires on an unclear state.
-    try:
-        rc = subprocess.run(
-            ["git", "-C", project_dir, "diff", "--quiet", "HEAD"],
-            capture_output=True, timeout=10,
-        ).returncode
-    except Exception:
-        return True
-    return rc != 0
-
-
-def save_handoff(size):
-    # Delegate to the shared writer so the handoff schema lives in one place.
-    sh = os.environ.get("WORKFLOW_SAVE_HANDOFF_SH")
-    if not sh and plugin_root:
-        sh = os.path.join(plugin_root, "scripts", "save-handoff.sh")
-    if not sh or not os.path.isfile(sh):
-        return
-    args = ["bash", sh, "--session", session_id, "--size", str(size)]
-    try:
-        subprocess.run(args, cwd=project_dir, capture_output=True, timeout=10)
-    except Exception:
-        pass
-
-
 def emit(obj):
     sys.stdout.write(json.dumps(obj))
     sys.exit(0)
@@ -186,29 +125,13 @@ def emit(obj):
 
 size = context_tokens(transcript)
 
-# --- Phase C — Stop: prompt /handoff once the wrap-up commit has landed. -------
-if event == "Stop":
-    if not os.path.exists(nudged_path):       # no nudge this cycle -> nothing to do
-        sys.exit(0)
-    if os.path.exists(compacted_path):        # already prompted this cycle
-        sys.exit(0)
-    head = git("rev-parse", "HEAD")
-    nudge_head = read_json(nudged_path).get("head")
-    if not head or not nudge_head or head == nudge_head:
-        sys.exit(0)                           # no wrap commit landed yet
-    if tree_dirty():
-        sys.exit(0)                           # still mid-work; wait for a clean stop
-    save_handoff(size or 0)
-    touch(compacted_path)
-    emit({"systemMessage":
-          "workflow: wrap-up committed. Once the work and any fixes are in, run "
-          "`/handoff` — it saves a rich handoff doc + resume pointer and walks "
-          "you through `/clear` into fresh context, where the plan auto-resumes."})
+# Active events (UserPromptSubmit / PostToolUse) only.
+if event not in ("UserPromptSubmit", "PostToolUse"):
+    sys.exit(0)
 
-# --- Active events (UserPromptSubmit / PostToolUse). -------------------------
-# Orchestrate gate (advisory): on UserPromptSubmit, when the /orchestrate slash
-# command is typed (bare or with arguments like `3`, `--max 2`, `3 --max 2`) and
-# context >= PLANGATE, inject an advisory hint to run /clear first so the loop
+# --- Orchestrate gate (advisory): on UserPromptSubmit, when the /orchestrate
+# slash command is typed (bare or with arguments like `3`, `--max 2`, `3 --max 2`)
+# and context >= PLANGATE, inject an advisory hint to run /clear first so the loop
 # starts in fresh context. Never a decision:block — the prompt survives and
 # /orchestrate still runs if the user proceeds. Non-orchestrate prompts and
 # /orchestrate under the threshold are always silent. Natural-language phrasing
@@ -236,25 +159,24 @@ if (event == "UserPromptSubmit"
         },
     })
 
-# Phase B — mid-execution wrap nudge: once per cycle, ask to wrap up + commit.
-# Record HEAD so Phase C can detect that a wrap commit later advanced it.
+# --- 100k universal signal: once per cycle, tell the agent to wrap up at the
+# next natural breaking point, commit, and run /handoff. Fires on any work
+# (not orchestrate-specific). Silent on subsequent events while still over budget
+# (sentinel guards re-fire). resume.sh re-arms on /clear or /compact.
 if size is not None and size >= NUDGE and not os.path.exists(nudged_path):
-    # A null HEAD (no commits / git failed) records head: null, which Phase C's
-    # `not nudge_head` guard treats as "no wrap detectable" -> Phase C stays off
-    # this cycle. Acceptable: we never falsely fire the /handoff prompt.
-    touch(nudged_path, {"head": git("rev-parse", "HEAD")})
+    touch(nudged_path)
     kb = size // 1000
     emit({
         "systemMessage":
-            "workflow: ~%dk tokens in context — wrap it up soon and commit." % kb,
+            "workflow: ~%dk tokens in context — wrap it up soon, commit, and run `/handoff`." % kb,
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext":
                 "Context over budget (~%dk tokens). Stop at the next natural "
-                "breaking point: finish and COMMIT the current sub-task, and "
-                "don't start new work. Once it is committed and reviewed I'll "
-                "prompt the user to run /handoff and you'll continue in fresh "
-                "context — do not start new work before then." % kb,
+                "breaking point: finish and COMMIT the current sub-task, then "
+                "run `/handoff` — it saves a rich handoff doc + resume pointer "
+                "and walks you through `/clear` into fresh context where the "
+                "plan auto-resumes. Do not start new work before then." % kb,
         },
     })
 

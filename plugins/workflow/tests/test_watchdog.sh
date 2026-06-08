@@ -3,20 +3,19 @@
 # Tests for scripts/watchdog.sh — the context watchdog hook.
 #
 # Black-box: we drive a real git repo + synthetic transcript JSONL + hook
-# payload, run the actual hook, and assert on the JSON it prints, the per-session
-# sentinels it writes, and the handoff it saves. The watchdog reads context
-# occupancy from the LAST assistant transcript entry's input-side usage.
+# payload, run the actual hook, and assert on the JSON it prints and the
+# per-session sentinels it writes. The watchdog reads context occupancy from the
+# LAST assistant transcript entry's input-side usage.
 #
-# Covers the phases and orchestrate gate:
+# Covers the 100k signal and orchestrate gate:
+#   * 100k universal signal — >= nudge -> wrap-up + commit + /handoff message,
+#     once per cycle, per-event label, env-overridable; subsequent events while
+#     still over budget are silent.
 #   * Orchestrate gate — /orchestrate at >= 60k context -> advisory /clear hint
 #     (no block, prompt survives); /orchestrate under threshold -> silent;
 #     non-orchestrate at >= 60k -> silent; threshold is env-overridable.
-#   * Phase B — wrap nudge: >= nudge -> wrap-up nudge, once per cycle, per-event
-#     label, env-overridable.
-#   * Phase C — post-wrap handoff prompt (Stop): clean tree + wrap commit after
-#     the nudge -> continue-handoff + /handoff instruction; dirty / no-wrap /
-#     no-nudge -> silent; one-shot per cycle.
 #   * Fail-open: a missing transcript stays silent.
+#   * Stop events are always silent (no Phase C handler).
 #
 # Run: bash plugins/workflow/tests/test_watchdog.sh   (non-zero if any fail)
 
@@ -35,7 +34,6 @@ export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 GLOBAL_HOME="$WORK/home"
 mkdir -p "$GLOBAL_HOME/.claude/handoffs"
-HANDOFF="$GLOBAL_HOME/.claude/.pending-handoff"
 
 PROJECT_DIR="$WORK/proj"
 
@@ -53,12 +51,10 @@ assert_nofile() { if [ -f "$2" ]; then no "$1 (unexpected file $2)"; else ok "$1
 
 g() { git -C "$PROJECT_DIR" "$@"; }
 
-# Fresh repo + clear any prior handoff so tests that assert on it start clean.
-# Per-session sentinels are keyed by session_id (unique per test) so they need
-# no clearing here.
+# Fresh repo. Per-session sentinels are keyed by session_id (unique per test)
+# so they need no clearing here.
 init_repo() {
     rm -rf "$PROJECT_DIR"
-    rm -f "$HANDOFF"
     mkdir -p "$PROJECT_DIR/.claude"
     g init -q
     g config user.email t@t.com
@@ -94,7 +90,7 @@ with open(path, "w") as fh:
 PY
 }
 
-# run_watchdog <event> <sid> <transcript> — print the hook's stdout.
+# run_watchdog <event> <sid> <transcript> [<prompt>] — print the hook's stdout.
 run_watchdog() {
     local event="$1" sid="$2" tr="$3" prompt="${4:-}"
     printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false,"prompt":"%s"}' \
@@ -112,20 +108,7 @@ key = hashlib.sha1(sid.encode()).hexdigest()[:16]
 print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
-nudged_path()    { sentinel_path "workflow-nudged-"    "$1"; }
-compacted_path() { sentinel_path "workflow-compacted-" "$1"; }
-
-# read_field <json-file> <field> — print one top-level field.
-read_field() {
-    python3 - "$1" "$2" <<'PY'
-import sys, json
-try:
-    v = json.load(open(sys.argv[1])).get(sys.argv[2], "")
-    print(v if v is not None else "")
-except Exception:
-    print("")
-PY
-}
+nudged_path() { sentinel_path "workflow-nudged-" "$1"; }
 
 # ---------------------------------------------------------------------------
 echo "test: under the nudge threshold stays silent and writes no state"
@@ -136,27 +119,32 @@ assert_empty "under threshold: silent" "$out"
 assert_nofile "no nudge sentinel under threshold" "$(nudged_path sid-under)"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase B — over the nudge threshold nudges and sets the sentinel"
+echo "test: 100k signal — over the nudge threshold fires the signal and sets the sentinel"
 init_repo
 make_transcript "$WORK/over.jsonl" 200000
 out=$(run_watchdog UserPromptSubmit sid-nudge "$WORK/over.jsonl")
-assert_contains "emits the wrap-up nudge" "$out" "Context over budget"
+assert_contains "emits the wrap-up signal" "$out" "Context over budget"
+assert_contains "tells agent to commit" "$out" "COMMIT"
+assert_contains "tells agent to run /handoff" "$out" "/handoff"
 assert_contains "labels the UserPromptSubmit event" "$out" '"hookEventName": "UserPromptSubmit"'
 assert_contains "shows a user-facing systemMessage" "$out" "wrap it up"
+assert_contains "user-facing message mentions /handoff" "$out" "/handoff"
 assert_file "creates the nudge sentinel" "$(nudged_path sid-nudge)"
-assert_contains "records HEAD in the nudge sentinel" "$(read_field "$(nudged_path sid-nudge)" head)" "$(g rev-parse HEAD)"
 
 # ---------------------------------------------------------------------------
-echo "test: the nudge fires at most once per cycle"
+echo "test: the signal fires at most once per cycle (silent on subsequent events)"
 out=$(run_watchdog UserPromptSubmit sid-nudge "$WORK/over.jsonl")
 assert_empty "second over-threshold call stays silent" "$out"
+out=$(run_watchdog PostToolUse sid-nudge "$WORK/over.jsonl")
+assert_empty "PostToolUse while still over budget stays silent" "$out"
 
 # ---------------------------------------------------------------------------
-echo "test: the nudge labels the PostToolUse event when fired there"
+echo "test: the signal labels the PostToolUse event when fired there"
 init_repo
 make_transcript "$WORK/ptu.jsonl" 200000
 out=$(run_watchdog PostToolUse sid-ptu "$WORK/ptu.jsonl")
 assert_contains "labels the PostToolUse event" "$out" '"hookEventName": "PostToolUse"'
+assert_contains "PostToolUse signal tells agent to /handoff" "$out" "/handoff"
 
 # ---------------------------------------------------------------------------
 echo "test: the nudge threshold is env-overridable"
@@ -168,11 +156,20 @@ out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-env","tran
 assert_contains "a lowered threshold trips on a small transcript" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase B — the default nudge threshold is 100k (no env override)"
+echo "test: 100k signal — the default nudge threshold is 100k (no env override)"
 init_repo
 make_transcript "$WORK/default100.jsonl" 110000
 out=$(run_watchdog UserPromptSubmit sid-default100 "$WORK/default100.jsonl")
-assert_contains "110k over the 100k default nudges" "$out" "Context over budget"
+assert_contains "110k over the 100k default fires the signal" "$out" "Context over budget"
+
+# ---------------------------------------------------------------------------
+echo "test: Stop events are always silent (no Phase C handler)"
+init_repo
+make_transcript "$WORK/stop.jsonl" 200000
+run_watchdog UserPromptSubmit sid-stop "$WORK/stop.jsonl" >/dev/null   # arm the sentinel
+commit_file src/app.py "print(1)"                                      # advance HEAD
+out=$(run_watchdog Stop sid-stop "$WORK/stop.jsonl")
+assert_empty "Stop event is always silent" "$out"
 
 # ---------------------------------------------------------------------------
 echo "test: orchestrate gate — /orchestrate at >= 60k emits an advisory hint (no block)"
@@ -242,55 +239,6 @@ out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-orch-env",
         WORKFLOW_PLANGATE_TOKENS=500 bash "$WATCHDOG")
 assert_contains "a lowered plangate threshold trips on a small transcript" "$out" "workflow:"
 assert_not_contains "still advisory (no block)" "$out" '"decision": "block"'
-
-# ---------------------------------------------------------------------------
-echo "test: Phase C — clean tree + wrap commit after the nudge prompts /handoff"
-init_repo
-make_transcript "$WORK/cycle.jsonl" 200000
-run_watchdog UserPromptSubmit sid-c "$WORK/cycle.jsonl" >/dev/null   # nudge: records HEAD
-commit_file src/app.py "print(1)"                                    # the wrap-up commit
-out=$(run_watchdog Stop sid-c "$WORK/cycle.jsonl")
-assert_contains "Phase C announces the wrap-up + /handoff" "$out" "wrap-up committed"
-assert_contains "Phase C tells the user to run /handoff" "$out" '/handoff'
-assert_contains "Phase C mentions clearing into fresh context" "$out" '/clear'
-assert_file "Phase C wrote the continue-handoff" "$HANDOFF"
-assert_equals "handoff records the repo toplevel" "$(read_field "$HANDOFF" git_toplevel)" "$(g rev-parse --show-toplevel)"
-assert_equals "handoff baseline = current HEAD" "$(read_field "$HANDOFF" baseline_head)" "$(g rev-parse HEAD)"
-assert_file "sets the compacted sentinel" "$(compacted_path sid-c)"
-
-# ---------------------------------------------------------------------------
-echo "test: Phase C is one-shot per cycle"
-out=$(run_watchdog Stop sid-c "$WORK/cycle.jsonl")
-assert_empty "second Stop in the same cycle stays silent" "$out"
-
-# ---------------------------------------------------------------------------
-echo "test: Phase C stays silent until a wrap commit lands (HEAD unmoved)"
-init_repo
-make_transcript "$WORK/nowrap.jsonl" 200000
-run_watchdog UserPromptSubmit sid-nowrap "$WORK/nowrap.jsonl" >/dev/null   # nudge at HEAD
-out=$(run_watchdog Stop sid-nowrap "$WORK/nowrap.jsonl")                   # no commit since
-assert_empty "no wrap commit yet: silent" "$out"
-assert_nofile "no handoff without a wrap commit" "$HANDOFF"
-
-# ---------------------------------------------------------------------------
-echo "test: Phase C stays silent on a dirty tree even after a wrap commit"
-init_repo
-make_transcript "$WORK/dirty.jsonl" 200000
-run_watchdog UserPromptSubmit sid-dirty "$WORK/dirty.jsonl" >/dev/null
-commit_file src/app.py "print(1)"                                # HEAD advances
-printf 'uncommitted\n' >"$PROJECT_DIR/src/app.py"                 # ...but tree is now dirty
-out=$(run_watchdog Stop sid-dirty "$WORK/dirty.jsonl")
-assert_empty "dirty tree: silent" "$out"
-assert_nofile "no handoff on a dirty tree" "$HANDOFF"
-
-# ---------------------------------------------------------------------------
-echo "test: Phase C without a prior nudge stays silent"
-init_repo
-make_transcript "$WORK/nonudge.jsonl" 200000
-commit_file src/app.py "print(1)"
-out=$(run_watchdog Stop sid-nonudge "$WORK/nonudge.jsonl")
-assert_empty "Stop without a prior nudge: silent" "$out"
-assert_nofile "no handoff without a prior nudge" "$HANDOFF"
 
 # ---------------------------------------------------------------------------
 echo "test: a missing transcript path fails open (silent)"

@@ -2,29 +2,28 @@
 #
 # SessionStart auto-resume for the workflow plugin.
 #
-# The other half of the handoff loop. When the watchdog gates a plan start
-# (Phase A) or prompts a post-wrap /handoff (Phase C), it writes
-# ~/.claude/.pending-handoff and tells the user to run /clear (or to run
-# /handoff, which then clears). A PreCompact hook also writes a handoff before
-# EVERY compaction (a manual /compact or a harness auto-compact), so a
-# user-initiated or harness compact re-injects the plan too — not only
+# The other half of the handoff loop. When the watchdog fires the 100k one-shot
+# signal it tells the agent to commit and run /handoff, which writes
+# ~/.claude/.pending-handoff and clears context. A PreCompact hook also writes a
+# handoff before EVERY compaction (a manual /compact or a harness auto-compact),
+# so a user-initiated or harness compact re-injects the plan too — not only
 # workflow-driven ones. All of those fire SessionStart (source=clear /
 # source=compact). This hook reads the handoff and, if we are in the same repo it
 # came from, re-injects the plan so the user only ever has to type the one command
 # plus a kickoff word:
 #
-#   * source=clear   (Phase A / /handoff) -> "implement the plan @path" wording.
+#   * source=clear   (/handoff) -> "implement the plan @path" wording.
 #     Fresh context, so the agent starts the plan from the committed baseline.
 #   * source=compact (manual/auto /compact) -> "continue the plan @path" wording.
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
 #
-# On ANY clear or compact we reset this session's Phase-B/C wrap sentinels FIRST —
-# before the handoff lookup and repo guard below — so a later climb back over the
-# nudge threshold can drive another wrap -> /handoff cycle. This runs even when no
+# On ANY clear or compact we reset this session's wrap sentinel FIRST — before the
+# handoff lookup and repo guard below — so a later climb back over the nudge
+# threshold can drive another wrap -> /handoff cycle. This runs even when no
 # workflow handoff exists (a manual /compact or a harness auto-compact writes
 # none), which is exactly the case where the old handoff-gated reset was
 # unreachable. (On /clear with a new session_id this is a harmless no-op against a
-# fresh namespace; on a same-id resume it re-arms the cycle.) The Phase-A plangate
+# fresh namespace; on a same-id resume it re-arms the cycle.) The plangate
 # sentinel is left alone — keyed by the last-gated plan id, it re-fires on a new
 # plan without a reset.
 #
@@ -54,22 +53,20 @@ except Exception:
 
 source = data.get("source") or ""
 
-# Reset this session's Phase-B/C wrap sentinels on ANY compact/clear, independent
-# of whether a workflow handoff exists. A manual /compact or a harness
-# auto-compact writes no handoff, so the old reset (which lived after the handoff
-# early-return) never ran for them and Phase B stayed silent for the rest of the
-# session. Keyed by session_id; writes no stdout, so the no-handoff / wrong-repo
-# silence contracts below are preserved. The plangate sentinel is intentionally
-# left alone — Phase A re-fires on a genuinely new plan id on its own, and
-# resetting it would refire on the same plan right after a compact/clear.
+# Reset this session's wrap sentinel on ANY compact/clear, independent of whether
+# a workflow handoff exists. A manual /compact or a harness auto-compact writes no
+# handoff, so the old reset (which lived after the handoff early-return) never ran
+# for them and the nudge stayed silent for the rest of the session. Keyed by
+# session_id; writes no stdout, so the no-handoff / wrong-repo silence contracts
+# below are preserved. The plangate sentinel is intentionally left alone — it
+# re-fires on a genuinely new plan id on its own.
 if source in ("compact", "clear"):
     session_id = str(data.get("session_id") or "default")
     skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-    for prefix in ("workflow-nudged-", "workflow-compacted-"):
-        try:
-            os.remove(os.path.join(tempfile.gettempdir(), prefix + skey + ".json"))
-        except Exception:
-            pass
+    try:
+        os.remove(os.path.join(tempfile.gettempdir(), "workflow-nudged-" + skey + ".json"))
+    except Exception:
+        pass
 
 handoff_path = os.path.expanduser("~/.claude/.pending-handoff")
 if not os.path.isfile(handoff_path):

@@ -4,10 +4,10 @@
 #
 # Black-box: we plant a ~/.claude/.pending-handoff, run the actual hook in a real
 # git repo, and assert on the resume instruction it injects, the handoff it
-# removes, and (on a /compact resume) the Phase-B/C sentinels it resets. The hook
-# is source-aware: /clear -> "implement the handoff" wording (fresh context),
-# /compact -> "continue the handoff" wording + sentinel reset (so a later climb can
-# re-nudge), and any other source falls back to "continue".
+# removes, and (on a /compact resume) the nudge sentinel it resets. The hook is
+# source-aware: /clear -> "implement the handoff" wording (fresh context),
+# /compact -> "continue the handoff" wording + sentinel reset (so a later climb
+# can re-nudge), and any other source falls back to "continue".
 #
 # Covers: the clear/compact/startup wording variants; the wrong-repo no-op
 # (handoff preserved); no-handoff silence; the no-handoff-path variant; and the
@@ -119,8 +119,7 @@ key = hashlib.sha1(sid.encode()).hexdigest()[:16]
 print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
-nudged_path()    { sentinel_path "workflow-nudged-"    "$1"; }
-compacted_path() { sentinel_path "workflow-compacted-" "$1"; }
+nudged_path() { sentinel_path "workflow-nudged-" "$1"; }
 
 read_field() {
     python3 - "$1" "$2" <<'PY'
@@ -148,17 +147,15 @@ assert_contains "tells the agent not to redo work" "$out" "do not redo"
 assert_nofile "clears the handoff (resume once)" "$HANDOFF"
 
 # ---------------------------------------------------------------------------
-echo "test: source=compact injects the 'continue' wording and resets Phase-B/C sentinels"
+echo "test: source=compact injects the 'continue' wording and resets the nudge sentinel"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2)"            # pretend Phase B/C already fired this session
-: >"$(compacted_path sid-r2)"
+: >"$(nudged_path sid-r2)"            # pretend the 100k signal already fired this session
 make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume compact sid-r2)
 assert_contains "uses the continue wording" "$out" "continue the handoff"
 assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
-assert_nofile "resets the compacted sentinel" "$(compacted_path sid-r2)"
 assert_nofile "clears the handoff" "$HANDOFF"
 # Proof the reset re-arms the cycle: a fresh >=120k transcript re-nudges.
 make_transcript "$WORK/renudge.jsonl" 200000
@@ -166,17 +163,15 @@ rout=$(run_watchdog UserPromptSubmit sid-r2 "$WORK/renudge.jsonl")
 assert_contains "a later climb re-nudges after the reset" "$rout" "Context over budget"
 
 # ---------------------------------------------------------------------------
-echo "test: source=clear also resets Phase-B/C sentinels (re-arms the wrap cycle)"
+echo "test: source=clear also resets the nudge sentinel (re-arms the wrap cycle)"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2c)"            # pretend Phase B/C already fired this session
-: >"$(compacted_path sid-r2c)"
+: >"$(nudged_path sid-r2c)"            # pretend the 100k signal already fired this session
 make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume clear sid-r2c)
 assert_contains "uses the implement wording" "$out" "implement the handoff"
 assert_nofile "clear resets the nudge sentinel" "$(nudged_path sid-r2c)"
-assert_nofile "clear resets the compacted sentinel" "$(compacted_path sid-r2c)"
 assert_nofile "clears the handoff" "$HANDOFF"
 # Proof the reset re-arms the cycle: a fresh >=120k transcript re-nudges.
 make_transcript "$WORK/renudge-clear.jsonl" 130000
@@ -224,8 +219,7 @@ pc_branch="$(g rev-parse --abbrev-ref HEAD)"
 pc_safe="${pc_branch//\//-}"
 # Pre-create the handoff doc so resolve_handoff() finds it.
 printf '# Handoff\n## Done\n- base commit\n' >"$GLOBAL_HOME/.claude/handoffs/${pc_safe}.md"
-: >"$(nudged_path sid-pc)"             # Phase B already fired this session
-: >"$(compacted_path sid-pc)"
+: >"$(nudged_path sid-pc)"             # 100k signal already fired this session
 run_save_handoff "$PROJECT_DIR"        # simulate the PreCompact hook (no args)
 assert_file "PreCompact writes a handoff" "$HANDOFF"
 assert_equals "handoff records this repo" "$(read_field "$HANDOFF" git_toplevel)" "$top"
@@ -234,17 +228,14 @@ out=$(run_resume compact sid-pc)
 assert_contains "manual compact re-injects the handoff" "$out" "continue the handoff"
 assert_nofile "manual compact clears the handoff" "$HANDOFF"
 assert_nofile "manual compact resets the nudge sentinel" "$(nudged_path sid-pc)"
-assert_nofile "manual compact resets the compacted sentinel" "$(compacted_path sid-pc)"
 
 # ---------------------------------------------------------------------------
-echo "test: a manual /compact with NO handoff still re-arms Phase B (silent reset)"
+echo "test: a manual /compact with NO handoff still re-arms the 100k signal (silent reset)"
 init_repo
-: >"$(nudged_path sid-nh)"             # Phase B already fired this session
-: >"$(compacted_path sid-nh)"
+: >"$(nudged_path sid-nh)"             # 100k signal already fired this session
 out=$(run_resume compact sid-nh)       # no handoff present
 assert_empty "no handoff: silent" "$out"
 assert_nofile "no-handoff compact resets the nudge sentinel" "$(nudged_path sid-nh)"
-assert_nofile "no-handoff compact resets the compacted sentinel" "$(compacted_path sid-nh)"
 # Proof the reset re-armed the cycle: a fresh >=120k transcript re-nudges.
 make_transcript "$WORK/renudge-nh.jsonl" 200000
 rout=$(run_watchdog UserPromptSubmit sid-nh "$WORK/renudge-nh.jsonl")
