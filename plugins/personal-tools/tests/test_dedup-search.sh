@@ -192,5 +192,100 @@ assert_contains "dep angle tag present" "$out" "dep"
 assert_contains "def angle tag present" "$out" "def"
 
 # ---------------------------------------------------------------------------
+# ctags engine tests
+# ---------------------------------------------------------------------------
+# We need a stub ctags that emits realistic -x output for the fixture repo.
+# The stub ignores all real arguments and prints a fixed xref table that
+# names symbols from the fixture files planted above.
+#
+# ctags -x column layout: name  kind  line  file  context
+# ---------------------------------------------------------------------------
+
+# Resolve the real bash binary so we can inject it into synthetic PATHs.
+REAL_BASH_DS="$(command -v bash)"
+
+# Build a combined bin dir that has rg, python3, and bash — the minimum a
+# child process needs to run the helper.  (The ctags test also adds ctags.)
+mkdir -p "$WORK/full_bin"
+ln -sf "$REAL_BASH_DS" "$WORK/full_bin/bash"
+# Symlink python3 if available (the helper requires it).
+_py3="$(command -v python3 2>/dev/null || true)"
+[ -n "$_py3" ] && ln -sf "$_py3" "$WORK/full_bin/python3"
+# Re-use the rg shim already placed in $WORK/bin.
+ln -sf "$(readlink -f "$WORK/bin/rg")" "$WORK/full_bin/rg" 2>/dev/null \
+    || cp "$WORK/bin/rg" "$WORK/full_bin/rg"
+
+mkdir -p "$WORK/ctags_bin"
+
+# Write the stub using shell variables already expanded — the here-doc is
+# NOT quoted so $REPO expands now, giving the stub hard-coded absolute paths.
+cat > "$WORK/ctags_bin/ctags" <<CTAGS_STUB
+#!/usr/bin/env bash
+# Stub ctags: ignores args, emits a fixed -x xref table for the fixture repo.
+printf '%s\n' \\
+  'calculate_total  function  4  ${REPO}/src/math_utils.py  def calculate_total(items):' \\
+  'DISCOUNT_RATE  variable  3  ${REPO}/src/math_utils.py  DISCOUNT_RATE = 0.15' \\
+  'formatResult  function  5  ${REPO}/src/formatter.ts  export function formatResult(value: number): string {' \\
+  'DEFAULT_LABEL  constant  3  ${REPO}/src/formatter.ts  const DEFAULT_LABEL = "calculate_total result";' \\
+  'calculate_total  function  7  ${REPO}/src/run.sh  calculate_total() {' \\
+  '_zebra_unrelated_func  function  13  ${REPO}/src/run.sh  _zebra_unrelated_func() {'
+CTAGS_STUB
+chmod +x "$WORK/ctags_bin/ctags"
+
+# Helper that runs the helper under a controlled PATH.
+# Usage: run_helper_path <path> <repo> <term ...>
+run_helper_path() {
+    local p="$1"; shift
+    PATH="$p" "$REAL_BASH_DS" "$HELPER" "$@"
+}
+
+# ---------------------------------------------------------------------------
+echo "test (ctags present): ctags-sym rows contain name, file:line, and signature"
+CTAGS_PATH="$WORK/ctags_bin:$WORK/full_bin"
+out=$(run_helper_path "$CTAGS_PATH" "$REPO" calculate_total)
+assert_contains "ctags-sym angle tag present" "$out" "ctags-sym"
+assert_contains "ctags-sym row names calculate_total" "$out" "calculate_total"
+# Row must contain a file:line reference (colon between path and line number)
+assert_contains "ctags-sym row contains file:line" "$out" "math_utils.py:"
+# Row must contain the signature/context
+assert_contains "ctags-sym row contains kind" "$out" "function"
+
+# ---------------------------------------------------------------------------
+echo "test (ctags present): ctags output filtered — unrelated symbol absent"
+out=$(run_helper_path "$CTAGS_PATH" "$REPO" calculate_total)
+assert_not_contains "zebra symbol absent when searching calculate_total" "$out" "_zebra_unrelated_func"
+
+# ---------------------------------------------------------------------------
+echo "test (ctags present): ctags-sym row for TS function"
+out=$(run_helper_path "$CTAGS_PATH" "$REPO" formatResult)
+assert_contains "ctags-sym row for formatResult" "$out" "ctags-sym"
+assert_contains "ctags-sym row names formatter.ts" "$out" "formatter.ts"
+assert_contains "ctags-sym row contains formatResult" "$out" "formatResult"
+
+# ---------------------------------------------------------------------------
+echo "test (ctags present): def angle absent — ctags-sym supersedes it"
+out=$(run_helper_path "$CTAGS_PATH" "$REPO" calculate_total)
+# The def angle tag should NOT appear when ctags is present.
+assert_not_contains "def angle absent when ctags present" "$out" "	def	"
+
+# ---------------------------------------------------------------------------
+echo "test (ctags absent): graceful degradation — falls back to ripgrep def-search"
+# Use a PATH that has rg, python3, and bash but NO ctags.
+NOCT_PATH="$WORK/full_bin"
+out=$(run_helper_path "$NOCT_PATH" "$REPO" calculate_total)
+# With ctags absent the def angle must fire and find the planted definitions.
+assert_contains "fallback def row for Python" "$out" "def"
+assert_contains "fallback def names math_utils.py" "$out" "math_utils.py"
+assert_contains "fallback def names run.sh" "$out" "run.sh"
+# And ctags-sym must NOT appear.
+assert_not_contains "ctags-sym absent without ctags" "$out" "ctags-sym"
+
+# ---------------------------------------------------------------------------
+echo "test (ctags absent): fallback still finds planted Shell definition"
+out=$(run_helper_path "$NOCT_PATH" "$REPO" calculate_total)
+assert_contains "shell def row present in fallback" "$out" "def"
+assert_contains "fallback finds run.sh shell def" "$out" "run.sh"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
