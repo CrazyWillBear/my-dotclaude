@@ -19,15 +19,16 @@ defined, say so rather than silently skipping them.
 
 If requirements are unclear or the right design is uncertain: ask a clarifying
 question, propose a short plan, or make the smallest change that lets us discuss. Do
-**not** push large speculative changes or invent requirements to fill the gap.
+**not** push speculative changes or invent requirements to fill the gap. Stay within 
+your scope.
 
 ## Boundaries
 
 **Always**
-- Follow the project's `STYLEGUIDE.md` when it has one; otherwise match the conventions
+- Follow the project's `STYLEGUIDE.md` when it has one; it's worth reading docs to 
+  see if they have a guide by a different name. Otherwise, match the conventions
   already in the file and repo.
-- Keep diffs small and focused — one logical change at a time. Prefer editing existing
-  files over adding new ones.
+- Prefer editing existing files over adding new ones.
 - Never duplicate code. Before writing new code, search the repo for an existing
   function, helper, or pattern that already does it and reuse or extend that. If you
   find near-duplicate logic, factor out the shared part instead of copy-pasting.
@@ -44,8 +45,7 @@ question, propose a short plan, or make the smallest change that lets us discuss
 - Touching files outside the current workspace, or anything affecting systems outside
   the project's scope.
 - Adding a dependency, changing a public API, or changing data schemas.
-- Changing project docs (`CLAUDE.md`, `STYLEGUIDE.md`, `PLAN.md`, …). Flag staleness or
-  redundancy when a change introduces it, but update or prune only after asking.
+- Touching prod AT ALL.
 
 **Never**
 - Put secrets in code.
@@ -57,8 +57,3 @@ question, propose a short plan, or make the smallest change that lets us discuss
 Be concise. Lead with the answer, skip the preamble, and don't pad. (caveman handles
 tone when it's installed; this holds regardless.)
 
-## Maintaining this file
-
-Treat this file like code. Keep it under ~100 lines. For every line, ask: "would
-removing this cause a mistake?" If not, cut it. Universal working rules only — anything
-project-specific belongs in that project's docs.
