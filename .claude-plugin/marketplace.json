@@ -7,19 +7,14 @@
   },
   "plugins": [
     {
-      "name": "my-code-review",
-      "source": "./plugins/my-code-review",
-      "description": "Automatic, subagent-powered code review on every turn — correctness, security, style, and performance, driven by a shared team rubric."
-    },
-    {
       "name": "personal-tools",
       "source": "./plugins/personal-tools",
       "description": "My personal Claude Code slash commands and subagents."
     },
     {
-      "name": "context-flow",
-      "source": "./plugins/context-flow",
-      "description": "Threshold-driven context management: a watchdog drives deliberate, early /clear and /compact as the window fills, and auto-resumes the in-flight plan around each command."
+      "name": "workflow",
+      "source": "./plugins/workflow",
+      "description": "An autonomous dev loop (/orchestrate fans out parallel issue-solving in isolated git worktrees, then an opus reviewer files blocking follow-ups) plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
     }
   ]
 }

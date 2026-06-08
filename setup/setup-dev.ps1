@@ -10,8 +10,8 @@
 
 .DESCRIPTION
   Installs the global ~/.claude/CLAUDE.md (technical), sets model=opus, installs the plugins
-  (my-code-review, personal-tools, caveman, agent-sdk-dev), the Playwright MCP server, and a
-  read-only gh (GitHub CLI) allowlist. Not tied to any project. -Force overwrites an existing
+  (personal-tools, workflow, caveman, agent-sdk-dev), the Playwright MCP server, and a gh
+  (GitHub CLI) allowlist (read-only reads + issue-write). Not tied to any project. -Force overwrites an existing
   ~/.claude/CLAUDE.md (a timestamped backup is always kept either way).
 #>
 param([switch]$Force, [switch]$Continue)
@@ -48,8 +48,9 @@ if (-not (Test-TcrCommand 'claude')) { Stop-TcrError "Claude Code's 'claude' CLI
 Write-TcrStep "Developer setup into: $(Join-Path $HOME '.claude')"
 Install-TcrGlobalClaudeMd -LocalRoot $LocalRoot -Force:$Force
 Set-TcrSetting 'model' 'opus'
-Install-TcrReviewPlugin -LocalRoot $LocalRoot   # also adds our marketplace
-Install-TcrPersonalTools                        # reuses the marketplace added above
+Add-TcrOurMarketplace -LocalRoot $LocalRoot     # register our marketplace
+Install-TcrPersonalTools                        # from our marketplace
+Install-TcrWorkflow                             # from our marketplace
 Install-TcrCaveman
 Install-TcrAgentSdkDev
 Install-TcrPlaywrightMcp
@@ -62,5 +63,5 @@ if ($script:TcrInstallFailed) {
 Write-Host ''
 Write-Host 'Done. Next:' -ForegroundColor White
 Write-Host '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.'
-Write-Host '  2. Run /plugin to confirm my-code-review, personal-tools, caveman, and agent-sdk-dev are enabled.'
+Write-Host '  2. Run /plugin to confirm personal-tools, workflow, caveman, and agent-sdk-dev are enabled.'
 Write-Host '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.'

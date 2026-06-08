@@ -9,11 +9,11 @@
   pwsh -File setup/setup-simple.ps1 -Continue -Force
 
 .DESCRIPTION
-  Installs the global ~/.claude/CLAUDE.md (plain-English), the plugins (my-code-review,
-  personal-tools, caveman, agent-sdk-dev), the Playwright MCP server, a read-only gh (GitHub CLI)
-  allowlist, sets caveman to its gentler "lite" level, and writes ~/.claude/review-audience=plain so
-  reviews come back in plain language. Not tied to any project; model is left at Claude Code's default.
-  -Force overwrites an existing ~/.claude/CLAUDE.md (a timestamped backup is always kept either way).
+  Installs the global ~/.claude/CLAUDE.md (plain-English), the plugins (personal-tools,
+  workflow, caveman, agent-sdk-dev), the Playwright MCP server, a gh (GitHub CLI) allowlist,
+  and sets caveman to its gentler "lite" level. Not tied to any project; model is left at
+  Claude Code's default. -Force overwrites an existing ~/.claude/CLAUDE.md (a timestamped
+  backup is always kept either way).
 #>
 param([switch]$Force, [switch]$Continue)
 
@@ -48,14 +48,14 @@ if (-not (Test-TcrCommand 'claude')) { Stop-TcrError "Claude Code's 'claude' CLI
 
 Write-TcrStep "Setting up your Claude Code in: $(Join-Path $HOME '.claude')"
 Install-TcrGlobalClaudeMd -LocalRoot $LocalRoot -Source 'templates/simple/CLAUDE.md' -Force:$Force
-Install-TcrReviewPlugin -LocalRoot $LocalRoot   # also adds our marketplace
-Install-TcrPersonalTools                        # reuses the marketplace added above
+Add-TcrOurMarketplace -LocalRoot $LocalRoot     # register our marketplace
+Install-TcrPersonalTools                        # from our marketplace
+Install-TcrWorkflow                             # from our marketplace
 Install-TcrCaveman
 Install-TcrAgentSdkDev
 Install-TcrPlaywrightMcp
 Set-TcrGhAccess
 Set-TcrCavemanLevel 'lite'
-Set-TcrGlobalAudience 'plain'
 
 if ($script:TcrInstallFailed) {
     Write-TcrWarn "a helper did not install automatically - run the 'claude plugin install' command(s) shown above, then restart Claude Code."

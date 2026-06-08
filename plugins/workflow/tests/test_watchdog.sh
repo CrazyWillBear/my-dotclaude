@@ -13,13 +13,13 @@
 #     block; UserPromptSubmit -> advisory additionalContext, no block, so the
 #     prompt survives); under gate -> silent one-shot.
 #   * Phase B — wrap nudge: >= nudge -> wrap-up nudge, once per cycle, per-event
-#     label, env-overridable; asserts it writes NO my-code-review deferral state.
-#   * Phase C — post-wrap compact prompt (Stop): clean tree + wrap commit after
-#     the nudge -> continue-handoff + /compact instruction; dirty / no-wrap /
+#     label, env-overridable.
+#   * Phase C — post-wrap handoff prompt (Stop): clean tree + wrap commit after
+#     the nudge -> continue-handoff + /handoff instruction; dirty / no-wrap /
 #     no-nudge -> silent; one-shot per cycle.
 #   * Fail-open: a missing transcript stays silent.
 #
-# Run: bash plugins/context-flow/tests/test_watchdog.sh   (non-zero if any fail)
+# Run: bash plugins/workflow/tests/test_watchdog.sh   (non-zero if any fail)
 
 set -u
 
@@ -60,7 +60,7 @@ g() { git -C "$PROJECT_DIR" "$@"; }
 # no clearing here.
 init_repo() {
     rm -rf "$PROJECT_DIR"
-    rm -f "$TMPDIR"/my-code-review-plan-*.json "$HANDOFF"
+    rm -f "$HANDOFF"
     mkdir -p "$PROJECT_DIR/.claude"
     g init -q
     g config user.email t@t.com
@@ -134,20 +134,9 @@ key = hashlib.sha1(sid.encode()).hexdigest()[:16]
 print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
-nudged_path()    { sentinel_path "context-flow-nudged-"    "$1"; }
-plangate_path()  { sentinel_path "context-flow-plangate-"  "$1"; }
-compacted_path() { sentinel_path "context-flow-compacted-" "$1"; }
-
-# plan_state_file — the per-repo my-code-review deferral path (keyed sha1(toplevel)).
-# context-flow must NEVER create this now (the reviewer is no longer deferred).
-plan_state_file() {
-    local root; root="$(g rev-parse --show-toplevel)"
-    python3 - "$root" <<'PY'
-import sys, hashlib, tempfile, os
-key = hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16]
-print(os.path.join(tempfile.gettempdir(), "my-code-review-plan-" + key + ".json"))
-PY
-}
+nudged_path()    { sentinel_path "workflow-nudged-"    "$1"; }
+plangate_path()  { sentinel_path "workflow-plangate-"  "$1"; }
+compacted_path() { sentinel_path "workflow-compacted-" "$1"; }
 
 # read_field <json-file> <field> — print one top-level field.
 read_field() {
@@ -168,7 +157,6 @@ make_transcript "$WORK/under.jsonl" 1000
 out=$(run_watchdog UserPromptSubmit sid-under "$WORK/under.jsonl")
 assert_empty "under threshold: silent" "$out"
 assert_nofile "no nudge sentinel under threshold" "$(nudged_path sid-under)"
-assert_nofile "no my-code-review deferral ever written" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase B — over the nudge threshold nudges and sets the sentinel"
@@ -177,10 +165,9 @@ make_transcript "$WORK/over.jsonl" 200000
 out=$(run_watchdog UserPromptSubmit sid-nudge "$WORK/over.jsonl")
 assert_contains "emits the wrap-up nudge" "$out" "Context over budget"
 assert_contains "labels the UserPromptSubmit event" "$out" '"hookEventName": "UserPromptSubmit"'
-assert_contains "shows a user-facing systemMessage" "$out" "wrap up"
+assert_contains "shows a user-facing systemMessage" "$out" "wrap it up"
 assert_file "creates the nudge sentinel" "$(nudged_path sid-nudge)"
 assert_contains "records HEAD in the nudge sentinel" "$(read_field "$(nudged_path sid-nudge)" head)" "$(g rev-parse HEAD)"
-assert_nofile "Phase B does NOT arm any my-code-review deferral" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: the nudge fires at most once per cycle"
@@ -200,15 +187,15 @@ init_repo
 make_transcript "$WORK/envov.jsonl" 1000
 out=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-env","transcript_path":"%s","stop_hook_active":false}' "$WORK/envov.jsonl" \
     | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
-        CONTEXT_FLOW_NUDGE_TOKENS=500 bash "$WATCHDOG")
+        WORKFLOW_NUDGE_TOKENS=500 bash "$WATCHDOG")
 assert_contains "a lowered threshold trips on a small transcript" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase B — the default nudge threshold is 120k (no env override)"
+echo "test: Phase B — the default nudge threshold is 100k (no env override)"
 init_repo
-make_transcript "$WORK/default120.jsonl" 130000
-out=$(run_watchdog UserPromptSubmit sid-default120 "$WORK/default120.jsonl")
-assert_contains "130k over the 120k default nudges" "$out" "Context over budget"
+make_transcript "$WORK/default100.jsonl" 110000
+out=$(run_watchdog UserPromptSubmit sid-default100 "$WORK/default100.jsonl")
+assert_contains "110k over the 100k default nudges" "$out" "Context over budget"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase A — on PostToolUse the plan-accept gate halts with a block decision"
@@ -222,7 +209,6 @@ assert_contains "tells the agent not to implement yet" "$out" "Do NOT begin impl
 assert_file "writes the handoff" "$HANDOFF"
 assert_equals "handoff records the plan path" "$(read_field "$HANDOFF" plan_path)" "$GLOBAL_HOME/.claude/plans/active.md"
 assert_file "sets the plan-gate sentinel" "$(plangate_path sid-gate)"
-assert_nofile "Phase A does NOT arm any my-code-review deferral" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase A — on UserPromptSubmit the gate halts non-destructively (no block, keeps the prompt)"
@@ -282,20 +268,19 @@ assert_contains "a new plan id (p2) re-fires the gate" "$out" '"decision": "bloc
 assert_equals "advances the gated plan id to p2" "$(read_field "$(plangate_path sid-refire)" plan_id)" "p2"
 
 # ---------------------------------------------------------------------------
-echo "test: Phase C — clean tree + wrap commit after the nudge prompts /compact"
+echo "test: Phase C — clean tree + wrap commit after the nudge prompts /handoff"
 init_repo
 make_transcript "$WORK/cycle.jsonl" 200000
 run_watchdog UserPromptSubmit sid-c "$WORK/cycle.jsonl" >/dev/null   # nudge: records HEAD
 commit_file src/app.py "print(1)"                                    # the wrap-up commit
 out=$(run_watchdog Stop sid-c "$WORK/cycle.jsonl")
-assert_contains "Phase C announces the wrap-up + /compact" "$out" "wrap-up committed"
-assert_contains "Phase C tells the user to run /compact" "$out" '/compact'
-assert_contains "Phase C tells the user the kickoff word" "$out" 'send `continue`'
+assert_contains "Phase C announces the wrap-up + /handoff" "$out" "wrap-up committed"
+assert_contains "Phase C tells the user to run /handoff" "$out" '/handoff'
+assert_contains "Phase C mentions clearing into fresh context" "$out" '/clear'
 assert_file "Phase C wrote the continue-handoff" "$HANDOFF"
 assert_equals "handoff records the repo toplevel" "$(read_field "$HANDOFF" git_toplevel)" "$(g rev-parse --show-toplevel)"
 assert_equals "handoff baseline = current HEAD" "$(read_field "$HANDOFF" baseline_head)" "$(g rev-parse HEAD)"
 assert_file "sets the compacted sentinel" "$(compacted_path sid-c)"
-assert_nofile "Phase C does NOT arm any my-code-review deferral" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: Phase C is one-shot per cycle"

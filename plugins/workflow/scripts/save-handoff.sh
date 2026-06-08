@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# Shared handoff writer for the context-flow plugin.
+# Shared handoff writer for the workflow plugin.
 #
 # Single source of the ~/.claude/.pending-handoff JSON schema that resume.sh
 # reads. Used by the watchdog's Phase-A plan-start gate and Phase-C post-wrap
-# compact prompt, and by the PreCompact hook (which calls it with NO args before
+# handoff prompt, and by the PreCompact hook (which calls it with NO args before
 # every compaction), so the schema lives in exactly one place.
 #
 #   save-handoff.sh [--session ID] [--size N]
@@ -13,9 +13,8 @@
 #     --size N       context-token occupancy to record (informational).
 #
 # Git state is read from CLAUDE_PROJECT_DIR (else cwd). The baseline is simply the
-# current HEAD — prior work is committed before a handoff. context-flow no longer
-# defers code review, so there is no review state to read or arm here. Fail open:
-# any error exits 0 so a handoff attempt never wedges the session.
+# current HEAD — prior work is committed before a handoff. Fail open: any error
+# exits 0 so a handoff attempt never wedges the session.
 
 set -u
 

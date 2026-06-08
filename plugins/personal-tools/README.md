@@ -8,7 +8,7 @@ plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
 │   ├── commit/SKILL.md            # /commit — review changes, write message, commit, summarize
-│   ├── debug/SKILL.md             # /debug — root-cause debugging workflow
+│   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
 │   └── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs

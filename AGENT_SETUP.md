@@ -5,12 +5,11 @@ from the **my-dotclaude** repo. Both paths install the same full kit **user-wide
 `~/.claude`, not a project folder); they differ only in audience. Keep the user informed
 in plain language as you go:
 
-- **Developer setup** — global technical `CLAUDE.md`, the code-review + personal-tools +
-  caveman + agent-sdk-dev plugins, the Playwright MCP, a read-only `gh` allowlist,
-  `model=opus`, and technical (severity-grouped) review output.
+- **Developer setup** — global technical `CLAUDE.md`, the personal-tools + workflow +
+  caveman + agent-sdk-dev plugins, the Playwright MCP, a `gh` allowlist (read-only reads +
+  issue-write), and `model=opus`.
 - **Non-developer setup** — the same kit, but with a plain-English global `CLAUDE.md`,
-  caveman set to `lite`, plain-language review summaries, and the model left at Claude
-  Code's default.
+  caveman set to `lite`, and the model left at Claude Code's default.
 
 ### Pick the path — ask first
 
@@ -20,8 +19,8 @@ question** and wait for the answer:
 > Do you write code yourself, or would you rather I handle all the technical
 > parts for you?
 >
-> - **I write code** → developer setup (technical review reports, `model=opus`).
-> - **Handle it for me** → non-developer setup (plain-English summaries, no jargon).
+> - **I write code** → developer setup (`model=opus`, technical conventions).
+> - **Handle it for me** → non-developer setup (plain-English, no jargon).
 
 Map their answer: writes code → **Developer setup**; wants it handled → **Non-developer
 setup**. If they only say "set me up" with no other signal, ask this question first.
@@ -58,8 +57,8 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
-   claude plugin install my-code-review@my-dotclaude
    claude plugin install personal-tools@my-dotclaude
+   claude plugin install workflow@my-dotclaude
    claude plugin marketplace add JuliusBrussee/caveman
    claude plugin install caveman@caveman
    claude plugin marketplace add anthropics/claude-plugins-official
@@ -73,12 +72,14 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
    claude mcp add playwright -s user -- npx @playwright/mcp@latest
    ```
 5. For GitHub, allowlist the common read-only `gh` commands under `permissions.allow` in
-   `~/.claude/settings.json` (e.g. `Bash(gh pr view:*)`, `Bash(gh pr list:*)`,
-   `Bash(gh issue view:*)`, `Bash(gh repo view:*)`, `Bash(gh run view:*)` — **not**
-   `gh api`, which can mutate), and tell them to install `gh` and run `gh auth login` if
-   it isn't set up. (Claude uses `gh`, not a GitHub MCP.)
+   `~/.claude/settings.json` (e.g. `Bash(gh pr view:*)`, `Bash(gh issue view:*)`,
+   `Bash(gh repo view:*)`, `Bash(gh run view:*)`) **plus** the four issue-write commands the
+   dev loop needs (`Bash(gh issue create:*)`, `Bash(gh issue edit:*)`,
+   `Bash(gh issue comment:*)`, `Bash(gh issue close:*)`) — but **not** `gh api` (can
+   POST/DELETE any endpoint) or `gh pr merge` (merges stay a human decision). Tell them to
+   install `gh` and run `gh auth login` if it isn't set up. (Claude uses `gh`, not a GitHub
+   MCP.)
 
-Review output defaults to technical with no marker, so there is nothing else to write.
 Finish by telling the user to **restart Claude Code**.
 
 ---
@@ -107,13 +108,11 @@ On Windows PowerShell (the `.ps1` scripts are untested; `-Continue` accepts that
    `<raw base>/templates/simple/CLAUDE.md`. Leave the model at Claude Code's default
    (don't set `model=opus`).
 2. Install the same plugins and the Playwright MCP as the developer fallback above (steps
-   3–4), and set up the read-only `gh` allowlist (step 5).
+   3–4), and set up the `gh` allowlist (step 5).
 3. Make caveman a little less terse: set its default level to `lite` by writing
    `{"defaultMode":"lite"}` (merging if the file exists) into
    `~/.config/caveman/config.json` (on Windows: `%APPDATA%\caveman\config.json`; if
    `$XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/caveman/config.json`).
-4. Write `~/.claude/review-audience` containing the single word `plain` so reviews come
-   back in plain language.
 
 Finish by telling the user, in plain words, that everything is ready: they should close
 and reopen Claude Code, then just describe what they want to build — you'll handle the

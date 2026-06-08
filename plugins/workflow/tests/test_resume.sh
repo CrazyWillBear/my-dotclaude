@@ -10,12 +10,10 @@
 # re-nudge), and any other source falls back to "continue".
 #
 # Covers: the clear/compact/startup wording variants; the wrong-repo no-op
-# (handoff preserved); no-handoff silence; the no-plan variant; the
-# /compact sentinel reset proven by a subsequent re-nudge; and that context-flow
-# no longer touches my-code-review state (it neither seeds the review marker nor
-# clears a deferral).
+# (handoff preserved); no-handoff silence; the no-plan variant; and the
+# /compact sentinel reset proven by a subsequent re-nudge.
 #
-# Run: bash plugins/context-flow/tests/test_resume.sh   (non-zero if any fail)
+# Run: bash plugins/workflow/tests/test_resume.sh   (non-zero if any fail)
 
 set -u
 
@@ -53,7 +51,7 @@ g() { git -C "$PROJECT_DIR" "$@"; }
 
 init_repo() {
     rm -rf "$PROJECT_DIR"
-    rm -f "$TMPDIR"/my-code-review-plan-*.json "$HANDOFF"
+    rm -f "$HANDOFF"
     mkdir -p "$PROJECT_DIR/.claude"
     g init -q
     g config user.email t@t.com
@@ -121,18 +119,8 @@ key = hashlib.sha1(sid.encode()).hexdigest()[:16]
 print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
 PY
 }
-nudged_path()    { sentinel_path "context-flow-nudged-"    "$1"; }
-compacted_path() { sentinel_path "context-flow-compacted-" "$1"; }
-head_state()     { sentinel_path "my-code-review-head-"    "$1"; }
-
-plan_state_file() {
-    local root; root="$(g rev-parse --show-toplevel)"
-    python3 - "$root" <<'PY'
-import sys, hashlib, tempfile, os
-key = hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16]
-print(os.path.join(tempfile.gettempdir(), "my-code-review-plan-" + key + ".json"))
-PY
-}
+nudged_path()    { sentinel_path "workflow-nudged-"    "$1"; }
+compacted_path() { sentinel_path "workflow-compacted-" "$1"; }
 
 read_field() {
     python3 - "$1" "$2" <<'PY'
@@ -158,7 +146,6 @@ assert_contains "names the plan to resume" "$out" "active.md"
 assert_contains "names the branch" "$out" "feat/ctx"
 assert_contains "tells the agent not to redo work" "$out" "do not redo"
 assert_nofile "clears the handoff (resume once)" "$HANDOFF"
-assert_nofile "does NOT seed a my-code-review marker" "$(head_state sid-r1)"
 
 # ---------------------------------------------------------------------------
 echo "test: source=compact injects the 'continue' wording and resets Phase-B/C sentinels"
@@ -228,16 +215,6 @@ base="$(g rev-parse HEAD)"
 make_handoff "$top" "$base" "main" ""
 out=$(run_resume clear sid-r6)
 assert_contains "uses the no-plan resume phrasing" "$out" "continue the prior in-progress work"
-
-# ---------------------------------------------------------------------------
-echo "test: resume does not touch a my-code-review deferral (decoupled)"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
-printf '{"defer_review":true,"armed_at":0}' >"$(plan_state_file)"   # a live deferral
-make_handoff "$top" "$base" "main" "$PLAN"
-run_resume compact sid-r8 >/dev/null
-assert_file "leaves the my-code-review deferral untouched" "$(plan_state_file)"
 
 # ---------------------------------------------------------------------------
 echo "test: a PreCompact-written handoff makes a manual /compact re-inject the plan + re-arm"

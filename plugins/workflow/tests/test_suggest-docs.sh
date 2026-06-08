@@ -15,7 +15,7 @@
 #   * stop_hook_active -> silent (no re-loop);
 #   * no git / python3 on PATH -> fail open (exit 0, silent).
 #
-# Run: bash plugins/context-flow/tests/test_suggest-docs.sh  (non-zero if any fail)
+# Run: bash plugins/workflow/tests/test_suggest-docs.sh  (non-zero if any fail)
 
 set -u
 
@@ -78,7 +78,7 @@ docs_state() {
     python3 - "$1" <<'PY'
 import sys, hashlib, tempfile, os
 key = hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16]
-print(os.path.join(tempfile.gettempdir(), "context-flow-docs-" + key + ".json"))
+print(os.path.join(tempfile.gettempdir(), "workflow-docs-" + key + ".json"))
 PY
 }
 

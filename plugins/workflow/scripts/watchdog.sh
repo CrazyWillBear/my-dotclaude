@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 #
-# Context watchdog for the context-flow plugin.
+# Context watchdog for the workflow plugin.
 #
 # Wired on UserPromptSubmit + PostToolUse (detect mid-work) and Stop (the wrap
 # seam). It reads the LIVE context occupancy from the transcript and drives a
-# deliberate, EARLY /clear or /compact as the window fills — the user types the
+# deliberate, EARLY /clear or /handoff as the window fills — the user types the
 # one command, the hook handles everything around it. (No hook or agent can run
-# /clear or /compact itself; they are user-typed REPL input only.) Three phases:
+# /clear, /handoff, or /compact itself; they are user-typed REPL input only.)
+# Three phases:
 #
 #   * Phase A — plan-start clear gate (active events, on an ExitPlanMode accept,
-#     >= CONTEXT_FLOW_PLANGATE_TOKENS, default 60k): fires once per new plan
+#     >= WORKFLOW_PLANGATE_TOKENS, default 60k): fires once per new plan
 #     accept, keyed by the ExitPlanMode tool_use id (re-fires on a genuinely new
 #     plan, even across compact/clear, without a sentinel reset). Save a handoff
 #     and tell the agent "do NOT implement yet; run /clear, then send `go`". On
@@ -17,26 +18,29 @@
 #     the same instruction as advisory hookSpecificOutput.additionalContext (not
 #     an enforced stop) — a block there would discard the user's typed prompt.
 #     resume.sh re-injects after the /clear.
-#   * Phase B — mid-execution wrap nudge (active events, >= CONTEXT_FLOW_NUDGE_
-#     TOKENS, default 120k): once per cycle, ask the agent to wrap up at a natural
-#     breaking point and commit. Records HEAD so Phase C can tell a wrap landed.
-#     Does NOT touch code review — the reviewer runs normally on the wrap commit.
-#   * Phase C — post-wrap compact prompt (Stop, the next clean stop after the
+#   * Phase B — mid-execution wrap nudge (active events, >= WORKFLOW_NUDGE_
+#     TOKENS, default 100k): once per cycle, ask the agent to wrap it up soon at a
+#     natural breaking point and commit. Records HEAD so Phase C can tell a wrap
+#     landed. Does NOT touch code review — the project's own checks run on the
+#     wrap commit.
+#   * Phase C — post-wrap handoff prompt (Stop, the next clean stop after the
 #     nudge once a wrap commit exists): one-shot per cycle. Save a handoff and
-#     tell the user to run /compact (once the review and fixes are in), then send
-#     `continue`. resume.sh re-injects the plan and resets the Phase-B/C sentinels
-#     after the /compact so a later climb can re-nudge in the same long session.
+#     tell the user to run /handoff (once the work is committed), which captures a
+#     rich handoff doc + resume pointer and walks them through /clear into fresh
+#     context. resume.sh re-injects the plan and resets the Phase-B/C sentinels
+#     after the /clear or /compact so a later climb can re-nudge in the same long
+#     session.
 #
 # Metric = the LAST assistant transcript entry's
 #   usage.input_tokens + cache_read_input_tokens + cache_creation_input_tokens
 # i.e. the tokens the model just saw = current occupancy.
 #
-# Design notes (mirrors my-code-review's review.sh):
-#   * Hooks are plain shell; they cannot run /compact, /clear, or any tool. So we
-#     inject instructions and write files; the only manual step is the one command.
+# Design notes:
+#   * Hooks are plain shell; they cannot run /compact, /clear, /handoff, or any
+#     tool. So we inject instructions and write files; the only manual step is the
+#     one command.
 #   * Fail open: any error / missing dependency exits 0 so we never wedge a session.
-#   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal,
-#     mirroring review.sh's reviewed-HEAD marker.
+#   * Per-session sentinels (sha1(session_id)[:16] temp files) bound each signal.
 #   * The handoff JSON is written by the shared scripts/save-handoff.sh (single
 #     schema writer) — we never build it here.
 
@@ -58,15 +62,15 @@ try:
 except Exception:
     sys.exit(0)
 
-# Thresholds (env-overridable). Defaults: nudge at 120k, plan-accept gate at 60k.
+# Thresholds (env-overridable). Defaults: nudge at 100k, plan-accept gate at 60k.
 def _int_env(name, default):
     try:
         return int(os.environ.get(name) or default)
     except Exception:
         return default
 
-NUDGE    = _int_env("CONTEXT_FLOW_NUDGE_TOKENS", 120000)
-PLANGATE = _int_env("CONTEXT_FLOW_PLANGATE_TOKENS", 60000)
+NUDGE    = _int_env("WORKFLOW_NUDGE_TOKENS", 100000)
+PLANGATE = _int_env("WORKFLOW_PLANGATE_TOKENS", 60000)
 
 event       = data.get("hook_event_name", "")
 transcript  = data.get("transcript_path", "")
@@ -76,9 +80,9 @@ plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
 
 tmp = tempfile.gettempdir()
 skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-nudged_path    = os.path.join(tmp, "context-flow-nudged-"    + skey + ".json")
-plangate_path  = os.path.join(tmp, "context-flow-plangate-"  + skey + ".json")
-compacted_path = os.path.join(tmp, "context-flow-compacted-" + skey + ".json")
+nudged_path    = os.path.join(tmp, "workflow-nudged-"    + skey + ".json")
+plangate_path  = os.path.join(tmp, "workflow-plangate-"  + skey + ".json")
+compacted_path = os.path.join(tmp, "workflow-compacted-" + skey + ".json")
 
 
 def context_tokens(path):
@@ -201,7 +205,7 @@ def tree_dirty():
 
 def save_handoff(size):
     # Delegate to the shared writer so the handoff schema lives in one place.
-    sh = os.environ.get("CONTEXT_FLOW_SAVE_HANDOFF_SH")
+    sh = os.environ.get("WORKFLOW_SAVE_HANDOFF_SH")
     if not sh and plugin_root:
         sh = os.path.join(plugin_root, "scripts", "save-handoff.sh")
     if not sh or not os.path.isfile(sh):
@@ -220,7 +224,7 @@ def emit(obj):
 
 size = context_tokens(transcript)
 
-# --- Phase C — Stop: prompt /compact once the wrap-up commit has landed. ------
+# --- Phase C — Stop: prompt /handoff once the wrap-up commit has landed. -------
 if event == "Stop":
     if not os.path.exists(nudged_path):       # no nudge this cycle -> nothing to do
         sys.exit(0)
@@ -235,22 +239,21 @@ if event == "Stop":
     save_handoff(size or 0)
     touch(compacted_path)
     emit({"systemMessage":
-          "context-flow: wrap-up committed. Once the code review and any fixes "
-          "are in, run `/compact`, then send `continue` — I'll re-inject the "
-          "plan and keep going in compacted context."})
+          "workflow: wrap-up committed. Once the work and any fixes are in, run "
+          "`/handoff` — it saves a rich handoff doc + resume pointer and walks "
+          "you through `/clear` into fresh context, where the plan auto-resumes."})
 
 # --- Active events (UserPromptSubmit / PostToolUse). -------------------------
 # Phase A — plan-start clear gate: fires once per NEW plan accept, keyed by the
 # id of the most recent ExitPlanMode tool_use. Over the gate, HALT the agent and
 # ask for a /clear. last_plan_id() detects a *proposed* plan (an ExitPlanMode
-# tool_use) — normally an accept, but like suggest-commit.sh it cannot truly tell
-# accept from reject. We re-fire only when the current plan id differs from the
-# last-gated one: a 2nd/3rd plan in a long session (or after compact/clear) brings
-# a fresh id and re-gates, while a retained old id matches and stays silent — so
-# no resume.sh reset is needed and no post-compact false fire occurs. Only advance
-# the gate once the metric is readable: a transient transcript read miss (size is
-# None) must NOT burn the gate, or the plan-start halt would be disabled until the
-# next new plan.
+# tool_use) — normally an accept, but it cannot truly tell accept from reject. We
+# re-fire only when the current plan id differs from the last-gated one: a 2nd/3rd
+# plan in a long session (or after compact/clear) brings a fresh id and re-gates,
+# while a retained old id matches and stays silent — so no resume.sh reset is
+# needed and no post-compact false fire occurs. Only advance the gate once the
+# metric is readable: a transient transcript read miss (size is None) must NOT
+# burn the gate, or the plan-start halt would be disabled until the next new plan.
 gated_id = read_json(plangate_path).get("plan_id")
 current_id = last_plan_id(transcript)
 if current_id and current_id != gated_id and size is not None:
@@ -262,12 +265,12 @@ if current_id and current_id != gated_id and size is not None:
             "A plan was just approved, but the context window is already "
             "~%dk tokens — too full to execute the plan cleanly. Do NOT begin "
             "implementing. Tell the user to run `/clear`, then send `go`: "
-            "context-flow saved a handoff and will re-inject the plan into the "
+            "workflow saved a handoff and will re-inject the plan into the "
             "fresh session automatically, so no work is lost. Only continue "
             "without clearing if the user explicitly insists." % kb
         )
         halt_message = (
-            "context-flow: context already ~%dk tokens at plan start. Run "
+            "workflow: context already ~%dk tokens at plan start. Run "
             "`/clear`, then send `go` — the plan will auto-resume in fresh "
             "context." % kb
         )
@@ -300,21 +303,20 @@ if current_id and current_id != gated_id and size is not None:
 if size is not None and size >= NUDGE and not os.path.exists(nudged_path):
     # A null HEAD (no commits / git failed) records head: null, which Phase C's
     # `not nudge_head` guard treats as "no wrap detectable" -> Phase C stays off
-    # this cycle. Acceptable: we never falsely fire the /compact prompt.
+    # this cycle. Acceptable: we never falsely fire the /handoff prompt.
     touch(nudged_path, {"head": git("rev-parse", "HEAD")})
     kb = size // 1000
     emit({
         "systemMessage":
-            "context-flow: ~%dk tokens in context — wrap up at the next stopping "
-            "point and commit." % kb,
+            "workflow: ~%dk tokens in context — wrap it up soon and commit." % kb,
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext":
                 "Context over budget (~%dk tokens). Stop at the next natural "
                 "breaking point: finish and COMMIT the current sub-task, and "
                 "don't start new work. Once it is committed and reviewed I'll "
-                "prompt the user to run /compact and you'll continue from "
-                "there — do not start new work before then." % kb,
+                "prompt the user to run /handoff and you'll continue in fresh "
+                "context — do not start new work before then." % kb,
         },
     })
 

@@ -6,8 +6,8 @@
 $script:TcrRepo          = 'CrazyWillBear/my-dotclaude'
 $script:TcrRawBase       = "https://raw.githubusercontent.com/$($script:TcrRepo)/main"
 $script:TcrMarketplace    = 'my-dotclaude'
-$script:TcrPlugin         = "my-code-review@$($script:TcrMarketplace)"
 $script:TcrPersonalPlugin = "personal-tools@$($script:TcrMarketplace)"
+$script:TcrWorkflowPlugin = "workflow@$($script:TcrMarketplace)"
 $script:TcrCavemanRepo   = 'JuliusBrussee/caveman'
 $script:TcrCavemanPlugin = 'caveman@caveman'
 $script:TcrOfficialMarketplaceRepo = 'anthropics/claude-plugins-official'
@@ -44,14 +44,21 @@ function Add-TcrMarketplace {
     if ($LASTEXITCODE -ne 0) { Write-TcrWarn "could not add marketplace '$Source' (it may already be registered)." }
 }
 
-function Install-TcrReviewPlugin {
+# Adds our marketplace (the local checkout when available, else the GitHub repo) so
+# the personal-tools and workflow plugins can install from it. Call once first.
+function Add-TcrOurMarketplace {
     param([string]$LocalRoot)
-    Write-TcrStep 'Installing the my-code-review plugin'
     $localMarket = if ($LocalRoot) { Join-Path $LocalRoot '.claude-plugin/marketplace.json' } else { $null }
     if ($localMarket -and (Test-Path $localMarket)) { Add-TcrMarketplace $LocalRoot } else { Add-TcrMarketplace $script:TcrRepo }
-    claude plugin install $script:TcrPlugin *> $null
-    if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrPlugin)" }
-    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrPlugin)" }
+}
+
+# Installs the workflow plugin (autonomous dev loop + context watchdog). Assumes our
+# marketplace is already added (call Add-TcrOurMarketplace first).
+function Install-TcrWorkflow {
+    Write-TcrStep 'Installing the workflow plugin'
+    claude plugin install $script:TcrWorkflowPlugin *> $null
+    if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrWorkflowPlugin)" }
+    else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrWorkflowPlugin)" }
 }
 
 function Install-TcrCaveman {
@@ -81,16 +88,20 @@ function Install-TcrPlaywrightMcp {
     else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not add the playwright MCP automatically - run: claude mcp add playwright -s user -- npx $($script:TcrPlaywrightMcpPkg) --headless" }
 }
 
-# GitHub access uses the gh CLI, not a GitHub MCP server (see README). Adds a read-only
-# gh allowlist so common reads do not prompt, and checks gh is installed + authenticated.
+# GitHub access uses the gh CLI, not a GitHub MCP server (see README). Allowlists the
+# common read-only gh commands plus the four issue-write commands the dev loop needs
+# (issues only); deliberately NOT gh api or gh pr merge. Checks gh is installed + auth'd.
 function Set-TcrGhAccess {
     Write-TcrStep 'Configuring gh (GitHub CLI) access'
-    # Read-only subcommands only. gh api is intentionally omitted - it can POST/DELETE.
+    # Read-only reads plus issue-write (issues only). gh api and gh pr merge are
+    # intentionally omitted - gh api can POST/DELETE any endpoint; merges stay human.
     Add-TcrPermissions @(
         'Bash(gh pr view:*)', 'Bash(gh pr list:*)', 'Bash(gh pr diff:*)', 'Bash(gh pr checks:*)',
         'Bash(gh issue view:*)', 'Bash(gh issue list:*)', 'Bash(gh repo view:*)',
         'Bash(gh run view:*)', 'Bash(gh run list:*)', 'Bash(gh release view:*)',
-        'Bash(gh search:*)', 'Bash(gh auth status:*)'
+        'Bash(gh search:*)', 'Bash(gh auth status:*)',
+        'Bash(gh issue create:*)', 'Bash(gh issue edit:*)', 'Bash(gh issue comment:*)',
+        'Bash(gh issue close:*)'
     )
     if (Test-TcrCommand 'gh') {
         gh auth status *> $null
@@ -102,22 +113,12 @@ function Set-TcrGhAccess {
 }
 
 # Installs personal-tools. Assumes our marketplace is already added (call
-# Install-TcrReviewPlugin or Add-TcrMarketplace before this).
+# Add-TcrOurMarketplace before this).
 function Install-TcrPersonalTools {
     Write-TcrStep 'Installing the personal-tools plugin'
     claude plugin install $script:TcrPersonalPlugin *> $null
     if ($LASTEXITCODE -eq 0) { Write-TcrOk "enabled $($script:TcrPersonalPlugin)" }
     else { $script:TcrInstallFailed = $true; Write-TcrWarn "could not install automatically - run: claude plugin install $($script:TcrPersonalPlugin)" }
-}
-
-# Set-TcrAudience <plain|technical>
-# Project-scope helper, unused by the shipped user-wide setup (retained for a future /scaffold-* skill;
-# the user-wide default lives at ~/.claude via Set-TcrGlobalAudience).
-function Set-TcrAudience {
-    param([string]$Audience)
-    if (-not (Test-Path '.claude')) { New-Item -ItemType Directory -Force -Path '.claude' | Out-Null }
-    Write-TcrTextNoBom '.claude/review-audience' "$Audience`n"
-    Write-TcrOk "set review style to '$Audience' (.claude/review-audience)"
 }
 
 function Get-TcrCavemanConfigPath {
@@ -173,19 +174,6 @@ function Install-TcrGlobalClaudeMd {
         }
     }
     Write-TcrOk "wrote $dest"
-}
-
-# Set-TcrGlobalAudience <plain|technical> - write ~/.claude/review-audience, the
-# user-wide review-output default (the review hook falls back to it when a project
-# has no .claude/review-audience). Backs up an existing marker.
-function Set-TcrGlobalAudience {
-    param([string]$Audience)
-    $dest = Join-Path $HOME '.claude/review-audience'
-    $destDir = Split-Path -Parent $dest
-    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-    Backup-TcrFile $dest
-    Write-TcrTextNoBom $dest "$Audience`n"
-    Write-TcrOk "set user-wide review style to '$Audience' ($dest)"
 }
 
 # Merge-TcrJsonString <cfg> <key> <string-value> - merge one string key into a

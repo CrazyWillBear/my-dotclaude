@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 #
-# SessionStart auto-resume for the context-flow plugin.
+# SessionStart auto-resume for the workflow plugin.
 #
 # The other half of the handoff loop. When the watchdog gates a plan start
-# (Phase A) or prompts a post-wrap compact (Phase C), it writes
-# ~/.claude/.pending-handoff and tells the user to run /clear or /compact. A
-# PreCompact hook also writes a handoff before EVERY compaction (a manual /compact
-# or a harness auto-compact), so a user-initiated or harness compact re-injects the
-# plan too — not only context-flow-driven ones. All of those fire SessionStart
-# (source=clear / source=compact). This hook reads the handoff and, if we are in
-# the same repo it came from, re-injects the plan so the user only ever has to type
-# the one command plus a kickoff word:
+# (Phase A) or prompts a post-wrap /handoff (Phase C), it writes
+# ~/.claude/.pending-handoff and tells the user to run /clear (or to run
+# /handoff, which then clears). A PreCompact hook also writes a handoff before
+# EVERY compaction (a manual /compact or a harness auto-compact), so a
+# user-initiated or harness compact re-injects the plan too — not only
+# workflow-driven ones. All of those fire SessionStart (source=clear /
+# source=compact). This hook reads the handoff and, if we are in the same repo it
+# came from, re-injects the plan so the user only ever has to type the one command
+# plus a kickoff word:
 #
-#   * source=clear   (Phase A) -> "implement the plan @path" wording. Fresh
-#     context, so the agent starts the plan from the committed baseline.
-#   * source=compact (Phase C) -> "continue the plan @path" wording.
+#   * source=clear   (Phase A / /handoff) -> "implement the plan @path" wording.
+#     Fresh context, so the agent starts the plan from the committed baseline.
+#   * source=compact (manual/auto /compact) -> "continue the plan @path" wording.
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
 #
 # On ANY clear or compact we reset this session's Phase-B/C wrap sentinels FIRST —
 # before the handoff lookup and repo guard below — so a later climb back over the
-# nudge threshold can drive another wrap -> /compact cycle. This runs even when no
-# context-flow handoff exists (a manual /compact or a harness auto-compact writes
+# nudge threshold can drive another wrap -> /handoff cycle. This runs even when no
+# workflow handoff exists (a manual /compact or a harness auto-compact writes
 # none), which is exactly the case where the old handoff-gated reset was
 # unreachable. (On /clear with a new session_id this is a harmless no-op against a
 # fresh namespace; on a same-id resume it re-arms the cycle.) The Phase-A plangate
@@ -29,8 +30,7 @@
 #
 # Fail open: any error exits 0. If we are NOT in the handoff's repo, leave the
 # handoff untouched and stay silent, so a launch in another project never steals
-# or drops it. context-flow no longer touches my-code-review state — the reviewer
-# is never deferred now, so my-code-review's own SessionStart seeding suffices.
+# or drops it.
 #
 # Caveat: the handoff is one global file, and PreCompact now writes it before EVERY
 # compaction, so across concurrent repos it is last-writer-wins — a /compact in
@@ -55,7 +55,7 @@ except Exception:
 source = data.get("source") or ""
 
 # Reset this session's Phase-B/C wrap sentinels on ANY compact/clear, independent
-# of whether a context-flow handoff exists. A manual /compact or a harness
+# of whether a workflow handoff exists. A manual /compact or a harness
 # auto-compact writes no handoff, so the old reset (which lived after the handoff
 # early-return) never ran for them and Phase B stayed silent for the rest of the
 # session. Keyed by session_id; writes no stdout, so the no-handoff / wrong-repo
@@ -65,7 +65,7 @@ source = data.get("source") or ""
 if source in ("compact", "clear"):
     session_id = str(data.get("session_id") or "default")
     skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-    for prefix in ("context-flow-nudged-", "context-flow-compacted-"):
+    for prefix in ("workflow-nudged-", "workflow-compacted-"):
         try:
             os.remove(os.path.join(tempfile.gettempdir(), prefix + skey + ".json"))
         except Exception:
@@ -116,7 +116,7 @@ branch = ho.get("branch") or git("rev-parse", "--abbrev-ref", "HEAD") or "the cu
 verb = "implement" if source == "clear" else "continue"
 if plan:
     add = (
-        "Resume (context-flow): " + verb + " the plan @" + str(plan) + " on "
+        "Resume (workflow): " + verb + " the plan @" + str(plan) + " on "
         + str(branch) + ". Prior work is committed — "
         + ("start from the committed baseline; do not redo any completed steps."
            if source == "clear" else
@@ -125,7 +125,7 @@ if plan:
     )
 else:
     add = (
-        "Resume (context-flow): continue the prior in-progress work on "
+        "Resume (workflow): continue the prior in-progress work on "
         + str(branch) + ". It is committed — pick up from the latest commits."
     )
 

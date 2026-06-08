@@ -11,8 +11,8 @@
 REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
-OUR_PLUGIN="my-code-review@${OUR_MARKETPLACE}"
 PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
+WORKFLOW_PLUGIN="workflow@${OUR_MARKETPLACE}"
 CAVEMAN_REPO="JuliusBrussee/caveman"
 CAVEMAN_PLUGIN="caveman@caveman"
 # Anthropic's official marketplace ships with Claude Code (usually already registered);
@@ -63,18 +63,26 @@ tcr_add_marketplace() {
     || tcr_warn "could not add marketplace '$1' (it may already be registered)."
 }
 
-tcr_install_review_plugin() {
-  tcr_step "Installing the my-code-review plugin"
+# Adds our marketplace (the local checkout when available, else the GitHub repo)
+# so the personal-tools and workflow plugins can install from it. Call once before
+# the first of those installs.
+tcr_add_our_marketplace() {
   if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
     tcr_add_marketplace "$TCR_LOCAL_ROOT"
   else
     tcr_add_marketplace "$REPO"
   fi
-  if claude plugin install "$OUR_PLUGIN" >/dev/null 2>&1; then
-    tcr_ok "enabled $OUR_PLUGIN"
+}
+
+# Installs the workflow plugin (the autonomous dev loop + context watchdog).
+# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
+tcr_install_workflow() {
+  tcr_step "Installing the workflow plugin"
+  if claude plugin install "$WORKFLOW_PLUGIN" >/dev/null 2>&1; then
+    tcr_ok "enabled $WORKFLOW_PLUGIN"
   else
     TCR_INSTALL_FAILED=1
-    tcr_warn "could not install $OUR_PLUGIN automatically — run: claude plugin install $OUR_PLUGIN"
+    tcr_warn "could not install $WORKFLOW_PLUGIN automatically — run: claude plugin install $WORKFLOW_PLUGIN"
   fi
 }
 
@@ -121,17 +129,24 @@ tcr_install_playwright_mcp() {
 
 # GitHub access uses the gh CLI, not a GitHub MCP server: on a machine with gh,
 # gh + Bash already cover the whole GitHub API, so an MCP would only add a managed
-# token and per-session tool-schema overhead. This adds a read-only gh allowlist (so
-# common reads do not prompt) and checks that gh is installed and authenticated.
+# token and per-session tool-schema overhead. This allowlists the common read-only
+# gh commands (so reads do not prompt) PLUS the four issue-write commands the dev
+# loop needs (the /to-prd, /to-issues, and /orchestrate flow files and updates
+# GitHub Issues). It deliberately does NOT allowlist `gh api` (can POST/DELETE any
+# endpoint) or `gh pr merge` — merges stay a human decision. Then it checks that gh
+# is installed and authenticated.
 tcr_setup_gh() {
   tcr_step "Configuring gh (GitHub CLI) access"
-  # Read-only subcommands only. gh api is intentionally omitted — it can POST/DELETE,
-  # so it is not read-only under prefix matching.
+  # Read-only reads plus issue-write (issues only). gh api and gh pr merge are
+  # intentionally omitted — gh api can POST/DELETE any endpoint, and PR merges
+  # stay a human decision.
   tcr_add_permissions \
     "Bash(gh pr view:*)" "Bash(gh pr list:*)" "Bash(gh pr diff:*)" "Bash(gh pr checks:*)" \
     "Bash(gh issue view:*)" "Bash(gh issue list:*)" "Bash(gh repo view:*)" \
     "Bash(gh run view:*)" "Bash(gh run list:*)" "Bash(gh release view:*)" \
-    "Bash(gh search:*)" "Bash(gh auth status:*)"
+    "Bash(gh search:*)" "Bash(gh auth status:*)" \
+    "Bash(gh issue create:*)" "Bash(gh issue edit:*)" "Bash(gh issue comment:*)" \
+    "Bash(gh issue close:*)"
   if command -v gh >/dev/null 2>&1; then
     if gh auth status >/dev/null 2>&1; then
       tcr_ok "gh is installed and authenticated"
@@ -144,7 +159,7 @@ tcr_setup_gh() {
 }
 
 # Installs personal-tools. Assumes our marketplace is already added (call
-# tcr_install_review_plugin first, or tcr_add_marketplace, before this).
+# tcr_add_our_marketplace before this).
 tcr_install_personal_tools() {
   tcr_step "Installing the personal-tools plugin"
   if claude plugin install "$PERSONAL_PLUGIN" >/dev/null 2>&1; then
@@ -153,18 +168,6 @@ tcr_install_personal_tools() {
     TCR_INSTALL_FAILED=1
     tcr_warn "could not install $PERSONAL_PLUGIN automatically — run: claude plugin install $PERSONAL_PLUGIN"
   fi
-}
-
-# --- project marker ----------------------------------------------------------
-# Project-scope helper, unused by the shipped user-wide setup (retained for a
-# future /scaffold-* skill). The user-wide default lives at ~/.claude (see
-# tcr_write_global_audience).
-
-# tcr_write_audience <plain|technical>
-tcr_write_audience() {
-  mkdir -p .claude
-  printf '%s\n' "$1" > .claude/review-audience
-  tcr_ok "set review style to '$1' (.claude/review-audience)"
 }
 
 # --- caveman level -----------------------------------------------------------
@@ -214,17 +217,6 @@ tcr_install_global_claudemd() {
       || tcr_die "Could not download $src from $RAW_BASE."
   fi
   tcr_ok "wrote $dest"
-}
-
-# tcr_write_global_audience <plain|technical> — write ~/.claude/review-audience,
-# the user-wide review-output default (the review hook falls back to it when a
-# project has no .claude/review-audience). Backs up an existing marker.
-tcr_write_global_audience() {
-  local dest="$HOME/.claude/review-audience"
-  mkdir -p "$HOME/.claude"
-  tcr_backup_file "$dest"
-  printf '%s\n' "$1" > "$dest"
-  tcr_ok "set user-wide review style to '$1' ($dest)"
 }
 
 # tcr_merge_json_string <cfg> <key> <string-value>

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Docs-staleness nudge — a Stop hook for the context-flow plugin.
+# Docs-staleness nudge — a Stop hook for the workflow plugin.
 #
 # When a batch changed code but touched NO docs, give a soft "heads up — docs may
 # be stale" so the docs get folded into the same commit. It never edits or commits
@@ -8,11 +8,10 @@
 # suggestion. The block + per-HEAD dedupe means it fires at most once per batch.
 #
 # This is an independent soft nudge that rides out on the same Stop batch as the
-# watchdog and (in my-code-review) the commit nudge — cross-plugin Stop ordering
-# does not matter, since each surfaces its own advisory and none suppresses
-# another.
+# watchdog — cross-plugin Stop ordering does not matter, since each surfaces its
+# own advisory and none suppresses another.
 #
-# Design notes (mirrors my-code-review's suggest-commit.sh):
+# Design notes:
 #   * Hooks are plain shell; they cannot edit docs or call tools for the user. So
 #     we hand the main agent a suggestion instead of acting.
 #   * Fail open: any error / missing dependency exits 0 so we never wedge a session.
@@ -120,7 +119,7 @@ if FILE_THRESHOLD or LINE_THRESHOLD:
 # A commit moves HEAD, so the next batch is eligible again.
 session_id = str(data.get("session_id") or "default")
 key = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-state_path = os.path.join(tempfile.gettempdir(), "context-flow-docs-" + key + ".json")
+state_path = os.path.join(tempfile.gettempdir(), "workflow-docs-" + key + ".json")
 
 try:
     with open(state_path) as fh:
@@ -143,7 +142,7 @@ else:
     churn = str(nondoc_count) + " file(s)"
 
 reason = (
-    "Heads up (context-flow docs nudge): this batch changed code (" + churn + ") "
+    "Heads up (workflow docs nudge): this batch changed code (" + churn + ") "
     "but no docs (README, plugin docs, SKILL.md, CLAUDE.md). If the behavior or "
     "usage changed, update the relevant docs and fold them into this commit; "
     "otherwise ignore — you won't be nudged again until the next commit."
