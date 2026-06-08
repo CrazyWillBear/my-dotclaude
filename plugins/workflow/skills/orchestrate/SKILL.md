@@ -11,7 +11,8 @@ Run the autonomous issue-solving loop on this repo's GitHub issues. `$ARGUMENTS`
 the **main thread** because only the main thread can spawn subagents.
 
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
-`hitl`. Never push.
+`hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
+push.
 
 ## Setup (once, before round 1)
 - **Base branch** = the current branch: `git rev-parse --abbrev-ref HEAD`. Every worktree branches
@@ -27,8 +28,10 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch
    `gh issue list --label ready-for-agent --state open --json number,title,labels,body`.
    For each issue, parse the `## Blocked by` section (C2): bare `#N` refs, or
    `None - can start immediately`. An issue is **ready** iff **every** `#N` blocker is **closed**
-   (`gh issue view <N> --json state`). **Skip** any issue also labeled `hitl`. If the ready set is
-   empty → report and **stop the loop**.
+   (`gh issue view <N> --json state`). **Skip** any issue also labeled `hitl` or `prd` (the
+   `--label ready-for-agent` filter already excludes a correctly-labeled PRD; this is a
+   belt-and-suspenders guard against a hand-added label). If the ready set is empty → report and
+   **stop the loop**.
 3. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
    base branch (C4):
    `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.

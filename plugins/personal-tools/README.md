@@ -38,8 +38,9 @@ plugins/personal-tools/
   Read-only; runs on the main thread.
 - **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
   a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
-  template verbatim, and publish it labeled `ready-for-agent`. Feeds the `workflow` plugin's
-  `/orchestrate` loop.
+  template verbatim, and publish it labeled `prd` (a tracking doc — *not* built directly).
+  `/to-issues` then slices it into the `ready-for-agent` issues the `workflow` plugin's
+  `/orchestrate` loop builds.
 - **`/to-issues <#>`** — break a PRD issue into **tracer-bullet vertical slices** (each cuts all
   layers, demoable alone): quiz me on granularity/dependencies/HITL, then file them in dependency
   order so each issue's `## Blocked by` carries real `#N` refs. Labels slices `ready-for-agent`

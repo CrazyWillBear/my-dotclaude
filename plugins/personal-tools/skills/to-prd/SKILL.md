@@ -1,6 +1,6 @@
 ---
 name: to-prd
-description: Turn an aligned task into a Product Requirements Doc and publish it as a labeled GitHub issue via gh — explore the repo, map the testing seam with me, fill the PRD template verbatim, then file it as a ready-for-agent issue. Use for "/to-prd", "write a PRD", "turn this into a PRD issue".
+description: Turn an aligned task into a Product Requirements Doc and publish it as a labeled GitHub issue via gh — explore the repo, map the testing seam with me, fill the PRD template verbatim, then file it as a `prd`-labeled tracking issue (sliced later by /to-issues). Use for "/to-prd", "write a PRD", "turn this into a PRD issue".
 argument-hint: "[shared-understanding summary or task; defaults to the current discussion]"
 model: inherit
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
@@ -38,10 +38,12 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PRs.
 5. **Publish as a GitHub issue.**
    - Confirm `gh auth status` and the target repo (`gh repo view --json nameWithOwner`).
    - Ensure the label exists (ignore an "already exists" error):
-     `gh label create ready-for-agent --description "AFK, orchestrate-eligible" 2>/dev/null || true`
+     `gh label create prd --description "Product Requirements Doc; slice with /to-issues" 2>/dev/null || true`
    - Write the PRD body to a temp file (so markdown/headings survive), then:
-     `gh issue create --title "<title>" --label ready-for-agent --body-file <tmp>`
+     `gh issue create --title "<title>" --label prd --body-file <tmp>`
+   - **Do not** label the PRD `ready-for-agent`. That label is what `/orchestrate` builds, and a
+     PRD is a multi-feature tracking doc, not a single buildable slice — `/to-issues` produces the
+     `ready-for-agent` slices.
 6. **Report** the issue URL + number. Then point me at the next step: **`/to-issues <#>`** breaks
-   the PRD into tracer-bullet vertical slices. `/orchestrate` is label-driven and will treat a
-   `ready-for-agent` issue as directly buildable — so for anything bigger than a trivial change,
-   run `/to-issues` to slice it before orchestrating.
+   the PRD into tracer-bullet vertical slices labeled `ready-for-agent` — those are what
+   `/orchestrate` builds. The PRD itself stays `prd`-labeled and out of the loop.
