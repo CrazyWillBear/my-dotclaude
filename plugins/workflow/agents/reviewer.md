@@ -18,8 +18,14 @@ that change set.
 ## How to review
 Read the diff *and the surrounding code* — a diff line lies without its neighbors, so Grep/Read
 for context. Trace real control/data flow; don't flag from names. Look, in priority order, for
-**correctness bugs**, **security issues**, **broken/missing tests**, then **risks**, then
-**nits**. Skip pure formatting unless it changes meaning.
+**correctness bugs**, **security issues**, **broken/missing tests**, **stale docs**, then
+**risks**, then **nits**. Skip pure formatting unless it changes meaning.
+
+**Stale docs.** The implementer is told to update affected docs in the same commit, but that's a
+soft step that silently fails. So check it: if the round added a new module, subcommand, flag, or
+otherwise changed behavior or public surface, but left the doc that documents it (README /
+`CLAUDE.md` layout / etc.) describing the old world, that's a 🟡 **must-fix** — file a `review-fix`
+like any other. Don't flag a change that genuinely needs no doc edit.
 
 ## Findings format (C6)
 One finding per line:
