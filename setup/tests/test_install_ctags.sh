@@ -47,6 +47,25 @@ make_stub() {
   chmod +x "$WORK/stubs/$name"
 }
 
+# make_passthrough_stub <name> — records the invocation then exec's its args,
+# so 'sudo pacman ...' actually runs the pacman stub.
+make_passthrough_stub() {
+  local name="$1"
+  mkdir -p "$WORK/stubs" "$WORK/calls"
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls/%s"\nexec "$@"\n' \
+    "$name" "$WORK" "$name" > "$WORK/stubs/$name"
+  chmod +x "$WORK/stubs/$name"
+}
+
+# make_id_stub <uid> — stub 'id' so that 'id -u' prints the given uid.
+make_id_stub() {
+  local uid="$1"
+  mkdir -p "$WORK/stubs"
+  printf '#!/usr/bin/env bash\nif [ "$1" = "-u" ]; then echo "%s"; else exec %s "$@"; fi\n' \
+    "$uid" "$(command -v id)" > "$WORK/stubs/id"
+  chmod +x "$WORK/stubs/id"
+}
+
 # stub_calls <name> — emit the recorded invocation(s) for <name>.
 stub_calls() { cat "$WORK/calls/$1" 2>/dev/null || true; }
 
@@ -64,7 +83,7 @@ mkdir -p "$_SYS_BIN"
 ln -sf "$REAL_BASH" "$_SYS_BIN/bash"
 [ -n "$REAL_PYTHON3" ] && ln -sf "$REAL_PYTHON3" "$_SYS_BIN/python3"
 # Link all the standard utilities common.sh and bash itself need.
-for _b in printf mkdir cp date mktemp dirname rm cat; do
+for _b in printf mkdir cp date mktemp dirname rm cat id; do
   _p="$(command -v "$_b" 2>/dev/null || true)"
   [ -n "$_p" ] && ln -sf "$_p" "$_SYS_BIN/$_b" 2>/dev/null || true
 done
@@ -115,9 +134,11 @@ calls=$(stub_calls brew)
 assert_contains "brew called with universal-ctags" "$calls" "universal-ctags"
 
 # ---- test: pacman path ------------------------------------------------------
+# Non-root: sudo passthrough stub is required so the install succeeds.
 echo "test: ctags absent, pacman present -> uses pacman -S --noconfirm ctags"
 reset_work
 make_stub pacman
+make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "ok message mentions pacman" "$out" "installed ctags via pacman"
@@ -130,6 +151,7 @@ assert_contains "pacman called with --noconfirm" "$calls" "--noconfirm"
 echo "test: ctags absent, apt-get present -> uses apt-get install -y ctags"
 reset_work
 make_stub apt-get
+make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "ok message mentions apt-get" "$out" "installed ctags via apt-get"
@@ -141,6 +163,7 @@ assert_contains "apt-get called with ctags" "$calls" "ctags"
 echo "test: ctags absent, dnf present -> uses dnf install -y ctags"
 reset_work
 make_stub dnf
+make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "ok message mentions dnf" "$out" "installed ctags via dnf"
@@ -168,6 +191,81 @@ out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "emits a warning"        "$out" "warn"
 assert_contains "mentions manual install" "$out" "universal-ctags manually"
 assert_contains "INSTALL_FAILED set to 1" "$out" "INSTALL_FAILED=1"
+
+# ---- test: non-root + sudo present -> Linux managers invoked via sudo --------
+echo "test: non-root + sudo present -> pacman invoked via sudo"
+reset_work
+make_stub pacman
+make_passthrough_stub sudo
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "ok message mentions pacman"  "$out" "installed ctags via pacman"
+assert_contains "INSTALL_FAILED stays 0"      "$out" "INSTALL_FAILED=0"
+calls_sudo=$(stub_calls sudo)
+assert_contains "sudo was called"             "$calls_sudo" "sudo"
+assert_contains "sudo called with pacman"     "$calls_sudo" "pacman"
+assert_contains "sudo called with ctags"      "$calls_sudo" "ctags"
+
+echo "test: non-root + sudo present -> apt-get invoked via sudo"
+reset_work
+make_stub apt-get
+make_passthrough_stub sudo
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "ok message mentions apt-get" "$out" "installed ctags via apt-get"
+assert_contains "INSTALL_FAILED stays 0"      "$out" "INSTALL_FAILED=0"
+calls_sudo=$(stub_calls sudo)
+assert_contains "sudo called with apt-get"    "$calls_sudo" "apt-get"
+
+echo "test: non-root + sudo present -> dnf invoked via sudo"
+reset_work
+make_stub dnf
+make_passthrough_stub sudo
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "ok message mentions dnf"     "$out" "installed ctags via dnf"
+assert_contains "INSTALL_FAILED stays 0"      "$out" "INSTALL_FAILED=0"
+calls_sudo=$(stub_calls sudo)
+assert_contains "sudo called with dnf"        "$calls_sudo" "dnf"
+
+# ---- test: brew is never prefixed with sudo ----------------------------------
+echo "test: brew is never prefixed with sudo (even when sudo is available)"
+reset_work
+make_stub brew
+make_passthrough_stub sudo
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "ok message mentions brew" "$out" "installed ctags via brew"
+calls_sudo=$(stub_calls sudo)
+assert_equals "sudo not called for brew"  "$calls_sudo" ""
+
+# ---- test: root user (id -u == 0) -> Linux managers run WITHOUT sudo ---------
+echo "test: root user (EUID=0) -> pacman runs without sudo"
+reset_work
+make_stub pacman
+make_id_stub 0   # simulate root
+# no sudo stub: if sudo were called, the subshell would fail to find it
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "ok message mentions pacman"   "$out" "installed ctags via pacman"
+assert_contains "INSTALL_FAILED stays 0"       "$out" "INSTALL_FAILED=0"
+calls_pacman=$(stub_calls pacman)
+assert_contains "pacman called directly"       "$calls_pacman" "pacman"
+calls_sudo=$(stub_calls sudo)
+assert_equals "sudo not called when root"      "$calls_sudo" ""
+
+# ---- test: sudo absent, non-root -> warn with manual cmd, set FAILED, no abort
+# _SYS_BIN never includes sudo (only: printf mkdir cp date mktemp dirname rm cat id).
+# So omitting a sudo stub means the subshell's PATH has no sudo at all.
+echo "test: sudo absent, non-root -> warns with manual cmd, sets INSTALL_FAILED=1, non-fatal"
+reset_work
+make_stub pacman
+# No sudo stub — sudo is absent from both stubs dir and _SYS_BIN.
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "warning mentions manual cmd"  "$out" "warn"
+assert_contains "warning contains pacman"      "$out" "pacman"
+assert_contains "INSTALL_FAILED set to 1"      "$out" "INSTALL_FAILED=1"
 
 # ---- test: setup-dev.sh calls tcr_install_ctags; setup-simple.sh does not --
 echo "test: setup-dev.sh wires tcr_install_ctags; setup-simple.sh does not"

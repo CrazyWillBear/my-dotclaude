@@ -203,6 +203,18 @@ tcr_install_ctags() {
     apt-get) cmd="apt-get install -y $pkg_name" ;;
     dnf)     cmd="dnf install -y $pkg_name" ;;
   esac
+  # Linux package managers need root. When not already root, try sudo; when
+  # sudo is missing too, warn and bail out non-fatally rather than prompting
+  # interactively (this script runs unattended via `curl | bash`).
+  if [ "$pkg_mgr" != "brew" ] && [ "$(id -u)" != "0" ]; then
+    if command -v sudo >/dev/null 2>&1; then
+      cmd="sudo $cmd"
+    else
+      TCR_INSTALL_FAILED=1
+      tcr_warn "could not install ctags automatically — run as root or with sudo: $cmd"
+      return 0
+    fi
+  fi
   if $cmd >/dev/null 2>&1; then
     tcr_ok "installed ctags via $pkg_mgr"
   else
