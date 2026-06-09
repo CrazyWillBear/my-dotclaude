@@ -137,6 +137,8 @@ echo "test: PRD with one open non-hitl child is NOT reported ready or blocked"
 set_body 7 '{"body":"Slice.\n\nPart of #2\n"}'
 # PRD #2 has one open non-hitl child #8
 set_list 2 '[{"number":7,"state":"closed","labels":[]},{"number":8,"state":"open","labels":[]}]'
+# Set bodies so re-verification confirms both are genuine children of PRD #2.
+set_body 8 '{"body":"Part of #2\n"}'
 
 out=$(run_reap 7)
 assert_not_contains "not reported ready" "$out" "ready"
@@ -150,6 +152,8 @@ echo "test: PRD whose only open child is hitl-labeled is reported blocked"
 set_body 9 '{"body":"Slice.\n\nPart of #3\n"}'
 # PRD #3: #9 closed, #10 open+hitl
 set_list 3 '[{"number":9,"state":"closed","labels":[]},{"number":10,"state":"open","labels":[{"name":"hitl"}]}]'
+# Set bodies so re-verification confirms both are genuine children of PRD #3.
+set_body 10 '{"body":"Part of #3\n"}'
 
 out=$(run_reap 9)
 assert_contains "blocked PRD is in output" "$out" "blocked"
@@ -174,6 +178,9 @@ set_body 13 '{"body":"Part of #5\n"}'
 
 set_list 4 '[{"number":12,"state":"closed","labels":[]},{"number":14,"state":"closed","labels":[]}]'
 set_list 5 '[{"number":13,"state":"closed","labels":[]},{"number":15,"state":"open","labels":[{"name":"hitl"}]}]'
+# Set bodies so re-verification confirms each child genuinely belongs to its PRD.
+set_body 14 '{"body":"Part of #4\n"}'
+set_body 15 '{"body":"Part of #5\n"}'
 
 out=$(run_reap 12 13)
 assert_contains "PRD 4 reported ready" "$out" "4"
@@ -189,10 +196,42 @@ echo "test: issue numbers can also be read from stdin"
 
 set_body 20 '{"body":"Part of #6\n"}'
 set_list 6 '[{"number":20,"state":"closed","labels":[]},{"number":21,"state":"closed","labels":[]}]'
+# Set body for #21 so re-verification confirms it belongs to PRD #6.
+set_body 21 '{"body":"Part of #6\n"}'
 
 out=$(printf '20\n' | FAKE_GH_WORK="$WORK" PATH="$WORK/bin:$PATH" bash "$REAP")
 assert_contains "stdin-supplied number -> PRD 6 ready" "$out" "6"
 assert_contains "stdin path reports ready" "$out" "ready"
+
+# ---------------------------------------------------------------------------
+echo "test: false-positive from fuzzy search (ready path) — search for #7 returns issue referencing #70"
+
+# Slice #30 says "Part of #7"
+set_body 30 '{"body":"Slice.\n\nPart of #7\n"}'
+# PRD #7 has one real closed child: #30 (body confirms Part of #7).
+# The gh search also returns issue #31, which is open but whose body says "Part of #70" — a false positive.
+set_list 7 '[{"number":30,"state":"closed","labels":[]},{"number":31,"state":"open","labels":[]}]'
+set_body 30 '{"body":"Part of #7\n"}'
+set_body 31 '{"body":"Part of #70\n"}'
+
+out=$(run_reap 30)
+assert_contains     "false-positive excluded: PRD 7 still ready" "$out" "ready"
+assert_contains     "PRD 7 number appears"                        "$out" "7"
+assert_not_contains "no spurious blocked for PRD 7"              "$out" "blocked"
+
+# ---------------------------------------------------------------------------
+echo "test: false-positive from fuzzy search (blocked path) — hitl false-positive must not produce spurious blocked"
+
+# Slice #32 says "Part of #8"
+set_body 32 '{"body":"Part of #8\n"}'
+# PRD #8 real children: #32 (closed). Search also returns #33, which is open+hitl but body says "Part of #80".
+set_list 8 '[{"number":32,"state":"closed","labels":[]},{"number":33,"state":"open","labels":[{"name":"hitl"}]}]'
+set_body 33 '{"body":"Part of #80\n"}'
+
+out=$(run_reap 32)
+assert_not_contains "no spurious blocked for PRD 8"             "$out" "blocked"
+assert_contains     "PRD 8 is ready (false hitl-positive gone)" "$out" "ready"
+assert_contains     "PRD 8 number appears"                      "$out" "8"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

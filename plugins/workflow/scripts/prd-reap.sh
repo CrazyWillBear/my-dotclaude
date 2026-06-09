@@ -75,7 +75,13 @@ def get_body(issue_number):
 
 
 def get_children(prd_number):
-    """Return list of {number, state, labels} dicts for all issues referencing 'Part of #<prd>'."""
+    """Return list of {number, state, labels} dicts for issues that genuinely reference 'Part of #<prd>'.
+
+    GitHub's --search is tokenized full-text, so searching 'Part of #1' may return
+    issues whose bodies contain 'Part of #10' or 'Part of #100'.  We re-verify each
+    candidate by fetching its body and requiring an exact-number match (the digit
+    sequence after # must equal prd_number, with no further digits following).
+    """
     search = "Part of #%s" % prd_number
     out = gh(
         "issue", "list",
@@ -87,9 +93,22 @@ def get_children(prd_number):
     if not out:
         return []
     try:
-        return json.loads(out)
+        candidates = json.loads(out)
     except Exception:
         return []
+
+    # Build a regex that matches the exact PRD number — not a prefix of a larger one.
+    # e.g. for prd_number=1: matches '#1' but not '#10' or '#100'.
+    exact_pattern = re.compile(
+        r"[Pp]art\s+of\s+#" + re.escape(str(prd_number)) + r"(?!\d)"
+    )
+
+    verified = []
+    for child in candidates:
+        child_body = get_body(child["number"])
+        if exact_pattern.search(child_body):
+            verified.append(child)
+    return verified
 
 
 def parse_prd_refs(body):
