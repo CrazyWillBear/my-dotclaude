@@ -45,7 +45,7 @@ assert_empty()        { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected sile
 # The shim itself just dispatches on the arguments it receives.
 
 GH_BIN="$WORK/bin/gh"
-mkdir -p "$WORK/bin" "$WORK/issue_body" "$WORK/issue_list"
+mkdir -p "$WORK/bin" "$WORK/issue_body" "$WORK/issue_body_error" "$WORK/issue_list"
 
 # write_gh_shim — (re)write the PATH-prepended fake gh.
 write_gh_shim() {
@@ -58,6 +58,12 @@ WORK_DIR="${FAKE_GH_WORK}"
 if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
     N="$3"
     # Any remaining args are flags (--json body, etc.) — ignore.
+    # Check for a simulated error sentinel first.
+    error_file="$WORK_DIR/issue_body_error/$N"
+    if [ -f "$error_file" ]; then
+        printf 'gh: error fetching issue %s\n' "$N" >&2
+        exit 1
+    fi
     file="$WORK_DIR/issue_body/$N"
     if [ -f "$file" ]; then
         cat "$file"
@@ -103,6 +109,12 @@ write_gh_shim
 set_body() {
     local n="$1" body="$2"
     printf '%s\n' "$body" >"$WORK/issue_body/$n"
+}
+
+# Helper: mark an issue number so the gh shim returns a non-zero exit (simulates network/rate-limit error).
+set_body_error() {
+    local n="$1"
+    touch "$WORK/issue_body_error/$n"
 }
 
 # Helper: set the child-list JSON for a given PRD number.
@@ -232,6 +244,41 @@ out=$(run_reap 32)
 assert_not_contains "no spurious blocked for PRD 8"             "$out" "blocked"
 assert_contains     "PRD 8 is ready (false hitl-positive gone)" "$out" "ready"
 assert_contains     "PRD 8 number appears"                      "$out" "8"
+
+# ---------------------------------------------------------------------------
+echo "test: body-fetch error on open non-hitl child — PRD must NOT be reported ready"
+# Regression: get_children used to drop any candidate whose body-fetch errored,
+# silently converting a real open child into no child, making the PRD look done.
+
+# Slice #40 says "Part of #9"
+set_body 40 '{"body":"Part of #9\n"}'
+# PRD #9: #40 (closed) and #41 (open, no hitl). Body-fetch for #41 will error.
+set_list 9 '[{"number":40,"state":"closed","labels":[]},{"number":41,"state":"open","labels":[]}]'
+set_body 40 '{"body":"Part of #9\n"}'
+set_body_error 41   # simulate transient gh error for child #41
+
+out=$(run_reap 40)
+assert_not_contains "body-fetch error: PRD 9 must NOT appear ready"   "$out" "ready"
+assert_not_contains "body-fetch error: PRD 9 must NOT appear blocked" "$out" "blocked"
+assert_empty        "body-fetch error: output is empty (non-hitl open child retained)" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: body-fetch error on open hitl child — PRD must NOT be reported ready"
+# Same regression, but the open child carries a hitl label.
+# Without the fix the PRD would be reported 'ready' (dropped child made it look all-closed).
+# With the fix the candidate is kept so the PRD is 'blocked'.
+
+# Slice #42 says "Part of #11"
+set_body 42 '{"body":"Part of #11\n"}'
+# PRD #11: #42 (closed) and #43 (open, hitl). Body-fetch for #43 will error.
+set_list 11 '[{"number":42,"state":"closed","labels":[]},{"number":43,"state":"open","labels":[{"name":"hitl"}]}]'
+set_body 42 '{"body":"Part of #11\n"}'
+set_body_error 43   # simulate transient gh error for child #43
+
+out=$(run_reap 42)
+assert_not_contains "body-fetch error: hitl PRD 11 must NOT appear ready" "$out" "ready"
+assert_contains     "body-fetch error: hitl PRD 11 must appear blocked"   "$out" "blocked"
+assert_contains     "body-fetch error: hitl issue 43 must appear"         "$out" "43"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

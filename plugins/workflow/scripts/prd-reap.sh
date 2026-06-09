@@ -64,14 +64,24 @@ def gh(*args):
 
 
 def get_body(issue_number):
-    """Return the body text of an issue, or '' on error."""
+    """Return the body text of an issue.
+
+    Returns:
+        str  — the body (may be '' if the issue genuinely has no body).
+        None — the fetch failed (network error, timeout, rate-limit, etc.).
+
+    Callers that need to distinguish "empty body" from "could not fetch" should
+    check for None explicitly; callers that only care about the text can treat
+    None as '' (fail-open).
+    """
     out = gh("issue", "view", str(issue_number), "--json", "body")
-    if not out:
-        return ""
+    if out is None:
+        # gh returned non-zero — fetch failed; signal that distinctly from an empty body.
+        return None
     try:
         return json.loads(out).get("body") or ""
     except Exception:
-        return ""
+        return None
 
 
 def get_children(prd_number):
@@ -106,8 +116,16 @@ def get_children(prd_number):
     verified = []
     for child in candidates:
         child_body = get_body(child["number"])
-        if exact_pattern.search(child_body):
+        if child_body is None:
+            # Body fetch failed (transient error).  We cannot confirm the exact
+            # reference, but search already returned this issue as a candidate.
+            # Dropping it would silently hide a genuine open child (fail-closed).
+            # Keep it so an open child still blocks a 'ready' verdict (fail-open).
             verified.append(child)
+        elif exact_pattern.search(child_body):
+            # Body fetched and exact reference confirmed — genuine child.
+            verified.append(child)
+        # else: body fetched, reference absent — search false-positive; exclude.
     return verified
 
 
@@ -125,9 +143,10 @@ def has_label(issue, name):
 
 
 # Step 1: collect candidate PRD numbers from the closed slices, deduped.
+# If get_body returns None (fetch error), treat as empty — no refs to parse.
 candidate_prds = set()
 for n in numbers:
-    body = get_body(n)
+    body = get_body(n) or ""
     for prd in parse_prd_refs(body):
         candidate_prds.add(prd)
 
