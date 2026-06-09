@@ -66,3 +66,38 @@ push.
 Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
 under the done-check; an **unresolvable conflict**, a **red done-check**, or an implementer failure
 **always stops the loop** with a clear report; everything else continues to the next round.
+
+## End-of-run: PRD reap
+
+After **all rounds** finish (or the loop stops), collect every issue number closed during this
+run and pass them to the reap helper. Locate the repo root with
+`git rev-parse --show-toplevel`, then run:
+
+```
+bash <repo-root>/plugins/workflow/scripts/prd-reap.sh <N1> [N2 ...]
+```
+
+The helper prints one line per finding to stdout:
+
+- `ready <prd_number>` — every child slice of that PRD is closed; the PRD is eligible
+  to close.
+- `blocked <prd_number> hitl <hitl_N> [hitl_N ...]` — the only open children carry the
+  `hitl` label; a human must review before closing.
+
+**If the helper prints nothing**, the final report is unchanged — do not add any prompt
+or mention of PRDs. The autonomous contract is fully preserved for runs where no PRD
+qualifies.
+
+**For each `ready` PRD**, add an offer to the final report (never auto-close):
+
+> PRD #N appears complete — all child slices are closed. Close it? (yes/no)
+
+On **yes**: run `gh issue close <N> --comment "All child slices are closed — closing this PRD."`.
+Never edit the PRD body. Never delete the issue.
+
+**For each `blocked` PRD**, note it in the final report without offering to close:
+
+> PRD #N is blocked — open `hitl` issue(s): #H [#H …] need human review before closing.
+
+These PRD offers and notes appear only in the **final report** (step 7), after all rounds. They
+never interrupt mid-loop rounds.
