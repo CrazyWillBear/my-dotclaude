@@ -281,5 +281,50 @@ assert_contains     "body-fetch error: hitl PRD 11 must appear blocked"   "$out"
 assert_contains     "body-fetch error: hitl issue 43 must appear"         "$out" "43"
 
 # ---------------------------------------------------------------------------
+echo "test: 'Part of #N' quoted mid-sentence (not own line) is NOT a candidate PRD"
+# Regression: parse_prd_refs used to scrape 'Part of #N' anywhere in the body,
+# so a slice whose prose *quotes* an example reference produced a spurious PRD.
+# (This is the latent bug dogfooding surfaced: issue bodies explaining the search
+#  collision literally contain `Part of #1` / `Part of #100` inline.)
+
+set_body 50 '{"body":"This explains a search for `Part of #1` also matches `Part of #100` in prose.\n"}'
+# If 1 or 100 were (wrongly) treated as candidates, get_children would run; give
+# them a body that would re-verify so any leak shows up as output.
+set_list 1   '[{"number":50,"state":"closed","labels":[]}]'
+set_list 100 '[{"number":50,"state":"closed","labels":[]}]'
+
+out=$(run_reap 50)
+assert_empty "inline-quoted Part-of refs yield no candidate PRD" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: child whose body only quotes 'Part of #N' inline is excluded from re-verify"
+# Regression: get_children's re-verify pattern matched the ref anywhere in a
+# candidate body, so a prose-only mention turned a non-child into a counted child.
+
+# Slice #52 is a genuine child of PRD #60 (own-line trailer).
+set_body 52 '{"body":"Slice.\n\nPart of #60\n"}'
+# Search for PRD #60 returns #52 (real, closed) and #53 (open, non-hitl) whose body
+# only quotes the ref inline — must be excluded so PRD #60 reads ready.
+set_list 60 '[{"number":52,"state":"closed","labels":[]},{"number":53,"state":"open","labels":[]}]'
+set_body 52 '{"body":"Part of #60\n"}'
+set_body 53 '{"body":"Docs note: write `Part of #60` as a trailer line.\n"}'
+
+out=$(run_reap 52)
+assert_contains     "inline-only child excluded: PRD 60 ready" "$out" "ready"
+assert_contains     "PRD 60 number appears"                    "$out" "60"
+assert_not_contains "no spurious blocked for PRD 60"           "$out" "blocked"
+
+# ---------------------------------------------------------------------------
+echo "test: candidate PRD with no verified children is NOT reported ready"
+# Guard against a vacuously-empty child set printing 'ready' (the #100-does-not-exist
+# case from dogfooding: search returns nothing -> empty set must not look all-closed).
+
+set_body 55 '{"body":"Part of #70\n"}'
+# Deliberately set no list for PRD #70 -> shim returns '[]' -> no children.
+
+out=$(run_reap 55)
+assert_empty "PRD with zero children yields no output" "$out"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

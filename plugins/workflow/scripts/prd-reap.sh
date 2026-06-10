@@ -107,10 +107,12 @@ def get_children(prd_number):
     except Exception:
         return []
 
-    # Build a regex that matches the exact PRD number — not a prefix of a larger one.
-    # e.g. for prd_number=1: matches '#1' but not '#10' or '#100'.
+    # Build a regex that matches a real 'Part of #N' trailer — the reference on its
+    # own line, not the substring quoted inside prose (e.g. an issue body that
+    # *explains* the convention with `Part of #1` mid-sentence).  Anchoring to the
+    # line ($ after the number) also excludes prefix collisions like '#10'/'#100'.
     exact_pattern = re.compile(
-        r"[Pp]art\s+of\s+#" + re.escape(str(prd_number)) + r"(?!\d)"
+        r"(?m)^[Pp]art\s+of\s+#" + re.escape(str(prd_number)) + r"\s*$"
     )
 
     verified = []
@@ -130,8 +132,13 @@ def get_children(prd_number):
 
 
 def parse_prd_refs(body):
-    """Extract all PRD numbers from 'Part of #N' references in a body string."""
-    return [int(m) for m in re.findall(r"[Pp]art\s+of\s+#(\d+)", body)]
+    """Extract PRD numbers from real 'Part of #N' trailer lines in a body string.
+
+    Matches only references on their own line (anchored with re.MULTILINE), not the
+    substring quoted inside prose — a slice body that *quotes* `Part of #1` while
+    explaining the convention must not be read as a reference to PRD 1.
+    """
+    return [int(m) for m in re.findall(r"(?m)^[Pp]art\s+of\s+#(\d+)\s*$", body)]
 
 
 def has_label(issue, name):
