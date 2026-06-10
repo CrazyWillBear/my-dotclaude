@@ -2,15 +2,15 @@
 #
 # SessionStart auto-resume for the workflow plugin.
 #
-# The other half of the handoff loop. When the watchdog fires the 100k one-shot
-# signal it tells the agent to commit and run /handoff, which writes
-# ~/.claude/.pending-handoff and clears context. A PreCompact hook also writes a
-# handoff before EVERY compaction (a manual /compact or a harness auto-compact),
-# so a user-initiated or harness compact re-injects the plan too — not only
-# workflow-driven ones. All of those fire SessionStart (source=clear /
-# source=compact). This hook reads the handoff and, if we are in the same repo it
-# came from, re-injects the plan so the user only ever has to type the one command
-# plus a kickoff word:
+# The other half of the handoff loop. When the watchdog fires the 100k wrap
+# signal it tells the agent to commit and run /handoff, which writes a per-repo
+# keyed resume pointer (~/.claude/handoffs/<sha1(toplevel)[:16]>/.pending.json) and
+# clears context. A PreCompact hook also writes a handoff before EVERY compaction
+# (a manual /compact or a harness auto-compact), so a user-initiated or harness
+# compact re-injects the plan too — not only workflow-driven ones. All of those
+# fire SessionStart (source=clear / source=compact). This hook resolves the pointer
+# for the current repo and, if we are in the same repo it came from, re-injects the
+# plan so the user only ever has to type the one command plus a kickoff word:
 #
 #   * source=clear   (/handoff) -> "implement the plan @path" wording.
 #     Fresh context, so the agent starts the plan from the committed baseline.
@@ -31,11 +31,12 @@
 # handoff untouched and stay silent, so a launch in another project never steals
 # or drops it.
 #
-# Caveat: the handoff is one global file, and PreCompact now writes it before EVERY
-# compaction, so across concurrent repos it is last-writer-wins — a /compact in
-# repo B overwrites an unconsumed handoff from repo A. Acceptable: B's handoff is
-# correct for B, and a dropped cross-repo handoff costs at most one plan
-# re-injection (the repo guard still prevents B from consuming A's plan).
+# Pointer resolution is per-repo keyed first, legacy global second: we read
+# <keyed-dir>/.pending.json for the current repo, then fall back to the legacy
+# global ~/.claude/.pending-handoff (one-release migration; repo-guarded), and
+# consume whichever we actually used. Per-repo keying means concurrent repos no
+# longer collide — the old single global file was last-writer-wins across repos;
+# that caveat now applies only to the legacy fallback, which is going away.
 
 export HOOK_INPUT="$(cat)"
 
@@ -68,17 +69,6 @@ if source in ("compact", "clear"):
     except Exception:
         pass
 
-handoff_path = os.path.expanduser("~/.claude/.pending-handoff")
-if not os.path.isfile(handoff_path):
-    sys.exit(0)
-try:
-    with open(handoff_path) as fh:
-        ho = json.load(fh)
-except Exception:
-    sys.exit(0)
-if not isinstance(ho, dict):
-    sys.exit(0)
-
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
@@ -94,12 +84,42 @@ def git(*args):
         return None
     return out.stdout.strip()
 
-# Repo guard: only resume in the repo the handoff came from.
+
+# toplevel is needed both to compute the per-repo keyed pointer path and for the
+# repo guard, so resolve it before reading the pointer.
 toplevel = git("rev-parse", "--show-toplevel")
+
+# Pointer resolution: the new per-repo keyed pointer first, then the legacy global
+# file (one-release migration). Consume exactly whichever we use.
+keyed_path = None
+if toplevel:
+    key = hashlib.sha1(toplevel.encode()).hexdigest()[:16]
+    keyed_path = os.path.expanduser(
+        os.path.join("~/.claude/handoffs", key, ".pending.json")
+    )
+legacy_path = os.path.expanduser("~/.claude/.pending-handoff")
+
+handoff_path = None
+for cand in (keyed_path, legacy_path):
+    if cand and os.path.isfile(cand):
+        handoff_path = cand
+        break
+if not handoff_path:
+    sys.exit(0)
+try:
+    with open(handoff_path) as fh:
+        ho = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(ho, dict):
+    sys.exit(0)
+
+# Repo guard: only resume in the repo the handoff came from. (Keyed pointers
+# always match; this gates the legacy global fallback against a foreign repo.)
 if not toplevel or toplevel != ho.get("git_toplevel"):
     sys.exit(0)
 
-# Clear the handoff so we resume exactly once.
+# Clear the consumed pointer so we resume exactly once.
 try:
     os.remove(handoff_path)
 except Exception:

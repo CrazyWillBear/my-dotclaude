@@ -20,9 +20,11 @@ Capture everything the next session needs, then send me into fresh context. `wor
    - `toplevel` = `git rev-parse --show-toplevel`
    - `head` = `git rev-parse HEAD`
    - `ts` = `date +%s`
-2. **Write the handoff doc** to `~/.claude/handoffs/<branch>.md` — replace every `/` in the
-   branch with `-`, and `mkdir -p ~/.claude/handoffs` first. Be concrete; this is the *only*
-   memory the fresh session gets. Fold `$ARGUMENTS` in if given. Sections:
+   - `toplevel_key` = `printf %s "$toplevel" | sha1sum | cut -c1-16` — the per-repo key
+   - `dir` = `~/.claude/handoffs/$toplevel_key`, then `mkdir -p "$dir"`
+2. **Write the handoff doc** to `$dir/<branch-slug>.md` — replace every `/` in the branch with
+   `-` for the slug. Be concrete; this is the *only* memory the fresh session gets. Fold
+   `$ARGUMENTS` in if given. Sections:
    ```
    # Handoff — <branch> — <date>
    ## Done
@@ -36,9 +38,11 @@ Capture everything the next session needs, then send me into fresh context. `wor
    ## Gotchas
    <traps, assumptions, things that already bit us>
    ```
-3. **Write the resume pointer** `~/.claude/.pending-handoff` with the **Write tool**, as JSON in
-   exactly the `workflow` schema (this mirrors `save-handoff.sh` — the cross-plugin script path
-   isn't install-stable, so write it inline):
+3. **Write the resume pointer** `$dir/.pending.json` with the **Write tool**, as JSON in exactly
+   the `workflow` schema (this mirrors `save-handoff.sh` — the cross-plugin script path isn't
+   install-stable, so write it inline). The keyed-dir algorithm **must** match `save-handoff.sh`:
+   `~/.claude/handoffs/<sha1(toplevel)[:16]>/` (bash: `printf %s "$toplevel" | sha1sum | cut -c1-16`),
+   pointer named `.pending.json`. A drift test enforces this, so don't diverge.
    ```json
    {
      "handoff_path": "<absolute path to the handoff doc you just wrote>",
@@ -50,8 +54,8 @@ Capture everything the next session needs, then send me into fresh context. `wor
      "ts": <ts>
    }
    ```
-   `handoff_path` points at the **handoff doc** you just wrote. `git_toplevel` must be the real
-   toplevel: `resume.sh` only re-injects when the new session is in the same repo.
+   `handoff_path` points at the **handoff doc** you just wrote (in `$dir`). `git_toplevel` must be
+   the real toplevel: `resume.sh` only re-injects when the new session is in the same repo.
 4. **Tell me what to do**, in plain English (this is a multi-step instruction — write it normally
    even in caveman mode): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject
    "implement the handoff @`<handoff doc>`" into the fresh session, so nothing is lost. Show the

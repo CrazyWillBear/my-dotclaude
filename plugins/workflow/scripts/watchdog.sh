@@ -9,11 +9,17 @@
 # user-typed REPL input only.)
 #
 #   * 100k signal — mid-execution wrap-and-handoff nudge (active events,
-#     >= WORKFLOW_NUDGE_TOKENS, default 100k): once per cycle, ask the agent to
-#     wrap up at the next natural breaking point, commit, and run /handoff. The
-#     signal fires on any work (not orchestrate-specific). resume.sh re-arms the
-#     sentinel on /clear or /compact so a later climb back over 100k in the same
-#     long session can re-fire.
+#     >= WORKFLOW_NUDGE_TOKENS, default 100k): ask the agent to wrap up at the
+#     next natural breaking point, commit, and run /handoff. Fires on any work
+#     (not orchestrate-specific). Re-fires on context CLIMB, not once-per-cycle:
+#     the sentinel stores the token count of the last fire, and the signal
+#     re-fires every time context climbs >= STEP (30k) past it (100->130->160...),
+#     so a single dropped emit (e.g. landing on a mid-subagent PostToolUse turn
+#     that never surfaces) self-recovers on the next climb instead of being
+#     suppressed for the rest of the session. A subagent-return PostToolUse
+#     (tool_name in Task/Agent) is skipped entirely — neither fires nor burns the
+#     sentinel — since that turn often isn't surfaced to the user. resume.sh still
+#     deletes the sentinel on /clear or /compact, re-arming from the NUDGE floor.
 #
 # Orchestrate gate (advisory, UserPromptSubmit only): when the user types the
 # /orchestrate slash command (bare or with arguments, e.g. `/orchestrate 3` or
@@ -61,11 +67,15 @@ def _int_env(name, default):
 
 NUDGE    = _int_env("WORKFLOW_NUDGE_TOKENS", 100000)
 PLANGATE = _int_env("WORKFLOW_PLANGATE_TOKENS", 60000)
+# Re-fire the wrap nudge each time context climbs >= STEP past the last fire.
+# Hardcoded (not env) on purpose: the climb cadence is a fixed design choice.
+STEP     = 30000
 
 event       = data.get("hook_event_name", "")
 prompt      = str(data.get("prompt") or "").strip()
 transcript  = data.get("transcript_path", "")
 session_id  = str(data.get("session_id") or "default")
+tool_name   = data.get("tool_name")
 
 tmp = tempfile.gettempdir()
 skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
@@ -118,6 +128,23 @@ def touch(path, extra=None):
         pass
 
 
+def read_last_fired(path):
+    # Token count of the last fire, used to gate re-fire on climb.
+    #   None  -> sentinel missing (never fired) => fire from the NUDGE floor.
+    #   NUDGE -> sentinel present but old/empty/unparseable/missing the field
+    #            (back-compat with the old {"ts":N} / empty `: >file` formats):
+    #            treat as a single fire at NUDGE, so the next fire needs >= NUDGE+STEP.
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as fh:
+            d = json.load(fh)
+        v = d.get("last_fired_tokens")
+        return int(v) if v is not None else NUDGE
+    except Exception:
+        return NUDGE
+
+
 def emit(obj):
     sys.stdout.write(json.dumps(obj))
     sys.exit(0)
@@ -159,12 +186,20 @@ if (event == "UserPromptSubmit"
         },
     })
 
-# --- 100k universal signal: once per cycle, tell the agent to wrap up at the
-# next natural breaking point, commit, and run /handoff. Fires on any work
-# (not orchestrate-specific). Silent on subsequent events while still over budget
-# (sentinel guards re-fire). resume.sh re-arms on /clear or /compact.
-if size is not None and size >= NUDGE and not os.path.exists(nudged_path):
-    touch(nudged_path)
+# --- 100k universal signal: tell the agent to wrap up at the next natural
+# breaking point, commit, and run /handoff. Fires on any work (not
+# orchestrate-specific). Re-fires on context CLIMB: the sentinel records the
+# tokens at the last fire and the signal re-fires once context climbs >= STEP
+# past it, so a dropped first emit self-recovers. A subagent-return PostToolUse
+# (tool_name in Task/Agent) is skipped entirely (no fire, no burn) because that
+# turn is often not surfaced. resume.sh deletes the sentinel on /clear or
+# /compact, re-arming from the NUDGE floor.
+is_subagent_return = event == "PostToolUse" and tool_name in ("Task", "Agent")
+last_fired = read_last_fired(nudged_path)
+threshold = NUDGE if last_fired is None else last_fired + STEP
+if (size is not None and size >= NUDGE and size >= threshold
+        and not is_subagent_return):
+    touch(nudged_path, {"last_fired_tokens": size})
     kb = size // 1000
     emit({
         "systemMessage":

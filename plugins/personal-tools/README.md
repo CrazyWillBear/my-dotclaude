@@ -46,10 +46,11 @@ plugins/personal-tools/
   layers, demoable alone): quiz me on granularity/dependencies/HITL, then file them in dependency
   order so each issue's `## Blocked by` carries real `#N` refs. Labels slices `ready-for-agent`
   (and `hitl` where a human is needed); never edits the parent PRD.
-- **`/handoff [note]`** — capture a rich handoff before `/clear`: write
-  `~/.claude/handoffs/<branch>.md` (work done, in-flight state, next steps, key files, gotchas)
-  plus the `~/.claude/.pending-handoff` resume pointer the `workflow` plugin reads, then tell me
-  to `/clear` and send `go`. Requires committed work first.
+- **`/handoff [note]`** — capture a rich handoff before `/clear`: write the handoff doc and the
+  resume pointer the `workflow` plugin reads, both under a per-repo keyed dir
+  `~/.claude/handoffs/<sha1(toplevel)[:16]>/` (`<branch-slug>.md` + `.pending.json`), so concurrent
+  handoffs across repos never collide. Captures work done, in-flight state, next steps, key files,
+  and gotchas, then tells me to `/clear` and send `go`. Requires committed work first.
 - **`/dedup-search [task]`** — search the repo for reusable or extendable code before writing
   anything new. It extracts 3–8 concrete search terms from the task description, runs the
   `scripts/dedup-search.sh` helper against the repo, and triages each candidate into

@@ -9,8 +9,11 @@
 #
 # Covers the 100k signal and orchestrate gate:
 #   * 100k universal signal — >= nudge -> wrap-up + commit + /handoff message,
-#     once per cycle, per-event label, env-overridable; subsequent events while
-#     still over budget are silent.
+#     per-event label, env-overridable. Re-fires on context CLIMB (>= STEP=30k
+#     past the last fire), not once-per-cycle: silent on the same tier, re-fires
+#     after a 30k+ climb. A subagent-return PostToolUse (tool_name in Task/Agent)
+#     is skipped entirely (no fire, no sentinel burn). An old {"ts":N}/empty
+#     sentinel is treated as a fire at NUDGE (back-compat).
 #   * Orchestrate gate — /orchestrate at >= 60k context -> advisory /clear hint
 #     (no block, prompt survives); /orchestrate under threshold -> silent;
 #     non-orchestrate at >= 60k -> silent; threshold is env-overridable.
@@ -90,11 +93,11 @@ with open(path, "w") as fh:
 PY
 }
 
-# run_watchdog <event> <sid> <transcript> [<prompt>] — print the hook's stdout.
+# run_watchdog <event> <sid> <transcript> [<prompt>] [<tool_name>] — hook stdout.
 run_watchdog() {
-    local event="$1" sid="$2" tr="$3" prompt="${4:-}"
-    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false,"prompt":"%s"}' \
-        "$event" "$sid" "$tr" "$prompt" \
+    local event="$1" sid="$2" tr="$3" prompt="${4:-}" tool="${5:-}"
+    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false,"prompt":"%s","tool_name":"%s"}' \
+        "$event" "$sid" "$tr" "$prompt" "$tool" \
         | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
             bash "$WATCHDOG"
 }
@@ -132,11 +135,64 @@ assert_contains "user-facing message mentions /handoff" "$out" "/handoff"
 assert_file "creates the nudge sentinel" "$(nudged_path sid-nudge)"
 
 # ---------------------------------------------------------------------------
-echo "test: the signal fires at most once per cycle (silent on subsequent events)"
+echo "test: the signal stays silent on the same tier (re-fires only on >= STEP climb)"
+# sid-nudge first fired at 200k above; a second call at the SAME 200k is < STEP
+# (30k) above the last fire, so it must stay silent.
 out=$(run_watchdog UserPromptSubmit sid-nudge "$WORK/over.jsonl")
-assert_empty "second over-threshold call stays silent" "$out"
+assert_empty "second call at the same tier stays silent" "$out"
 out=$(run_watchdog PostToolUse sid-nudge "$WORK/over.jsonl")
-assert_empty "PostToolUse while still over budget stays silent" "$out"
+assert_empty "PostToolUse at the same tier stays silent" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: the signal re-fires on context climb (a dropped first emit self-recovers)"
+init_repo
+make_transcript "$WORK/climb100.jsonl" 100000
+make_transcript "$WORK/climb110.jsonl" 110000
+make_transcript "$WORK/climb130.jsonl" 130000
+out=$(run_watchdog UserPromptSubmit sid-climb "$WORK/climb100.jsonl")
+assert_contains "fires at 100k" "$out" "Context over budget"
+out=$(run_watchdog UserPromptSubmit sid-climb "$WORK/climb110.jsonl")
+assert_empty "silent at 110k (only +10k, below the 30k STEP)" "$out"
+out=$(run_watchdog UserPromptSubmit sid-climb "$WORK/climb130.jsonl")
+assert_contains "re-fires at 130k (>= STEP climb past the last fire)" "$out" "Context over budget"
+out=$(run_watchdog UserPromptSubmit sid-climb "$WORK/climb130.jsonl")
+assert_empty "silent again at 130k after re-firing there (sentinel advanced)" "$out"
+
+# ---------------------------------------------------------------------------
+echo "test: a subagent-return PostToolUse is skipped (no fire, no sentinel burn)"
+init_repo
+make_transcript "$WORK/sub.jsonl" 200000
+out=$(run_watchdog PostToolUse sid-sub "$WORK/sub.jsonl" "" "Task")
+assert_empty "PostToolUse tool_name=Task does not fire" "$out"
+assert_nofile "Task return does not burn the sentinel" "$(nudged_path sid-sub)"
+out=$(run_watchdog PostToolUse sid-sub "$WORK/sub.jsonl" "" "Agent")
+assert_empty "PostToolUse tool_name=Agent does not fire" "$out"
+assert_nofile "Agent return does not burn the sentinel" "$(nudged_path sid-sub)"
+# The next clean event still fires — the sentinel was never burned.
+out=$(run_watchdog PostToolUse sid-sub "$WORK/sub.jsonl" "" "Edit")
+assert_contains "a non-subagent PostToolUse still fires" "$out" "Context over budget"
+assert_file "and now the sentinel exists" "$(nudged_path sid-sub)"
+# UserPromptSubmit is never suppressed by tool_name (subagent skip is PostToolUse-only).
+init_repo
+make_transcript "$WORK/sub2.jsonl" 200000
+out=$(run_watchdog UserPromptSubmit sid-sub2 "$WORK/sub2.jsonl" "" "Task")
+assert_contains "UserPromptSubmit with tool_name=Task still fires" "$out" "Context over budget"
+
+# ---------------------------------------------------------------------------
+echo "test: an old {\"ts\":N} / empty sentinel is treated as NUDGE-level (back-compat)"
+init_repo
+printf '{"ts":123}' >"$(nudged_path sid-bc)"
+make_transcript "$WORK/bc110.jsonl" 110000
+out=$(run_watchdog UserPromptSubmit sid-bc "$WORK/bc110.jsonl")
+assert_empty "old sentinel @110k stays silent (treated as a fire at NUDGE)" "$out"
+make_transcript "$WORK/bc130.jsonl" 130000
+out=$(run_watchdog UserPromptSubmit sid-bc "$WORK/bc130.jsonl")
+assert_contains "old sentinel re-fires only at >= NUDGE+STEP (130k)" "$out" "Context over budget"
+init_repo
+: >"$(nudged_path sid-bce)"
+make_transcript "$WORK/bce120.jsonl" 120000
+out=$(run_watchdog UserPromptSubmit sid-bce "$WORK/bce120.jsonl")
+assert_empty "empty sentinel @120k stays silent (NUDGE-level back-compat)" "$out"
 
 # ---------------------------------------------------------------------------
 echo "test: the signal labels the PostToolUse event when fired there"

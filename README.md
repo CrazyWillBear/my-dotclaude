@@ -94,12 +94,13 @@ command to type, then handles everything around it. Three steps over a long plan
 1. **Plan start (`/clear`).** When you approve a plan and the window is already large
    (≥ 60k tokens), the watchdog saves a handoff and halts *before* any code is written:
    run `/clear`, then send `go`. The plan re-injects into fresh context.
-2. **Mid-plan wrap (commit).** Once the window crosses ~100k, it nudges you to wrap it up
-   soon at a natural breaking point and commit.
-3. **After the wrap (`/handoff`).** On the next clean stop after the wrap commit, it
-   prompts you to run `/handoff`, which writes a rich handoff doc plus the resume pointer
-   and walks you through `/clear` into fresh context, where the plan auto-resumes. A later
-   climb back over the threshold repeats the wrap → `/handoff` cycle.
+2. **Mid-plan wrap (commit + `/handoff`).** Once the window crosses ~100k, it nudges you to
+   wrap up soon at a natural breaking point, commit, and run `/handoff`. The nudge re-fires
+   on context **climb** — every ~30k tokens past the last fire (100k → 130k → 160k …) — so a
+   dropped or unseen first nudge self-recovers instead of staying silent for the session.
+3. **The handoff (`/handoff`).** `/handoff` writes a rich handoff doc plus the resume pointer
+   (both keyed per-repo) and walks you through `/clear` into fresh context, where the plan
+   auto-resumes. `/clear` and `/compact` re-arm the cycle from the 100k floor.
 
 ## How it works
 
@@ -225,8 +226,8 @@ my-dotclaude/
 │       ├── agents/implementer.md   # sonnet implementer (works in one worktree)
 │       ├── agents/merger.md        # sonnet merger (merges branches in dep order, resolves conflicts)
 │       ├── agents/reviewer.md      # opus caveman-style reviewer (files follow-ups)
-│       ├── scripts/watchdog.sh     # thresholds: plan-start /clear gate, wrap nudge, /handoff prompt
-│       ├── scripts/resume.sh       # SessionStart: re-injects the plan after /clear or /compact
+│       ├── scripts/watchdog.sh     # thresholds: orchestrate /clear gate, climb-refiring wrap nudge
+│       ├── scripts/resume.sh       # SessionStart: re-injects the per-repo-keyed handoff after /clear or /compact
 │       ├── scripts/suggest-docs.sh # Stop: soft nudge when a batch changed code but no docs
 │       ├── scripts/save-handoff.sh # shared handoff writer
 │       └── tests/                  # watchdog + resume + suggest-docs tests
