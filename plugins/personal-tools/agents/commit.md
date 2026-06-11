@@ -21,7 +21,8 @@ so the diff reading never floods the main conversation.
    Conventional Commits with a scope to match this repo's log
    (`feat(personal-tools): …`, `refactor(setup): …`, `fix(setup): …`): a concise imperative
    subject (≤ ~50 chars), a body explaining the *why* when it isn't obvious, and the trailer
-   `Co-Authored-By: Claude <noreply@anthropic.com>`.
+   `Co-Authored-By: Claude <noreply@anthropic.com>`. Fold in any extra context the prompt
+   gives you.
 4. Commit the staged index with a quoted heredoc (`git commit -F - <<"EOF" … EOF`) so
    multi-line text and punctuation can't break quoting.
 
