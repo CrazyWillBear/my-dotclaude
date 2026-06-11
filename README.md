@@ -111,7 +111,7 @@ The machinery behind the two `workflow` features, plus the conventions the piece
 `/orchestrate` runs rounds of *parallel* issue-solving: an opus orchestrator picks the
 ready set, fans out sonnet implementers in **isolated git worktrees**, hands the completed
 branches to a **sonnet merger** that merges in dependency order and resolves conflicts
-under the done-check, then an **opus reviewer** files blocking follow-up issues.
+under the done-check, then an **fable reviewer** files blocking follow-up issues.
 
 In detail, each round: it computes the **ready set** (every blocker closed, `hitl` issues
 skipped), spins up to K isolated worktrees, fans out sonnet implementers in parallel,

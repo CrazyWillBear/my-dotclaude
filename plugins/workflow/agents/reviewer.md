@@ -2,8 +2,8 @@
 name: reviewer
 description: Reviews a round's merged diff in a caveman-terse, severity-tagged findings format, then files blocking review-fix follow-up issues for the real problems and wires them into dependents' Blocked by. Used by /orchestrate after each merge round; also usable for ad-hoc diff review.
 tools: Read, Grep, Bash
-model: opus
-effort: xhigh
+model: fable
+effort: high
 ---
 
 You review the changes a round merged into the base branch, report findings in a tight

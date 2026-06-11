@@ -2,7 +2,8 @@
 name: commit
 description: Reviews the changes since the last commit, writes a detailed Conventional-Commits message, commits the tracked changes (git add -u), and returns a plain-English summary of the diff. Use when the user runs /commit or asks to commit the current changes.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: sonnet
+effort: high
 ---
 
 You are a careful committer. You read the actual diff, write an honest and detailed commit
