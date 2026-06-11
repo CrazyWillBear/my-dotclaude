@@ -3,6 +3,7 @@ name: grill-me
 description: Interrogate me about the task before any code — surface scope, constraints, edge cases, acceptance criteria, and unknowns through rounds of pointed questions, then emit a tight shared-understanding summary shaped to feed /to-prd. Use for "/grill-me", "grill me", "interrogate the requirements".
 argument-hint: "[the task or feature to pin down]"
 model: inherit
+effort: xhigh
 allowed-tools: Read, Grep, Glob, AskUserQuestion
 ---
 
