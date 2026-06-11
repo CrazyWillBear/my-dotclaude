@@ -10,11 +10,13 @@
 # compact re-injects the plan too — not only workflow-driven ones. All of those
 # fire SessionStart (source=clear / source=compact). This hook resolves the pointer
 # for the current repo and, if we are in the same repo it came from, re-injects the
-# plan so the user only ever has to type the one command plus a kickoff word:
+# plan so the user only ever has to type the one command plus a kickoff word. Every
+# variant orders the agent to read the handoff file FIRST — before any other tool
+# call or reply — so the resumed session never acts on stale context:
 #
-#   * source=clear   (/handoff) -> "implement the plan @path" wording.
+#   * source=clear   (/handoff) -> read the handoff, then "implement the handoff".
 #     Fresh context, so the agent starts the plan from the committed baseline.
-#   * source=compact (manual/auto /compact) -> "continue the plan @path" wording.
+#   * source=compact (manual/auto /compact) -> read the handoff, then "continue".
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
 #
 # On ANY clear or compact we reset this session's wrap sentinel FIRST — before the
@@ -133,8 +135,10 @@ branch = ho.get("branch") or git("rev-parse", "--abbrev-ref", "HEAD") or "the cu
 verb = "implement" if source == "clear" else "continue"
 if handoff:
     add = (
-        "Resume (workflow): " + verb + " the handoff @" + str(handoff) + " on "
-        + str(branch) + ". Prior work is committed — "
+        "Resume (workflow): your FIRST action this session, before any other tool "
+        "call or reply, MUST be to read the handoff file @" + str(handoff)
+        + " in full. Then " + verb + " the handoff on " + str(branch)
+        + ". Prior work is committed — "
         + ("start from the committed baseline; do not redo any completed steps."
            if source == "clear" else
            "continue from where the handoff and the commits leave off; do not redo "

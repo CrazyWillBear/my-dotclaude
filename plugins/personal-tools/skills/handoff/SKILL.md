@@ -57,6 +57,6 @@ Capture everything the next session needs, then send me into fresh context. `wor
    `handoff_path` points at the **handoff doc** you just wrote (in `$dir`). `git_toplevel` must be
    the real toplevel: `resume.sh` only re-injects when the new session is in the same repo.
 4. **Tell me what to do**, in plain English (this is a multi-step instruction — write it normally
-   even in caveman mode): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject
-   "implement the handoff @`<handoff doc>`" into the fresh session, so nothing is lost. Show the
-   handoff doc path.
+   even in caveman mode): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject an
+   order making **reading the handoff doc the fresh session's mandatory first action**, then
+   "implement the handoff @`<handoff doc>`", so nothing is lost. Show the handoff doc path.
