@@ -8,12 +8,12 @@
 # (No hook or agent can run /clear, /handoff, or /compact itself; they are
 # user-typed REPL input only.)
 #
-#   * 100k signal — mid-execution wrap-and-handoff nudge (active events,
-#     >= WORKFLOW_NUDGE_TOKENS, default 100k): ask the agent to wrap up at the
+#   * 250k signal — mid-execution wrap-and-handoff nudge (active events,
+#     >= WORKFLOW_NUDGE_TOKENS, default 250k): ask the agent to wrap up at the
 #     next natural breaking point, commit, and run /handoff. Fires on any work
 #     (not orchestrate-specific). Re-fires on context CLIMB, not once-per-cycle:
 #     the sentinel stores the token count of the last fire, and the signal
-#     re-fires every time context climbs >= STEP (30k) past it (100->130->160...),
+#     re-fires every time context climbs >= STEP (50k) past it (250->300->350...),
 #     so a single dropped emit (e.g. landing on a mid-subagent PostToolUse turn
 #     that never surfaces) self-recovers on the next climb instead of being
 #     suppressed for the rest of the session. A subagent-return PostToolUse
@@ -58,18 +58,18 @@ try:
 except Exception:
     sys.exit(0)
 
-# Thresholds (env-overridable). Defaults: nudge at 100k, orchestrate gate at 60k.
+# Thresholds (env-overridable). Defaults: nudge at 250k, orchestrate gate at 60k.
 def _int_env(name, default):
     try:
         return int(os.environ.get(name) or default)
     except Exception:
         return default
 
-NUDGE    = _int_env("WORKFLOW_NUDGE_TOKENS", 100000)
+NUDGE    = _int_env("WORKFLOW_NUDGE_TOKENS", 250000)
 PLANGATE = _int_env("WORKFLOW_PLANGATE_TOKENS", 60000)
 # Re-fire the wrap nudge each time context climbs >= STEP past the last fire.
 # Hardcoded (not env) on purpose: the climb cadence is a fixed design choice.
-STEP     = 30000
+STEP     = 50000
 
 event       = data.get("hook_event_name", "")
 prompt      = str(data.get("prompt") or "").strip()
@@ -186,7 +186,7 @@ if (event == "UserPromptSubmit"
         },
     })
 
-# --- 100k universal signal: tell the agent to wrap up at the next natural
+# --- 250k universal signal: tell the agent to wrap up at the next natural
 # breaking point, commit, and run /handoff. Fires on any work (not
 # orchestrate-specific). Re-fires on context CLIMB: the sentinel records the
 # tokens at the last fire and the signal re-fires once context climbs >= STEP
