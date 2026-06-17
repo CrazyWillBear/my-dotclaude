@@ -185,14 +185,14 @@ echo "test: source=compact injects the 'continue' wording and resets the nudge s
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2)"            # pretend the 100k signal already fired this session
+: >"$(nudged_path sid-r2)"            # pretend the 250k signal already fired this session
 make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume compact sid-r2)
 assert_contains "uses the continue wording" "$out" "continue the handoff"
 assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
 assert_nofile "consumes the keyed pointer" "$(pending_path "$top")"
 # Proof the reset re-arms the cycle: a fresh >=NUDGE transcript re-nudges.
-make_transcript "$WORK/renudge.jsonl" 200000
+make_transcript "$WORK/renudge.jsonl" 260000
 rout=$(run_watchdog UserPromptSubmit sid-r2 "$WORK/renudge.jsonl")
 assert_contains "a later climb re-nudges after the reset" "$rout" "Context over budget"
 
@@ -201,14 +201,14 @@ echo "test: source=clear also resets the nudge sentinel (re-arms the wrap cycle)
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2c)"            # pretend the 100k signal already fired this session
+: >"$(nudged_path sid-r2c)"            # pretend the 250k signal already fired this session
 make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume clear sid-r2c)
 assert_contains "uses the implement wording" "$out" "implement the handoff"
 assert_nofile "clear resets the nudge sentinel" "$(nudged_path sid-r2c)"
 assert_nofile "consumes the keyed pointer" "$(pending_path "$top")"
 # Proof the reset re-arms the cycle: a fresh transcript re-nudges.
-make_transcript "$WORK/renudge-clear.jsonl" 130000
+make_transcript "$WORK/renudge-clear.jsonl" 260000
 rout=$(run_watchdog UserPromptSubmit sid-r2c "$WORK/renudge-clear.jsonl")
 assert_contains "a later climb re-nudges after the clear reset" "$rout" "Context over budget"
 
@@ -286,7 +286,7 @@ kd="$(keyed_dir "$top")"
 mkdir -p "$kd"
 # Pre-create the handoff doc in the KEYED dir so resolve_handoff() finds it.
 printf '# Handoff\n## Done\n- base commit\n' >"$kd/${pc_safe}.md"
-: >"$(nudged_path sid-pc)"             # 100k signal already fired this session
+: >"$(nudged_path sid-pc)"             # 250k signal already fired this session
 run_save_handoff "$PROJECT_DIR"        # simulate the PreCompact hook (no args)
 PEND="$kd/.pending.json"
 assert_file "PreCompact writes a keyed pointer" "$PEND"
@@ -298,14 +298,14 @@ assert_nofile "manual compact consumes the keyed pointer" "$PEND"
 assert_nofile "manual compact resets the nudge sentinel" "$(nudged_path sid-pc)"
 
 # ---------------------------------------------------------------------------
-echo "test: a manual /compact with NO handoff still re-arms the 100k signal (silent reset)"
+echo "test: a manual /compact with NO handoff still re-arms the 250k signal (silent reset)"
 init_repo
-: >"$(nudged_path sid-nh)"             # 100k signal already fired this session
+: >"$(nudged_path sid-nh)"             # 250k signal already fired this session
 out=$(run_resume compact sid-nh)       # no handoff present
 assert_empty "no handoff: silent" "$out"
 assert_nofile "no-handoff compact resets the nudge sentinel" "$(nudged_path sid-nh)"
 # Proof the reset re-armed the cycle: a fresh >=NUDGE transcript re-nudges.
-make_transcript "$WORK/renudge-nh.jsonl" 200000
+make_transcript "$WORK/renudge-nh.jsonl" 260000
 rout=$(run_watchdog UserPromptSubmit sid-nh "$WORK/renudge-nh.jsonl")
 assert_contains "a later climb re-nudges after the no-handoff reset" "$rout" "Context over budget"
 

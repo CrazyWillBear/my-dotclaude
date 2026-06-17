@@ -2,7 +2,7 @@
 #
 # SessionStart auto-resume for the workflow plugin.
 #
-# The other half of the handoff loop. When the watchdog fires the 100k wrap
+# The other half of the handoff loop. When the watchdog fires the 250k wrap
 # signal it tells the agent to commit and run /handoff, which writes a per-repo
 # keyed resume pointer (~/.claude/handoffs/<sha1(toplevel)[:16]>/.pending.json) and
 # clears context. A PreCompact hook also writes a handoff before EVERY compaction
