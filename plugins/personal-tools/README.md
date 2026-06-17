@@ -11,15 +11,13 @@ plugins/personal-tools/
 │   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
-│   ├── explain-dir/SKILL.md       # /explain-dir <path> — one-directory walkthrough
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
 │   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
 ├── agents/
-│   ├── commit.md                  # commit — isolated committer for /commit (model: inherit)
-│   └── explain-dir.md             # explain-dir — isolated haiku worker for /explain-dir
+│   └── commit.md                  # commit — isolated committer for /commit (model: inherit)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -65,10 +63,6 @@ plugins/personal-tools/
   on the main thread (Sonnet) and spawns the **Explore** agent to map the repo first,
   then synthesizes. It runs in the main thread on purpose: only the main thread can spawn
   Explore — subagents can't spawn subagents.
-- **`/explain-dir <path>`** — a focused walkthrough of *one* directory. The skill is a
-  thin shim whose `agent:` field runs it inside the `explain-dir` agent: a fresh,
-  isolated **haiku** context. The file reading stays in that subagent, so it never floods
-  your main conversation — only the summary comes back.
 - **`/init-python-project [dir]`** — minimal scaffold for a Python project: drops a filled
   `CLAUDE.md`, `STYLEGUIDE.md`, and a Python `.gitignore` into the target dir, wired for a
   **uv + ruff + mypy + pytest** toolchain. It reads the language-neutral base in
@@ -79,10 +73,10 @@ plugins/personal-tools/
 ## How the pieces map to Claude Code
 
 - **Skills** (`skills/<name>/SKILL.md`) become slash commands named after the directory:
-  `explain-dir/` → `/explain-dir`. Frontmatter sets the description, argument hint, the
+  `commit/` → `/commit`. Frontmatter sets the description, argument hint, the
   `model` to run on, and (optionally) an `agent` to execute inside.
 - **Agents** (`agents/*.md`) become subagents. Frontmatter sets the name, when-to-use
-  description, allowed tools, and `model`. `explain-dir` is read-only (`Read, Grep, Glob,
-  Bash`) and pinned to haiku.
+  description, allowed tools, and `model`. `commit` gets `Read, Grep, Glob, Bash` and
+  runs on `model: inherit`.
 
 Adding a tool is just dropping a file in and **restarting Claude Code** so it registers.
