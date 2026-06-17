@@ -2,7 +2,8 @@
 #
 # Non-developer setup — installs the full Claude Code kit into ~/.claude, tuned
 # for someone who does not write code: the global CLAUDE.md (plain-English), the
-# personal-tools + workflow + caveman + agent-sdk-dev plugins, the Playwright MCP
+# personal-tools + workflow + caveman + agent-sdk-dev + perf + security-guidance +
+# security-sweep plugins, the Playwright MCP
 # server, a gh (GitHub CLI) allowlist, and caveman set to its gentler "lite"
 # level. User scope — not tied to any one project. (Model is left at Claude
 # Code's default.)
@@ -71,6 +72,8 @@ tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
 tcr_install_caveman
 tcr_install_agent_sdk_dev
+tcr_install_composio_plugins    # third-party: perf + security-guidance
+tcr_install_security_sweep      # third-party: read-only security-scan skill
 tcr_install_playwright_mcp
 tcr_setup_gh
 tcr_set_caveman_level lite

@@ -61,6 +61,16 @@ Then **restart Claude Code** so it loads the plugins.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
   official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed
   alongside the above.
+- **[perf](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/perf)** and
+  **[security-guidance](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/security-guidance)**
+  — third-party plugins from Composio's marketplace: `/perf` runs a multi-phase
+  performance investigation (baseline → profile → hypothesis → optimize), and
+  `security-guidance` adds an advisory hook that flags risky code (`eval(`, `execSync(`,
+  `os.system`, …) before a write. (The guidance hook *blocks* the first such edit per
+  session so it gets a second look; set `ENABLE_SECURITY_REMINDER=0` to silence it.)
+- **[security-sweep](https://github.com/Onome-AJ/security-sweep-plugin)** — third-party,
+  read-only security-scan skill: greps the project for secrets, injection, auth/config
+  issues, and weak deps against OWASP / LLM / Mobile top-ten patterns.
 - **Setup scripts** (`setup/`) — two user-wide installers: `setup-dev` (developer) and
   `setup-simple` (non-developer). Both install the same kit into `~/.claude`.
 
