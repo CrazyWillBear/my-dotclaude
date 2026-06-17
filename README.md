@@ -48,8 +48,8 @@ Then **restart Claude Code** so it loads the plugins.
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents: `/explain` (whole-codebase overview), `/explain-dir` (one directory),
-  `/commit` (review-and-commit the current changes), `/init-python-project` (scaffold
+  subagents: `/explain` (whole-codebase overview), `/commit` (review-and-commit the
+  current changes), `/init-python-project` (scaffold
   Python docs), `/diagnose` (root-cause debugging), and the human-in-the-loop dev
   front-end `/grill-me` → `/to-prd` → `/to-issues` plus `/handoff`.
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous
@@ -111,7 +111,7 @@ The machinery behind the two `workflow` features, plus the conventions the piece
 `/orchestrate` runs rounds of *parallel* issue-solving: an opus orchestrator picks the
 ready set, fans out sonnet implementers in **isolated git worktrees**, hands the completed
 branches to a **sonnet merger** that merges in dependency order and resolves conflicts
-under the done-check, then an **opus reviewer** files blocking follow-up issues.
+under the done-check, then an **fable reviewer** files blocking follow-up issues.
 
 In detail, each round: it computes the **ready set** (every blocker closed, `hitl` issues
 skipped), spins up to K isolated worktrees, fans out sonnet implementers in parallel,
@@ -216,10 +216,10 @@ my-dotclaude/
 ├── .claude-plugin/marketplace.json  # lists personal-tools + workflow
 ├── plugins/
 │   ├── personal-tools/             # my personal skills + agents
-│   │   ├── skills/                 # /commit, /diagnose, /explain, /explain-dir,
+│   │   ├── skills/                 # /commit, /diagnose, /explain,
 │   │   │                           #   /init-python-project, /grill-me, /to-prd,
 │   │   │                           #   /to-issues, /handoff
-│   │   ├── agents/                 # commit (isolated committer), explain-dir (haiku)
+│   │   ├── agents/                 # commit (isolated committer)
 │   │   └── templates/              # CLAUDE.md + STYLEGUIDE.md for the init-* skills
 │   └── workflow/                   # the autonomous dev loop + context watchdog
 │       ├── skills/orchestrate/SKILL.md  # /orchestrate — the parallel issue-solving loop

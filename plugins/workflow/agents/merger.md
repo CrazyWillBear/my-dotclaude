@@ -50,6 +50,9 @@ Merge each `issue-<N>` into the base branch in ascending issue number, using
 - Only `git -C <base> merge` / `add` / `commit --no-edit` / `merge --abort` on the **base branch**,
   and `Edit` strictly to resolve conflict markers. Never edit a worktree's own files, never push,
   never rebase, never switch branches.
+- **Never run `git worktree add` or create a worktree under any circumstances** — operate only on
+  the base repo and worktrees you're given. The global "worktree per coding task" rule does **not**
+  apply to you.
 - Do **not** close issues, comment on issues, or spawn the reviewer — return data; the orchestrator
   acts on it.
 - Resolve conflicts by default; **stop only** on a red done-check after a real resolution attempt,

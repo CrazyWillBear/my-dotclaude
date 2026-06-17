@@ -1,8 +1,7 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel sonnet implementers in isolated git worktrees, hand the completed branches to a sonnet merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then an opus reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel sonnet implementers in isolated git worktrees, hand the completed branches to a sonnet merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then a reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3]"
-model: opus
 effort: high
 allowed-tools: Read, Grep, Bash, Agent
 ---
@@ -53,7 +52,7 @@ push.
    - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
      implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**
      with a report. **Never keep an unverified resolution** — that discipline lives in the merger.
-6. **Review the round.** Spawn the **opus reviewer** — one `Agent` call
+6. **Review the round.** Spawn the **reviewer** — one `Agent` call
    (`subagent_type: workflow:reviewer`) — on the round's merged range
    (`git diff <round_base>..HEAD`) plus the merged issue numbers. It emits findings (C6), files
    `review-fix` follow-ups, and wires them into dependents' `## Blocked by` (C2) — so a fix lands
