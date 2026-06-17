@@ -50,8 +50,10 @@ every file and git operation — use absolute paths, and `git -C <worktree>` for
 - Do **not** push, merge, rebase, or switch branches — merging is the orchestrator's job.
 
 ## Boundaries
-- Stay inside your worktree. Never `cd` to the base repo, never edit another `.worktrees/issue-*`,
-  never touch the base branch.
+- Stay inside your **assigned** worktree. **Never** edit any file outside it, never `cd` to the
+  base repo, never edit another `.worktrees/issue-*`, never touch the base branch.
+- **Never run `git worktree add` or create a worktree under any circumstances** — yours is given.
+  The global "worktree per coding task" rule does **not** apply to you.
 - If a blocker isn't actually satisfied, the done-check can't pass, or the issue needs a human
   decision — **stop and report**. Don't force it.
 
