@@ -2,8 +2,9 @@
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
 # the global CLAUDE.md (technical), model=opus, the personal-tools + workflow +
-# caveman + agent-sdk-dev plugins, the Playwright MCP server, and a gh (GitHub
-# CLI) allowlist (read-only reads + issue-write for the dev loop). User scope —
+# caveman + agent-sdk-dev + perf + security-guidance + security-sweep plugins, the
+# Playwright MCP server, and a gh (GitHub CLI) allowlist (read-only reads +
+# issue-write for the dev loop). User scope —
 # not tied to any one project.
 #
 #   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
@@ -72,6 +73,8 @@ tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
 tcr_install_caveman
 tcr_install_agent_sdk_dev
+tcr_install_composio_plugins    # third-party: perf + security-guidance
+tcr_install_security_sweep      # third-party: read-only security-scan skill
 tcr_install_playwright_mcp
 tcr_setup_gh
 
@@ -81,5 +84,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm personal-tools, workflow, caveman, and agent-sdk-dev are enabled.\n'
+printf '  2. Run /plugin to confirm personal-tools, workflow, caveman, agent-sdk-dev, perf, security-guidance, and security-sweep are enabled.\n'
 printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

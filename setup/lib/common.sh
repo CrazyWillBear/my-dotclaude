@@ -19,6 +19,14 @@ CAVEMAN_PLUGIN="caveman@caveman"
 # agent-sdk-dev scaffolds new Claude Agent SDK apps.
 OFFICIAL_MARKETPLACE_REPO="anthropics/claude-plugins-official"
 AGENT_SDK_PLUGIN="agent-sdk-dev@claude-plugins-official"
+# Composio marketplace (third-party): perf (perf-investigation workflow) +
+# security-guidance (advisory PreToolUse hook).
+COMPOSIO_MARKETPLACE_REPO="ComposioHQ/awesome-claude-plugins"
+PERF_PLUGIN="perf@awesome-claude-plugins"
+SECURITY_GUIDANCE_PLUGIN="security-guidance@awesome-claude-plugins"
+# security-sweep (third-party, read-only scan skill): its repo is its own marketplace.
+SECURITY_SWEEP_REPO="Onome-AJ/security-sweep-plugin"
+SECURITY_SWEEP_PLUGIN="security-sweep@security-sweep-marketplace"
 # Playwright MCP server (browser automation), added at user scope via `claude mcp add`.
 PLAYWRIGHT_MCP_PKG="@playwright/mcp@latest"
 
@@ -74,39 +82,47 @@ tcr_add_our_marketplace() {
   fi
 }
 
-# Installs the workflow plugin (the autonomous dev loop + context watchdog).
-# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
-tcr_install_workflow() {
-  tcr_step "Installing the workflow plugin"
-  if claude plugin install "$WORKFLOW_PLUGIN" >/dev/null 2>&1; then
-    tcr_ok "enabled $WORKFLOW_PLUGIN"
+# tcr_install_plugin <plugin@marketplace> — install one plugin, report, and flag
+# failures. Assumes the plugin's marketplace is already added.
+tcr_install_plugin() {
+  tcr_step "Installing the ${1%@*} plugin"
+  if claude plugin install "$1" >/dev/null 2>&1; then
+    tcr_ok "enabled $1"
   else
     TCR_INSTALL_FAILED=1
-    tcr_warn "could not install $WORKFLOW_PLUGIN automatically — run: claude plugin install $WORKFLOW_PLUGIN"
+    tcr_warn "could not install $1 automatically — run: claude plugin install $1"
   fi
 }
 
+# Installs the workflow plugin (the autonomous dev loop + context watchdog).
+# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
+tcr_install_workflow() {
+  tcr_install_plugin "$WORKFLOW_PLUGIN"
+}
+
 tcr_install_caveman() {
-  tcr_step "Installing the caveman plugin"
   tcr_add_marketplace "$CAVEMAN_REPO"
-  if claude plugin install "$CAVEMAN_PLUGIN" >/dev/null 2>&1; then
-    tcr_ok "enabled $CAVEMAN_PLUGIN"
-  else
-    TCR_INSTALL_FAILED=1
-    tcr_warn "could not install $CAVEMAN_PLUGIN automatically — run: claude plugin install $CAVEMAN_PLUGIN"
-  fi
+  tcr_install_plugin "$CAVEMAN_PLUGIN"
 }
 
 # Installs agent-sdk-dev from Anthropic's official marketplace (Claude Agent SDK scaffolder).
 tcr_install_agent_sdk_dev() {
-  tcr_step "Installing the agent-sdk-dev plugin"
   tcr_add_marketplace "$OFFICIAL_MARKETPLACE_REPO"
-  if claude plugin install "$AGENT_SDK_PLUGIN" >/dev/null 2>&1; then
-    tcr_ok "enabled $AGENT_SDK_PLUGIN"
-  else
-    TCR_INSTALL_FAILED=1
-    tcr_warn "could not install $AGENT_SDK_PLUGIN automatically — run: claude plugin install $AGENT_SDK_PLUGIN"
-  fi
+  tcr_install_plugin "$AGENT_SDK_PLUGIN"
+}
+
+# Installs the Composio marketplace plugins: perf (perf-investigation workflow) and
+# security-guidance (advisory PreToolUse hook). Both live in one marketplace.
+tcr_install_composio_plugins() {
+  tcr_add_marketplace "$COMPOSIO_MARKETPLACE_REPO"
+  tcr_install_plugin "$PERF_PLUGIN"
+  tcr_install_plugin "$SECURITY_GUIDANCE_PLUGIN"
+}
+
+# Installs security-sweep (read-only security-scan skill; its repo is its own marketplace).
+tcr_install_security_sweep() {
+  tcr_add_marketplace "$SECURITY_SWEEP_REPO"
+  tcr_install_plugin "$SECURITY_SWEEP_PLUGIN"
 }
 
 # --- MCP servers + GitHub CLI access -----------------------------------------
@@ -161,13 +177,7 @@ tcr_setup_gh() {
 # Installs personal-tools. Assumes our marketplace is already added (call
 # tcr_add_our_marketplace before this).
 tcr_install_personal_tools() {
-  tcr_step "Installing the personal-tools plugin"
-  if claude plugin install "$PERSONAL_PLUGIN" >/dev/null 2>&1; then
-    tcr_ok "enabled $PERSONAL_PLUGIN"
-  else
-    TCR_INSTALL_FAILED=1
-    tcr_warn "could not install $PERSONAL_PLUGIN automatically — run: claude plugin install $PERSONAL_PLUGIN"
-  fi
+  tcr_install_plugin "$PERSONAL_PLUGIN"
 }
 
 # --- system tools ------------------------------------------------------------
