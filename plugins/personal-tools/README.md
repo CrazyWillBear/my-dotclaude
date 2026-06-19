@@ -15,7 +15,8 @@ plugins/personal-tools/
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
-│   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
+│   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
+│   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 ├── agents/
 │   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
@@ -69,6 +70,10 @@ plugins/personal-tools/
   pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
   a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
   it checks the tree is clean, checks out, reviews, then restores your original branch.
+- **`/update-kit`** — apply the latest kit release on this machine. Runs
+  `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
+  `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
+  No arguments needed; works for both developer and simple-setup audiences.
 
 ## How the pieces map to Claude Code
 
