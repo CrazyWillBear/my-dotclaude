@@ -2,7 +2,7 @@
 #
 # notify-update.sh — SessionStart hook that surfaces an available kit update.
 #
-# Wired on SessionStart in plugins/personal-tools/hooks.json. On session start it
+# Wired on SessionStart in plugins/personal-tools/hooks/hooks.json. On session start it
 # checks whether a newer kit release exists and, if so, prints a short notice
 # naming the new version and telling the user to run /update-kit.
 #
