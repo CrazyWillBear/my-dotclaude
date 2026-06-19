@@ -13,7 +13,8 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
-- `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`) + `scripts/tests/`.
+- `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
+- `.github/workflows/` — CI (`ci.yml`, gates PRs into `main`) and release (`release.yml`) automation.
 - `.claude-plugin/` — plugin marketplace manifest.
 
 ## Payload vs. governing — read this
@@ -25,8 +26,8 @@ to your own edits, and don't edit payload to change your behavior here.
 
 ## Done-check
 
-Tests are standalone bash scripts — no runner, no CI. Run every one and confirm all
-pass before declaring done:
+Tests are standalone bash scripts — no runner. Run every one and confirm all pass
+before declaring done:
 
 ```bash
 for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh scripts/tests/test_*.sh; do
@@ -34,7 +35,14 @@ for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh scripts/tests/test_*.sh
 done
 ```
 
-Add or update a test alongside any change to `setup/lib/` or plugin scripts.
+Note: that loop always exits 0 (the `|| echo` guard swallows failures), so eyeball
+the output for `FAIL:` lines. CI runs the same suite via `bash scripts/run-tests.sh`,
+which drops the guard and exits non-zero on any failing test — use it when you need a
+true pass/fail exit code. CI (`.github/workflows/ci.yml`) also runs shellcheck, JSON
++ manifest validation, and the version-consistency check on every PR into `main`.
+
+Add or update a test alongside any change to `setup/lib/`, `scripts/`, or plugin
+scripts.
 
 ## Gotchas
 

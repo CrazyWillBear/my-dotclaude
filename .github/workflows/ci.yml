@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read  # checkout only; CI gates, it does not write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck and jq
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+
+      - name: Run bash test suite
+        run: bash scripts/run-tests.sh
+
+      - name: Shellcheck all shell scripts
+        run: |
+          # Collect every tracked *.sh and lint it. Gate on error-severity
+          # findings (real correctness bugs); the existing tree carries
+          # style/info/warning notes that are out of scope to fix here.
+          mapfile -t scripts < <(git ls-files '*.sh')
+          if [ "${#scripts[@]}" -eq 0 ]; then
+            echo "Error: no shell scripts found to lint" >&2
+            exit 1
+          fi
+          shellcheck --severity=error "${scripts[@]}"
+
+      - name: Validate JSON and manifests
+        run: |
+          # Every tracked *.json must be syntactically valid JSON.
+          status=0
+          mapfile -t jsons < <(git ls-files '*.json')
+          if [ "${#jsons[@]}" -eq 0 ]; then
+            echo "Error: no JSON files found to validate" >&2
+            exit 1
+          fi
+          for f in "${jsons[@]}"; do
+            if jq empty "$f" >/dev/null 2>&1; then
+              echo "ok: $f"
+            else
+              echo "INVALID JSON: $f" >&2
+              status=1
+            fi
+          done
+
+          # Marketplace manifest: required keys + a non-empty plugins array whose
+          # source dirs each carry a plugin.json.
+          mp=".claude-plugin/marketplace.json"
+          jq -e '.name and (.plugins | type == "array" and length > 0)' "$mp" >/dev/null \
+            || { echo "INVALID marketplace manifest: $mp" >&2; status=1; }
+          while IFS= read -r src; do
+            pj="${src#./}/.claude-plugin/plugin.json"
+            if [ ! -f "$pj" ]; then
+              echo "marketplace plugin source missing plugin.json: $pj" >&2
+              status=1
+            fi
+          done < <(jq -r '.plugins[].source' "$mp")
+
+          # Each plugin manifest needs name + version.
+          while IFS= read -r pj; do
+            jq -e '.name and .version' "$pj" >/dev/null \
+              || { echo "INVALID plugin manifest: $pj" >&2; status=1; }
+          done < <(git ls-files '*/.claude-plugin/plugin.json')
+
+          exit "$status"
+
+      - name: Check version consistency
+        run: bash scripts/check-version-consistency.sh
