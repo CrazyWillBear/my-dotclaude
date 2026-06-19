@@ -7,7 +7,10 @@
 #   * a pull request before merging (0 required approvals — solo maintainer),
 #     with stale approvals dismissed on new pushes;
 #   * status checks to pass with the branch up to date, gating on the CI
-#     workflow's check (context "CI / check" — workflow `CI`, job `check`);
+#     workflow's check (context "check" — the bare job name GitHub Actions
+#     reports as the check-run name; the PR UI shows "CI / check", but the
+#     required-status-check context matches the job name, not that display
+#     string, so requiring "CI / check" would never match);
 #   * no force-pushes and no branch deletion.
 #
 # enforce_admins is FALSE so a repo admin can still administer / hotfix the
@@ -23,13 +26,13 @@
 # scripts/branch-protection-checklist.md to add one later.
 #
 # Usage:   bash scripts/setup-branch-protection.sh
-# Override (env): REPO=owner/name  BRANCH=main  CI_CONTEXT="CI / check"
+# Override (env): REPO=owner/name  BRANCH=main  CI_CONTEXT="check"
 
 set -euo pipefail
 
 REPO="${REPO:-CrazyWillBear/my-dotclaude}"
 BRANCH="${BRANCH:-main}"
-CI_CONTEXT="${CI_CONTEXT:-CI / check}"
+CI_CONTEXT="${CI_CONTEXT:-check}"
 
 # ---------------------------------------------------------------------------
 # Build the protection payload

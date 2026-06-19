@@ -50,7 +50,7 @@ if printf '%s ' "\$@" | grep -q -- '--input'; then
     exit 0
 fi
 cat <<'JSON'
-{"required_status_checks":{"strict":true,"contexts":["CI / check"]},
+{"required_status_checks":{"strict":true,"contexts":["check"]},
  "enforce_admins":{"enabled":false},
  "required_pull_request_reviews":{"dismiss_stale_reviews":true,"required_approving_review_count":0},
  "allow_force_pushes":{"enabled":false},
@@ -81,7 +81,7 @@ assert_contains "body requires PR reviews block" "$body" "required_pull_request_
 assert_contains "body sets 0 required approvals" "$body" "\"required_approving_review_count\": 0"
 assert_contains "body dismisses stale reviews" "$body" "\"dismiss_stale_reviews\": true"
 assert_contains "body sets strict status checks" "$body" "\"strict\": true"
-assert_contains "body requires the CI context" "$body" "CI / check"
+assert_contains "body requires the bare job-name context" "$body" "\"contexts\": [\"check\"]"
 assert_contains "body leaves admins exempt" "$body" "\"enforce_admins\": false"
 assert_contains "body forbids force pushes" "$body" "\"allow_force_pushes\": false"
 

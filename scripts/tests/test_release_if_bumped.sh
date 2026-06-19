@@ -7,12 +7,14 @@
 # file. The script is driven with REPO_ROOT pointing at a fake repo tree.
 #
 # Covers:
-#   * VERSION ahead of latest tag -> tag created, `gh release create` called
-#     with --generate-notes
+#   * VERSION ahead of latest tag -> tag created + pushed, `gh release create`
+#     called with --generate-notes
 #   * VERSION equal to latest tag -> no tag, no release (no-op)
 #   * No existing v* tags yet -> treated as 0.0.0, so any VERSION triggers
 #     a release
 #   * duplicate tag guard: if the tag already exists, no duplicate is created
+#   * VERSION behind latest tag -> no-op (ordering guard blocks an out-of-order
+#     release for a never-tagged older version)
 #
 # Run: bash scripts/tests/test_release_if_bumped.sh  (non-zero if any fail)
 
@@ -116,6 +118,7 @@ gh_calls=$(cat "$GH_LOG")
 created=$(cat "$CREATED_TAGS_FILE")
 
 assert_contains "git tag v0.2.0 created" "$git_calls" "git tag v0.2.0"
+assert_contains "tag pushed to origin (pins it to this commit)" "$git_calls" "git push origin v0.2.0"
 assert_contains "gh release create called" "$gh_calls" "gh release create v0.2.0"
 assert_contains "gh release has --generate-notes" "$gh_calls" "--generate-notes"
 assert_equals "created_tags file has v0.2.0" "$created" "v0.2.0"
@@ -166,6 +169,26 @@ created=$(cat "$CREATED_TAGS_FILE")
 
 assert_equals "no tag created when already exists" "$created" ""
 assert_equals "gh NOT called when tag exists" "$gh_calls" ""
+
+# ---------------------------------------------------------------------------
+echo "test: VERSION behind latest tag -> no-op (no out-of-order release)"
+# latest tag is v0.3.0; VERSION is an older 0.2.0 that was never tagged. The
+# old existence-only guard would have cut an out-of-order v0.2.0 release; the
+# ordering guard must no-op instead.
+setup_repo "0.2.0"
+make_git_stub "$(printf 'v0.1.0\nv0.3.0')"
+make_gh_stub
+run_release
+assert_exit "exits 0 when behind latest" "$rc" 0
+
+git_calls=$(cat "$GIT_LOG")
+gh_calls=$(cat "$GH_LOG")
+created=$(cat "$CREATED_TAGS_FILE")
+
+assert_not_contains "no tag created when behind latest" "$git_calls" "git tag v0.2.0"
+assert_equals "no tags created when behind latest" "$created" ""
+assert_equals "gh NOT called when behind latest" "$gh_calls" ""
+assert_contains "explains it is not ahead" "$out" "not ahead"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

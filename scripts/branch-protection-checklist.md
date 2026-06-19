@@ -14,7 +14,7 @@ protection is an outward-facing, repo-admin action.
 | Pull request required before merge | yes (`required_pull_request_reviews`) |
 | Required approving reviews | **0** (solo maintainer) |
 | Dismiss stale approvals on new push | yes |
-| Required status checks | **`CI / check`** (the `CI` workflow, job `check`) |
+| Required status checks | **`check`** (the `CI` workflow's `check` job — GitHub Actions reports the bare job name as the check context; the PR UI's "CI / check" is display-only) |
 | Strict (branch must be up to date) | yes |
 | Force pushes | blocked |
 | Branch deletion | blocked |
@@ -30,7 +30,7 @@ protection is an outward-facing, repo-admin action.
 ```bash
 bash scripts/setup-branch-protection.sh
 # overrides (defaults shown):
-#   REPO=CrazyWillBear/my-dotclaude BRANCH=main CI_CONTEXT="CI / check" \
+#   REPO=CrazyWillBear/my-dotclaude BRANCH=main CI_CONTEXT="check" \
 #     bash scripts/setup-branch-protection.sh
 ```
 
@@ -46,8 +46,15 @@ gh api repos/CrazyWillBear/my-dotclaude/branches/main/protection \
          enforce_admins: .enforce_admins.enabled}'
 ```
 
-Expect `pr_required: true`, `required_checks: ["CI / check"]`, `strict: true`,
+Expect `pr_required: true`, `required_checks: ["check"]`, `strict: true`,
 `enforce_admins: false`.
+
+> ⚠️ The required context is the **bare job name** (`check`), not the PR UI's
+> `CI / check` display string. GitHub Actions reports the check-run name as the
+> job name, so a required context of `CI / check` never matches and — with
+> `enforce_admins: false` — would leave `main` silently un-gated (an admin could
+> still merge, masking the misconfiguration). Confirm the live name with
+> `gh api repos/CrazyWillBear/my-dotclaude/commits/<sha>/check-runs --jq '.check_runs[].name'`.
 
 ## External review bot — intentionally not required
 

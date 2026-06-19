@@ -39,8 +39,9 @@ if [ ! -f "$PLUGIN_JSON" ]; then
     exit 0
 fi
 
-# Extract version with grep+sed — avoids requiring jq
-installed_ver="$(grep '"version"' "$PLUGIN_JSON" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+# Extract version with grep+sed — avoids requiring jq. head -n1 guards against a
+# file that somehow carries more than one "version" line.
+installed_ver="$(grep '"version"' "$PLUGIN_JSON" | head -n1 | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 if [ -z "$installed_ver" ]; then
     exit 0
 fi
@@ -53,9 +54,18 @@ api_url="https://api.github.com/repos/CrazyWillBear/my-dotclaude/releases/latest
 # curl flags: silent, fail on HTTP error, 10s timeout
 raw="$(curl -sf --max-time 10 "$api_url" 2>/dev/null)" || exit 0
 
-# Extract tag_name from the JSON response
-latest_tag="$(printf '%s' "$raw" | grep '"tag_name"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+# Extract tag_name from the JSON response (head -n1: take the first match only).
+latest_tag="$(printf '%s' "$raw" | grep '"tag_name"' | head -n1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
 if [ -z "$latest_tag" ]; then
+    exit 0
+fi
+
+# Defense-in-depth: this tag is surfaced to the user and (via notify-update.sh)
+# injected into the model's context, so accept ONLY a clean vX.Y.Z value. Any
+# other shape — prose, shell metacharacters, an injected payload — is treated as
+# "no usable version" and the script fails open (silent), exactly like a missing
+# tag. The repo only ever ships plain-semver tags, so this rejects nothing real.
+if ! printf '%s' "$latest_tag" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
     exit 0
 fi
 

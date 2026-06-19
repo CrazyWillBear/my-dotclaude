@@ -126,6 +126,14 @@ assert_equals "network-fail: exits 0" "$exit3" "0"
 assert_empty "network-fail: no notice emitted" "$out3"
 assert_not_contains "network-fail: no 'error' in output" "$out3" "error"
 assert_not_contains "network-fail: no 'Error' in output" "$out3" "Error"
+# An empty fail-open result must NOT be cached — caching it would suppress every
+# check for the whole TTL on a single transient blip. Cache stays absent, so the
+# next session retries instead of replaying silence.
+if [ ! -f "$CACHE3/last-check.json" ]; then ok "network-fail: empty result not cached"; else no "network-fail: cached an empty fail-open result"; fi
+hits3_before=$(wc -l < "$HIT3")
+run_hook "$ROOT3" "$WORK/bin3" "$CACHE3" >/dev/null
+hits3_after=$(wc -l < "$HIT3")
+if [ "$hits3_after" -gt "$hits3_before" ]; then ok "network-fail: next session retries (not throttled by an empty cache)"; else no "network-fail: did not retry (before=$hits3_before after=$hits3_after)"; fi
 
 # ---------------------------------------------------------------------------
 echo "test: stale cache — re-hits the network after the throttle window expires"

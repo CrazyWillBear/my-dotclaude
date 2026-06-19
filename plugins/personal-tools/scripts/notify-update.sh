@@ -81,8 +81,11 @@ else
     # Stale or missing cache -> run the reused checker (fails open, prints a line).
     result="$(bash "$CHECK_UPDATE" 2>/dev/null)" || result=""
     # Persist the result + refresh the timestamp so the next session is throttled.
-    # An unwritable cache must not error — fail open.
-    if mkdir -p "$CACHE_DIR" 2>/dev/null; then
+    # Only cache a NON-EMPTY result: an empty line means the checker failed open
+    # (network/parse error), and caching it would suppress every check for the
+    # whole TTL on a single transient blip. Leaving the cache untouched lets the
+    # next session retry. An unwritable cache must not error — fail open.
+    if [ -n "$result" ] && mkdir -p "$CACHE_DIR" 2>/dev/null; then
         printf '%s\n' "$result" > "$CACHE_FILE" 2>/dev/null || true
     fi
 fi
