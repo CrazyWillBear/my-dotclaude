@@ -13,6 +13,7 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
+- `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`) + `scripts/tests/`.
 - `.claude-plugin/` — plugin marketplace manifest.
 
 ## Payload vs. governing — read this
@@ -28,7 +29,7 @@ Tests are standalone bash scripts — no runner, no CI. Run every one and confir
 pass before declaring done:
 
 ```bash
-for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh; do
+for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh scripts/tests/test_*.sh; do
   echo "== $t"; bash "$t" || echo "FAIL: $t"
 done
 ```
