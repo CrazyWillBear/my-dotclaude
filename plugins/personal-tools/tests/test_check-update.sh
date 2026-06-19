@@ -150,5 +150,77 @@ assert_not_contains "garbage-json: no 'error' in output" "$out4" "error"
 assert_not_contains "garbage-json: no 'Error' in output" "$out4" "Error"
 
 # ---------------------------------------------------------------------------
+# Case 5: Installed version is AHEAD of latest release — must NOT prompt a
+# downgrade. (Local/dev checkout at 0.2.0 vs latest release 0.1.0.)
+# ---------------------------------------------------------------------------
+echo "test: installed ahead of latest — reports up to date, no downgrade prompt"
+
+FAKE_ROOT_5="$WORK/case5"
+make_plugin_json "$FAKE_ROOT_5" "0.2.0"
+
+mkdir -p "$WORK/bin5"
+cat > "$WORK/bin5/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.1.0"}'
+exit 0
+STUB
+chmod +x "$WORK/bin5/curl"
+
+out5=$(CLAUDE_PLUGIN_ROOT="$FAKE_ROOT_5" PATH="$WORK/bin5:$PATH" bash "$SCRIPT" 2>&1)
+exit5=$?
+
+assert_equals "ahead: exits 0" "$exit5" "0"
+assert_contains "ahead: output says up to date" "$out5" "up to date"
+assert_not_contains "ahead: no /update-kit downgrade prompt" "$out5" "/update-kit"
+
+# ---------------------------------------------------------------------------
+# Case 6: Multi-digit component ordering — 0.10.0 (latest) > 0.9.0 (installed)
+# must compare numerically (10 > 9), so an update is reported.
+# ---------------------------------------------------------------------------
+echo "test: multi-digit ordering — 0.10.0 > 0.9.0 reports update available"
+
+FAKE_ROOT_6="$WORK/case6"
+make_plugin_json "$FAKE_ROOT_6" "0.9.0"
+
+mkdir -p "$WORK/bin6"
+cat > "$WORK/bin6/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.10.0"}'
+exit 0
+STUB
+chmod +x "$WORK/bin6/curl"
+
+out6=$(CLAUDE_PLUGIN_ROOT="$FAKE_ROOT_6" PATH="$WORK/bin6:$PATH" bash "$SCRIPT" 2>&1)
+exit6=$?
+
+assert_equals "multidigit-newer: exits 0" "$exit6" "0"
+assert_contains "multidigit-newer: output contains new version" "$out6" "v0.10.0"
+assert_contains "multidigit-newer: output mentions /update-kit" "$out6" "/update-kit"
+
+# ---------------------------------------------------------------------------
+# Case 7: Multi-digit component ordering, reversed — installed 0.10.0 is ahead
+# of latest 0.9.0, so it must report up to date (not a downgrade).
+# ---------------------------------------------------------------------------
+echo "test: multi-digit ordering reversed — 0.10.0 installed > 0.9.0 latest is up to date"
+
+FAKE_ROOT_7="$WORK/case7"
+make_plugin_json "$FAKE_ROOT_7" "0.10.0"
+
+mkdir -p "$WORK/bin7"
+cat > "$WORK/bin7/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '{"tag_name":"v0.9.0"}'
+exit 0
+STUB
+chmod +x "$WORK/bin7/curl"
+
+out7=$(CLAUDE_PLUGIN_ROOT="$FAKE_ROOT_7" PATH="$WORK/bin7:$PATH" bash "$SCRIPT" 2>&1)
+exit7=$?
+
+assert_equals "multidigit-ahead: exits 0" "$exit7" "0"
+assert_contains "multidigit-ahead: output says up to date" "$out7" "up to date"
+assert_not_contains "multidigit-ahead: no /update-kit downgrade prompt" "$out7" "/update-kit"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

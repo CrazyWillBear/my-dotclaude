@@ -19,9 +19,13 @@ Check whether a newer kit release is available. No arguments needed.
    ```
    The script reads the installed version from
    `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`, queries the GitHub
-   Releases API, and prints one of:
-   - `kit is up to date (vX.Y.Z)` — nothing to do.
-   - `vX.Y.Z available — run /update-kit to upgrade` — a newer release exists.
+   Releases API, and compares the two by numeric semver ordering
+   (major.minor.patch). It prints one of:
+   - `kit is up to date (vX.Y.Z)` — installed version is equal to or newer than
+     the latest release (a local/dev checkout that is ahead is never asked to
+     downgrade).
+   - `vX.Y.Z available — run /update-kit to upgrade` — the latest release is
+     strictly newer than the installed version.
 
    On any network or API failure the script exits 0 with no output (fail-open).
 

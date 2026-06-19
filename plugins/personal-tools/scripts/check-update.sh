@@ -64,10 +64,50 @@ installed_stripped="${installed_ver#v}"
 latest_stripped="${latest_tag#v}"
 
 # ---------------------------------------------------------------------------
-# Compare and report
+# Compare by numeric semver ordering
 # ---------------------------------------------------------------------------
-if [ "$installed_stripped" = "$latest_stripped" ]; then
-    printf 'kit is up to date (v%s)\n' "$installed_stripped"
-else
+# Returns 0 (success) when $1 is strictly greater than $2 by major.minor.patch,
+# comparing each component as a base-10 integer (so 10 > 9, and leading zeros
+# are not read as octal). Any non-numeric component is treated as 0, keeping
+# the fail-open spirit of the script. Components missing on either side default
+# to 0 (e.g. "1.2" behaves like "1.2.0").
+# num: parse a single version component into a base-10 integer. Non-numeric or
+# missing input yields 0, so a malformed tag can never crash the comparison
+# (keeps the fail-open spirit). Leading zeros are stripped before $((10#..)).
+num() {
+    local c="$1"
+    case "$c" in
+        ''|*[!0-9]*) printf '0' ;;
+        *)           printf '%d' "$((10#$c))" ;;
+    esac
+}
+
+semver_gt() {
+    local a="$1" b="$2"
+    local IFS=.
+    # shellcheck disable=SC2206
+    local a_parts=($a) b_parts=($b)
+    local i a_n b_n
+    for i in 0 1 2; do
+        a_n="$(num "${a_parts[i]:-0}")"
+        b_n="$(num "${b_parts[i]:-0}")"
+        if [ "$a_n" -gt "$b_n" ]; then
+            return 0
+        elif [ "$a_n" -lt "$b_n" ]; then
+            return 1
+        fi
+    done
+    # All components equal → not strictly greater.
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# Report: prompt an upgrade ONLY when latest is strictly greater than installed.
+# When installed == latest OR installed > latest (local ahead), report up to
+# date — never prompt a downgrade.
+# ---------------------------------------------------------------------------
+if semver_gt "$latest_stripped" "$installed_stripped"; then
     printf '%s available — run /update-kit to upgrade\n' "$latest_tag"
+else
+    printf 'kit is up to date (v%s)\n' "$installed_stripped"
 fi
