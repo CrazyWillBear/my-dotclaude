@@ -47,9 +47,8 @@ Then **restart Claude Code** so it loads the plugins.
 - **Global `CLAUDE.md`** (`global/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
-- **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents: `/explain` (whole-codebase overview), `/commit` (review-and-commit the
-  current changes), `/init-python-project` (scaffold
+- **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash
+  commands: `/explain` (whole-codebase overview), `/init-python-project` (scaffold
   Python docs), `/diagnose` (root-cause debugging), and the human-in-the-loop dev
   front-end `/grill-me` → `/to-prd` → `/to-issues` plus `/handoff`.
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous
@@ -215,11 +214,10 @@ equivalent.
 my-dotclaude/
 ├── .claude-plugin/marketplace.json  # lists personal-tools + workflow
 ├── plugins/
-│   ├── personal-tools/             # my personal skills + agents
-│   │   ├── skills/                 # /commit, /diagnose, /explain,
+│   ├── personal-tools/             # my personal skills
+│   │   ├── skills/                 # /diagnose, /explain,
 │   │   │                           #   /init-python-project, /grill-me, /to-prd,
-│   │   │                           #   /to-issues, /handoff
-│   │   ├── agents/                 # commit (isolated committer)
+│   │   │                           #   /to-issues, /handoff, /dedup-search
 │   │   └── templates/              # CLAUDE.md + STYLEGUIDE.md for the init-* skills
 │   └── workflow/                   # the autonomous dev loop + context watchdog
 │       ├── skills/orchestrate/SKILL.md  # /orchestrate — the parallel issue-solving loop

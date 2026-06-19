@@ -1,13 +1,12 @@
 # personal-tools
 
-My personal Claude Code slash commands and subagents, versioned here so they come back
+My personal Claude Code slash commands, versioned here so they come back
 with the rest of my setup on any machine.
 
 ```
 plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
-│   ├── commit/SKILL.md            # /commit — review changes, write message, commit, summarize
 │   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
@@ -16,21 +15,12 @@ plugins/personal-tools/
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
-├── agents/
-│   └── commit.md                  # commit — isolated committer for /commit (model: inherit)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
 
 ## What's here
 
-- **`/commit [context]`** — review the changes since the last commit, write a detailed
-  Conventional-Commits message, commit them, and summarize the diff. The skill is a thin
-  shim whose `agent:` field runs it inside the `commit` agent (`model: inherit`), so the
-  diff reading stays out of your main conversation. It stages **tracked changes only**
-  (`git add -u` — untracked files are mentioned but left alone), ends the message with a
-  `Co-Authored-By: Claude` trailer, and writes the message + summary in **normal English**
-  (not caveman, even when caveman mode is on). No push/amend/rebase; no empty commits.
 - **`/grill-me [task]`** — interrogate me about a task *before* any code: rounds of pointed
   questions (preferring `AskUserQuestion`) over scope, constraints, edge cases, and acceptance
   criteria, ending in a tight **shared-understanding summary** shaped to feed `/to-prd`.
@@ -73,10 +63,10 @@ plugins/personal-tools/
 ## How the pieces map to Claude Code
 
 - **Skills** (`skills/<name>/SKILL.md`) become slash commands named after the directory:
-  `commit/` → `/commit`. Frontmatter sets the description, argument hint, the
+  `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, the
   `model` to run on, and (optionally) an `agent` to execute inside.
-- **Agents** (`agents/*.md`) become subagents. Frontmatter sets the name, when-to-use
-  description, allowed tools, and `model`. `commit` gets `Read, Grep, Glob, Bash` and
-  runs on `model: inherit`.
+- **Agents** (`agents/*.md`) become subagents — frontmatter sets the name, when-to-use
+  description, allowed tools, and `model`. This plugin currently ships none of its own;
+  its skills run on the main thread (or spawn built-in agents like **Explore**).
 
 Adding a tool is just dropping a file in and **restarting Claude Code** so it registers.
