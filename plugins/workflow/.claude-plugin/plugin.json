@@ -9,5 +9,12 @@
   "homepage": "https://github.com/CrazyWillBear/my-dotclaude",
   "repository": "https://github.com/CrazyWillBear/my-dotclaude",
   "license": "MIT",
-  "keywords": ["workflow", "orchestration", "agents", "issues", "context", "hooks"]
+  "keywords": [
+    "workflow",
+    "orchestration",
+    "agents",
+    "issues",
+    "context",
+    "hooks"
+  ]
 }
