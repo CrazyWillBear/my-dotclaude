@@ -10,8 +10,8 @@ Capture everything the next session needs, then send me into fresh context. `wor
 `resume.sh` re-injects the handoff after I `/clear`, so the only manual step is one command.
 
 **Pre-req — committed work.** The resume pointer's baseline is the current `HEAD`. If
-`git status --porcelain` shows tracked changes, **stop and tell me to commit first** (or run
-`/commit`) — a handoff over uncommitted work would lose it on `/clear`.
+`git status --porcelain` shows tracked changes, **stop and tell me to commit first** —
+a handoff over uncommitted work would lose it on `/clear`.
 
 ## Steps
 
