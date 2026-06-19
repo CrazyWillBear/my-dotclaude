@@ -54,7 +54,7 @@ Then **restart Claude Code** so it loads the plugins.
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents: `/explain`, `/diagnose`, `/dedup-search`, `/init-python-project`,
+  subagents: `/explain`, `/diagnose`, `/my-review`, `/dedup-search`, `/init-python-project`,
   and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues` plus
   `/handoff`. **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous

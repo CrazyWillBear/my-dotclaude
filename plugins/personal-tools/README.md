@@ -13,8 +13,11 @@ plugins/personal-tools/
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
 │   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
+│   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
+├── agents/
+│   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -59,6 +62,13 @@ plugins/personal-tools/
   `templates/` and substitutes the Python commands; it does *not* create a
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
+- **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
+  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent at **max
+  reasoning** on the session model: a dedicated security pass first (injection, authn/authz,
+  secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
+  pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
+  a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
+  it checks the tree is clean, checks out, reviews, then restores your original branch.
 
 ## How the pieces map to Claude Code
 
@@ -66,7 +76,8 @@ plugins/personal-tools/
   `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, the
   `model` to run on, and (optionally) an `agent` to execute inside.
 - **Agents** (`agents/*.md`) become subagents — frontmatter sets the name, when-to-use
-  description, allowed tools, and `model`. This plugin currently ships none of its own;
-  its skills run on the main thread (or spawn built-in agents like **Explore**).
+  description, allowed tools, `model`, and reasoning `effort`. This plugin ships **`my-review`**
+  (the reviewer behind `/my-review`); its other skills run on the main thread (or spawn built-in
+  agents like **Explore**).
 
 Adding a tool is just dropping a file in and **restarting Claude Code** so it registers.
