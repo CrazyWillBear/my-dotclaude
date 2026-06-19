@@ -7,6 +7,7 @@ with the rest of my setup on any machine.
 plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
+│   ├── check-updates/SKILL.md     # /check-updates — report whether a newer kit release is available
 │   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
@@ -19,6 +20,8 @@ plugins/personal-tools/
 │   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 ├── agents/
 │   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
+├── scripts/
+│   └── check-update.sh            # backing script for /check-updates — compares installed vs latest release
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -70,6 +73,11 @@ plugins/personal-tools/
   pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
   a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
   it checks the tree is clean, checks out, reviews, then restores your original branch.
+- **`/check-updates`** — report whether a newer kit release is available. Runs
+  `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
+  queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or
+  `vX.Y.Z available — run /update-kit to upgrade`. Fails open (silent) on any network or API
+  error. No arguments needed.
 - **`/update-kit`** — apply the latest kit release on this machine. Runs
   `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
   `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
