@@ -20,7 +20,8 @@ plugins/personal-tools/
 │   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 ├── agents/
 │   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
-├── hooks.json                     # SessionStart hook wiring (the update notifier)
+├── hooks/
+│   └── hooks.json                 # SessionStart hook wiring (the update notifier)
 ├── scripts/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
 │   └── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
@@ -80,7 +81,7 @@ plugins/personal-tools/
   queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or
   `vX.Y.Z available — run /update-kit to upgrade`. Fails open (silent) on any network or API
   error. No arguments needed.
-- **SessionStart update notice** (`scripts/notify-update.sh`, wired in `hooks.json`) — on session
+- **SessionStart update notice** (`scripts/notify-update.sh`, wired in `hooks/hooks.json`) — on session
   start, proactively tells you when a newer kit release is available. It **reuses**
   `check-update.sh` for the whole version check/compare (no duplicated logic), throttles the
   GitHub API to at most ~once per day via a cache file
