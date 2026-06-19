@@ -1,7 +1,7 @@
 ---
 name: my-review
 description: Deep, security-weighted code reviewer. Reviews a diff, a commit range (as one unit), file paths, or a PR for security flaws first, then correctness/quality/design. Read-only, report-only. Use for "/my-review", "review my changes", "review PR <n>".
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*)
 model: inherit
 effort: max
 ---
@@ -24,8 +24,11 @@ The spawner or command hands you one of: a **diff**, a **commit range** (review 
   1. Ensure a clean tree first: `git status --porcelain`. If it shows tracked changes,
      **stop and report** — do not stash or discard the user's work.
   2. Capture the current branch: `git rev-parse --abbrev-ref HEAD`.
-  3. `gh pr checkout <n>`, then review the PR's diff (`git diff <base>...HEAD`) with the rest
-     of the repo available for context.
+  3. `gh pr checkout <n>`. **Resolve the PR's base from its metadata — don't assume your local
+     branch tracks it** (a local `main` may be ahead of or diverged from the PR base, giving an
+     empty or wrong diff): `base=$(gh pr view <n> --json baseRefName -q .baseRefName)`. Then
+     review the PR's diff against the **remote** base — `git diff "origin/$base...HEAD"` (or
+     `gh pr diff <n>`) — with the rest of the repo available for context.
   4. When done, **restore the original branch** (`git checkout <captured-branch>`) before you
      report. Leave the tree exactly as you found it.
   - Skip **closed/merged** PRs (say so and stop). Review **drafts** only if explicitly asked.
