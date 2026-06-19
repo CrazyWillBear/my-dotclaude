@@ -7,14 +7,24 @@ with the rest of my setup on any machine.
 plugins/personal-tools/
 ├── .claude-plugin/plugin.json     # manifest
 ├── skills/
+│   ├── check-updates/SKILL.md     # /check-updates — report whether a newer kit release is available
 │   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
 │   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
+│   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
-│   └── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
+│   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
+│   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
+├── agents/
+│   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
+├── hooks/
+│   └── hooks.json                 # SessionStart hook wiring (the update notifier)
+├── scripts/
+│   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
+│   └── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -59,6 +69,30 @@ plugins/personal-tools/
   `templates/` and substitutes the Python commands; it does *not* create a
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
+- **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
+  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent at **max
+  reasoning** on the session model: a dedicated security pass first (injection, authn/authz,
+  secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
+  pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
+  a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
+  it checks the tree is clean, checks out, reviews, then restores your original branch.
+- **`/check-updates`** — report whether a newer kit release is available. Runs
+  `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
+  queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or
+  `vX.Y.Z available — run /update-kit to upgrade`. Fails open (silent) on any network or API
+  error. No arguments needed.
+- **SessionStart update notice** (`scripts/notify-update.sh`, wired in `hooks/hooks.json`) — on session
+  start, proactively tells you when a newer kit release is available. It **reuses**
+  `check-update.sh` for the whole version check/compare (no duplicated logic), throttles the
+  GitHub API to at most ~once per day via a cache file
+  (`${XDG_CACHE_HOME:-~/.cache}/my-dotclaude/last-check.json`; TTL `NOTIFY_UPDATE_TTL_SECONDS`,
+  default 86400), and **fails open** — any network/parse error or unwritable cache exits cleanly
+  and silently so it can never block a session. When a newer release exists it surfaces a short
+  non-blocking notice naming the version and telling you to run `/update-kit`.
+- **`/update-kit`** — apply the latest kit release on this machine. Runs
+  `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
+  `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
+  No arguments needed; works for both developer and simple-setup audiences.
 
 ## How the pieces map to Claude Code
 
@@ -66,7 +100,8 @@ plugins/personal-tools/
   `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, the
   `model` to run on, and (optionally) an `agent` to execute inside.
 - **Agents** (`agents/*.md`) become subagents — frontmatter sets the name, when-to-use
-  description, allowed tools, and `model`. This plugin currently ships none of its own;
-  its skills run on the main thread (or spawn built-in agents like **Explore**).
+  description, allowed tools, `model`, and reasoning `effort`. This plugin ships **`my-review`**
+  (the reviewer behind `/my-review`); its other skills run on the main thread (or spawn built-in
+  agents like **Explore**).
 
 Adding a tool is just dropping a file in and **restarting Claude Code** so it registers.

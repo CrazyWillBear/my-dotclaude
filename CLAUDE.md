@@ -13,6 +13,8 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
+- `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
+- `.github/workflows/` — CI (`ci.yml`, gates PRs into `main`) and release (`release.yml`) automation.
 - `.claude-plugin/` — plugin marketplace manifest.
 
 ## Payload vs. governing — read this
@@ -22,18 +24,53 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 governing rules are *this* file plus `~/.claude/CLAUDE.md`. Don't apply payload content
 to your own edits, and don't edit payload to change your behavior here.
 
-## Done-check
+## Release & versioning
 
-Tests are standalone bash scripts — no runner, no CI. Run every one and confirm all
-pass before declaring done:
+**Branch model.** `main` is release-only — never commit straight to it. Do day-to-day
+work on `dev` or on short feature branches, and land it on `main` via a PR (CI gates
+every PR into `main`; see [Done-check](#done-check)). **Merging `dev` → `main` cuts a
+release:** the Release workflow (`.github/workflows/release.yml`) runs on every push to
+`main` and calls `scripts/release-if-bumped.sh`, which tags `vX.Y.Z` and runs
+`gh release create --generate-notes` *only when* `VERSION` is ahead of the latest `v*`
+tag. If `VERSION` is unchanged it's a no-op, so a merge that didn't bump the version
+ships nothing — bump first when you intend to release.
+
+**Version single-source.** The root `VERSION` file is the one source of truth. Never
+hand-edit a version anywhere else. Bump it with:
 
 ```bash
-for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh; do
+bash scripts/sync-version.sh <x.y.z>
+```
+
+That writes `VERSION` and stamps the same `version` into both plugin manifests
+(`plugins/personal-tools/.claude-plugin/plugin.json` and
+`plugins/workflow/.claude-plugin/plugin.json`) so all three stay in lockstep.
+`scripts/check-version-consistency.sh` enforces the lockstep — it fails if either
+plugin.json drifts from `VERSION` — and CI (`.github/workflows/ci.yml`) runs it on
+every PR into `main`, so a mismatched version blocks the merge.
+
+How an updated kit reaches installed users (the notify hook → `/check-updates` →
+`/update-kit` flow) is documented in [README.md](README.md#keeping-the-kit-updated).
+
+## Done-check
+
+Tests are standalone bash scripts — no runner. Run every one and confirm all pass
+before declaring done:
+
+```bash
+for t in setup/tests/test_*.sh plugins/*/tests/test_*.sh scripts/tests/test_*.sh; do
   echo "== $t"; bash "$t" || echo "FAIL: $t"
 done
 ```
 
-Add or update a test alongside any change to `setup/lib/` or plugin scripts.
+Note: that loop always exits 0 (the `|| echo` guard swallows failures), so eyeball
+the output for `FAIL:` lines. CI runs the same suite via `bash scripts/run-tests.sh`,
+which drops the guard and exits non-zero on any failing test — use it when you need a
+true pass/fail exit code. CI (`.github/workflows/ci.yml`) also runs shellcheck, JSON
++ manifest validation, and the version-consistency check on every PR into `main`.
+
+Add or update a test alongside any change to `setup/lib/`, `scripts/`, or plugin
+scripts.
 
 ## Gotchas
 

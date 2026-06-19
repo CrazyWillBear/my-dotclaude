@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release-if-bumped:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create tags and releases
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # fetch all tags so the script can compare versions
+
+      - name: Cut release if VERSION bumped
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/release-if-bumped.sh

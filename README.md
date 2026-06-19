@@ -54,7 +54,7 @@ Then **restart Claude Code** so it loads the plugins.
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
-  subagents: `/explain`, `/diagnose`, `/dedup-search`, `/init-python-project`,
+  subagents: `/explain`, `/diagnose`, `/my-review`, `/dedup-search`, `/init-python-project`,
   and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues` plus
   `/handoff`. **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous
@@ -120,6 +120,27 @@ command to type. In short:
 The full hook wiring (`watchdog.sh`, `resume.sh`, `save-handoff.sh`, `suggest-docs.sh`),
 the env-overridable thresholds, and the `PreCompact` handoff are documented in
 [`plugins/workflow/README.md`](plugins/workflow/README.md#inside-the-watchdog).
+
+### Keeping the kit updated
+
+The kit ships as versioned GitHub Releases, and updates reach an installed machine
+through the `personal-tools` plugin — no need to re-run the installer:
+
+1. **A new release is cut** when a version bump lands on `main` (see the maintainer's
+   release model in [`CLAUDE.md`](CLAUDE.md#release--versioning)).
+2. **You hear about it.** A `SessionStart` hook quietly checks once a day whether a newer
+   release exists and, if so, surfaces a one-line notice naming the version and pointing
+   you at `/update-kit`. It's throttled to ~once per 24h and **fails open** — a network
+   hiccup just stays silent, never blocking the session.
+3. **`/check-updates`** — run it any time to ask on demand. It prints either
+   `kit is up to date (vX.Y.Z)` or `vX.Y.Z available — run /update-kit to upgrade`.
+4. **`/update-kit`** — applies the latest release: it updates the `my-dotclaude`
+   marketplace entry and both the `personal-tools` and `workflow` plugins, then reminds
+   you to **restart Claude Code** so the new versions load. Works for both the developer
+   and non-developer setups.
+
+Per-command details are in
+[`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 
 ## Install (full)
 
