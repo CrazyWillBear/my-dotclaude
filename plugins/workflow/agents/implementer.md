@@ -2,7 +2,6 @@
 name: implementer
 description: Implements one GitHub issue end-to-end inside its own git worktree — plans, builds TDD-first, runs the project's done-check, and commits per repo convention. Used by /orchestrate's parallel fan-out (one implementer per ready issue). Never touches another worktree or the base branch.
 tools: Read, Edit, Write, Grep, Glob, Bash, Skill
-model: sonnet
 effort: xhigh
 ---
 

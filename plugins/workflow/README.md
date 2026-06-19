@@ -13,9 +13,9 @@ plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
 ├── skills/orchestrate/SKILL.md       # /orchestrate — the parallel issue-solving loop
 ├── agents/
-│   ├── implementer.md                # sonnet — builds one issue in one worktree
-│   ├── merger.md                     # sonnet — merges branches in dep order, resolves conflicts
-│   └── reviewer.md                   # inherits model — files review-fix follow-ups, never edits code
+│   ├── implementer.md                # inherits model, xhigh effort — builds one issue in one worktree
+│   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
+│   └── reviewer.md                   # opus, max effort — files review-fix follow-ups, never edits code
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
@@ -37,18 +37,18 @@ Each round:
 
 1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
    `hitl` issues (those need a human). Take up to K of them.
-2. **Fan out implementers.** Spawn one **sonnet implementer** per ready issue, each in its
+2. **Fan out implementers.** Spawn one **implementer** per ready issue, each in its
    own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
    TDD-first, runs the project's done-check, and commits — never touching another worktree
    or the base branch.
-3. **Merge.** Hand the completed branches to the **sonnet merger**, which merges them into
+3. **Merge.** Hand the completed branches to the **merger**, which merges them into
    the base branch serially in dependency (topological) order, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
 4. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
    `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-5. **Review.** Spawn the **reviewer** (model inherited from the session — not pinned) on the
+5. **Review.** Spawn the **reviewer** (opus, max effort) on the
    round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
    (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
    blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.
