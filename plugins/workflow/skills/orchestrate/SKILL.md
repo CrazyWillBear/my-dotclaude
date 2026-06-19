@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel sonnet implementers in isolated git worktrees, hand the completed branches to a sonnet merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then a reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel implementers in isolated git worktrees, hand the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then a reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent
@@ -39,7 +39,7 @@ push.
    call per picked issue (`subagent_type: workflow:implementer`), each given: the issue number,
    its full body, the **absolute** worktree path, and the branch `issue-<N>`. They run
    concurrently.
-5. **Merge + verify via the merger (C4).** Collect the results, then spawn the **sonnet merger** —
+5. **Merge + verify via the merger (C4).** Collect the results, then spawn the **merger** —
    one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute base-repo path** and
    its **base branch**, the **ordered list of completed issues** (each: `#N`, branch `issue-<N>`,
    and its **absolute worktree path**) in **ascending issue number**, and the project's
