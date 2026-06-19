@@ -128,3 +128,23 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 Finish by telling the user, in plain words, that everything is ready: they should close
 and reopen Claude Code, then just describe what they want to build — you'll handle the
 rest and double-check your own work for them.
+
+---
+
+## Keeping the kit updated
+
+Both setups install the `personal-tools` plugin, which keeps the kit current after the
+first install — the user never has to re-run the installer. New versions ship as GitHub
+Releases and reach the machine like this:
+
+- **A `SessionStart` hook** checks ~once a day whether a newer release exists and, if so,
+  surfaces a short non-blocking notice naming the version and suggesting `/update-kit`. It
+  fails open (a network error just stays silent).
+- **`/check-updates`** asks on demand, printing `kit is up to date (vX.Y.Z)` or
+  `vX.Y.Z available — run /update-kit to upgrade`.
+- **`/update-kit`** applies the latest release: it updates the `my-dotclaude` marketplace
+  entry and both the `personal-tools` and `workflow` plugins, then reminds the user to
+  **restart Claude Code** so the new versions load.
+
+When you finish a setup, mention these to the user in plain language so they know how
+they'll get updates.
