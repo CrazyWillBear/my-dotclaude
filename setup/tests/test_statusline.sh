@@ -7,8 +7,8 @@
 # caveman flag and update cache never leak in) and assert on the printed line.
 #
 # Covers: dir (~-relative), git branch (+ non-repo omits it), model, token
-# formatting + 0k fallback, cost, line churn, output_style (hidden when
-# default), caveman fold (+ symlink refusal), and the update flag.
+# formatting + 0k fallback, cost, line churn, caveman fold (+ symlink
+# refusal), and the update flag.
 #
 # Run: bash setup/tests/test_statusline.sh  (non-zero if any fail)
 
@@ -46,7 +46,7 @@ git -C "$REPO" -c user.email=t@e -c user.name=t commit -q --allow-empty -m init
 
 # ---- test: full render ------------------------------------------------------
 echo "test: full render"
-json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$REPO"'"},"context_window":{"total_input_tokens":47000},"cost":{"total_cost_usd":0.42,"total_lines_added":12,"total_lines_removed":3},"output_style":{"name":"default"}}'
+json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$REPO"'"},"context_window":{"total_input_tokens":47000},"cost":{"total_cost_usd":0.42,"total_lines_added":12,"total_lines_removed":3}}'
 out=$(run_sl "$json")
 has "dir is ~-relative"     "$out" "~/repo"
 has "git branch shown"      "$out" "⎇ main"
@@ -55,7 +55,6 @@ has "tokens k-formatted"    "$out" "47k"
 has "cost shown"            "$out" "\$0.42"
 has "tokens/cost combined"  "$out" "47k / \$0.42"
 has "line churn shown"      "$out" "+12/-3"
-has_not "default style hidden" "$out" "default"
 
 # ---- test: control chars stripped from human-text segments -----------------
 # A directory name can legally contain a raw ESC byte; the model/style names
@@ -83,12 +82,6 @@ json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$PLAIN"
 out=$(run_sl "$json")
 has_not "no branch glyph" "$out" "⎇"
 has "still shows dir" "$out" "~/plain"
-
-# ---- test: non-default output_style shown ----------------------------------
-echo "test: non-default output_style -> shown"
-json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$PLAIN"'"},"output_style":{"name":"Explanatory"}}'
-out=$(run_sl "$json")
-has "custom style shown" "$out" "Explanatory"
 
 # ---- test: caveman fold -----------------------------------------------------
 echo "test: caveman fold"

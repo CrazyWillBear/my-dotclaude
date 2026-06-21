@@ -4,7 +4,7 @@
 Claude Code runs this on every status refresh, piping a JSON blob on stdin
 (model, workspace, cost, context_window, ...). We print ONE line:
 
-    <model> · <tokens>/<cost> · <dir> · ⎇ <branch> · +a/-r · <style> · <caveman> · <update>
+    <model> · <tokens>/<cost> · <dir> · ⎇ <branch> · +a/-r · <caveman> · <update>
 
 Design notes:
   * No network, no transcript parsing. Token usage comes straight from the
@@ -162,13 +162,6 @@ def seg_lines(data):
     return "+%d/-%d" % (added, removed)
 
 
-def seg_style(data):
-    name = (data.get("output_style") or {}).get("name") or ""
-    if name and name != "default":
-        return name
-    return ""
-
-
 def seg_caveman():
     flag = os.path.join(_config_dir(), ".caveman-active")
     raw = _read_safe(flag, 64)
@@ -201,7 +194,6 @@ def main():
         seg_dir(data),
         seg_branch(data),
         seg_lines(data),    # diff churn
-        seg_style(data),    # only when non-default
         seg_caveman(),
         seg_update(),
     ]
