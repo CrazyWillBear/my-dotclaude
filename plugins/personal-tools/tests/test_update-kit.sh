@@ -2,13 +2,18 @@
 #
 # Tests for scripts/update-kit.sh
 #
-# Black-box: we stub `claude` on PATH so it logs every invocation to a file,
-# then assert:
+# Black-box: we stub `claude` on PATH so it logs every invocation to a file and
+# point HOME at a sandbox, then assert:
 #   1. `claude plugin marketplace update my-dotclaude` is called first.
 #   2. `claude plugin update personal-tools` is called second.
 #   3. `claude plugin update workflow` is called third.
 #   4. The restart reminder is printed to stdout.
 #   5. The script exits 0.
+#   6. The status line is refreshed from the marketplace's local repo copy:
+#      ~/.claude/statusline.py is written (matching global/statusline.py) and
+#      the statusLine block is merged into ~/.claude/settings.json.
+#   7. When the marketplace copy can't be located, the refresh is skipped
+#      gracefully — the script still exits 0 and prints the restart reminder.
 #
 # Run: bash plugins/personal-tools/tests/test_update-kit.sh  (non-zero if any fail)
 
@@ -16,6 +21,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
 SCRIPT="$PLUGIN_ROOT/scripts/update-kit.sh"
 
 WORK="$(mktemp -d)"
@@ -61,11 +67,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Run the script with the stub claude on PATH.
-# Capture stdout for the restart-reminder check.
+# A sandbox HOME whose known_marketplaces.json points the my-dotclaude
+# marketplace at THIS repo checkout — so the status-line refresh copies the
+# real global/statusline.py and reuses the real setup/lib/common.sh installer.
+# ---------------------------------------------------------------------------
+HOME_DIR="$WORK/home"
+mkdir -p "$HOME_DIR/.claude/plugins"
+cat > "$HOME_DIR/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$REPO_ROOT" },
+    "installLocation": "$REPO_ROOT"
+  }
+}
+EOF
+
+# ---------------------------------------------------------------------------
+# Run the script with the stub claude on PATH and the sandbox HOME.
 # ---------------------------------------------------------------------------
 rm -f "$CLAUDE_STUB_LOG"
-out=$(PATH="$WORK/bin:$PATH" bash "$SCRIPT" 2>&1)
+out=$(PATH="$WORK/bin:$PATH" HOME="$HOME_DIR" bash "$SCRIPT" 2>&1)
 exit_code=$?
 
 # ---------------------------------------------------------------------------
@@ -119,6 +140,42 @@ assert_contains "restart reminder in output" "$out" "Restart"
 # ---------------------------------------------------------------------------
 echo "test: restart reminder mentions Claude Code"
 assert_contains "restart reminder mentions Claude Code" "$out" "Claude Code"
+
+# ---------------------------------------------------------------------------
+echo "test: status line is refreshed from the marketplace repo copy"
+if [ -f "$HOME_DIR/.claude/statusline.py" ]; then
+    if diff -q "$HOME_DIR/.claude/statusline.py" "$REPO_ROOT/global/statusline.py" >/dev/null; then
+        ok "statusline.py installed and matches global/statusline.py"
+    else
+        no "statusline.py installed but differs from global/statusline.py"
+    fi
+else
+    no "statusline.py was not written to the sandbox ~/.claude"
+fi
+
+# ---------------------------------------------------------------------------
+echo "test: settings.json gets the statusLine wiring"
+if [ -f "$HOME_DIR/.claude/settings.json" ]; then
+    settings="$(cat "$HOME_DIR/.claude/settings.json")"
+    assert_contains "settings.json has statusLine" "$settings" '"statusLine"'
+    assert_contains "statusLine points at statusline.py" "$settings" "statusline.py"
+else
+    no "settings.json was not written to the sandbox ~/.claude"
+fi
+
+# ---------------------------------------------------------------------------
+# Graceful skip: a sandbox with no known_marketplaces.json must not error.
+# ---------------------------------------------------------------------------
+echo "test: missing marketplace metadata -> refresh skipped, still succeeds"
+EMPTY_HOME="$WORK/empty-home"
+mkdir -p "$EMPTY_HOME/.claude"
+rm -f "$CLAUDE_STUB_LOG"
+out2=$(PATH="$WORK/bin:$PATH" HOME="$EMPTY_HOME" bash "$SCRIPT" 2>&1)
+rc2=$?
+assert_equals "exit 0 even without marketplace metadata" "$rc2" "0"
+assert_contains "still prints restart reminder" "$out2" "Restart"
+assert_not_contains "no statusline written without metadata" \
+    "$(ls "$EMPTY_HOME/.claude" 2>/dev/null)" "statusline.py"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

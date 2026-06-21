@@ -22,6 +22,15 @@ Apply the latest kit release on this machine. No arguments needed.
    - `claude plugin update personal-tools`
    - `claude plugin update workflow`
 
+   It then refreshes the status line, which is not plugin payload: the
+   marketplace update above also refreshes Claude Code's local copy of the repo
+   (a git clone for a GitHub install, the live checkout for a `directory`
+   install), so the script reads that location from `known_marketplaces.json`
+   and reuses `setup/lib/common.sh`'s installer to copy the new
+   `global/statusline.py` into `~/.claude/` and merge the `settings.json`
+   wiring — backing up the old files first. A refresh failure is non-fatal: the
+   plugin update still succeeded.
+
 3. **Report the result.** If the script exits non-zero, surface the error and
    tell the user to check their `claude` CLI installation. If it exits 0, confirm
    that the kit was updated and remind them to **restart Claude Code** so the new

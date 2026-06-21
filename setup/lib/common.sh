@@ -362,9 +362,97 @@ PY
   tcr_ok "set $key = \"$value\" ($cfg)"
 }
 
+# tcr_merge_json_object <cfg> <key> <json-blob>
+# Like tcr_merge_json_string, but <key>'s value is itself a JSON value (object,
+# array, number, ...) passed as a literal blob rather than a bare string. Same
+# safety as tcr_merge_json_string: creates the file when absent, backs up before
+# overwriting real content, and never clobbers a non-empty file it cannot parse.
+# The blob is developer-supplied, so an invalid blob is a hard error (exit 4),
+# not a silent skip.
+tcr_merge_json_object() {
+  local cfg="$1" key="$2" blob="$3"
+  mkdir -p "$(dirname "$cfg")"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    if [ ! -s "$cfg" ]; then
+      printf '{\n  "%s": %s\n}\n' "$key" "$blob" > "$cfg"
+      tcr_ok "set $key ($cfg)"
+    else
+      tcr_warn "python3 not found and $cfg already exists — set \"$key\" to $blob in it manually."
+    fi
+    return 0
+  fi
+
+  local bak rc=0
+  bak="$(TCR_CFG="$cfg" TCR_KEY="$key" TCR_BLOB="$blob" python3 - <<'PY'
+import json, os, shutil, sys, time
+
+cfg = os.environ["TCR_CFG"]
+key = os.environ["TCR_KEY"]
+try:
+    value = json.loads(os.environ["TCR_BLOB"])
+except ValueError:
+    sys.exit(4)  # caller passed an invalid JSON blob — programmer error
+
+data = {}
+if os.path.exists(cfg):
+    with open(cfg) as fh:
+        raw = fh.read()
+    if raw.strip():
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            sys.exit(3)  # non-empty but unparseable — do not clobber
+        if not isinstance(data, dict):
+            sys.exit(3)
+        bak = cfg + ".bak." + time.strftime("%Y%m%d%H%M%S")
+        shutil.copy2(cfg, bak)
+        print(bak)
+
+data[key] = value
+with open(cfg, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+)" || rc=$?
+
+  if [ "$rc" -eq 3 ]; then
+    tcr_warn "$cfg isn't plain JSON (comments or a trailing comma?) — left it untouched; set \"$key\" in it manually."
+    return 0
+  elif [ "$rc" -eq 4 ]; then
+    tcr_die "internal: invalid JSON blob passed for \"$key\"."
+  elif [ "$rc" -ne 0 ]; then
+    tcr_die "failed to update $cfg (python3 exit $rc)."
+  fi
+  [ -n "$bak" ] && tcr_ok "backed up $cfg -> $bak"
+  tcr_ok "set $key ($cfg)"
+}
+
 # tcr_set_setting <key> <string-value> — merge a setting into ~/.claude/settings.json.
 tcr_set_setting() {
   tcr_merge_json_string "$HOME/.claude/settings.json" "$1" "$2"
+}
+
+# tcr_install_statusline — install the default statusline renderer to
+# ~/.claude/statusline.py and point settings.json's statusLine at it. Always
+# overwrites any existing statusLine (a timestamped settings.json backup is
+# kept); the renderer folds the caveman mode badge in, so nothing is lost.
+# Dev install only — setup-simple.sh leaves the status line plain.
+tcr_install_statusline() {
+  local src="global/statusline.py"
+  local dest="$HOME/.claude/statusline.py"
+  mkdir -p "$HOME/.claude"
+  tcr_backup_file "$dest"
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/$src" ]; then
+    cp "$TCR_LOCAL_ROOT/$src" "$dest"
+  else
+    curl -fsSL "$RAW_BASE/$src" -o "$dest" \
+      || tcr_die "Could not download $src from $RAW_BASE."
+  fi
+  chmod +x "$dest" 2>/dev/null || true
+  tcr_ok "wrote $dest"
+  tcr_merge_json_object "$HOME/.claude/settings.json" statusLine \
+    "$(printf '{"type":"command","command":"python3 \\"%s\\""}' "$dest")"
 }
 
 # tcr_add_permissions <perm> [<perm> ...]
