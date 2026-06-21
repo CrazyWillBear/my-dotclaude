@@ -65,9 +65,9 @@ echo "test: control-char/escape stripping"
 esc=$(printf '\033')
 json='{"model":{"display_name":"Op'"$esc"'[31mus"},"workspace":{"current_dir":"'"$HOME_DIR"'/p'"$esc"'[2Jlain"}}'
 out=$(run_sl "$json")
-case "$out" in *"$esc[31m"*) no "injected ESC[31m stripped" ;; *) ok "injected ESC[31m stripped" ;; esac
-case "$out" in *"$esc[2J"*)  no "injected ESC[2J stripped"  ;; *) ok "injected ESC[2J stripped"  ;; esac
-has "separator ESC preserved" "$out" "$esc[2m"
+case "$out" in *"${esc}[31m"*) no "injected ESC[31m stripped" ;; *) ok "injected ESC[31m stripped" ;; esac
+case "$out" in *"${esc}[2J"*)  no "injected ESC[2J stripped"  ;; *) ok "injected ESC[2J stripped"  ;; esac
+has "separator ESC preserved" "$out" "${esc}[2m"
 
 # ---- test: token fallback when context_window absent ------------------------
 echo "test: token fallback -> 0k"
