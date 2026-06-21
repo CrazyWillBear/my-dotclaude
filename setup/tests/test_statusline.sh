@@ -56,6 +56,19 @@ has "cost shown"            "$out" "\$0.42"
 has "line churn shown"      "$out" "+12/-3"
 has_not "default style hidden" "$out" "default"
 
+# ---- test: control chars stripped from human-text segments -----------------
+# A directory name can legally contain a raw ESC byte; the model/style names
+# arrive on stdin. None may smuggle a terminal escape into the rendered line.
+# The dim separator legitimately uses ESC "[2m"/"[0m", so we assert on the
+# *injected* sequences specifically (ESC "[31m", ESC "[2J").
+echo "test: control-char/escape stripping"
+esc=$(printf '\033')
+json='{"model":{"display_name":"Op'"$esc"'[31mus"},"workspace":{"current_dir":"'"$HOME_DIR"'/p'"$esc"'[2Jlain"}}'
+out=$(run_sl "$json")
+case "$out" in *"$esc[31m"*) no "injected ESC[31m stripped" ;; *) ok "injected ESC[31m stripped" ;; esac
+case "$out" in *"$esc[2J"*)  no "injected ESC[2J stripped"  ;; *) ok "injected ESC[2J stripped"  ;; esac
+has "separator ESC preserved" "$out" "$esc[2m"
+
 # ---- test: token fallback when context_window absent ------------------------
 echo "test: token fallback -> 0k"
 json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$REPO"'"},"cost":{"total_cost_usd":0}}'

@@ -11,12 +11,17 @@ Design notes:
     stdin `context_window` object (Claude Code >= 2.1.132). The "update
     available" flag is read from the cache the personal-tools SessionStart
     notifier already maintains (`~/.cache/my-dotclaude/last-check.json`).
-  * Three files are read from user space (caveman flag, caveman savings,
-    update cache). All three are hardened the same way the caveman statusline
-    hardens its flag file: refuse symlinks, cap bytes, strip control chars,
-    and only ever emit derived/whitelisted text — never the raw file bytes
-    (a local attacker could otherwise plant terminal-escape sequences that
-    render on every keystroke).
+  * Output is rendered straight into the terminal on every refresh, so EVERY
+    segment is passed through `_clean()` (strips C0/C1 control chars + DEL)
+    before it is joined into the line — no matter its source. This is the
+    catch-all that neutralizes terminal-escape injection from any field,
+    including ones outside our control: the working directory (a dir name can
+    legally contain a raw ESC byte), the git branch name, and the model /
+    output-style names that arrive on stdin.
+  * The three user-space files (caveman flag, caveman savings, update cache)
+    get extra defenses on top: refuse symlinks, cap bytes, and only ever emit
+    derived/whitelisted text (mode whitelist, savings char-class, a static
+    update badge) — never the raw file bytes.
   * Fail open: any unexpected error prints nothing rather than spamming the
     status line with a traceback.
 """
@@ -35,6 +40,13 @@ CAVEMAN_MODES = {
 }
 # Conservative whitelist for the caveman savings suffix (e.g. "(-75%)").
 _SAVINGS_OK = re.compile(r"[^A-Za-z0-9 %()+./,\-]")
+# C0 + C1 control chars and DEL — stripped from every rendered segment so no
+# field (cwd, branch, model, ...) can smuggle a terminal-escape sequence.
+_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _clean(s):
+    return _CTRL.sub("", s)
 
 
 def _config_dir():
@@ -195,7 +207,7 @@ def main():
         seg_style(data),
         seg_update(),
     ]
-    line = SEP.join(s for s in segments if s)
+    line = SEP.join(_clean(s) for s in segments if s)
     sys.stdout.write(line)
 
 
