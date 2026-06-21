@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
-# the global CLAUDE.md (technical), model=opus, the personal-tools + workflow +
-# caveman + agent-sdk-dev + perf + security-guidance + security-sweep plugins, the
-# Playwright MCP server, and a gh (GitHub CLI) allowlist (read-only reads +
-# issue-write for the dev loop). User scope —
-# not tied to any one project.
+# the global CLAUDE.md (technical), model=opus, a default context status line,
+# the personal-tools + workflow + caveman + agent-sdk-dev + perf +
+# security-guidance + security-sweep plugins, the Playwright MCP server, and a
+# gh (GitHub CLI) allowlist (read-only reads + issue-write for the dev loop).
+# User scope — not tied to any one project.
 #
 #   curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 #
@@ -50,7 +50,7 @@ for arg in "$@"; do
     --no-color) : ;;  # already handled before sourcing (see top)
     -h|--help)
       printf 'setup-dev.sh — install the full user-wide Claude Code kit (user scope).\n'
-      printf 'Writes ~/.claude/CLAUDE.md (technical), sets model=opus, installs the plugins, the Playwright MCP, and a gh allowlist.\n'
+      printf 'Writes ~/.claude/CLAUDE.md (technical), sets model=opus, installs the status line + plugins, the Playwright MCP, and a gh allowlist.\n'
       printf 'Options: --force (overwrite an existing ~/.claude/CLAUDE.md), --no-color\n'
       exit 0 ;;
     *) tcr_warn "ignoring unknown option: $arg" ;;
@@ -67,6 +67,7 @@ fi
 tcr_step "Developer setup into: $HOME/.claude"
 tcr_install_global_claudemd
 tcr_set_setting model opus
+tcr_install_statusline         # default context status line (folds in caveman badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
 tcr_install_personal_tools      # from our marketplace
