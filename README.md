@@ -154,6 +154,7 @@ differ only in audience:
 |---|---|---|
 | global `CLAUDE.md` | technical conventions (`global/CLAUDE.md`) | plain-English, no-jargon contract |
 | `model` | `opus` | Claude Code's default |
+| status line | context line (dir · branch · model · tokens · cost · churn · update flag; folds in the caveman badge) | not set |
 | caveman level | `full` (terse) | `lite` (a little more readable) |
 | universal-ctags | installed (for code navigation) | not installed |
 
