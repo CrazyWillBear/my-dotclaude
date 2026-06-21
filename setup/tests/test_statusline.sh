@@ -53,6 +53,7 @@ has "git branch shown"      "$out" "⎇ main"
 has "model shown"           "$out" "Opus 4.8"
 has "tokens k-formatted"    "$out" "47k"
 has "cost shown"            "$out" "\$0.42"
+has "tokens/cost combined"  "$out" "47k / \$0.42"
 has "line churn shown"      "$out" "+12/-3"
 has_not "default style hidden" "$out" "default"
 

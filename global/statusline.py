@@ -4,7 +4,7 @@
 Claude Code runs this on every status refresh, piping a JSON blob on stdin
 (model, workspace, cost, context_window, ...). We print ONE line:
 
-    <caveman> · <dir> · ⎇ <branch> · <model> · <tokens> · <cost> · +a/-r · <style> · <update>
+    <model> · <tokens>/<cost> · <dir> · ⎇ <branch> · +a/-r · <style> · <caveman> · <update>
 
 Design notes:
   * No network, no transcript parsing. Token usage comes straight from the
@@ -18,10 +18,9 @@ Design notes:
     including ones outside our control: the working directory (a dir name can
     legally contain a raw ESC byte), the git branch name, and the model /
     output-style names that arrive on stdin.
-  * The three user-space files (caveman flag, caveman savings, update cache)
-    get extra defenses on top: refuse symlinks, cap bytes, and only ever emit
-    derived/whitelisted text (mode whitelist, savings char-class, a static
-    update badge) — never the raw file bytes.
+  * The two user-space files (caveman flag, update cache) get extra defenses
+    on top: refuse symlinks, cap bytes, and only ever emit derived/whitelisted
+    text (mode whitelist, a static update badge) — never the raw file bytes.
   * Fail open: any unexpected error prints nothing rather than spamming the
     status line with a traceback.
 """
@@ -38,8 +37,6 @@ CAVEMAN_MODES = {
     "wenyan-lite", "wenyan", "wenyan-full", "wenyan-ultra",
     "commit", "review", "compress",
 }
-# Conservative whitelist for the caveman savings suffix (e.g. "(-75%)").
-_SAVINGS_OK = re.compile(r"[^A-Za-z0-9 %()+./,\-]")
 # C0 + C1 control chars and DEL — stripped from every rendered segment so no
 # field (cwd, branch, model, ...) can smuggle a terminal-escape sequence.
 _CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -150,6 +147,11 @@ def seg_cost(data):
     return "$%.2f" % usd
 
 
+def seg_meters(data):
+    # tokens-in-context and session cost, shown as one "47k / $0.42" segment.
+    return seg_tokens(data) + " / " + seg_cost(data)
+
+
 def seg_lines(data):
     cost = data.get("cost") or {}
     try:
@@ -173,10 +175,7 @@ def seg_caveman():
     mode = re.sub(r"[^a-z0-9-]", "", raw.strip().lower())
     if not mode or mode == "off" or mode not in CAVEMAN_MODES:
         return ""
-    label = "caveman" if mode == "full" else "caveman:" + mode
-    suffix = _read_safe(os.path.join(_config_dir(), ".caveman-statusline-suffix"), 128)
-    suffix = _SAVINGS_OK.sub("", suffix.strip())[:32]
-    return label + (" " + suffix if suffix else "")
+    return "caveman" if mode == "full" else "caveman:" + mode
 
 
 def seg_update():
@@ -197,14 +196,13 @@ def main():
         data = {}
 
     segments = [
-        seg_caveman(),
+        seg_model(data),
+        seg_meters(data),   # tokens / cost
         seg_dir(data),
         seg_branch(data),
-        seg_model(data),
-        seg_tokens(data),
-        seg_cost(data),
-        seg_lines(data),
-        seg_style(data),
+        seg_lines(data),    # diff churn
+        seg_style(data),    # only when non-default
+        seg_caveman(),
         seg_update(),
     ]
     line = SEP.join(_clean(s) for s in segments if s)
