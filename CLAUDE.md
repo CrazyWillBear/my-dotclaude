@@ -16,6 +16,7 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
 - `.github/workflows/` — CI (`ci.yml`, gates PRs into `main`) and release (`release.yml`) automation.
 - `.claude-plugin/` — plugin marketplace manifest.
+- `docs/` — cross-cutting design notes (e.g. `anti-mock-drift.md`, the mock-drift guard woven through the `/to-prd`→`/to-issues`→`/orchestrate` flow).
 
 ## Payload vs. governing — read this
 

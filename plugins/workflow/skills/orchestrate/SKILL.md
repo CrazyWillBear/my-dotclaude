@@ -30,8 +30,12 @@ push.
    `None - can start immediately`. An issue is **ready** iff **every** `#N` blocker is **closed**
    (`gh issue view <N> --json state`). **Skip** any issue also labeled `hitl` or `prd` (the
    `--label ready-for-agent` filter already excludes a correctly-labeled PRD; this is a
-   belt-and-suspenders guard against a hand-added label). If the ready set is empty → report and
-   **stop the loop**.
+   belt-and-suspenders guard against a hand-added label). **Mock-debt gate (C7):** an issue
+   labeled `e2e-gate` is **not ready** while **any** open `mock-debt` issue exists
+   (`gh issue list --label mock-debt --state open --json number` — non-empty → hold the gate),
+   even if all its `## Blocked by` refs are closed; report it as `blocked — N mock-debt open`.
+   The open `mock-debt` set **is** the ledger (the source of truth). If the ready set is empty →
+   report and **stop the loop**.
 3. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
    base branch (C4):
    `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
@@ -55,12 +59,20 @@ push.
 6. **Review the round.** Spawn the **reviewer** — one `Agent` call
    (`subagent_type: workflow:reviewer`) — on the round's merged range
    (`git diff <round_base>..HEAD`) plus the merged issue numbers. It emits findings (C6), files
-   `review-fix` follow-ups, and wires them into dependents' `## Blocked by` (C2) — so a fix lands
-   before anything built on it does.
+   `review-fix` follow-ups (wired into dependents' `## Blocked by`, C2) **and** `mock-debt`
+   follow-ups for any central mock it found (audited per slice, not wired into dependents — the
+   ready-rule's label query is the gate). A fix/un-mock lands before anything builds on it.
+   - **Mirror the ledger (C7).** If this is a PRD run (slices carry `Part of #<prd>`), reflect the
+     open `mock-debt` set into the PRD body for human visibility: rewrite **only** a delimited
+     `## Mock-debt ledger` section (a checklist — `- [ ] #N — <what>` for open, `- [x]` for
+     closed) from `gh issue list --label mock-debt --json number,title,state`. Touch **no other
+     part** of the PRD body. The label query — not this mirror — is authoritative for the gate, so
+     a stale mirror never breaks enforcement.
 7. **Clean up + report.** Remove merged worktrees
    (`git worktree remove .worktrees/issue-<N>` then `git worktree prune`). Print a **status
-   table**: issue `#` → title → merged? / closed? → done-check → notes (filed `review-fix`s,
-   conflicts, failures).
+   table**: issue `#` → title → merged? / closed? → done-check → notes (filed `review-fix`s and
+   `mock-debt`s, conflicts, failures). If any `mock-debt` is open, add a one-line **ledger
+   summary** (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held by it.
 
 Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
 under the done-check; an **unresolvable conflict**, a **red done-check**, or an implementer failure
@@ -92,7 +104,8 @@ qualifies.
 > PRD #N appears complete — all child slices are closed. Close it? (yes/no)
 
 On **yes**: run `gh issue close <N> --comment "All child slices are closed — closing this PRD."`.
-Never edit the PRD body. Never delete the issue.
+Never edit the PRD's spec content or delete the issue. (The one exception is the delimited
+`## Mock-debt ledger` section the orchestrator maintains in step 6 — it owns that section only.)
 
 **For each `blocked` PRD**, note it in the final report without offering to close:
 

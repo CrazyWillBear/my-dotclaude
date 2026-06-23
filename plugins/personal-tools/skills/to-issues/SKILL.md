@@ -35,6 +35,15 @@ trusts the PRD and starts at step 3.
    Prefer **many thin AFK-able slices** over a few fat ones. Per slice: its **dependencies**
    (which slices land first) and whether it needs a **human** (a design call, a secret, an
    external account, a judgement) → mark it **HITL**.
+   - **Name each slice's central mechanism** — its piece of the PRD's central mechanism (step 3
+     of `/to-prd`): the load-bearing behavior the slice exists to prove. A tracer is allowed to
+     be *thin*, but it must build that mechanism **real**, never a mock of it — a mock of the
+     central mechanism makes the slice's acceptance criterion vacuous (see
+     [anti-mock-drift](../../../../docs/anti-mock-drift.md)). Pure-logic slices that touch no
+     external system have `none — pure logic`.
+   - **Mark the gate slice.** The final slice that exercises the *whole* central mechanism
+     end-to-end is the **e2e-gate** — usually also HITL. It must not ship until all deferred
+     mock-debt is paid (the orchestrator enforces this).
 4. **Quiz me until approved** (`AskUserQuestion`): granularity, slice boundaries, dependency
    edges, HITL marks. Iterate until I approve. **Create no issue before approval.**
 5. **Publish in dependency order** — blocker slices **first**, so their real `#N` exist when you
@@ -42,21 +51,28 @@ trusts the PRD and starts at step 3.
    ```
    ## What to build
    <the slice, at the behavior level>
+   ## Central mechanism
+   <the real interface/behavior this slice must exercise — OR — none - pure logic>
    ## Acceptance criteria
    - [ ] <demoable, checkable outcome>
    ## Blocked by
    <bare #N refs, one per line — OR — None - can start immediately>
    ```
    Ensure labels exist (ignore "already exists"):
-   `gh label create ready-for-agent 2>/dev/null || true` and
-   `gh label create hitl 2>/dev/null || true`.
+   `gh label create ready-for-agent 2>/dev/null || true`,
+   `gh label create hitl 2>/dev/null || true`,
+   `gh label create e2e-gate --description "final slice; ships only when mock-debt is zero" 2>/dev/null || true`, and
+   `gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`.
    Label **every** slice `ready-for-agent`; **also** add `hitl` to slices that need a human
-   (`/orchestrate` skips `hitl`). Create with a temp body file:
-   `gh issue create --title "<title>" --label ready-for-agent [--label hitl] --body-file <tmp>`.
+   (`/orchestrate` skips `hitl`), and **`e2e-gate`** to the final whole-feature end-to-end slice
+   (the orchestrator holds it not-ready until every open `mock-debt` issue is closed). Create with
+   a temp body file:
+   `gh issue create --title "<title>" --label ready-for-agent [--label hitl] [--label e2e-gate] --body-file <tmp>`.
    **PRD mode only:** also put `Part of #<prd>` in each slice body, without touching the PRD.
    No-PRD modes have no parent — omit it.
 6. **(no-PRD) File the testing-seam issue last** — a minimal issue stating the step-2 seam (what
-   to test, at what level) for me to set up myself. Labels `ready-for-agent` **and** `hitl`; its
-   `## Blocked by` lists **every** functional slice, so it surfaces only after the feature is built.
+   to test, at what level) for me to set up myself. It's the **e2e-gate**: labels `ready-for-agent`,
+   `hitl`, **and** `e2e-gate`; its `## Blocked by` lists **every** functional slice, so it surfaces
+   only after the feature is built — and the orchestrator additionally holds it until mock-debt is zero.
 7. **Report a table:** slice `#` → title → `Blocked by` → labels. Then confirm every `#N` in a
    `Blocked by` resolves to a real issue you created — no dangling refs.
