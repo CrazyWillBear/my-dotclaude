@@ -28,6 +28,16 @@ every file and git operation — use absolute paths, and `git -C <worktree>` for
 2. **Build TDD-first.** When a real test seam exists, write or extend a **failing** test for an
    acceptance criterion, then make it pass. Never duplicate logic — reuse candidates from the
    dedup-search step first.
+   - **Build the slice's `## Central mechanism` for real**, not a mock of it. A tracer may be
+     *thin*, but mocking the central mechanism makes the acceptance criterion vacuous (the test
+     passes while the feature doesn't exist) — that's the drift this loop guards against. Boundary
+     mocks (clock, third-party API, an LLM's reply text) are fine; the central mechanism is not.
+   - **If you genuinely must defer the real wiring** (the real dependency doesn't exist yet),
+     **declare mock-debt** — don't hide it. Add a `## Mock-debt` line to your output (and to the
+     commit body): `Mocked: <what>. Real wiring blocked by: #N` — or `... deferred to integration`
+     if no slice yet builds the real dependency. You only **declare**; the reviewer files the
+     follow-up (you're sandboxed and never edit the cross-issue graph). Hiding a central mock
+     doesn't help — the reviewer auto-converts undeclared ones to the same mock-debt.
 3. **Satisfy every acceptance criterion.** Work the list; don't declare done with a box unchecked.
 4. **Run the project's done-check** in the worktree — its tests, linter, type-checker (from the
    project's `CLAUDE.md` / `STYLEGUIDE.md` / config). Don't report success unless it's green; if
@@ -62,4 +72,6 @@ Return, terse and factual (this is data for the orchestrator, not a user-facing 
 - the **commit hash + subject**;
 - which acceptance criteria are **met** (and any not, with why);
 - the **done-check result** — the actual command run and pass/fail;
+- **mock-debt**, if any — the `Mocked: <what>. Real wiring blocked by: #N | deferred` line(s),
+  so the reviewer can file the follow-up;
 - any follow-ups or risks worth a reviewer's attention.

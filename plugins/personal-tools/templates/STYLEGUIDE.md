@@ -45,5 +45,9 @@ workflow; this file covers how code is written.
 - **Cover new reusable logic** with tests.
 - **Test both paths:** happy path *and* error conditions (bad input, raised errors, edge
   cases) — not just success.
-- **Structure:** Arrange-Act-Assert. Mock external dependencies (network, filesystem,
-  services) so tests are fast and deterministic.
+- **Structure:** Arrange-Act-Assert. Mock external dependencies at the **boundary** (network,
+  third-party services, the clock) so tests are fast and deterministic.
+- **Never mock the thing under test.** A test that mocks the central mechanism it's supposed to
+  prove passes while the behavior doesn't exist — drift. Mock the boundary, exercise the real
+  code path. If a slice must defer the real mechanism, track that as explicit, blocking debt, not
+  a silent mock.

@@ -94,8 +94,8 @@ echo "test: skill instructs adding a completion comment when closing"
 assert_contains "completion comment present" "$content" "--comment"
 
 # ---------------------------------------------------------------------------
-echo "test: skill never edits the PRD body"
-assert_contains "never edit PRD body stated" "$content" "Never edit the PRD body"
+echo "test: skill never edits the PRD spec content (ledger section carve-out aside)"
+assert_contains "never edit PRD spec content stated" "$content" "Never edit the PRD's spec content"
 
 # ---------------------------------------------------------------------------
 echo "test: skill reports blocked PRDs without offering to close them"
@@ -112,6 +112,20 @@ assert_contains "end-of-run placement stated" "$content" "After **all rounds**"
 # ---------------------------------------------------------------------------
 echo "test: mid-loop rounds are uninterrupted"
 assert_contains "mid-loop uninterrupted stated" "$content" "never interrupt mid-loop rounds"
+
+# --- mock-debt gate (C7) ---------------------------------------------------
+echo "test: ready-rule holds the e2e-gate while mock-debt is open"
+assert_contains "e2e-gate referenced in ready-rule" "$content" "e2e-gate"
+assert_contains "mock-debt gate tag present" "$content" "Mock-debt gate (C7)"
+assert_contains "mock-debt label query is the gate" "$content" "--label mock-debt --state open"
+assert_contains "gate holds while debt open" "$content" "not ready"
+
+echo "test: orchestrator mirrors the ledger into the PRD body (visibility, not enforcement)"
+assert_contains "ledger section named" "$content" "## Mock-debt ledger"
+assert_contains "label query is authoritative for the gate" "$content" "authoritative"
+
+echo "test: round report surfaces open mock-debt"
+assert_contains "report mentions mock-debt" "$content" "mock-debt: N open"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

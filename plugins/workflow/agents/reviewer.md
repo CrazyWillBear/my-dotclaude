@@ -27,6 +27,19 @@ otherwise changed behavior or public surface, but left the doc that documents it
 `CLAUDE.md` layout / etc.) describing the old world, that's a 🟡 **must-fix** — file a `review-fix`
 like any other. Don't flag a change that genuinely needs no doc edit.
 
+**Central-mechanism audit (mock-drift).** A green test suite is *not* evidence the slice's
+central mechanism is wired — a test can pass because the behavior works, or because the behavior
+was mocked and the test asserts against the mock. For each reviewed issue, read its
+`## Central mechanism` line (`gh issue view <N>`; skip if `none - pure logic`) and check whether
+the **test that proves it exercises the real mechanism or a mock of it**. Trace the test into the
+code — don't trust the test name. See [anti-mock-drift](../../../docs/anti-mock-drift.md).
+- **Declared** (the implementer reported a `## Mock-debt` line) → confirm it's real and complete,
+  then file a `mock-debt` follow-up (below).
+- **Undeclared** central mock — the test mocks the central mechanism with no declaration (the
+  failure mode that ships drift silently) → **auto-convert**: treat it as mock-debt and file the
+  follow-up yourself. Also report it as a 🔴 so it's visible, but the fix lives in the follow-up.
+- Boundary mocks (clock, third-party API, an LLM's reply text) are **fine** — don't flag them.
+
 ## Findings format (C6)
 One finding per line:
 ```
@@ -58,6 +71,26 @@ builds on it:
 Do **not** file issues for 🔵 / ❓. Never edit code, never close issues, never touch the base
 branch.
 
+## Filing mock-debt follow-ups
+
+For each declared or auto-converted central mock (from the audit above), file a `mock-debt`
+follow-up so the real wiring is tracked and **blocks the e2e-gate** until paid:
+1. Ensure the label exists
+   (`gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`),
+   then `gh issue create --label ready-for-agent --label mock-debt --body-file <tmp>` with the
+   verbatim template: `## What to build` (wire real `<X>`, removing the mock from #N),
+   `## Central mechanism` (the now-real interface), `## Acceptance criteria` (the central
+   mechanism runs real and the test exercises it), `## Blocked by`.
+2. **Set `## Blocked by` from the declaration:** the implementer's `Real wiring blocked by: #N`
+   (the slice that builds the real dependency); or `None - can start immediately` if that
+   dependency already exists; or, for `deferred to integration`, leave it to surface late — list
+   the e2e-gate's own functional blockers if known, else `None`.
+
+You do **not** wire mock-debt into dependents' `## Blocked by` — the orchestrator's ready-rule
+holds the e2e-gate not-ready while any open `mock-debt` issue exists, so the label is the gate.
+This is the one difference from `review-fix`, which *does* re-block dependents.
+
 ## Output
 Return, terse and factual: the findings block + `totals:` line, then the issues you filed
-(`#N — title`) and the dependents you re-blocked (`#dep += #N`). This is data for the orchestrator.
+(`#N — title`, marking which are `review-fix` vs `mock-debt`) and the dependents you re-blocked
+(`#dep += #N`). This is data for the orchestrator.
