@@ -20,6 +20,8 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SAVE="$PLUGIN_ROOT/scripts/save-handoff.sh"
 # The /handoff skill lives in the sibling personal-tools plugin.
 SKILL="$PLUGIN_ROOT/../personal-tools/skills/handoff/SKILL.md"
+# /handoff-plan writes the same keyed pointer inline, so it carries the same drift risk.
+SKILL_PLAN="$PLUGIN_ROOT/../personal-tools/skills/handoff-plan/SKILL.md"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -170,6 +172,15 @@ assert_contains "skill documents sha1 keying" "$skill_txt" "sha1"
 assert_contains "skill documents the cut -c1-16 key length" "$skill_txt" "cut -c1-16"
 assert_contains "skill names the .pending.json pointer" "$skill_txt" ".pending.json"
 assert_contains "skill names the keyed handoffs dir" "$skill_txt" "~/.claude/handoffs/"
+
+# /handoff-plan writes the same keyed pointer inline, so the same recipe must be
+# documented there too or its inline writer could silently diverge.
+assert_file "handoff-plan SKILL.md exists" "$SKILL_PLAN"
+plan_txt="$(cat "$SKILL_PLAN")"
+assert_contains "plan skill documents sha1 keying" "$plan_txt" "sha1"
+assert_contains "plan skill documents the cut -c1-16 key length" "$plan_txt" "cut -c1-16"
+assert_contains "plan skill names the .pending.json pointer" "$plan_txt" ".pending.json"
+assert_contains "plan skill names the keyed handoffs dir" "$plan_txt" "~/.claude/handoffs/"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

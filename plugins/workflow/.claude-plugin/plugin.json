@@ -1,6 +1,6 @@
 {
   "name": "workflow",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "An autonomous dev loop plus context management: /orchestrate runs N rounds of parallel issue-solving (implementers in isolated git worktrees, a merger that merges in dependency order and resolves conflicts under the done-check, then an opus reviewer files blocking follow-up issues), and a threshold-driven watchdog drives deliberate, early /clear and /handoff as the window fills, auto-resuming the in-flight plan.",
   "author": {
     "name": "William Chastain",
