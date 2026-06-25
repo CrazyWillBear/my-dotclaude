@@ -63,39 +63,19 @@ were given, ask the user which artifact to check rather than guess.
 ## Step 4 — Spawn the subagent
 
 Call the `Agent` tool with `subagent_type: "general-purpose"` and `model: "sonnet"`.
-(No `effort` parameter — communicate effort via the prompt text instead.) Use this
-prompt, filling in the target refs and log path you resolved:
+(There is no `effort` parameter on `Agent` — don't try to pass one.)
 
-> Think hard / reason at high effort. You are reviewing whether some written artifacts
-> still match the decisions made in a coding session. **Read-only — change nothing, edit
-> nothing, comment nowhere.** Your entire job is to compare, then report.
+**Keep the prompt short.** A terse prompt is both far faster (a verbose, heavily
+structured prompt makes the subagent read the log in tiny chunks and crawl — ~10× slower)
+*and* sharper. Use roughly this, filling in the refs from Step 3 and the path from Step 1:
+
+> Read the target(s) `<refs assembled in Step 3 — file paths; `gh issue view <n>` for
+> GitHub issues>` and the session log `<resolved transcript path>` (JSONL of the
+> conversation that produced them).
 >
-> **Targets** (read each one yourself — use `Read` for file paths, `Bash(gh issue view
-> <n>)` for GitHub issues):
-> `<the refs assembled in Step 3>`
->
-> **Session log** (read the WHOLE file — it may be large; use offset+limit to chunk
-> through it): `<resolved transcript path>`
->
-> The log is JSONL — one object per line. User turns have `"type":"user"`; assistant
-> turns `"type":"assistant"`. Look for user choices embedded in `tool_result` blocks
-> (from AskUserQuestion rounds) and in free-text user messages.
->
-> A **decision** = something the user explicitly chose or changed, **plus** any proposal
-> the assistant made that the user went along with or acted on. When the log records a
-> decision and *later* reverses or refines it, **the later decision wins** — compare each
-> target against the latest state, ignoring superseded earlier states.
->
-> For each target, find:
-> - **Contradictions** — the target states X but the session later chose not-X.
-> - **Omissions** — the session decided Y but the target never captures Y.
->
-> Output, in plain English:
-> - First line: `VERDICT: ALIGNED` or `VERDICT: MISMATCHES FOUND (n)`.
-> - Then one line per mismatch:
->   `<target item> — says <X> — session later decided <Y> (<pointer: who/when in log>) — <ruling: target stale / missing>`.
-> - Then a short list of key decisions you DID confirm the target matches.
-> - If a target is fully aligned, say so in one line. Do not manufacture findings.
+> Does each target match the decisions made in the session? Later decisions override
+> earlier ones. Report any contradictions or omissions, read-only. Lead with
+> `VERDICT: ALIGNED` or `VERDICT: MISMATCHES (n)`.
 
 ## Step 5 — Relay the report
 
