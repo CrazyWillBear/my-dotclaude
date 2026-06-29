@@ -2,13 +2,13 @@
 #
 # stash-session.sh — UserPromptSubmit hook for personal-tools.
 #
-# Stashes this session's transcript_path to a temp file so the /review-grill skill
+# Stashes this session's transcript_path to a temp file so the /verify-plan skill
 # (which never receives session_id/transcript_path in its execution context) can find
 # the current session log. Keyed by sha1(git-toplevel)[:16] — the same key the skill
 # recomputes — so hook and skill always agree even when running in different
 # subdirectories of the same repo.
 #
-# Fires on every UserPromptSubmit (including the /review-grill prompt itself), so the
+# Fires on every UserPromptSubmit (including the /verify-plan prompt itself), so the
 # stash is always the most-recent session for this repo. That also defeats the
 # two-sessions-in-one-repo race: the most-recent prompt wins.
 #
@@ -52,7 +52,7 @@ except Exception:
     pass
 
 key = hashlib.sha1(root.encode()).hexdigest()[:16]
-path = os.path.join(tempfile.gettempdir(), "review-grill-session-" + key + ".path")
+path = os.path.join(tempfile.gettempdir(), "verify-plan-session-" + key + ".path")
 try:
     with open(path, "w") as fh:
         fh.write(transcript + "\n")

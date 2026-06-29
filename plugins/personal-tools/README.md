@@ -16,10 +16,10 @@ plugins/personal-tools/
 │   ├── handoff-plan/SKILL.md      # /handoff-plan — capture the approved plan + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
-│   ├── review-grill/SKILL.md      # /review-grill — check plan/PRD/issues vs session decisions
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
-│   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
+│   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
+│   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
 │   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
 ├── hooks/
@@ -27,7 +27,7 @@ plugins/personal-tools/
 ├── scripts/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
 │   ├── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
-│   └── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /review-grill (fail-open)
+│   └── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /verify-plan (fail-open)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -38,7 +38,7 @@ plugins/personal-tools/
   questions (preferring `AskUserQuestion`) over scope, constraints, edge cases, and acceptance
   criteria, ending in a tight **shared-understanding summary** shaped to feed `/to-prd`.
   Read-only; runs on the main thread.
-- **`/review-grill [target]`** — point a sonnet subagent at the current session log and ask
+- **`/verify-plan [target]`** — point a sonnet subagent at the current session log and ask
   whether the plan/PRD/issue-slices under discussion still match what was decided (later
   decisions win). Reports drift — contradictions and omissions — read-only. A `UserPromptSubmit`
   hook (`stash-session.sh`) stashes the transcript path on every prompt; the skill reads it back
