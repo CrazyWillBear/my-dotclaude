@@ -14,9 +14,26 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
 push.
 
+## Step 0 — enter the orchestration worktree (once, before Setup)
+The **whole run executes in one worktree** so the merger writes to a linked worktree (the
+`PreToolUse` guard allows that) and the **primary checkout is never touched**. Decide by where you
+are now — canonicalize both with `realpath` first, since git may print a relative `.git`:
+- **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir` resolve to the
+  **same** path) → call **`EnterWorktree(name: "orchestrate-<n>")`** with a unique `<n>` (e.g.
+  `orchestrate-$(date +%s)`). This creates `.claude/worktrees/orchestrate-<n>` off the current
+  `HEAD` (`worktree.baseRef=head`) on branch `orchestrate-<n>` and switches this session into it.
+- **Already in a linked worktree** (the two **differ**) → **skip**; this worktree is already
+  isolated and *is* the orchestration worktree. (`EnterWorktree(name:…)` refuses to nest a new
+  worktree while you're in a worktree session anyway.)
+
+Everything below runs **from the orchestration worktree**. The result is **left on the
+orchestration branch** for you to merge into `dev`/`main` yourself — the run never merges back to
+the launch branch and never removes the orchestration worktree.
+
 ## Setup (once, before round 1)
-- **Base branch** = the current branch: `git rev-parse --abbrev-ref HEAD`. Every worktree branches
-  from it and merges back into it.
+- **Base branch** = the current branch (the **orchestration branch** from Step 0):
+  `git rev-parse --abbrev-ref HEAD`. Every per-issue worktree branches from it and merges back into
+  it; the merged result stays on it.
 - **Locally exclude worktrees** so they don't dirty the tree: append `.worktrees/` to
   `"$(git rev-parse --git-dir)"/info/exclude` if not already there (a local exclude — doesn't
   modify the tracked `.gitignore`).
@@ -44,8 +61,10 @@ push.
    its full body, the **absolute** worktree path, and the branch `issue-<N>`. They run
    concurrently.
 5. **Merge + verify via the merger (C4).** Collect the results, then spawn the **merger** —
-   one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute base-repo path** and
-   its **base branch**, the **ordered list of completed issues** (each: `#N`, branch `issue-<N>`,
+   one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute orchestration-worktree
+   path** as this run's base repo (`git rev-parse --show-toplevel`, a linked worktree → the guard
+   allows the merger's writes) and its **base branch**, the **ordered list of completed issues**
+   (each: `#N`, branch `issue-<N>`,
    and its **absolute worktree path**) in **ascending issue number**, and the project's
    **done-check command**. Ascending issue number is the **deterministic** merge order; the picked
    issues' blockers were already closed, but file-level overlap can still collide — **conflicts are
@@ -68,15 +87,23 @@ push.
      closed) from `gh issue list --label mock-debt --json number,title,state`. Touch **no other
      part** of the PRD body. The label query — not this mirror — is authoritative for the gate, so
      a stale mirror never breaks enforcement.
-7. **Clean up + report.** Remove merged worktrees
-   (`git worktree remove .worktrees/issue-<N>` then `git worktree prune`). Print a **status
-   table**: issue `#` → title → merged? / closed? → done-check → notes (filed `review-fix`s and
-   `mock-debt`s, conflicts, failures). If any `mock-debt` is open, add a one-line **ledger
-   summary** (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held by it.
+7. **Clean up + report.** Remove only the **per-issue child worktrees**
+   (`git worktree remove .worktrees/issue-<N>` then `git worktree prune`) — **leave the
+   orchestration worktree and its branch in place** (that's where the merged result lives, for you
+   to merge onward). Print a **status table**: issue `#` → title → merged? / closed? → done-check →
+   notes (filed `review-fix`s and `mock-debt`s, conflicts, failures). If any `mock-debt` is open,
+   add a one-line **ledger summary** (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held
+   by it.
 
 Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
 under the done-check; an **unresolvable conflict**, a **red done-check**, or an implementer failure
 **always stops the loop** with a clear report; everything else continues to the next round.
+
+**Where the work lives.** All merged rounds land on the **orchestration branch** inside the
+orchestration worktree — never on the launch branch and never in the primary checkout. End the
+final report by naming that branch + worktree path and telling me to merge it into `dev`/`main`
+when I'm satisfied; if I entered it via Step 0's `EnterWorktree`, `ExitWorktree(keep)` returns me to
+the original directory with the branch intact (or the session-exit prompt offers keep/remove).
 
 ## End-of-run: PRD reap
 
