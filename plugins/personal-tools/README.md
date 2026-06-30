@@ -9,6 +9,10 @@ plugins/personal-tools/
 ├── skills/
 │   ├── check-updates/SKILL.md     # /check-updates — report whether a newer kit release is available
 │   ├── dedup-search/SKILL.md      # /dedup-search — search for reusable code before writing new code
+│   ├── deploy-artifact/           # /deploy-artifact — deploy a claude.ai artifact live to Vercel
+│   │   ├── SKILL.md               #   the playbook
+│   │   ├── scripts/detect-deps.mjs #   scans artifact imports → on-demand npm installs
+│   │   └── template/              #   vendored Vite + Tailwind v3 + classic radix shadcn/ui base
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
@@ -83,6 +87,17 @@ plugins/personal-tools/
   `templates/` and substitutes the Python commands; it does *not* create a
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
+- **`/deploy-artifact [code | share-URL | path]`** — deploy a **claude.ai Artifact** live to
+  Vercel, reproducing the claude.ai runtime so it actually renders. Handles all six kinds
+  (HTML/SVG/Mermaid/Markdown/code/React), single- or multi-file: static kinds are wrapped and
+  shipped; **React** is dropped into a vendored Vite + Tailwind-v3 + **classic radix shadcn/ui**
+  template (the `@/` alias, lucide, recharts baked) under `skills/deploy-artifact/template/`, with
+  heavy libs (`three`, `d3`, …) detected by `scripts/detect-deps.mjs` and `npm install`ed on
+  demand, then built and pushed via the `vercel` CLI. Finally it **verifies the live URL in a real
+  browser** (Playwright): asserts the root mounted with **zero console errors**, screenshots it,
+  and stops for you to eyeball. Prereqs: the `vercel` CLI logged in (`vercel login`) and the
+  Playwright MCP. Accounts with Deployment Protection on are handled per-deploy (ask to make it
+  public or keep it login-gated).
 - **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
   (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent at **max
   reasoning** on the session model: a dedicated security pass first (injection, authn/authz,
