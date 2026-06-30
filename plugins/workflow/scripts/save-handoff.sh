@@ -18,11 +18,14 @@
 #                    the /handoff skill mirrors and a drift test asserts against.
 #
 # Handoff keying: both the resume pointer and the handoff doc live under
-#   ~/.claude/handoffs/<sha1(git_toplevel)[:16]>/
-# as .pending.json (pointer) and <branch-slug>.md (doc). Per-repo keying means
-# concurrent /handoff across repos never clobber each other (the old single global
-# ~/.claude/.pending-handoff was last-writer-wins). resume.sh recomputes the same
-# sha; the /handoff skill writes the same layout inline.
+#   ~/.claude/handoffs/<sha1(git_common_dir)[:16]>/
+# as .pending.json (pointer) and <branch-slug>.md (doc). Keyed by the COMMON git
+# dir (not the worktree toplevel) so the primary tree and all its linked worktrees
+# share one pointer — a handoff written in a worktree resumes from anywhere in the
+# repo. Per-repo keying also means concurrent /handoff across repos never clobber
+# each other (the old single global ~/.claude/.pending-handoff was last-writer-wins).
+# resume.sh recomputes the same sha; the /handoff + /handoff-plan skills write the
+# same layout inline.
 #
 # Git state is read from CLAUDE_PROJECT_DIR (else cwd). The baseline is simply the
 # current HEAD — prior work is committed before a handoff. Fail open: any error
@@ -64,22 +67,35 @@ def git(*args):
     return out.stdout.strip()
 
 
-def keyed_dir(toplevel):
-    # Per-repo handoff dir: ~/.claude/handoffs/<sha1(git_toplevel)[:16]>.
-    # The 16-hex key must be byte-identical to resume.sh and the /handoff skill,
-    # which both compute sha1(toplevel)[:16] (bash: sha1sum | cut -c1-16).
-    if not toplevel:
+def keyed_dir(common_dir):
+    # Per-repo handoff dir: ~/.claude/handoffs/<sha1(git_common_dir)[:16]>.
+    # Keyed by the COMMON git dir so the primary tree and all its linked worktrees
+    # share one pointer. The 16-hex key must be byte-identical to resume.sh and the
+    # /handoff + /handoff-plan skills, which compute the same sha1 over the canonical
+    # absolute --git-common-dir (bash: (cd "$gcd" && pwd -P) | sha1sum | cut -c1-16).
+    if not common_dir:
         return None
-    key = hashlib.sha1(toplevel.encode()).hexdigest()[:16]
+    key = hashlib.sha1(common_dir.encode()).hexdigest()[:16]
     return os.path.expanduser(os.path.join("~/.claude/handoffs", key))
 
 
+def common_git_dir():
+    # Canonical absolute --git-common-dir: identical from the primary tree and every
+    # linked worktree (they share one common .git). realpath(join(...)) turns git's
+    # possibly-relative ".git" into the same physical path the bash skills compute.
+    raw = git("rev-parse", "--git-common-dir")
+    if not raw:
+        return None
+    return os.path.realpath(os.path.join(project_dir, raw))
+
+
 toplevel = git("rev-parse", "--show-toplevel")
+common_dir = common_git_dir()
 
 # --print-dir: emit the keyed dir for the current repo and exit (empty outside a
 # repo). The canonical reference the skill mirrors and the drift test checks.
 if os.environ.get("SH_PRINT_DIR"):
-    kd = keyed_dir(toplevel)
+    kd = keyed_dir(common_dir)
     if kd:
         sys.stdout.write(kd)
     sys.exit(0)
@@ -94,7 +110,7 @@ except Exception:
 def resolve_handoff(branch):
     # Handoff doc written by /handoff: <keyed-dir>/<branch-slug>.md
     # (branch slashes replaced with dashes, same rule the skill uses).
-    kd = keyed_dir(toplevel)
+    kd = keyed_dir(common_dir)
     if not branch or not kd:
         return None
     try:
@@ -110,6 +126,7 @@ obj = {
     "handoff_path":   resolve_handoff(branch_val),
     "branch":         branch_val,
     "git_toplevel":   toplevel,
+    "git_common_dir": common_dir,
     "baseline_head":  git("rev-parse", "HEAD"),
     "session_id":     session_id or None,
     "context_tokens": size or None,
@@ -120,12 +137,12 @@ obj = {
 # resume.sh's repo guard would reject the handoff anyway. Skip writing so a
 # PreCompact firing in a non-repo dir leaves no junk handoff for a later session
 # to spuriously consume.
-if not toplevel:
+if not common_dir:
     sys.exit(0)
 
 # Per-repo keyed pointer: <keyed-dir>/.pending.json. Concurrent /handoff across
 # repos write distinct files, so they never clobber each other.
-path = os.path.join(keyed_dir(toplevel), ".pending.json")
+path = os.path.join(keyed_dir(common_dir), ".pending.json")
 try:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
