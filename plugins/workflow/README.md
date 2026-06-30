@@ -19,7 +19,7 @@ plugins/workflow/
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
-│   ├── resume.sh                     # SessionStart: re-inject the per-repo handoff after /clear or /compact
+│   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
 │   └── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
@@ -32,6 +32,13 @@ plugins/workflow/
 `/orchestrate [N] [--max K]` runs **N** rounds (default 1), building up to **K** issues in
 parallel per round (default 3). It runs on the **main thread** because only the main thread
 can spawn subagents.
+
+**The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
+into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
+worktree the `personal-tools` `worktree-guard` allows and the **primary checkout is never touched**.
+Per-issue implementer worktrees nest under it. The merged result is **left on the orchestration
+branch** for you to merge into `dev`/`main` yourself — the run never merges back to the launch
+branch, and cleanup removes only the per-issue child worktrees.
 
 Each round:
 
@@ -83,7 +90,11 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
     skipped entirely.
 - **`resume.sh`** (SessionStart) re-injects the in-flight per-repo handoff after each
   `/clear` or `/compact`, and deletes the wrap-nudge sentinel — re-arming the nudge from the
-  250k floor.
+  250k floor. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
+  written inside a linked worktree resumes from anywhere in the repo; when it was written in a
+  worktree, the re-injected order tells the fresh session to `EnterWorktree(path=…)` that
+  worktree first. Resolution is **3-tier**: the common-dir key, then the old `--show-toplevel`
+  key (one release of migration), then the legacy global pointer.
 - **`save-handoff.sh`** (PreCompact) writes a handoff before *every* compaction — a manual
   `/compact` or Claude Code's auto-compact — so the plan re-injects either way.
 - **`suggest-docs.sh`** (Stop) gives a soft nudge when a batch changed code but touched no

@@ -56,7 +56,10 @@ Then **restart Claude Code** so it loads the plugins.
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
   subagents: `/explain`, `/diagnose`, `/my-review`, `/dedup-search`, `/init-python-project`,
   and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues` plus
-  `/handoff`. **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
+  `/handoff`. It also ships the **worktree guard** — a `PreToolUse` hook that keeps writes out
+  of a repo's primary checkout and into a per-task worktree (`EnterWorktree`), so parallel
+  sessions never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
+  **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous
   dev loop (`/orchestrate`) that solves GitHub issues in parallel worktrees, and a context
   watchdog that drives deliberate, early `/clear` and `/handoff` as the window fills.
