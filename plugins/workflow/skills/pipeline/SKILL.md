@@ -38,8 +38,8 @@ Do not redo completed phases.
      closed.
    Issue mode is **autonomous** — scope was pre-approved when the issue was filed. Exactly two
    writes go **to the target issue**: the plan comment (step 2) and the result comment (step 8).
-   (Step 7's follow-up issues — lows and declared mock-debt — are filed in either mode and are
-   the only other outward writes.)
+   (Step 7's label creates and follow-up issues — lows and declared mock-debt — happen in
+   either mode and are the only other outward writes.)
 4. **Grill/bare mode:** distill the brief **yourself on the main thread** — the task text plus
    (grill mode) the constraints, edge cases, and acceptance criteria surfaced by the grill.
    The planner gets the distilled brief, not the raw conversation.
@@ -129,14 +129,17 @@ free; each re-review decrements the budget.
 If the budget is exhausted and **medium-or-worse findings remain open**, **pause and ask**
 (AskUserQuestion): **continue** (grant +1 cycle) / **stop and report** (branch stays as-is,
 open findings listed) / **user takes over** (report state, exit cleanly). Never loop past the
-cap silently.
+cap silently. On **stop** or **take over**, report the open findings, then delete the step-9
+resume state (the `.pending.json` pointer and the `-pipeline.md` state doc) — a run the user
+ended must not resurrect at the next session start. Only **continue** keeps the state.
 
 ## Step 7 — file the lows + declared mock-debt
 
 For each **low** finding, file a follow-up issue (both modes). Ensure the labels exist
 (`gh label create review-fix 2>/dev/null || true`, same for `ready-for-agent`), then
-`gh issue create --title "<one-line fix>" --label ready-for-agent --label review-fix
---body-file <tmp>` using the reviewer's verbatim template: `## What to build` (the fix),
+`gh issue create --title '<one-line fix>' --label ready-for-agent --label review-fix
+--body-file <tmp>` using the reviewer's verbatim template (single-quote the title — it embeds
+review-derived text, which may carry shell metacharacters echoed from repo content): `## What to build` (the fix),
 `## Acceptance criteria`, `## Blocked by` (`None - can start immediately` unless the fix
 depends on this branch landing — then name the issue/branch).
 

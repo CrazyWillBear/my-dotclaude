@@ -206,7 +206,7 @@ my-dotclaude/
 ├── .claude-plugin/marketplace.json  # lists personal-tools + workflow
 ├── plugins/
 │   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
-│   └── workflow/         # autonomous dev loop + context watchdog — see plugins/workflow/README.md
+│   └── workflow/         # dev loop + /pipeline + context watchdog — see plugins/workflow/README.md
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)

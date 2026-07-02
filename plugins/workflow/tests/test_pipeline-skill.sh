@@ -112,6 +112,7 @@ echo "test: cap hit with open medium+ pauses via AskUserQuestion"
 assert_contains "AskUserQuestion on cap" "$content" "AskUserQuestion"
 assert_contains "continue option grants a cycle" "$content" "grant +1 cycle"
 assert_contains "user takes over option" "$content" "takes over"
+assert_contains "stop/take-over delete the resume state" "$content" "ended must not resurrect"
 
 # ---------------------------------------------------------------------------
 echo "test: never push; branch left for the user"

@@ -79,8 +79,8 @@ human decision; the loop never merges PRs.
 chain — **fable plans, sonnet builds, fable reviews** — for work not worth slicing into an
 issue graph. Three input modes: an **issue number** (autonomous — scope was pre-approved;
 refused if `prd`/`hitl`-labeled or any `## Blocked by` ref is still open; exactly two writes
-to the target issue, the plan comment and the result comment — step 7's follow-up issues are
-the only other outward writes), a **grilled task** (a `/grill-me` alignment
+to the target issue, the plan comment and the result comment — step 7's label creates and
+follow-up issues are the only other outward writes), a **grilled task** (a `/grill-me` alignment
 exists in the session — the plan is drift-checked with `/verify-plan`, then gated on user
 approval), or **bare text** (same gate, no drift-check).
 
