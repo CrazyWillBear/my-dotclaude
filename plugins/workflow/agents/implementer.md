@@ -44,9 +44,10 @@ paths, and `git -C <worktree>` for git.
      **declare mock-debt** — don't hide it. Add a `## Mock-debt` line to your output (and to the
      commit body): `Mocked: <what>. Real wiring blocked by: #N` (or, for a work order, the plan
      step that builds it) — or `... deferred to integration` if nothing yet builds the real
-     dependency. You only **declare**; the reviewer files the
-     follow-up (you're sandboxed and never edit the cross-issue graph). Hiding a central mock
-     doesn't help — the reviewer auto-converts undeclared ones to the same mock-debt.
+     dependency. You only **declare**; the spawner's review path files the follow-up —
+     orchestrate's reviewer, or /pipeline's finish step (you're sandboxed and never edit the
+     cross-issue graph). Hiding a central mock doesn't help — orchestrate's reviewer
+     auto-converts undeclared ones to the same mock-debt.
 3. **Satisfy every acceptance criterion.** Work the list; don't declare done with a box unchecked.
 4. **Run the project's done-check** in the worktree — its tests, linter, type-checker (from the
    project's `CLAUDE.md` / `STYLEGUIDE.md` / config). Don't report success unless it's green; if
@@ -83,5 +84,5 @@ Return, terse and factual (this is data for the spawner, not a user-facing messa
 - which acceptance criteria are **met** (and any not, with why);
 - the **done-check result** — the actual command run and pass/fail;
 - **mock-debt**, if any — the `Mocked: <what>. Real wiring blocked by: #N | deferred` line(s),
-  so the reviewer can file the follow-up;
+  so the spawner's review path can file the follow-up;
 - any follow-ups or risks worth a reviewer's attention.

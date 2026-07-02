@@ -37,7 +37,9 @@ Do not redo completed phases.
      **open** (`gh issue view <ref> --json state`). An issue is ready iff **every** blocker is
      closed.
    Issue mode is **autonomous** — scope was pre-approved when the issue was filed. Exactly two
-   outward writes happen: the plan comment (step 2) and the result comment (step 8).
+   writes go **to the target issue**: the plan comment (step 2) and the result comment (step 8).
+   (Step 7's follow-up issues — lows and declared mock-debt — are filed in either mode and are
+   the only other outward writes.)
 4. **Grill/bare mode:** distill the brief **yourself on the main thread** — the task text plus
    (grill mode) the constraints, edge cases, and acceptance criteria surfaced by the grill.
    The planner gets the distilled brief, not the raw conversation.
@@ -109,6 +111,11 @@ Parse the ```findings block (empty block → clean; skip to step 7). Route by se
 | **high** | ONE **collective replan** covering **all high findings together** (planner mode=replan, mediums appended) — one coherent revision, not per-finding patches |
 | **critical** | **each critical finding gets its own full plan→implement→review cycle** (planner mode=replan scoped to that finding alone, then steps 3–4 again) |
 
+**When one review returns both criticals and highs:** run the per-critical cycles **first**
+(ascending by path, so the order is deterministic), then the ONE collective high replan —
+mediums append to the collective replan only. At each scoped re-review, drop any finding a
+prior cycle already resolved.
+
 Fix rounds go to a **fresh implementer spawn** (`model: "sonnet"`), work order = the fix-list
 or revised plan. Then a **scoped re-review**: spawn `personal-tools:my-review` again asking it
 to (a) verify each prior finding is addressed and (b) review **only the fix delta**
@@ -124,14 +131,22 @@ If the budget is exhausted and **medium-or-worse findings remain open**, **pause
 open findings listed) / **user takes over** (report state, exit cleanly). Never loop past the
 cap silently.
 
-## Step 7 — file the lows
+## Step 7 — file the lows + declared mock-debt
 
 For each **low** finding, file a follow-up issue (both modes). Ensure the labels exist
 (`gh label create review-fix 2>/dev/null || true`, same for `ready-for-agent`), then
-`gh issue create --label ready-for-agent --label review-fix --body-file <tmp>` using the
-reviewer's verbatim template: `## What to build` (the fix), `## Acceptance criteria`,
-`## Blocked by` (`None - can start immediately` unless the fix depends on this branch landing —
-then name the issue/branch).
+`gh issue create --title "<one-line fix>" --label ready-for-agent --label review-fix
+--body-file <tmp>` using the reviewer's verbatim template: `## What to build` (the fix),
+`## Acceptance criteria`, `## Blocked by` (`None - can start immediately` unless the fix
+depends on this branch landing — then name the issue/branch).
+
+Also file any **`## Mock-debt` the implementer declared** — there is no orchestrate reviewer
+on this path, so the pipeline files it or nobody does. Ensure the label
+(`gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`),
+then file with reviewer.md's mock-debt template: `## What to build` (wire real `<X>`, removing
+the mock), `## Central mechanism` (the now-real interface), `## Acceptance criteria` (the
+central mechanism runs real and the test exercises it), `## Blocked by` (from the declaration,
+or `None - can start immediately`).
 
 ## Step 8 — finish
 

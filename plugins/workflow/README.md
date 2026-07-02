@@ -78,8 +78,9 @@ human decision; the loop never merges PRs.
 `/pipeline <issue#|task text> [--max-cycles K]` runs **one task** through the standardized
 chain — **fable plans, sonnet builds, fable reviews** — for work not worth slicing into an
 issue graph. Three input modes: an **issue number** (autonomous — scope was pre-approved;
-refused if `prd`/`hitl`-labeled or any `## Blocked by` ref is still open; exactly two outward
-writes, the plan comment and the result comment), a **grilled task** (a `/grill-me` alignment
+refused if `prd`/`hitl`-labeled or any `## Blocked by` ref is still open; exactly two writes
+to the target issue, the plan comment and the result comment — step 7's follow-up issues are
+the only other outward writes), a **grilled task** (a `/grill-me` alignment
 exists in the session — the plan is drift-checked with `/verify-plan`, then gated on user
 approval), or **bare text** (same gate, no drift-check).
 
@@ -97,8 +98,9 @@ branch diff. Findings route by severity:
 | high | ONE collective replan covering all highs (mediums appended) |
 | critical | each gets its own full plan→implement→review cycle |
 
-Fix rounds go to a fresh sonnet implementer, then a **scoped re-review** (prior findings
-addressed? + the fix delta only). Re-reviews are capped at `--max-cycles` (default 2); hitting
+Declared mock-debt is filed as a `mock-debt` issue at finish — there's no orchestrate
+reviewer on this path to do it. Fix rounds go to a fresh sonnet implementer, then a
+**scoped re-review** (prior findings addressed? + the fix delta only). Re-reviews are capped at `--max-cycles` (default 2); hitting
 the cap with medium+ findings open pauses on an AskUserQuestion (continue / stop / take over).
 State persists at every phase boundary into the handoff dir (a `<branch>-pipeline.md` state doc
 plus the `.pending.json` resume pointer), so `/clear` + `go` resumes mid-run. The finished

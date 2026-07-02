@@ -110,13 +110,19 @@ except Exception:
 def resolve_handoff(branch):
     # Handoff doc written by /handoff: <keyed-dir>/<branch-slug>.md
     # (branch slashes replaced with dashes, same rule the skill uses).
+    # Fallback: <branch-slug>-pipeline.md — the /pipeline skill's phase-boundary
+    # state doc — so a PreCompact firing mid-pipeline points the resume order at
+    # the pipeline state instead of nulling handoff_path and orphaning it.
     kd = keyed_dir(common_dir)
     if not branch or not kd:
         return None
     try:
         safe = branch.replace("/", "-")
-        path = os.path.join(kd, safe + ".md")
-        return path if os.path.isfile(path) else None
+        for suffix in (".md", "-pipeline.md"):
+            path = os.path.join(kd, safe + suffix)
+            if os.path.isfile(path):
+                return path
+        return None
     except Exception:
         return None
 

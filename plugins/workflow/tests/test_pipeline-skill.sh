@@ -95,6 +95,12 @@ assert_contains "lows filed with ready-for-agent label" "$content" "ready-for-ag
 assert_contains "mediums triaged to one ordered fix-list" "$content" "ordered fix-list"
 assert_contains "collective high replan" "$content" "all high findings together"
 assert_contains "critical gets its own cycle" "$content" "own full plan"
+assert_contains "mixed critical+high ordering specified" "$content" "per-critical cycles **first**"
+
+# ---------------------------------------------------------------------------
+echo "test: declared mock-debt is filed (no orchestrate reviewer on this path)"
+assert_contains "mock-debt label filed" "$content" "gh label create mock-debt"
+assert_contains "mock-debt filing rationale" "$content" "no orchestrate reviewer"
 
 # ---------------------------------------------------------------------------
 echo "test: scoped re-review of the fix delta only"
@@ -104,7 +110,7 @@ assert_contains "fix delta only" "$content" "fix delta"
 # ---------------------------------------------------------------------------
 echo "test: cap hit with open medium+ pauses via AskUserQuestion"
 assert_contains "AskUserQuestion on cap" "$content" "AskUserQuestion"
-assert_contains "continue option" "$content" "continue"
+assert_contains "continue option grants a cycle" "$content" "grant +1 cycle"
 assert_contains "user takes over option" "$content" "takes over"
 
 # ---------------------------------------------------------------------------

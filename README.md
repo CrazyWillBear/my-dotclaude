@@ -60,9 +60,10 @@ Then **restart Claude Code** so it loads the plugins.
   of a repo's primary checkout and into a per-task worktree (`EnterWorktree`), so parallel
   sessions never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
   **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
-- **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: an autonomous
-  dev loop (`/orchestrate`) that solves GitHub issues in parallel worktrees, and a context
-  watchdog that drives deliberate, early `/clear` and `/handoff` as the window fills.
+- **`workflow`** plugin (`plugins/workflow/`) — three things in one plugin: an autonomous
+  dev loop (`/orchestrate`) that solves GitHub issues in parallel worktrees, a single-task
+  plan→build→review chain (`/pipeline` — fable plans, sonnet builds, fable reviews), and a
+  context watchdog that drives deliberate, early `/clear` and `/handoff` as the window fills.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
@@ -87,7 +88,7 @@ Then **restart Claude Code** so it loads the plugins.
 What you actually type day to day. One human-in-the-loop front-end and one AFK loop, with
 **GitHub Issues as the tracker** (via the `gh` CLI).
 
-### The dev pipeline
+### The issue loop
 
 1. **`/grill-me`** interrogates you about the task — scope, constraints, edge cases,
    acceptance criteria — and emits a shared-understanding summary shaped to feed the PRD.
@@ -99,6 +100,11 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
 4. **`/orchestrate [N] [--max K]`** then runs N rounds AFK: it picks the ready issues,
    builds each in parallel, merges the finished branches back in order, closes them, and
    files follow-ups for anything a reviewer flags.
+
+For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>`**
+runs the same discipline in one pass: a fable planner writes the plan, a sonnet implementer
+builds it in an isolated worktree, and the fable `my-review` agent reviews the diff with
+severity-routed fixes.
 
 The machinery behind each step — worktrees, the merger, the reviewer, label conventions —
 is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command details
@@ -215,7 +221,7 @@ Each plugin's own `README.md` carries its full file tree and per-piece reference
 `bash` and `python3` (the watchdog uses python3 to parse the transcript; if it's missing
 the hook fails open — it does nothing rather than blocking). The setup scripts also need
 the `claude` CLI and use `curl`. Caveman and the Playwright MCP both need
-Node ≥ 18 (Playwright runs via `npx`). The dev pipeline (`/to-prd`, `/to-issues`,
+Node ≥ 18 (Playwright runs via `npx`). The issue loop (`/to-prd`, `/to-issues`,
 `/orchestrate`) needs the [`gh` CLI](https://cli.github.com) installed and
 `gh auth login`'d; the setup just warns if it's absent.
 
