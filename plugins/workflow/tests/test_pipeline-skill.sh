@@ -111,6 +111,7 @@ assert_contains "user takes over option" "$content" "takes over"
 echo "test: never push; branch left for the user"
 assert_contains "never push stated" "$content" "never push"
 assert_contains "never merge stated" "$content" "never merge"
+assert_not_contains "no git push command anywhere" "$content" "git push"
 
 # ---------------------------------------------------------------------------
 echo "test: resume state — pointer schema + state doc + cleanup"
