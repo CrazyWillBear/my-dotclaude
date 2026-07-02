@@ -54,25 +54,30 @@ your scope.
 
 ## Worktree per coding task
 
-When real code work begins in a git repo **that has a remote**, isolate it in its own
-branch and worktree — never edit the base branch directly. *Lazy*: do nothing while
-planning, exploring, or just talking; act on the **first edit that implements the task**.
+The **primary checkout is off-limits for writing.** Before the **first edit that
+implements a task** in any git repo, move this session into a worktree by calling the
+**`EnterWorktree`** tool — then do all writing there. This keeps parallel sessions from
+colliding in one checkout. *Lazy*: do nothing while planning, exploring, or just talking;
+act on the first implementing edit. (A `PreToolUse` guard enforces this — writes to the
+primary tree are denied with a reminder.)
 
 1. **Dirty tree first.** If `git status --porcelain` is non-empty, stop and ask before
-   isolating — proceed (leave the changes here), `git stash` them, or skip the worktree
-   and edit in place.
-2. **Base** off fresh `origin/main` (fetch first) by default, or off a branch I name.
-3. **Name** the branch `issue-<N>` if the task maps to a GitHub issue, else
-   `<type>/<slug>` (`feat/`, `fix/`, `chore/`, …).
-4. `git worktree add ~/.claude/worktrees/<repo>/<branch> -b <branch> <base>`; work there.
+   isolating — the worktree branches off your current `HEAD` (`worktree.baseRef=head`), so
+   uncommitted changes won't come along. Commit them, stash them, or tell me to proceed.
+2. **Enter.** Call `EnterWorktree` (creates a worktree off `HEAD` on a fresh branch and
+   switches this session into it). To continue earlier work, call
+   `EnterWorktree(path=<existing worktree>)` instead — e.g. when a handoff points at one.
+3. **Work** entirely inside the worktree. Commit there as normal; push only when I ask.
+4. **Cleanup.** When the task is done, `ExitWorktree(remove)` (or keep it to come back);
+   on session exit you'll be prompted to keep or remove. A leftover empty, clean worktree
+   is garbage-collected on a later session start.
 
-Push only when I ask. Once the branch **is pushed** and the task is wrapping up, remove
-the worktree (`git worktree remove` + `git worktree prune`), return to the original
-checkout, and `git fetch`. If it was never pushed, leave it and warn
-`worktree not cleaned up`.
+**Conflict resolution is exempt:** while a merge/rebase is in progress, editing the
+primary tree is allowed.
 
-Skip this entirely inside `/orchestrate` or any workflow subagent — those own their
-worktrees.
+`/orchestrate` runs the **whole loop in one worktree** — it calls `EnterWorktree` at the
+start, and its parallel implementer subagents each get their own nested worktree. Don't
+stack another worktree on top inside an orchestrate run or any workflow subagent.
 
 ## Communication
 

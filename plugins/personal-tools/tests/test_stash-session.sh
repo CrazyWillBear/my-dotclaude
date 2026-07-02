@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Tests for scripts/stash-session.sh — the UserPromptSubmit hook that stashes the
-# current session's transcript_path for /review-grill to read back.
+# current session's transcript_path for /verify-plan to read back.
 #
 # Black-box: feed JSON on stdin via pipe, assert on the temp file written.
 # Isolation: $TMPDIR is pointed at an isolated work dir per test so we don't
@@ -79,7 +79,7 @@ assert_exit0 "exits 0" "$rc"
 
 TOPLEVEL="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null)"
 KEY="$(sha1_key "$TOPLEVEL")"
-STASH="$T/tmp/review-grill-session-$KEY.path"
+STASH="$T/tmp/verify-plan-session-$KEY.path"
 
 assert_file "stash file written" "$STASH"
 CONTENT="$(cat "$STASH" | tr -d '\n')"
@@ -109,7 +109,7 @@ rc=$?
 assert_exit0 "exits 0" "$rc"
 
 KEY2="$(sha1_key "$NOGIT")"
-STASH2="$T/tmp/review-grill-session-$KEY2.path"
+STASH2="$T/tmp/verify-plan-session-$KEY2.path"
 
 assert_file "stash file written (non-git)" "$STASH2"
 CONTENT2="$(cat "$STASH2" | tr -d '\n')"
@@ -128,7 +128,7 @@ rc=$?
 assert_exit0 "exits 0 when transcript_path absent" "$rc"
 
 # No stash file should exist in this isolated tmp
-COUNT="$(find "$T/tmp" -name 'review-grill-session-*.path' 2>/dev/null | wc -l)"
+COUNT="$(find "$T/tmp" -name 'verify-plan-session-*.path' 2>/dev/null | wc -l)"
 assert_equals "no stash file written" "$COUNT" "0"
 
 # ===========================================================================
@@ -141,7 +141,7 @@ run_hook "not valid json {{{{" "$T/tmp"
 rc=$?
 assert_exit0 "exits 0 on malformed JSON" "$rc"
 
-COUNT="$(find "$T/tmp" -name 'review-grill-session-*.path' 2>/dev/null | wc -l)"
+COUNT="$(find "$T/tmp" -name 'verify-plan-session-*.path' 2>/dev/null | wc -l)"
 assert_equals "no stash file on malformed JSON" "$COUNT" "0"
 
 # ===========================================================================

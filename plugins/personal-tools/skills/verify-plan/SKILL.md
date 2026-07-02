@@ -1,6 +1,6 @@
 ---
-name: review-grill
-description: Check whether the plan(s)/PRD(s)/issue-slice(s) under discussion still match the decisions made in this session — a sonnet subagent reads the current session log, later decisions win, and reports drift read-only. Use for "/review-grill", "does my plan still match what we decided?".
+name: verify-plan
+description: Check whether the plan(s)/PRD(s)/issue-slice(s) under discussion still match the decisions made in this session — a sonnet subagent reads the current session log, later decisions win, and reports drift read-only. Use for "/verify-plan", "does my plan still match what we decided?".
 argument-hint: "[optional: which plan/PRD/issue to check; empty = infer from the conversation]"
 model: inherit
 allowed-tools: Read, Grep, Glob, Bash, Agent
@@ -17,14 +17,14 @@ Run this in a Bash block:
 ```bash
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 key="$(printf %s "$root" | sha1sum | cut -c1-16)"
-stash="${TMPDIR:-/tmp}/review-grill-session-$key.path"
+stash="${TMPDIR:-/tmp}/verify-plan-session-$key.path"
 [ -s "$stash" ] && cat "$stash"
 ```
 
 If `$stash` is **missing or empty**: hard error, stop. Tell the user:
 
 > The session pointer isn't set yet — this usually means the hook hasn't fired yet.
-> Run `/reload-plugins`, submit one prompt (anything), then re-run `/review-grill`.
+> Run `/reload-plugins`, submit one prompt (anything), then re-run `/verify-plan`.
 
 Do nothing else until the user addresses this.
 
@@ -35,14 +35,14 @@ Read the resolved log path from the stash, then measure its size:
 ```bash
 log="$(cat "$stash" | tr -d '\n')"
 bytes="$(wc -c < "$log")"
-marker="${TMPDIR:-/tmp}/review-grill-oversize-$key"
+marker="${TMPDIR:-/tmp}/verify-plan-oversize-$key"
 ```
 
 - `bytes` ≤ **600000** (≈ 150k tokens): remove any stale marker (`rm -f "$marker"`),
   proceed to Step 3.
 - `bytes` > 600000 and `$marker` **absent**: write the marker (`touch "$marker"`),
   then hard-stop. Report the measured size (e.g. "session log is ~410k bytes, over the
-  ~150k-token cap") and tell the user that re-running `/review-grill` once more will
+  ~150k-token cap") and tell the user that re-running `/verify-plan` once more will
   override the guard and proceed.
 - `bytes` > 600000 and `$marker` **present**: remove the marker (`rm -f "$marker"`),
   then proceed to Step 3 — this is the override run.

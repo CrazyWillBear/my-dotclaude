@@ -1,25 +1,31 @@
 # workflow
 
-Two features in one plugin, versioned here with the rest of my setup:
+Three features in one plugin, versioned here with the rest of my setup:
 
 1. **`/orchestrate`** — an autonomous dev loop that solves GitHub issues in parallel
    isolated worktrees, merges the finished branches in dependency order, and files
    review follow-ups.
-2. **A context watchdog** — hooks that drive deliberate, *early* `/clear` and `/handoff`
+2. **`/pipeline`** — a single-task plan→build→review chain: a fable planner writes a
+   plan, a sonnet implementer builds it in an isolated worktree, the fable `my-review`
+   agent reviews the diff, and findings route by severity through a capped fix loop.
+3. **A context watchdog** — hooks that drive deliberate, *early* `/clear` and `/handoff`
    as the window fills, instead of waiting for Claude Code's near-the-limit auto-compact.
 
 ```
 plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
-├── skills/orchestrate/SKILL.md       # /orchestrate — the parallel issue-solving loop
+├── skills/
+│   ├── orchestrate/SKILL.md          # /orchestrate — the parallel issue-solving loop
+│   └── pipeline/SKILL.md             # /pipeline — plan→build→review one task
 ├── agents/
-│   ├── implementer.md                # inherits model, xhigh effort — builds one issue in one worktree
+│   ├── implementer.md                # inherits model, xhigh effort — builds one issue/work order in one worktree
 │   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
+│   ├── planner.md                    # fable, high effort — plans/replans/triages for /pipeline, read-only
 │   └── reviewer.md                   # opus, max effort — files review-fix follow-ups, never edits code
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
-│   ├── resume.sh                     # SessionStart: re-inject the per-repo handoff after /clear or /compact
+│   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
 │   └── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
@@ -32,6 +38,13 @@ plugins/workflow/
 `/orchestrate [N] [--max K]` runs **N** rounds (default 1), building up to **K** issues in
 parallel per round (default 3). It runs on the **main thread** because only the main thread
 can spawn subagents.
+
+**The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
+into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
+worktree the `personal-tools` `worktree-guard` allows and the **primary checkout is never touched**.
+Per-issue implementer worktrees nest under it. The merged result is **left on the orchestration
+branch** for you to merge into `dev`/`main` yourself — the run never merges back to the launch
+branch, and cleanup removes only the per-issue child worktrees.
 
 Each round:
 
@@ -60,6 +73,40 @@ round*. So a single `/orchestrate` (N=1) **files** follow-ups but doesn't build 
 another round (`/orchestrate 2`, or re-run) to let the loop pick them up. PR merges stay a
 human decision; the loop never merges PRs.
 
+## Inside the pipeline (`/pipeline`)
+
+`/pipeline <issue#|task text> [--max-cycles K]` runs **one task** through the standardized
+chain — **fable plans, sonnet builds, fable reviews** — for work not worth slicing into an
+issue graph. Three input modes: an **issue number** (autonomous — scope was pre-approved;
+refused if `prd`/`hitl`-labeled or any `## Blocked by` ref is still open; exactly two writes
+to the target issue, the plan comment and the result comment — step 7's label creates and
+follow-up issues are the only other outward writes), a **grilled task** (a `/grill-me` alignment
+exists in the session — the plan is drift-checked with `/verify-plan`, then gated on user
+approval), or **bare text** (same gate, no drift-check).
+
+The run enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
+`pipeline-<slug>`), then chains: **planner** (fable, high — ordered steps with file paths,
+testable acceptance criteria, the project done-check, risks) → **implementer** (spawned with
+`model: "sonnet"`, handed the plan as a *work order*) → **my-review** (the `personal-tools`
+fable/xhigh reviewer, hard dependency — the run fails loud at start if it's missing) on the
+branch diff. Findings route by severity:
+
+| severity | route |
+|---|---|
+| low | filed as `review-fix` + `ready-for-agent` issues; never fixed in-run |
+| medium | planner triage call → one ordered fix-list |
+| high | ONE collective replan covering all highs (mediums appended) |
+| critical | each gets its own full plan→implement→review cycle |
+
+Declared mock-debt is filed as a `mock-debt` issue at finish — there's no orchestrate
+reviewer on this path to do it. Fix rounds go to a fresh sonnet implementer, then a
+**scoped re-review** (prior findings addressed? + the fix delta only). Re-reviews are capped at `--max-cycles` (default 2); hitting
+the cap with medium+ findings open pauses on an AskUserQuestion (continue / stop / take over).
+State persists at every phase boundary into the handoff dir (a `<branch>-pipeline.md` state doc
+plus the `.pending.json` resume pointer), so `/clear` + `go` resumes mid-run. The finished
+branch is **left for the user** — the pipeline never pushes, never merges, never closes the
+issue.
+
 ## Inside the watchdog
 
 `hooks.json` wires five scripts to Claude Code hook events. All of them **fail open**: a
@@ -83,7 +130,11 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
     skipped entirely.
 - **`resume.sh`** (SessionStart) re-injects the in-flight per-repo handoff after each
   `/clear` or `/compact`, and deletes the wrap-nudge sentinel — re-arming the nudge from the
-  250k floor.
+  250k floor. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
+  written inside a linked worktree resumes from anywhere in the repo; when it was written in a
+  worktree, the re-injected order tells the fresh session to `EnterWorktree(path=…)` that
+  worktree first. Resolution is **3-tier**: the common-dir key, then the old `--show-toplevel`
+  key (one release of migration), then the legacy global pointer.
 - **`save-handoff.sh`** (PreCompact) writes a handoff before *every* compaction — a manual
   `/compact` or Claude Code's auto-compact — so the plan re-injects either way.
 - **`suggest-docs.sh`** (Stop) gives a soft nudge when a batch changed code but touched no
