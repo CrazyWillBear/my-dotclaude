@@ -21,7 +21,7 @@ plugins/personal-tools/
 │   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 │   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
-│   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
+│   └── my-review.md               # my-review — the reviewer brain (fable, xhigh reasoning)
 ├── hooks/
 │   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
@@ -88,12 +88,14 @@ plugins/personal-tools/
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
 - **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
-  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent at **max
-  reasoning** on the session model: a dedicated security pass first (injection, authn/authz,
+  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent (**fable**,
+  **xhigh** reasoning): a dedicated security pass first (injection, authn/authz,
   secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
   pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
-  a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
-  it checks the tree is clean, checks out, reviews, then restores your original branch.
+  a verdict plus findings graded **critical / high / medium / low**, ending in a
+  machine-readable ` ```findings ` block that spawners (e.g. `/pipeline`) route on; never edits,
+  posts, or comments. For a PR it checks the tree is clean, checks out, reviews, then restores
+  your original branch.
 - **`/check-updates`** — report whether a newer kit release is available. Runs
   `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
   queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or
