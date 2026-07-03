@@ -11,7 +11,9 @@
 #   3. Worktree entry via EnterWorktree (orchestrate step-0 pattern) and exit
 #      via ExitWorktree(keep).
 #   4. Grill-mode drift-check invokes the verify-plan skill.
-#   5. The implementer is spawned with model: "sonnet".
+#   5. Models are tier-routed: a Step-0 classify-task call sets a confirmed
+#      roster (planner/implementer/reviewer placeholders), so no model is
+#      hardcoded — the old model: "sonnet" implementer pin is gone.
 #   6. The reviewer is personal-tools:my-review on the baseline..HEAD range.
 #   7. Severity routes: lows filed as review-fix + ready-for-agent issues,
 #      mediums triaged into one ordered fix-list, highs get ONE collective
@@ -77,10 +79,26 @@ assert_contains "plan gate present" "$content" "plan gate"
 assert_contains "no planner round-trip on gate revisions" "$content" "no planner round-trip"
 
 # ---------------------------------------------------------------------------
-echo "test: implementer spawned on sonnet with a work order"
-assert_contains "sonnet model override" "$content" 'model: "sonnet"'
+echo "test: implementer spawned on the tier-routed roster with a work order"
+assert_not_contains "no hardcoded sonnet implementer" "$content" 'model: "sonnet"'
+assert_contains "implementer roster placeholder" "$content" 'model: "<implementer>"'
 assert_contains "work order handed over" "$content" "work order"
 assert_contains "implementer agent named" "$content" "workflow:implementer"
+
+# ---------------------------------------------------------------------------
+echo "test: Step-0 tier routing via classify-task"
+assert_contains "--complexity flag in argument-hint" "$content" "--complexity"
+assert_contains "classify-task skill invoked" "$content" "classify-task"
+assert_contains "invoked via the Skill tool" "$content" "Skill tool"
+assert_contains "tier table row — trivial" "$content" "| trivial | sonnet | sonnet | opus |"
+assert_contains "tier table row — standard" "$content" "| standard | opus | sonnet | opus |"
+assert_contains "tier table row — complex" "$content" "| complex | fable | opus | fable |"
+assert_contains "planner roster placeholder" "$content" 'model: "<planner>"'
+assert_contains "reviewer roster placeholder" "$content" 'model: "<reviewer>"'
+assert_contains "reviewer model held constant" "$content" "held constant"
+assert_contains "issue-mode carve-out — one interactive stop" "$content" "one interactive stop"
+assert_contains "tier rationale surfaced" "$content" "rationale"
+assert_contains "confirmed roster persisted in state doc" "$content" "confirmed roster"
 
 # ---------------------------------------------------------------------------
 echo "test: reviewer is personal-tools:my-review on the branch range"

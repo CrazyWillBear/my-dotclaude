@@ -88,8 +88,9 @@ plugins/personal-tools/
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
 - **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
-  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent (**fable**,
-  **xhigh** reasoning): a dedicated security pass first (injection, authn/authz,
+  (no arg) or a named **PR** (`/my-review 42`). It first **asks whether to run on opus** (cheaper,
+  faster) **or fable** (deepest), then spawns the `my-review` agent (**xhigh** reasoning) on that
+  model: a dedicated security pass first (injection, authn/authz,
   secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
   pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
   a verdict plus findings graded **critical / high / medium / low**, ending in a
@@ -131,12 +132,14 @@ plugins/personal-tools/
 ## How the pieces map to Claude Code
 
 - **Skills** (`skills/<name>/SKILL.md`) become slash commands named after the directory:
-  `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, the
-  `model` to run on, and (optionally) an `agent` to execute inside.
+  `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, and the `model` to
+  run on. (Claude Code also supports an `agent:` field to run a skill *inside* a subagent, but
+  no skill here uses it — `/my-review` now spawns its agent explicitly so it can pick the model
+  first.)
 - **Agents** (`agents/*.md`) become subagents — frontmatter sets the name, when-to-use
   description, allowed tools, `model`, and reasoning `effort`. This plugin ships **`my-review`**
-  (the reviewer behind `/my-review`); its other skills run on the main thread (or spawn built-in
-  agents like **Explore**).
+  (the reviewer `/my-review` spawns); its skills run on the main thread (spawning that agent, or
+  built-in ones like **Explore**).
 - **Hooks** (`hooks/hooks.json`) wire scripts to Claude Code events: a **`PreToolUse`** guard
   (`worktree-guard.sh`), two **`SessionStart`** hooks (`notify-update.sh`, `worktree-gc.sh`), and a
   **`UserPromptSubmit`** hook (`stash-session.sh`). All are fail-open — a hook error never wedges a

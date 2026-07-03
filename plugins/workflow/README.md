@@ -5,9 +5,10 @@ Three features in one plugin, versioned here with the rest of my setup:
 1. **`/orchestrate`** — an autonomous dev loop that solves GitHub issues in parallel
    isolated worktrees, merges the finished branches in dependency order, and files
    review follow-ups.
-2. **`/pipeline`** — a single-task plan→build→review chain: a fable planner writes a
-   plan, a sonnet implementer builds it in an isolated worktree, the fable `my-review`
-   agent reviews the diff, and findings route by severity through a capped fix loop.
+2. **`/pipeline`** — a single-task plan→build→review chain whose planner, implementer, and
+   reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
+   call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
+   agent, and routes findings by severity through a capped fix loop.
 3. **A context watchdog** — hooks that drive deliberate, *early* `/clear` and `/handoff`
    as the window fills, instead of waiting for Claude Code's near-the-limit auto-compact.
 
@@ -16,7 +17,8 @@ plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
 ├── skills/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the parallel issue-solving loop
-│   └── pipeline/SKILL.md             # /pipeline — plan→build→review one task
+│   ├── pipeline/SKILL.md             # /pipeline — plan→build→review one task
+│   └── classify-task/SKILL.md        # /classify-task — tier a task, return the model roster
 ├── agents/
 │   ├── implementer.md                # inherits model, xhigh effort — builds one issue/work order in one worktree
 │   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
@@ -75,21 +77,36 @@ human decision; the loop never merges PRs.
 
 ## Inside the pipeline (`/pipeline`)
 
-`/pipeline <issue#|task text> [--max-cycles K]` runs **one task** through the standardized
-chain — **fable plans, sonnet builds, fable reviews** — for work not worth slicing into an
-issue graph. Three input modes: an **issue number** (autonomous — scope was pre-approved;
-refused if `prd`/`hitl`-labeled or any `## Blocked by` ref is still open; exactly two writes
-to the target issue, the plan comment and the result comment — step 7's label creates and
-follow-up issues are the only other outward writes), a **grilled task** (a `/grill-me` alignment
-exists in the session — the plan is drift-checked with `/verify-plan`, then gated on user
-approval), or **bare text** (same gate, no drift-check).
+`/pipeline <issue#|task text> [--max-cycles K] [--complexity trivial|standard|complex]` runs
+**one task** through the standardized chain — **models routed to the task's complexity tier**
+— for work not worth slicing into an issue graph. Three input modes: an **issue number**
+(autonomous — scope was pre-approved; refused if `prd`/`hitl`-labeled or any `## Blocked by`
+ref is still open; exactly two writes to the target issue, the plan comment and the result
+comment — step 7's label creates and follow-up issues are the only other outward writes), a
+**grilled task** (a `/grill-me` alignment exists in the session — the plan is drift-checked
+with `/verify-plan`, then gated on user approval), or **bare text** (same gate, no drift-check).
 
-The run enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
-`pipeline-<slug>`), then chains: **planner** (fable, high — ordered steps with file paths,
-testable acceptance criteria, the project done-check, risks) → **implementer** (spawned with
-`model: "sonnet"`, handed the plan as a *work order*) → **my-review** (the `personal-tools`
-fable/xhigh reviewer, hard dependency — the run fails loud at start if it's missing) on the
-branch diff. Findings route by severity:
+**Step 0.5 — tier routing.** Before the worktree or any planner/implementer/reviewer spawn, a
+`classify-task` call explores the touched code and classifies the task into a complexity tier,
+which fixes the roster for the whole run:
+
+| tier | planner | implementer | reviewer |
+|---|---|---|---|
+| trivial | sonnet | sonnet | opus |
+| standard | opus | sonnet | opus |
+| complex | fable | opus | fable |
+
+`classify-task` runs its own confirm/override ask — the **one interactive stop before the fix
+loop** even in autonomous issue mode, before any planner/implementer/reviewer spawns.
+`--complexity <tier>` skips classification and
+takes that row directly. (The old hardwired roster ≈ the **complex** tier.)
+
+The run then enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
+`pipeline-<slug>`), and chains: **planner** (`model: <planner>`, high — ordered steps with file
+paths, testable acceptance criteria, the project done-check, risks) → **implementer** (spawned
+with `model: <implementer>`, handed the plan as a *work order*) → **my-review** (the
+`personal-tools` xhigh reviewer on `model: <reviewer>`, hard dependency — the run fails loud at
+start if it's missing) on the branch diff. Findings route by severity:
 
 | severity | route |
 |---|---|
@@ -99,13 +116,14 @@ branch diff. Findings route by severity:
 | critical | each gets its own full plan→implement→review cycle |
 
 Declared mock-debt is filed as a `mock-debt` issue at finish — there's no orchestrate
-reviewer on this path to do it. Fix rounds go to a fresh sonnet implementer, then a
-**scoped re-review** (prior findings addressed? + the fix delta only). Re-reviews are capped at `--max-cycles` (default 2); hitting
-the cap with medium+ findings open pauses on an AskUserQuestion (continue / stop / take over).
-State persists at every phase boundary into the handoff dir (a `<branch>-pipeline.md` state doc
-plus the `.pending.json` resume pointer), so `/clear` + `go` resumes mid-run. The finished
-branch is **left for the user** — the pipeline never pushes, never merges, never closes the
-issue.
+reviewer on this path to do it. Fix rounds go to a fresh implementer (`model: <implementer>`),
+then a **scoped re-review** (prior findings addressed? + the fix delta only) — the reviewer
+model is **held constant** across every re-review. Re-reviews are capped at `--max-cycles`
+(default 2); hitting the cap with medium+ findings open pauses on an AskUserQuestion (continue /
+stop / take over). State persists at every phase boundary into the handoff dir (a
+`<branch>-pipeline.md` state doc plus the `.pending.json` resume pointer) — including the
+**confirmed roster**, so a `/clear` + `go` resume never re-classifies. The finished branch is
+**left for the user** — the pipeline never pushes, never merges, never closes the issue.
 
 ## Inside the watchdog
 
