@@ -1,14 +1,16 @@
 ---
 name: orchestrate
 description: Run N rounds of the autonomous issue-solving loop — pick the ready set (blockers closed, skip hitl), fan out parallel implementers in isolated git worktrees, hand the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, close finished issues, then a reviewer files blocking follow-ups. Use for "/orchestrate", "run the loop", "build the ready issues".
-argument-hint: "[N rounds=1] [--max K=3]"
+argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
-allowed-tools: Read, Grep, Bash, Agent
+allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion
 ---
 
-Run the autonomous issue-solving loop on this repo's GitHub issues. `$ARGUMENTS` = `[N] [--max K]`
-— **N** rounds (default 1); **K** = max issues built in parallel per round (default 3). You run on
-the **main thread** because only the main thread can spawn subagents.
+Run the autonomous issue-solving loop on this repo's GitHub issues.
+`$ARGUMENTS` = `[N] [--max K] [--complexity <tier>]` — **N** rounds (default 1); **K** = max issues
+built in parallel per round (default 3); **`--complexity <tier>`** pins every issue's implementer
+model to one tier and skips per-round classification (see step 3). You run on the **main thread**
+because only the main thread can spawn subagents.
 
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
@@ -53,14 +55,50 @@ the launch branch and never removes the orchestration worktree.
    even if all its `## Blocked by` refs are closed; report it as `blocked — N mock-debt open`.
    The open `mock-debt` set **is** the ledger (the source of truth). If the ready set is empty →
    report and **stop the loop**.
-3. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
+3. **Classify the ready set (pick per-issue implementer models).** Route each ready issue's
+   **implementer** model by complexity **tier**, then confirm the whole round in **one** batch
+   table. This tier table is the source of truth (byte-identical to `classify-task`'s and
+   `/pipeline`'s):
+
+   | tier | planner | implementer | reviewer |
+   |---|---|---|---|
+   | trivial | sonnet | sonnet | opus |
+   | standard | opus | sonnet | opus |
+   | complex | fable | opus | fable |
+
+   Orchestrate routes **only the implementer** model per issue — implementers self-plan, and the
+   round's single **merger** and **reviewer** are per-round, not per-issue, so their models are
+   untouched (the planner/reviewer columns apply only if orchestrate later gains per-issue
+   planners/review).
+
+   - **`--complexity <tier>` given** → **skip classification** entirely; pin **every** ready issue
+     (this round and every subsequent round) to that tier's implementer model. No classify call, no
+     batch confirm — the zero-interaction escape hatch.
+   - **Otherwise** → for **each** ready issue, invoke the **`classify-task` skill** (Skill tool)
+     with that issue's number **and `--no-confirm`** so it explores + classifies and emits its
+     `tier=` / `implementer=` / `rationale=` contract **without its own per-issue confirm**
+     (orchestrate owns confirmation). Parse each issue's tier + implementer model.
+
+   Then show **ONE summary table for the whole round** — issue → tier → implementer model — and run
+   **exactly one `AskUserQuestion`** (never one per issue):
+
+   ```
+   #12 STANDARD (sonnet)   #14 TRIVIAL (sonnet)   #15 COMPLEX (opus)
+   Accept all, or override rows? [Accept all / #14=complex / #15=standard …]
+   ```
+
+   **Accept all** proceeds with the classified roster (the one-interaction default). An **override**
+   like `#14=complex` swaps that issue to the named tier's **whole** row (never a mixed row); apply
+   each override, then proceed. Each issue's confirmed implementer model drives its spawn in step 5.
+4. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
    base branch (C4):
    `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
-4. **Fan out implementers in parallel.** In a **single assistant message**, make one **`Agent`**
+5. **Fan out implementers in parallel.** In a **single assistant message**, make one **`Agent`**
    call per picked issue (`subagent_type: workflow:implementer`), each given: the issue number,
-   its full body, the **absolute** worktree path, and the branch `issue-<N>`. They run
-   concurrently.
-5. **Merge + verify via the merger (C4).** Collect the results, then spawn the **merger** —
+   its full body, the **absolute** worktree path, the branch `issue-<N>`, and
+   `model: "<implementer>"` — that issue's **confirmed implementer model from step 3** (issues in
+   the same round may differ). They run concurrently.
+6. **Merge + verify via the merger (C4).** Collect the results, then spawn the **merger** —
    one `Agent` call (`subagent_type: workflow:merger`) — passing the **absolute orchestration-worktree
    path** as this run's base repo (`git rev-parse --show-toplevel`, a linked worktree → the guard
    allows the merger's writes) and its **base branch**, the **ordered list of completed issues**
@@ -75,7 +113,7 @@ the launch branch and never removes the orchestration worktree.
    - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
      implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**
      with a report. **Never keep an unverified resolution** — that discipline lives in the merger.
-6. **Review the round.** Spawn the **reviewer** — one `Agent` call
+7. **Review the round.** Spawn the **reviewer** — one `Agent` call
    (`subagent_type: workflow:reviewer`) — on the round's merged range
    (`git diff <round_base>..HEAD`) plus the merged issue numbers. It emits findings (C6), files
    `review-fix` follow-ups (wired into dependents' `## Blocked by`, C2) **and** `mock-debt`
@@ -87,7 +125,7 @@ the launch branch and never removes the orchestration worktree.
      closed) from `gh issue list --label mock-debt --json number,title,state`. Touch **no other
      part** of the PRD body. The label query — not this mirror — is authoritative for the gate, so
      a stale mirror never breaks enforcement.
-7. **Clean up + report.** Remove only the **per-issue child worktrees**
+8. **Clean up + report.** Remove only the **per-issue child worktrees**
    (`git worktree remove .worktrees/issue-<N>` then `git worktree prune`) — **leave the
    orchestration worktree and its branch in place** (that's where the merged result lives, for you
    to merge onward). Print a **status table**: issue `#` → title → merged? / closed? → done-check →
@@ -132,11 +170,11 @@ qualifies.
 
 On **yes**: run `gh issue close <N> --comment "All child slices are closed — closing this PRD."`.
 Never edit the PRD's spec content or delete the issue. (The one exception is the delimited
-`## Mock-debt ledger` section the orchestrator maintains in step 6 — it owns that section only.)
+`## Mock-debt ledger` section the orchestrator maintains in step 7 — it owns that section only.)
 
 **For each `blocked` PRD**, note it in the final report without offering to close:
 
 > PRD #N is blocked — open `hitl` issue(s): #H [#H …] need human review before closing.
 
-These PRD offers and notes appear only in the **final report** (step 7), after all rounds. They
+These PRD offers and notes appear only in the **final report** (step 8), after all rounds. They
 never interrupt mid-loop rounds.
