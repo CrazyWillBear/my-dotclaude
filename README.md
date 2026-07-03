@@ -62,8 +62,9 @@ Then **restart Claude Code** so it loads the plugins.
   **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 - **`workflow`** plugin (`plugins/workflow/`) — three things in one plugin: an autonomous
   dev loop (`/orchestrate`) that solves GitHub issues in parallel worktrees, a single-task
-  plan→build→review chain (`/pipeline` — fable plans, sonnet builds, fable reviews), and a
-  context watchdog that drives deliberate, early `/clear` and `/handoff` as the window fills.
+  plan→build→review chain (`/pipeline` — planner/implementer/reviewer models routed to the
+  task's complexity tier), and a context watchdog that drives deliberate, early `/clear` and
+  `/handoff` as the window fills.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
   terse output; installed alongside the above.
@@ -102,9 +103,10 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    files follow-ups for anything a reviewer flags.
 
 For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>`**
-runs the same discipline in one pass: a fable planner writes the plan, a sonnet implementer
-builds it in an isolated worktree, and the fable `my-review` agent reviews the diff with
-severity-routed fixes.
+runs the same discipline in one pass: a Step-0 `classify-task` call routes the
+planner/implementer/reviewer models to the task's complexity tier, the planner writes the plan,
+the implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
+with severity-routed fixes.
 
 The machinery behind each step — worktrees, the merger, the reviewer, label conventions —
 is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command details

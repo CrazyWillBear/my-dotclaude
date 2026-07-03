@@ -14,7 +14,7 @@
     {
       "name": "workflow",
       "source": "./plugins/workflow",
-      "description": "An autonomous dev loop (/orchestrate fans out parallel issue-solving in isolated git worktrees, then an opus reviewer files blocking follow-ups), a single-task plan-build-review chain (/pipeline: fable plans, sonnet builds, fable reviews), plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
+      "description": "An autonomous dev loop (/orchestrate fans out parallel issue-solving in isolated git worktrees, then an opus reviewer files blocking follow-ups), a single-task plan-build-review chain (/pipeline: models routed by complexity tier), plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
     }
   ]
 }
