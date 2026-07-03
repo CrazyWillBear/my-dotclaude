@@ -99,6 +99,11 @@ assert_contains "override option" "$content" "override"
 assert_contains "proceed option" "$content" "proceed"
 
 # ---------------------------------------------------------------------------
+echo "test: --no-confirm batch mode suppresses the per-issue confirm (for orchestrate)"
+assert_contains "--no-confirm documented in argument-hint" "$content" "--no-confirm"
+assert_contains "batch mode skips step 4 confirm" "$content" "skip this step"
+
+# ---------------------------------------------------------------------------
 echo "test: output contract literals callers parse"
 assert_contains "tier= line" "$content" "tier="
 assert_contains "planner= line" "$content" "planner="

@@ -135,6 +135,40 @@ assert_contains "result is left on the orchestration branch" "$content" "orchest
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"
 assert_contains "primary checkout is never touched" "$content" "primary checkout is never touched"
 
+# --- per-issue tier routing (issue #50) ------------------------------------
+echo "test: frontmatter gains Skill + AskUserQuestion for the classify + batch confirm"
+assert_contains "Skill tool allowed" "$content" "Skill"
+assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
+
+echo "test: --complexity escape hatch is documented in the argument-hint"
+assert_contains "--complexity in argument-hint" "$content" "--complexity trivial|standard|complex"
+
+echo "test: each ready issue is classified via the classify-task skill before fan-out"
+assert_contains "classify-task skill invoked" "$content" "classify-task"
+assert_contains "invoked in batch mode (no per-issue confirm)" "$content" "--no-confirm"
+
+echo "test: tier table rows present verbatim (drift guard vs classify-task/pipeline)"
+assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
+assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
+assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
+
+echo "test: only the implementer model is routed per issue (merger/reviewer are per-round)"
+assert_contains "only implementer routed per issue" "$content" "only the implementer"
+
+echo "test: exactly one batch confirmation per round — not one question per issue"
+assert_contains "one summary table for the whole round" "$content" "ONE summary table for the whole round"
+assert_contains "single AskUserQuestion, never per issue" "$content" "never one per issue"
+
+echo "test: an accept-all / zero-override path exists"
+assert_contains "accept-all path" "$content" "Accept all"
+
+echo "test: row-level override swaps the whole tier row"
+assert_contains "row-level override" "$content" "override"
+assert_contains "override swaps the whole row (never mixed)" "$content" "whole"
+
+echo "test: confirmed implementer model is passed explicitly on each implementer spawn"
+assert_contains "explicit implementer model placeholder on spawn" "$content" 'model: "<implementer>"'
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -37,9 +37,9 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K]` runs **N** rounds (default 1), building up to **K** issues in
-parallel per round (default 3). It runs on the **main thread** because only the main thread
-can spawn subagents.
+`/orchestrate [N] [--max K] [--complexity <tier>]` runs **N** rounds (default 1), building up to
+**K** issues in parallel per round (default 3). It runs on the **main thread** because only the
+main thread can spawn subagents.
 
 **The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
 into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
@@ -52,18 +52,24 @@ Each round:
 
 1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
    `hitl` issues (those need a human). Take up to K of them.
-2. **Fan out implementers.** Spawn one **implementer** per ready issue, each in its
-   own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
+2. **Classify (per-issue implementer model).** Route each ready issue's **implementer** model by
+   complexity **tier** via the `classify-task` skill (invoked `--no-confirm`, once per issue), then
+   confirm the whole round in **one** batch table (issue → tier → model) with row-level overrides —
+   **exactly one interactive stop per round**, never one per issue. `--complexity <tier>` skips
+   classification and pins every issue to that tier. Only the implementer is routed per issue; the
+   round's single merger and reviewer are per-round.
+3. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
+   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
    TDD-first, runs the project's done-check, and commits — never touching another worktree
    or the base branch.
-3. **Merge.** Hand the completed branches to the **merger**, which merges them into
+4. **Merge.** Hand the completed branches to the **merger**, which merges them into
    the base branch serially in dependency (topological) order, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-4. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
+5. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
    `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-5. **Review.** Spawn the **reviewer** (opus, max effort) on the
+6. **Review.** Spawn the **reviewer** (opus, max effort) on the
    round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
    (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
    blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.

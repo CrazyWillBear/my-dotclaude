@@ -1,7 +1,7 @@
 ---
 name: classify-task
 description: Classify one task or issue into a complexity tier — trivial, standard, or complex — and return the model routing table (planner/implementer/reviewer) that tier dictates; grounds the call by fanning out 1–3 Explore subagents over the touched codebase areas, then asks you to confirm or override. Use for "/classify-task <issue#|brief>", "classify this task".
-argument-hint: "[issue# | task brief text]"
+argument-hint: "[issue# | task brief text] [--no-confirm]"
 effort: high
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion
 ---
@@ -28,6 +28,9 @@ The previous hardwired `/pipeline` roster ≈ the **complex** tier; the two chea
 below it. Never mix cells across rows — a tier is one whole row.
 
 ## Step 1 — resolve the brief
+
+Strip a trailing `--no-confirm` flag first (**batch mode** — see Step 4); the rest of
+`$ARGUMENTS` is the brief.
 
 - A leading integer (`12`, `#12`) in `$ARGUMENTS` → **issue mode**:
   `gh issue view <N> --json title,body,labels`. The title + body is the brief; labels are
@@ -73,7 +76,12 @@ files/seams from the exploration, not generalities).
 
 ## Step 4 — confirm / override
 
-Show the user the tier, the rationale, and the tier's roster row, then `AskUserQuestion`:
+**Batch mode (`--no-confirm`):** **skip this step** — emit the Step-5 contract directly,
+with no `AskUserQuestion`. A batch caller (e.g. `/orchestrate`'s round classify) invokes
+you once per issue and runs **one** confirmation over the whole set itself, so a per-issue
+confirm here would double-prompt.
+
+Otherwise, show the user the tier, the rationale, and the tier's roster row, then `AskUserQuestion`:
 **trivial** / **standard** / **complex** / **proceed** (accept the classification). An
 **override** substitutes that tier's **full** roster row — never a mixed row.
 
