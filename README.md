@@ -103,7 +103,7 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    files follow-ups for anything a reviewer flags.
 
 For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>`**
-runs the same discipline in one pass: a Step-0 `classify-task` call routes the
+runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the
 planner/implementer/reviewer models to the task's complexity tier, the planner writes the plan,
 the implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
 with severity-routed fixes.

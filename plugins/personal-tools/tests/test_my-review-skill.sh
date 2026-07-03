@@ -63,7 +63,7 @@ assert_contains "fable option" "$content" "fable"
 # ---------------------------------------------------------------------------
 echo "test: spawn literals — subagent_type + model override"
 assert_contains "subagent_type named" "$content" "subagent_type: personal-tools:my-review"
-assert_contains "model override on spawn" "$content" "model:"
+assert_contains "model override on spawn" "$content" 'model: "<pick>"'
 
 # ---------------------------------------------------------------------------
 echo "test: \$ARGUMENTS passes through as the target"

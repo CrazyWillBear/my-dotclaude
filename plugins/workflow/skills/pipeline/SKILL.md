@@ -1,13 +1,13 @@
 ---
 name: pipeline
-description: Run one task through the plan→build→review pipeline — a Step-0 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the planner writes a plan, the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
+description: Run one task through the plan→build→review pipeline — a Step-0.5 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the planner writes a plan, the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
 argument-hint: "[issue# | task text] [--max-cycles K=2] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Skill, AskUserQuestion
 ---
 
 Run one task through the standardized pipeline with **models routed by complexity tier**
-(classified in Step 0), and a severity-routed fix loop.
+(classified in Step 0.5), and a severity-routed fix loop.
 `$ARGUMENTS` = `[issue# | task text] [--max-cycles K] [--complexity trivial|standard|complex]` —
 **K** = max review cycles (default **2**). You run on the **main thread** because only the main
 thread can spawn subagents.
@@ -40,8 +40,8 @@ models) — reuse it; **never re-classify on resume**.
      **open** (`gh issue view <ref> --json state`). An issue is ready iff **every** blocker is
      closed.
    Issue mode is **autonomous** — scope was pre-approved when the issue was filed — with
-   **one interactive stop**: the Step-0.5 tier confirm, before any subagent spawns (skipped when
-   `--complexity` is passed). Exactly two writes go **to the target issue**: the plan comment
+   **one interactive stop before the fix loop**: the Step-0.5 tier confirm, before any pipeline
+   subagent (planner/implementer/reviewer) spawns (skipped when `--complexity` is passed). Exactly two writes go **to the target issue**: the plan comment
    (step 2) and the result comment (step 8). (Step 7's label creates and follow-up issues —
    lows and declared mock-debt — happen in either mode and are the only other outward writes.)
 4. **Grill/bare mode:** distill the brief **yourself on the main thread** — the task text plus
@@ -64,7 +64,7 @@ The models below are **tier-routed**, not fixed. This tier table is the source o
 - **Otherwise** → invoke the **`classify-task` skill** (Skill tool) with the issue body (issue
   mode) or the distilled brief (grill/bare). It explores the touched code, classifies, and runs
   **its own** confirm/override `AskUserQuestion` — the single interactive stop, in **both** modes,
-  before any subagent spawns. Parse its output contract (`tier=` / `planner=` / `implementer=` /
+  before any pipeline subagent (planner/implementer/reviewer) spawns. Parse its output contract (`tier=` / `planner=` / `implementer=` /
   `reviewer=` / `rationale=`) into the **confirmed roster** that drives every spawn below. Keep
   the `rationale` for Step 2 surfacing.
 

@@ -12,7 +12,7 @@ the **main thread** because only the main thread can spawn the Explore subagents
 the call. You are **read-only** apart from `gh issue view`: you inspect, classify, and emit a
 contract — you never edit.
 
-`/pipeline` invokes this at its Step 0 to pick the models for the run; you can also be invoked
+`/pipeline` invokes this at its Step 0.5 to pick the models for the run; you can also be invoked
 directly (`/classify-task <issue#|brief>`). The **output contract** at the bottom is
 load-bearing — callers parse it — so emit it verbatim.
 
@@ -24,7 +24,7 @@ load-bearing — callers parse it — so emit it verbatim.
 | standard | opus | sonnet | opus |
 | complex | fable | opus | fable |
 
-The current hardwired `/pipeline` roster ≈ the **complex** tier; the two cheaper tiers sit
+The previous hardwired `/pipeline` roster ≈ the **complex** tier; the two cheaper tiers sit
 below it. Never mix cells across rows — a tier is one whole row.
 
 ## Step 1 — resolve the brief

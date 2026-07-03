@@ -6,7 +6,7 @@ Three features in one plugin, versioned here with the rest of my setup:
    isolated worktrees, merges the finished branches in dependency order, and files
    review follow-ups.
 2. **`/pipeline`** — a single-task plan→build→review chain whose planner, implementer, and
-   reviewer models are **routed to the task's complexity tier** (a Step-0 `classify-task`
+   reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
    call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
    agent, and routes findings by severity through a capped fix loop.
 3. **A context watchdog** — hooks that drive deliberate, *early* `/clear` and `/handoff`
@@ -86,9 +86,9 @@ comment — step 7's label creates and follow-up issues are the only other outwa
 **grilled task** (a `/grill-me` alignment exists in the session — the plan is drift-checked
 with `/verify-plan`, then gated on user approval), or **bare text** (same gate, no drift-check).
 
-**Step 0 — tier routing.** Before any worktree or subagent, a `classify-task` call explores
-the touched code and classifies the task into a complexity tier, which fixes the roster for the
-whole run:
+**Step 0.5 — tier routing.** Before the worktree or any planner/implementer/reviewer spawn, a
+`classify-task` call explores the touched code and classifies the task into a complexity tier,
+which fixes the roster for the whole run:
 
 | tier | planner | implementer | reviewer |
 |---|---|---|---|
@@ -96,8 +96,9 @@ whole run:
 | standard | opus | sonnet | opus |
 | complex | fable | opus | fable |
 
-`classify-task` runs its own confirm/override ask — the **one interactive stop** even in
-autonomous issue mode, before anything spawns. `--complexity <tier>` skips classification and
+`classify-task` runs its own confirm/override ask — the **one interactive stop before the fix
+loop** even in autonomous issue mode, before any planner/implementer/reviewer spawns.
+`--complexity <tier>` skips classification and
 takes that row directly. (The old hardwired roster ≈ the **complex** tier.)
 
 The run then enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
