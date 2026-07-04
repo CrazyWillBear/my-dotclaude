@@ -67,6 +67,7 @@ fi
 tcr_step "Developer setup into: $HOME/.claude"
 tcr_install_global_claudemd
 tcr_set_setting model opus
+tcr_set_nested_setting worktree.baseRef head   # per-session worktrees branch off current HEAD
 tcr_install_statusline         # default context status line (folds in caveman badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)

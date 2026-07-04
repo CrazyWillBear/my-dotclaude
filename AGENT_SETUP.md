@@ -62,7 +62,11 @@ macOS / Linux / WSL only (on Windows, run under WSL).
      Resolve every conflict *in conversation* — don't silently pick a winner.
 2. Merge `"model": "opus"` into `~/.claude/settings.json`, preserving other keys. If the
    file already sets `model` to something else, don't silently swap it — tell the user the
-   current value vs. `opus` and ask before changing it.
+   current value vs. `opus` and ask before changing it. In the same file, set the nested
+   `"worktree": { "baseRef": "head" }` (preserving any other `worktree` keys) — the
+   `personal-tools` worktree guard pushes work into an `EnterWorktree` worktree, and `head`
+   branches it off the current local `HEAD` (the default `fresh` targets `origin/<default>` and
+   fails on local-only repos). Harmless outside git repos.
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude

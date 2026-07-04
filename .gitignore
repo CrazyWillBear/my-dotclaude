@@ -10,5 +10,9 @@ Thumbs.db
 *.log
 *.tmp
 
+# Worktrees created by EnterWorktree / the worktree rule (incl. /orchestrate's
+# orchestration worktree); kept out of the kit's own primary tree during dogfooding.
+.claude/worktrees/
+
 # Per-issue worktrees created by /orchestrate (workflow plugin)
 .worktrees/

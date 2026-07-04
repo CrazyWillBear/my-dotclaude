@@ -433,6 +433,74 @@ tcr_set_setting() {
   tcr_merge_json_string "$HOME/.claude/settings.json" "$1" "$2"
 }
 
+# tcr_set_nested_setting <dotted.key> <string-value> — set a NESTED setting in
+# ~/.claude/settings.json, e.g. `tcr_set_nested_setting worktree.baseRef head`. Walks (and
+# creates) the intermediate objects and sets the leaf to the string value, preserving every
+# sibling key. tcr_set_setting is flat and tcr_merge_json_object would replace the whole
+# top-level object, so neither can set a single sub-key. Same safety as the others: creates
+# the file if absent, backs up before a successful overwrite, never clobbers a non-empty
+# file it cannot parse.
+tcr_set_nested_setting() {
+  local cfg="$HOME/.claude/settings.json"
+  local key="$1" value="$2"
+  mkdir -p "$(dirname "$cfg")"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    tcr_warn "python3 not found — set \"$key\" to \"$value\" in $cfg manually."
+    return 0
+  fi
+
+  local bak rc=0
+  bak="$(TCR_CFG="$cfg" TCR_KEY="$key" TCR_VALUE="$value" python3 - <<'PY'
+import json, os, shutil, sys, time
+
+cfg = os.environ["TCR_CFG"]
+parts = [p for p in os.environ["TCR_KEY"].split(".") if p]
+value = os.environ["TCR_VALUE"]
+if not parts:
+    sys.exit(4)  # empty key — programmer error
+
+data = {}
+if os.path.exists(cfg):
+    with open(cfg) as fh:
+        raw = fh.read()
+    if raw.strip():
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            sys.exit(3)  # non-empty but unparseable — do not clobber
+        if not isinstance(data, dict):
+            sys.exit(3)
+        bak = cfg + ".bak." + time.strftime("%Y%m%d%H%M%S")
+        shutil.copy2(cfg, bak)
+        print(bak)
+
+node = data
+for p in parts[:-1]:
+    child = node.get(p)
+    if not isinstance(child, dict):
+        child = {}
+        node[p] = child
+    node = child
+node[parts[-1]] = value
+with open(cfg, "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
+)" || rc=$?
+
+  if [ "$rc" -eq 3 ]; then
+    tcr_warn "$cfg isn't plain JSON (comments or a trailing comma?) — left it untouched; set \"$key\" to \"$value\" manually."
+    return 0
+  elif [ "$rc" -eq 4 ]; then
+    tcr_die "internal: empty key passed to tcr_set_nested_setting."
+  elif [ "$rc" -ne 0 ]; then
+    tcr_die "failed to update $cfg (python3 exit $rc)."
+  fi
+  [ -n "$bak" ] && tcr_ok "backed up $cfg -> $bak"
+  tcr_ok "set $key=$value ($cfg)"
+}
+
 # tcr_install_statusline — install the default statusline renderer to
 # ~/.claude/statusline.py and point settings.json's statusLine at it. Always
 # overwrites any existing statusLine (a timestamped settings.json backup is

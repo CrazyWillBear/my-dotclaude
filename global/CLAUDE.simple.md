@@ -23,6 +23,10 @@ know coding terms, file structures, or command-line tools — and that's okay.
 - You do all the technical work: setting things up, installing what's needed, saving
   versions (git), running and testing things. I shouldn't need to touch a terminal.
 - Quietly keep my work safe — save versions as you go so nothing is ever lost.
+- **Work in a separate sandbox.** When you start changing files, move into your own
+  private copy of my project first, and make the changes there — never edit the main copy
+  directly. That way, if two tasks run at once they can't trip over each other, and my
+  main copy stays clean. Tidy the sandbox up when the task is finished.
 
 ## How you write code
 

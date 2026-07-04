@@ -18,14 +18,18 @@ plugins/personal-tools/
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
-│   └── update-kit/SKILL.md        # /update-kit — apply the latest kit release
+│   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
+│   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
-│   └── my-review.md               # my-review — the reviewer brain (inherit model, max reasoning)
+│   └── my-review.md               # my-review — the reviewer brain (fable, xhigh reasoning)
 ├── hooks/
-│   └── hooks.json                 # SessionStart hook wiring (the update notifier)
+│   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
-│   └── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
+│   ├── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
+│   ├── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /verify-plan (fail-open)
+│   ├── worktree-guard.sh          # PreToolUse hook — denies Edit/Write/NotebookEdit into the primary tree; forces a worktree (fail-open)
+│   └── worktree-gc.sh             # SessionStart hook — sweeps crash-orphaned .claude/worktrees/* (clean + no-commits + old, fail-open)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
 └── README.md                      # this file
 ```
@@ -36,6 +40,12 @@ plugins/personal-tools/
   questions (preferring `AskUserQuestion`) over scope, constraints, edge cases, and acceptance
   criteria, ending in a tight **shared-understanding summary** shaped to feed `/to-prd`.
   Read-only; runs on the main thread.
+- **`/verify-plan [target]`** — point a sonnet subagent at the current session log and ask
+  whether the plan/PRD/issue-slices under discussion still match what was decided (later
+  decisions win). Reports drift — contradictions and omissions — read-only. A `UserPromptSubmit`
+  hook (`stash-session.sh`) stashes the transcript path on every prompt; the skill reads it back
+  since skill bodies never receive the session path directly. Pairs with `/grill-me` → `/to-prd`
+  → `/to-issues`.
 - **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
   a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
   template verbatim, and publish it labeled `prd` (a tracking doc — *not* built directly).
@@ -47,9 +57,11 @@ plugins/personal-tools/
   (and `hitl` where a human is needed); never edits the parent PRD.
 - **`/handoff [note]`** — capture a rich handoff before `/clear`: write the handoff doc and the
   resume pointer the `workflow` plugin reads, both under a per-repo keyed dir
-  `~/.claude/handoffs/<sha1(toplevel)[:16]>/` (`<branch-slug>.md` + `.pending.json`), so concurrent
-  handoffs across repos never collide. Captures work done, in-flight state, next steps, key files,
-  and gotchas, then tells me to `/clear` and send `go`. Requires committed work first.
+  `~/.claude/handoffs/<sha1(--git-common-dir)[:16]>/` (`<branch-slug>.md` + `.pending.json`).
+  Keying by the shared common `.git` means the primary tree and all its linked worktrees share one
+  pointer (a worktree handoff resumes from anywhere in the repo) while concurrent handoffs across
+  *different* repos never collide. Captures work done, in-flight state, next steps, key files, and
+  gotchas, then tells me to `/clear` and send `go`. Requires committed work first.
 - **`/handoff-plan [path]`** — the plan-only sibling of `/handoff`, run *right after* exiting plan
   mode: capture the just-approved plan (or the file at `[path]`, which wins when given) verbatim to
   `<branch-slug>-plan.md` in the same keyed dir, write the same `.pending.json` resume pointer, then
@@ -76,12 +88,15 @@ plugins/personal-tools/
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
 - **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
-  (no arg) or a named **PR** (`/my-review 42`). Runs inside the `my-review` agent at **max
-  reasoning** on the session model: a dedicated security pass first (injection, authn/authz,
+  (no arg) or a named **PR** (`/my-review 42`). It first **asks whether to run on opus** (cheaper,
+  faster) **or fable** (deepest), then spawns the `my-review` agent (**xhigh** reasoning) on that
+  model: a dedicated security pass first (injection, authn/authz,
   secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
   pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
-  a verdict plus findings grouped blocker/warning/nit; never edits, posts, or comments. For a PR
-  it checks the tree is clean, checks out, reviews, then restores your original branch.
+  a verdict plus findings graded **critical / high / medium / low**, ending in a
+  machine-readable ` ```findings ` block that spawners (e.g. `/pipeline`) route on; never edits,
+  posts, or comments. For a PR it checks the tree is clean, checks out, reviews, then restores
+  your original branch.
 - **`/check-updates`** — report whether a newer kit release is available. Runs
   `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
   queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or
@@ -99,15 +114,35 @@ plugins/personal-tools/
   `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
   `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
   No arguments needed; works for both developer and simple-setup audiences.
+- **Worktree isolation** (`scripts/worktree-guard.sh` + `scripts/worktree-gc.sh`, wired in
+  `hooks/hooks.json`) — enforces the global "worktree per coding task" rule so parallel sessions
+  never collide in one checkout. **`worktree-guard.sh`** (`PreToolUse` on `Edit|Write|NotebookEdit`)
+  denies writes to the git **primary** working tree with a reason that names `EnterWorktree`; writes
+  to a **linked worktree** pass silently, and an **in-progress merge/rebase** is exempt (so the
+  `/orchestrate` merger and manual conflict resolution still work). **`worktree-gc.sh`**
+  (`SessionStart`) is the crash backstop: it removes a kit worktree under `.claude/worktrees/` only
+  when it's clean, has no unique commits vs the base branch, isn't the current one, and is older
+  than `MYDOTCLAUDE_WORKTREE_GC_AGE` (default `43200`s / 12h). Both **fail open**. Set
+  `MYDOTCLAUDE_WORKTREE_GUARD=0` to disable the guard (e.g. on a Claude Code without
+  `EnterWorktree`). **Requires** a Claude Code with the `EnterWorktree` tool and the
+  `worktree.baseRef` setting — the setup scripts install `worktree.baseRef=head` so a new worktree
+  branches off the current `HEAD`. **Gap:** raw Bash mutations (`sed -i`, `>`, `tee`, `git apply`)
+  bypass the guard — it gates the `Edit`/`Write`/`NotebookEdit` tools only.
 
 ## How the pieces map to Claude Code
 
 - **Skills** (`skills/<name>/SKILL.md`) become slash commands named after the directory:
-  `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, the
-  `model` to run on, and (optionally) an `agent` to execute inside.
+  `diagnose/` → `/diagnose`. Frontmatter sets the description, argument hint, and the `model` to
+  run on. (Claude Code also supports an `agent:` field to run a skill *inside* a subagent, but
+  no skill here uses it — `/my-review` now spawns its agent explicitly so it can pick the model
+  first.)
 - **Agents** (`agents/*.md`) become subagents — frontmatter sets the name, when-to-use
   description, allowed tools, `model`, and reasoning `effort`. This plugin ships **`my-review`**
-  (the reviewer behind `/my-review`); its other skills run on the main thread (or spawn built-in
-  agents like **Explore**).
+  (the reviewer `/my-review` spawns); its skills run on the main thread (spawning that agent, or
+  built-in ones like **Explore**).
+- **Hooks** (`hooks/hooks.json`) wire scripts to Claude Code events: a **`PreToolUse`** guard
+  (`worktree-guard.sh`), two **`SessionStart`** hooks (`notify-update.sh`, `worktree-gc.sh`), and a
+  **`UserPromptSubmit`** hook (`stash-session.sh`). All are fail-open — a hook error never wedges a
+  session.
 
 Adding a tool is just dropping a file in and **restarting Claude Code** so it registers.
