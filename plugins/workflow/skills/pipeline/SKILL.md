@@ -34,11 +34,12 @@ models) — reuse it; **never re-classify on resume**.
    unavailable" — and stop. Do not substitute another reviewer.
 3. **Issue mode only:** `gh issue view <N> --json title,body,labels,state`. **Refuse** (report
    and stop, mirroring orchestrate's ready rule) if:
-   - the issue is closed, or labeled `prd` (a PRD tracking doc — slice it with `/to-issues`
-     first) or `hitl` (needs a human);
+   - the issue is closed, or labeled `hitl` (needs a human);
    - any `## Blocked by` ref (bare `#N` lines; `None - can start immediately` passes) is still
      **open** (`gh issue view <ref> --json state`). An issue is ready iff **every** blocker is
      closed.
+   A `prd`-labeled issue is accepted — pipeline runs the whole PRD as one (large but valid)
+   pipeline task; slicing it with `/to-issues` first is the alternative, not a requirement.
    Issue mode is **autonomous** — scope was pre-approved when the issue was filed — with
    **one interactive stop before the fix loop**: the Step-0.5 tier confirm, before any pipeline
    subagent (planner/implementer/reviewer) spawns (skipped when `--complexity` is passed). Exactly two writes go **to the target issue**: the plan comment

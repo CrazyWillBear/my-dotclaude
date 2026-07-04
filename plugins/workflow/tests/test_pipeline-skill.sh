@@ -160,7 +160,8 @@ assert_contains "no substitute reviewer" "$content" "Do not substitute"
 # ---------------------------------------------------------------------------
 echo "test: issue mode guards"
 assert_contains "refuses open blockers" "$content" "## Blocked by"
-assert_contains "prd label refused" "$content" "prd"
+assert_contains "prd-labeled issue accepted" "$content" "\`prd\`-labeled issue is accepted"
+assert_not_contains "prd not in the refuse list" "$content" "labeled \`prd\`"
 assert_contains "hitl label refused" "$content" "hitl"
 assert_contains "plan posted as issue comment" "$content" "gh issue comment"
 
