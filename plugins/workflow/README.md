@@ -83,14 +83,16 @@ human decision; the loop never merges PRs.
 
 ## Inside the pipeline (`/pipeline`)
 
-`/pipeline <issue#|task text> [--max-cycles K] [--complexity trivial|standard|complex]` runs
+`/pipeline <issue#|task text> [--max-cycles K] [--complexity trivial|standard|complex]
+[--self-plan]` runs
 **one task** through the standardized chain — **models routed to the task's complexity tier**
 — for work not worth slicing into an issue graph. Three input modes: an **issue number**
 (autonomous — scope was pre-approved; refused if `prd`/`hitl`-labeled or any `## Blocked by`
 ref is still open; exactly two writes to the target issue, the plan comment and the result
 comment — step 7's label creates and follow-up issues are the only other outward writes), a
-**grilled task** (a `/grill-me` alignment exists in the session — the plan is drift-checked
-with `/verify-plan`, then gated on user approval), or **bare text** (same gate, no drift-check).
+**grilled task** (a `/grill-me` alignment exists in the session — the plan may be drift-checked
+with `/verify-plan` and gated on user approval, per the conditions below), or **bare text** (same
+gate, no drift-check).
 
 **Step 0.5 — tier routing.** Before the worktree or any planner/implementer/reviewer spawn, a
 `classify-task` call explores the touched code and classifies the task into a complexity tier,
@@ -106,6 +108,20 @@ which fixes the roster for the whole run:
 loop** even in autonomous issue mode, before any planner/implementer/reviewer spawns.
 `--complexity <tier>` skips classification and
 takes that row directly. (The old hardwired roster ≈ the **complex** tier.)
+
+**Step 2 — who writes the plan (authorship ladder, first match wins).** The Step-2 plan is
+normally written by the `workflow:planner` subagent, but two levers let the **main thread**
+author it inline (no planner spawn), since it often holds fuller context — especially after a
+`/grill-me`: (1) **`--self-plan`** (flag or a natural-language "plan it yourself") → inline, any
+mode/tier; (2) **trivial tier** → an automatic **minimal inline plan** that still carries ordered
+steps, `## Acceptance criteria`, and the done-check; (3) **grill mode, standard/complex** → an
+`AskUserQuestion` picks inline or subagent; (4) **bare/issue mode, standard/complex** → the
+planner subagent (today's default). Issue mode adds **no new ask** — its authorship is flag- or
+tier-driven, and classify's tier confirm stays the only interactive stop. The **plan gate**
+(grill/bare) now fires only when **tier is complex or the plan was subagent-authored** — an inline
+trivial/standard plan skips it; and **verify-plan** runs on grill standard/complex only (skipped
+on trivial). Step-5 replans always spawn the planner subagent, never inline; a `/clear` + `go`
+resume reuses the embedded plan and never re-spawns a Step-2 planner.
 
 The run then enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
 `pipeline-<slug>`), and chains: **planner** (`model: <planner>`, high — ordered steps with file
