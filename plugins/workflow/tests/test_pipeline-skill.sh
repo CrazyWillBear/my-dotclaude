@@ -77,6 +77,8 @@ echo "test: worktree entry via EnterWorktree, exit via ExitWorktree(keep)"
 assert_contains "EnterWorktree call present" "$content" "EnterWorktree(name:"
 assert_contains "ExitWorktree keep present" "$content" "ExitWorktree(keep)"
 assert_contains "git-dir vs common-dir check" "$content" "--git-common-dir"
+assert_contains "base recorded before worktree entry" "$content" 'base=$(git rev-parse HEAD)'
+assert_contains "worktree base drift guard resets to base" "$content" 'git reset --hard "$base"'
 
 # ---------------------------------------------------------------------------
 echo "test: grill-mode drift check invokes verify-plan"

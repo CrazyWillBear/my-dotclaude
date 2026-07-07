@@ -130,6 +130,8 @@ assert_contains "report mentions mock-debt" "$content" "mock-debt: N open"
 # --- worktree isolation (step 0) -------------------------------------------
 echo "test: step 0 runs the whole loop in one orchestration worktree"
 assert_contains "step 0 enters an orchestration worktree via EnterWorktree" "$content" "EnterWorktree(name:"
+assert_contains "base recorded before worktree entry" "$content" 'base=$(git rev-parse HEAD)'
+assert_contains "worktree base drift guard resets to base" "$content" 'git reset --hard "$base"'
 assert_contains "names the orchestration worktree" "$content" "orchestration worktree"
 assert_contains "result is left on the orchestration branch" "$content" "orchestration branch"
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"

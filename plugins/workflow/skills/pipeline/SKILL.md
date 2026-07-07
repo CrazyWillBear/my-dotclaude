@@ -88,16 +88,20 @@ Step 2.
 Orchestrate's step-0 pattern verbatim. Decide by where you are now — canonicalize both with
 `realpath` first, since git may print a relative `.git`:
 - **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir` resolve to the
-  **same** path) → call **`EnterWorktree(name: "issue-<N>")`** (issue mode) or
+  **same** path) → record `base=$(git rev-parse HEAD)` **before** the call, then call
+  **`EnterWorktree(name: "issue-<N>")`** (issue mode) or
   **`EnterWorktree(name: "pipeline-<slug>")`** (grill/bare; `<slug>` = short kebab slug of the
-  task). This creates the worktree off the current `HEAD` (`worktree.baseRef=head`) and
-  switches the session into it.
+  task). The worktree's branch point follows the `worktree.baseRef` setting: `head` (which the
+  kit's setup scripts install) branches off the current `HEAD`, but the built-in default is
+  `fresh` = `origin/<default-branch>`, which silently drops local commits. So **verify the base
+  after entering**: if `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"` — the
+  worktree is brand-new, so the reset is safe.
 - **Already in a linked worktree** (the two **differ**) → **skip**; this worktree is already
   isolated.
 
-Record `baseline=$(git rev-parse HEAD)` — the review diffs against it. Everything below runs
-from the worktree. At the very end, **`ExitWorktree(keep)`** — the branch and worktree stay for
-the user.
+Record `baseline=$(git rev-parse HEAD)` (= `$base` after the guard) — the review diffs against
+it. Everything below runs from the worktree. At the very end, **`ExitWorktree(keep)`** — the
+branch and worktree stay for the user.
 
 ## Step 2 — plan
 
