@@ -8,10 +8,13 @@
 # clash with live stash files.
 #
 # Cases:
-#   1. Git-repo cwd: hook writes the stash at sha1(git-toplevel)[:16] key.
+#   1. Git-repo cwd: hook writes the stash at sha1(canonical --git-common-dir)[:16] key.
 #   2. Non-git cwd: hook falls back to sha1(cwd)[:16] key, still writes.
 #   3. Missing transcript_path: hook exits 0 and writes nothing.
 #   4. Malformed JSON: hook exits 0 and writes nothing (fail-open).
+#   5. Linked worktree cwd: same key as the primary checkout (one shared stash).
+#   6. Lockstep: hook and /verify-plan SKILL both key on --git-common-dir, and the
+#      skill has a session-id fallback for stale transcript paths.
 #
 # Run: bash plugins/personal-tools/tests/test_stash-session.sh
 
@@ -58,8 +61,16 @@ run_hook() {
     printf '%s' "$json" | TMPDIR="$tmpdir" bash "$HOOK"
 }
 
+# ---------------------------------------------------------------------------
+# Helper: canonical absolute --git-common-dir for a repo path — the root the
+# hook keys on. Mirrors the hook's realpath(join(cwd, --git-common-dir)).
+# ---------------------------------------------------------------------------
+common_dir() {
+    (cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd -P)
+}
+
 # ===========================================================================
-echo "test 1: git-repo cwd — stash written at sha1(git-toplevel) key"
+echo "test 1: git-repo cwd — stash written at sha1(canonical common dir) key"
 # ===========================================================================
 T="$WORK/t1"
 mkdir -p "$T/tmp"
@@ -77,19 +88,12 @@ run_hook "$JSON" "$T/tmp"
 rc=$?
 assert_exit0 "exits 0" "$rc"
 
-TOPLEVEL="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null)"
-KEY="$(sha1_key "$TOPLEVEL")"
+KEY="$(sha1_key "$(common_dir "$REPO")")"
 STASH="$T/tmp/verify-plan-session-$KEY.path"
 
 assert_file "stash file written" "$STASH"
 CONTENT="$(cat "$STASH" | tr -d '\n')"
 assert_equals "stash contains transcript path" "$CONTENT" "$TRANSCRIPT"
-
-# Bonus: confirm the key used is the toplevel key, not the cwd key directly
-# (they happen to be the same here since REPO IS the toplevel — checked by
-# verifying the sha1 matches the real toplevel path).
-EXPECTED_KEY="$(sha1_key "$TOPLEVEL")"
-assert_equals "key is sha1 of toplevel" "$KEY" "$EXPECTED_KEY"
 
 # ===========================================================================
 echo "test 2: non-git cwd — falls back to sha1(cwd) key"
@@ -143,6 +147,61 @@ assert_exit0 "exits 0 on malformed JSON" "$rc"
 
 COUNT="$(find "$T/tmp" -name 'verify-plan-session-*.path' 2>/dev/null | wc -l)"
 assert_equals "no stash file on malformed JSON" "$COUNT" "0"
+
+# ===========================================================================
+echo "test 5: linked worktree cwd — same stash key as the primary checkout"
+# ===========================================================================
+T="$WORK/t5"
+mkdir -p "$T/tmp"
+
+REPO5="$T/repo"
+mkdir -p "$REPO5"
+git -C "$REPO5" init -q
+git -C "$REPO5" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$REPO5" worktree add -q "$T/wt" -b t5-wt
+
+# Hook fires from the primary checkout, then from the linked worktree.
+JSON5P="$(printf '{"hook_event_name":"UserPromptSubmit","transcript_path":"%s","cwd":"%s"}' \
+    "/fake/primary.jsonl" "$REPO5")"
+run_hook "$JSON5P" "$T/tmp"
+JSON5W="$(printf '{"hook_event_name":"UserPromptSubmit","transcript_path":"%s","cwd":"%s"}' \
+    "/fake/worktree.jsonl" "$T/wt")"
+run_hook "$JSON5W" "$T/tmp"
+
+KEY5="$(sha1_key "$(common_dir "$REPO5")")"
+STASH5="$T/tmp/verify-plan-session-$KEY5.path"
+
+assert_file "stash written at the shared common-dir key" "$STASH5"
+assert_equals "worktree hook overwrote the same stash" \
+    "$(cat "$STASH5" | tr -d '\n')" "/fake/worktree.jsonl"
+COUNT5="$(find "$T/tmp" -name 'verify-plan-session-*.path' 2>/dev/null | wc -l)"
+assert_equals "primary + worktree share ONE stash file" "$COUNT5" "1"
+
+# ===========================================================================
+echo "test 6: hook and /verify-plan skill key in lockstep on --git-common-dir"
+# ===========================================================================
+SKILL="$PLUGIN_ROOT/skills/verify-plan/SKILL.md"
+
+if grep -q -- '--git-common-dir' "$HOOK"; then
+    ok "hook keys on --git-common-dir"
+else
+    no "hook keys on --git-common-dir"
+fi
+if grep -q -- '--git-common-dir' "$SKILL"; then
+    ok "skill keys on --git-common-dir"
+else
+    no "skill keys on --git-common-dir"
+fi
+if grep -q -- '--show-toplevel' "$HOOK" || grep -q -- '--show-toplevel' "$SKILL"; then
+    no "no stale --show-toplevel keying remains"
+else
+    ok "no stale --show-toplevel keying remains"
+fi
+if grep -q '\.claude/projects' "$SKILL"; then
+    ok "skill has a session-id fallback for stale transcript paths"
+else
+    no "skill has a session-id fallback for stale transcript paths"
+fi
 
 # ===========================================================================
 echo ""

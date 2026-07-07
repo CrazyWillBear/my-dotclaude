@@ -4,9 +4,10 @@
 #
 # Stashes this session's transcript_path to a temp file so the /verify-plan skill
 # (which never receives session_id/transcript_path in its execution context) can find
-# the current session log. Keyed by sha1(git-toplevel)[:16] — the same key the skill
-# recomputes — so hook and skill always agree even when running in different
-# subdirectories of the same repo.
+# the current session log. Keyed by sha1(canonical --git-common-dir)[:16] — the same
+# key the skill recomputes, and the same recipe save-handoff.sh uses — so hook and
+# skill always agree from any subdirectory AND from any linked worktree of the repo
+# (the toplevel changes on EnterWorktree; the common dir never does).
 #
 # Fires on every UserPromptSubmit (including the /verify-plan prompt itself), so the
 # stash is always the most-recent session for this repo. That also defeats the
@@ -38,16 +39,19 @@ cwd = str(data.get("cwd") or os.getcwd()).strip()
 if not transcript:
     sys.exit(0)
 
-# Key by git toplevel so that subdirectory cwd still matches the skill's key.
-# Fall back to cwd if git is absent or cwd is outside a repo.
+# Key by the canonical --git-common-dir: identical from the primary tree and every
+# linked worktree (they share one common .git), so /verify-plan still finds the stash
+# after EnterWorktree. realpath(join(...)) turns git's possibly-relative ".git" into
+# the same physical path the skill's bash computes. Fall back to cwd if git is absent
+# or cwd is outside a repo.
 root = cwd
 try:
     out = subprocess.run(
-        ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+        ["git", "-C", cwd, "rev-parse", "--git-common-dir"],
         capture_output=True, text=True, timeout=5,
     )
     if out.returncode == 0 and out.stdout.strip():
-        root = out.stdout.strip()
+        root = os.path.realpath(os.path.join(cwd, out.stdout.strip()))
 except Exception:
     pass
 
