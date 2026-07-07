@@ -53,11 +53,12 @@ Each round:
 1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
    `hitl` issues (those need a human). Take up to K of them.
 2. **Classify (per-issue implementer model).** Route each ready issue's **implementer** model by
-   complexity **tier** via the `classify-task` skill (invoked `--no-confirm`, once per issue), then
-   confirm the whole round in **one** batch table (issue → tier → model) with row-level overrides —
-   **exactly one interactive stop per round**, never one per issue. `--complexity <tier>` skips
-   classification and pins every issue to that tier. Only the implementer is routed per issue; the
-   round's single merger and reviewer are per-round.
+   complexity **tier**, classified **in-workflow**: a Workflow leaf can't reuse the `classify-task`
+   skill (it fans out its own Explore subagents), so each ready issue gets an **explore→classify**
+   pass that emits a real tier, **auto-accepted — no interactive confirm** (the run is autonomous
+   past the launch gate). `--complexity <tier>` skips classification and pins every issue to that
+   tier. Only the implementer is routed per issue; the round's single merger and reviewer are
+   per-round.
 3. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
    each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
    TDD-first, runs the project's done-check, and commits — never touching another worktree

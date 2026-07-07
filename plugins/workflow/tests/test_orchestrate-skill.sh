@@ -178,6 +178,34 @@ assert_contains "conflict-stop stops the loop" "$content" "conflict-stop"
 assert_contains "red done-check stops the loop" "$content" "red done-check"
 assert_contains "implementer failure stops the loop" "$content" "implementer failure"
 
+# --- per-issue in-workflow classify + tier routing (issue #64) -------------
+# orchestrate now carries the tier table, so it JOINS the drift-guard trio
+# (classify-task + pipeline). The three rows must appear byte-identical.
+echo "test: tier table present verbatim (drift guard vs classify-task + pipeline)"
+assert_contains "tier table header" "$content" "| tier | planner | implementer | reviewer |"
+assert_contains "tier table separator" "$content" "|---|---|---|---|"
+assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
+assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
+assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
+
+echo "test: --complexity escape hatch pins every issue and skips classification"
+assert_contains "--complexity in argument-hint" "$content" "[--complexity trivial|standard|complex]"
+assert_contains "--complexity pins every issue" "$content" "pins every issue"
+assert_contains "--complexity skips classification" "$content" "skips classification"
+
+echo "test: each ready issue is classified in-workflow (explore->classify)"
+assert_contains "in-workflow explore→classify stage" "$content" "explore→classify"
+assert_contains "classify emits a real tier" "$content" "real tier"
+assert_contains "classify runs inside the workflow leaf" "$content" "in-workflow"
+
+echo "test: classification is auto-accepted with no interactive confirm"
+assert_contains "tier auto-accepted" "$content" "auto-accepted"
+assert_contains "no interactive confirm" "$content" "no interactive confirm"
+
+echo "test: the implementer model is routed by the issue's tier"
+assert_contains "implementer tier-routed" "$content" "tier-routes its implementer"
+assert_contains "routed via the implementer column" "$content" "implementer column"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

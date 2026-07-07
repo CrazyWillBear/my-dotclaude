@@ -1,7 +1,7 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, then closes the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
-argument-hint: "[N rounds=1] [--max K=3]"
+description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its implementer model, builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, then closes the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
+argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
 ---
@@ -13,13 +13,37 @@ return, exit the worktree and report (Step 2 + end-of-run PRD reap). Running the
 Workflow keeps per-issue chatter (implementer reports, merge results) out of the main conversational
 context — only compact results return.
 
-`$ARGUMENTS` = `[N] [--max K]` — **N** rounds (default 1); **K** = max issues built in parallel per
-round (default 3).
+`$ARGUMENTS` = `[N] [--max K] [--complexity <tier>]` — **N** rounds (default 1); **K** = max issues
+built in parallel per round (default 3); **`--complexity <tier>`** (trivial|standard|complex) pins
+every issue to that tier and skips per-issue classification.
 
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
-push. This skeleton runs one **implementer** per issue on the **default model** (self-plan, no
-per-issue classify/plan/review yet) — tier-routing and per-issue review land in later slices.
+push. Each round **classifies every ready issue in-workflow** (explore→classify, auto-accepted —
+**no interactive confirm**) and **tier-routes its implementer model** per the table below;
+`--complexity <tier>` pins every issue to one tier and skips classification. One **implementer**
+builds each issue (it self-plans); **per-issue review** still lands in a later slice.
+
+## Tier routing
+
+Each ready issue's **implementer** model is routed by its complexity **tier**, classified
+**in-workflow** (explore→classify) and **auto-accepted** — there is **no interactive confirm**,
+because the whole run is autonomous past the launch gate. This tier table must stay
+**byte-identical** to the copies in the `classify-task` and `/pipeline` skills (the three form a
+drift-guard trio — never edit one table without the others):
+
+| tier | planner | implementer | reviewer |
+|---|---|---|---|
+| trivial | sonnet | sonnet | opus |
+| standard | opus | sonnet | opus |
+| complex | fable | opus | fable |
+
+Only the **implementer** column routes here — the round has no per-issue planner or reviewer (the
+implementer self-plans; per-issue review lands in a later slice). A Workflow leaf `agent()`
+**can't** reuse the `classify-task` skill (that skill fans out its own Explore subagents from the
+main thread), so each issue is classified by two in-workflow stages that emit a **real tier**, then
+that tier picks the implementer model from the table's implementer column. **`--complexity <tier>`**
+pins every issue to that tier's row and **skips classification** entirely.
 
 ## Step 0 — enter the orchestration worktree (once, before the Workflow)
 The **whole run executes in one worktree** so the merger writes to a linked worktree (the
@@ -46,7 +70,8 @@ record the run's base for the workflow:
 - **base branch** = `git rev-parse --abbrev-ref HEAD` (the **orchestration branch** from Step 0).
 
 Then **invoke the Workflow tool** with the orchestrate round-loop workflow, passing `rounds=N`,
-`maxParallel=K`, and that base repo path + branch as the run's base. The skill
+`maxParallel=K`, the **pinned `--complexity <tier>` if given** (else unset — classify per issue),
+and that base repo path + branch as the run's base. The skill
 **passes the orchestration worktree** path and branch into the workflow as its base, so every
 per-issue worktree and the merger operate **under** the orchestration worktree and the
 **primary checkout is never touched**. Approving the **Workflow permission dialog is the single launch gate** — after you
@@ -59,8 +84,12 @@ the round loop below. Its shape:
 export const meta = {
   name: "orchestrate-round-loop",
   // inputs: baseRepo (orchestration-worktree path), baseBranch, rounds (N), maxParallel (K),
-  //         doneCheck (the project's done-check command)
+  //         doneCheck (the project's done-check command),
+  //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
+
+// Tier → implementer model — the implementer column of the tier table above.
+const IMPLEMENTER_MODEL = { trivial: "sonnet", standard: "sonnet", complex: "opus" };
 
 // Repeat for N rounds, or until the ready set drains.
 for (let round = 0; round < rounds; round++) {
@@ -68,17 +97,26 @@ for (let round = 0; round < rounds; round++) {
   const ready = await agent({ /* picks ready-for-agent issues; see "Each round" step 1 */ });
   if (ready.issues.length === 0) return stop("empty ready set");   // empty ready set → stop
 
-  // 2. One worktree + one implementer per picked issue (up to K, lowest number first).
-  const picked = ready.issues.slice(0, maxParallel);
-  const built  = await pipeline(picked.map(issue =>
-    agent({ subagent_type: "workflow:implementer", model: undefined /* default model */ })));
+  // 2. Classify each picked issue in-workflow (explore→classify), tier auto-accepted.
+  //    --complexity pins every issue to one tier and skips both stages.
+  const picked = ready.issues.slice(0, maxParallel);   // up to K, lowest number first
+  for (const issue of picked) {
+    if (complexity) { issue.tier = complexity; continue; }        // escape hatch: pin, no classify
+    const found = await agent({ /* explores this issue's touched code; see step 2 */ });
+    const cls   = await agent({ /* reads `found` + issue body → { tier }; see step 2 */ });
+    issue.tier  = cls.tier;                                       // real tier, auto-accepted
+  }
+
+  // 3. One worktree + one implementer per picked issue, model routed by its tier.
+  const built = await pipeline(picked.map(issue =>
+    agent({ subagent_type: "workflow:implementer", model: IMPLEMENTER_MODEL[issue.tier] })));
   if (built.some(b => b.failed)) return stop("implementer failure");
 
-  // 3. Merge serially in ascending issue number, conflicts gated by the done-check.
+  // 4. Merge serially in ascending issue number, conflicts gated by the done-check.
   const merged = await agent({ subagent_type: "workflow:merger" /* base = orchestration worktree */ });
   if (merged.conflictStop || merged.doneCheckRed) return stop("conflict-stop / red done-check");
 
-  // 4. Close the merged issues.
+  // 5. Close the merged issues.
   for (const n of merged.mergedIssues) gh(`issue close ${n} --comment "<merge commit>"`);
 }
 ```
@@ -97,13 +135,25 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    non-empty → hold the gate), even if all its `## Blocked by` refs are closed; report it as
    `blocked — N mock-debt open`. The open `mock-debt` set **is** the ledger (the source of truth).
    If the ready set is empty → an **empty ready set** stops the loop with a report.
-2. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
+2. **Classify each picked issue in-workflow (explore→classify, auto-accepted).** A Workflow leaf
+   `agent()` **can't** reuse the `classify-task` skill (it fans out its own Explore subagents from
+   the main thread), so each picked issue is classified by **two in-workflow stages**: an
+   **explore** agent maps the issue's touched code (relevant files, the seams/contracts it moves,
+   downstream consumers), then a **classify** agent reads that exploration plus the issue body and
+   emits a **real tier** (trivial/standard/complex) by classify-task's rubric — *size is not the
+   signal*: a seam move or new infrastructure is **complex**, mechanical no-decision edits are
+   **trivial**. The tier is **auto-accepted — no interactive confirm** (the run is autonomous past
+   the launch gate), and it **tier-routes its implementer model** via the tier table's implementer
+   column. **`--complexity <tier>`** short-circuits both stages — it **pins every issue** to that
+   tier's row and **skips classification**, so no explore/classify runs.
+3. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
    base branch (C4): `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
-3. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each given
+4. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each given
    the issue number, its full body, the **absolute** worktree path, and the branch `issue-<N>`.
-   They run concurrently on the **default model** — the implementer **self-plans** (no per-issue
-   classify/plan step in this skeleton). An **implementer failure** stops the loop with a report.
-4. **Merge + verify via the merger (C4).** Collect the results, then hand the **completed branches**
+   They run concurrently, **each on the model its tier routed** (the implementer column) — the
+   implementer still **self-plans** (per-issue review lands in a later slice). An **implementer
+   failure** stops the loop with a report.
+5. **Merge + verify via the merger (C4).** Collect the results, then hand the **completed branches**
    to the **`workflow:merger`**, passing the **absolute orchestration-worktree** path as this run's
    base repo (a linked worktree → the guard allows the merger's writes) and its **base branch**, the
    **ordered list of completed issues** (each: `#N`, branch `issue-<N>`, and its **absolute worktree
