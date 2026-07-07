@@ -1,6 +1,6 @@
 ---
 name: pipeline
-description: Run one task through the plan→build→review pipeline — a Step-0.5 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the planner writes a plan, the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
+description: Run one task through the plan→build→review pipeline — a Step-0.5 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the plan is written (planner subagent or inline), the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
 argument-hint: "[issue# | task text] [--max-cycles K=2] [--complexity trivial|standard|complex] [--self-plan]"
 effort: high
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Skill, AskUserQuestion

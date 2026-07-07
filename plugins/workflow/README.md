@@ -87,7 +87,7 @@ human decision; the loop never merges PRs.
 [--self-plan]` runs
 **one task** through the standardized chain — **models routed to the task's complexity tier**
 — for work not worth slicing into an issue graph. Three input modes: an **issue number**
-(autonomous — scope was pre-approved; refused if `prd`/`hitl`-labeled or any `## Blocked by`
+(autonomous — scope was pre-approved; a `prd`-labeled issue is accepted, refused if `hitl`-labeled or any `## Blocked by`
 ref is still open; exactly two writes to the target issue, the plan comment and the result
 comment — step 7's label creates and follow-up issues are the only other outward writes), a
 **grilled task** (a `/grill-me` alignment exists in the session — the plan may be drift-checked
