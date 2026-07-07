@@ -4,7 +4,7 @@
 Claude Code runs this on every status refresh, piping a JSON blob on stdin
 (model, workspace, cost, context_window, ...). We print ONE line:
 
-    <model> · <tokens>/<cost> · <dir> · ⎇ <branch> · +a/-r · <caveman> · <update>
+    <model> · <effort> · <tokens>/<cost> · <dir> · ⎇ <branch> · <caveman> · <update>
 
 Design notes:
   * No network, no transcript parsing. Token usage comes straight from the
@@ -121,6 +121,16 @@ def seg_model(data):
     return ""
 
 
+# Reasoning-effort levels Claude Code reports in `effort.level`. Absent when the
+# model doesn't support the effort parameter — then the segment stays empty.
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
+
+def seg_effort(data):
+    level = (data.get("effort") or {}).get("level")
+    return level if level in EFFORT_LEVELS else ""
+
+
 def _fmt_tokens(n):
     try:
         n = int(n)
@@ -152,16 +162,6 @@ def seg_meters(data):
     return seg_tokens(data) + " / " + seg_cost(data)
 
 
-def seg_lines(data):
-    cost = data.get("cost") or {}
-    try:
-        added = int(cost.get("total_lines_added", 0) or 0)
-        removed = int(cost.get("total_lines_removed", 0) or 0)
-    except (TypeError, ValueError):
-        added = removed = 0
-    return "+%d/-%d" % (added, removed)
-
-
 def seg_caveman():
     flag = os.path.join(_config_dir(), ".caveman-active")
     raw = _read_safe(flag, 64)
@@ -190,10 +190,10 @@ def main():
 
     segments = [
         seg_model(data),
+        seg_effort(data),   # reasoning-effort level
         seg_meters(data),   # tokens / cost
         seg_dir(data),
         seg_branch(data),
-        seg_lines(data),    # diff churn
         seg_caveman(),
         seg_update(),
     ]
