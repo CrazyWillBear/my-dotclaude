@@ -108,6 +108,28 @@ ln -s "$WORK/secret-mode" "$CFG2/.caveman-active"
 out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$CFG2" XDG_CACHE_HOME="$EMPTY_CACHE" python3 "$SL")
 has_not "symlinked flag ignored" "$out" "caveman"
 
+# ---- test: cost resets on /clear (session_id change) -----------------------
+# cost.total_cost_usd is process-scoped and survives /clear; the renderer
+# anchors a per-session baseline and subtracts it, so the shown cost resets
+# when session_id changes and re-arms when the raw total drops (new process).
+echo "test: cost baseline reset on session change"
+COSTC="$WORK/cache-cost"; mkdir -p "$COSTC"
+cost_sl() {  # cost_sl <session_id> <total_cost_usd>
+  printf '{"model":{"display_name":"Opus 4.8"},"session_id":"%s","workspace":{"current_dir":"%s"},"cost":{"total_cost_usd":%s}}' \
+    "$1" "$PLAIN" "$2" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$EMPTY_CFG" \
+    XDG_CACHE_HOME="$COSTC" python3 "$SL"
+}
+has     "first sighting anchors baseline -> \$0.00" "$(cost_sl sessA 0.42)" "\$0.00"
+has     "same session shows delta -> \$0.08"        "$(cost_sl sessA 0.50)" "\$0.08"
+has     "new session_id (/clear) resets -> \$0.00"  "$(cost_sl sessB 0.55)" "\$0.00"
+has     "cost climbs in new session -> \$0.05"      "$(cost_sl sessB 0.60)" "\$0.05"
+has     "raw total drop re-arms -> \$0.00"          "$(cost_sl sessB 0.02)" "\$0.00"
+
+echo "test: cost without session_id shows raw total"
+json='{"model":{"display_name":"Opus 4.8"},"session_id":"","workspace":{"current_dir":"'"$PLAIN"'"},"cost":{"total_cost_usd":0.77}}'
+out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$EMPTY_CFG" XDG_CACHE_HOME="$COSTC" python3 "$SL")
+has "no session_id -> raw cost" "$out" "\$0.77"
+
 # ---- test: update flag ------------------------------------------------------
 echo "test: update flag"
 CACHE="$WORK/cache-upd"; mkdir -p "$CACHE/my-dotclaude"
