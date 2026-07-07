@@ -263,6 +263,58 @@ assert_not_contains "no workflow:reviewer round agent" "$content" "workflow:revi
 assert_not_contains "no reference to the deleted reviewer.md" "$content" "reviewer.md"
 assert_not_contains "no stale 'per-issue review lands later' prose" "$content" "lands in a later slice"
 
+# --- severity-routed fix loop + finding filing + mock-debt (issue #67) ------
+# The round now ACTS on findings via a per-issue severity-routed fix loop capped
+# by --max-cycles (default 3), BEFORE the branch merges: critical→own cycle,
+# high→collective replan, medium→triage, low→file. All-lows/clean passes;
+# cap-exhausted-with-medium+ files those as review-fix follow-ups and merges
+# anyway (autonomous — no cap gate). The workflow files lows + cap-remainder and
+# re-blocks dependents; mock-debt filing stays my-review's job.
+echo "test: --max-cycles caps the per-issue fix loop (default 3, initial review free)"
+assert_contains "--max-cycles in argument-hint" "$content" "[--max-cycles K=3]"
+assert_contains "--max-cycles named in the body" "$content" "--max-cycles K"
+assert_contains "fix-loop cap default 3" "$content" "default **3**"
+assert_contains "initial review is free" "$content" "initial review is free"
+assert_contains "cap counts re-reviews" "$content" "counts re-reviews"
+
+echo "test: findings route by severity (critical/high/medium/low)"
+assert_contains "critical → own full cycle" "$content" "own full plan→implement→review cycle"
+assert_contains "high → collective replan" "$content" "collective replan"
+assert_contains "high/critical replan uses planner mode=replan" "$content" "mode=replan"
+assert_contains "medium → triage" "$content" "mode=triage"
+assert_contains "low → filed, never fixed in-run" "$content" "never fixed in-run"
+
+echo "test: re-reviews cover only the fix delta; reviewer model held constant"
+assert_contains "re-review scoped to the fix delta" "$content" "<pre-fix HEAD>..HEAD"
+assert_contains "reviewer model held constant across re-reviews" "$content" "held constant"
+
+echo "test: all-lows/clean passes; cap-exhausted-with-medium+ merges anyway (autonomous)"
+assert_contains "all-lows passes the branch" "$content" "all-lows"
+assert_contains "cap remainder merges the branch anyway" "$content" "merges anyway"
+assert_contains "no interactive cap gate (autonomous)" "$content" "No cap gate"
+assert_not_contains "no pipeline-style +1-cycle grant at the cap" "$content" "grant +1 cycle"
+
+echo "test: workflow files lows + cap-remainder as review-fix + ready-for-agent"
+assert_contains "review-fix label filed by the workflow" "$content" "--label review-fix"
+assert_contains "ready-for-agent label filed by the workflow" "$content" "--label ready-for-agent"
+assert_contains "cap-remainder is filed as a follow-up" "$content" "cap-remainder"
+
+echo "test: workflow re-blocks dependents' ## Blocked by via gh issue edit"
+assert_contains "dependent re-block uses gh issue edit" "$content" "gh issue edit"
+assert_contains "re-block appends into the dependent's existing Blocked by" "$content" "into that dependent's existing"
+
+echo "test: mock-debt filing stays my-review's job — the workflow does not re-file it"
+assert_contains "mock-debt filing owned by my-review" "$content" "my-review OWNS"
+assert_contains "workflow does not re-file mock-debt" "$content" "does not re-file mock-debt"
+
+echo "test: round reorder — review + fix loop run BEFORE the merge"
+assert_contains "fix loop acts before the branch merges" "$content" "before it merges"
+assert_contains "merge runs after the fix loop" "$content" "After the fix loop"
+
+echo "test: end-of-run still mirrors the mock-debt ledger + prints a summary"
+assert_contains "ledger mirror still present" "$content" "## Mock-debt ledger"
+assert_contains "ledger summary still printed" "$content" "mock-debt: N open"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

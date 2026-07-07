@@ -68,25 +68,34 @@ Each round:
    each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`), handed the step-3
    plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
    never touching another worktree or the base branch.
-5. **Merge.** Hand the completed branches to the **merger**, which merges them into
+5. **Review (per-issue) — initial review, free.** Spawn **`personal-tools:my-review`** on each built
+   slice's branch diff (`<base>..issue-<N>`) at the tier's **reviewer** model (`opus`/`opus`/`fable`),
+   handed the issue's plan for conformance context. It reports severity-tagged findings — correctness,
+   security, broken tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a
+   declared central mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt`
+   follow-up. my-review **never edits code**.
+6. **Severity-routed fix loop (capped by `--max-cycles`, default 3, autonomous).** Act on the findings
+   **before the branch merges**: **critical**→its own plan→implement→review cycle, **high**→one
+   collective replan (mediums appended), **medium**→a planner triage fix-list, **low**→filed, never
+   fixed in-run. Fix rounds re-plan (`workflow:planner`), re-implement (`workflow:implementer`), and
+   re-review (`my-review`, reviewer model held constant) over only the fix delta. The initial review
+   is free; the cap counts re-reviews. **All-lows (or clean) passes**; a cap exhausted with medium+
+   open files those as follow-ups and **merges anyway** — no interactive cap gate.
+7. **Merge.** Hand the clean-or-capped branches to the **merger**, which merges them into
    the base branch serially in dependency (topological) order, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-6. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
-   `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-7. **Review (per-issue).** Spawn **`personal-tools:my-review`** on each built slice's branch diff
-   (`<base>..issue-<N>`) at the tier's **reviewer** model (`opus`/`opus`/`fable`), handed the issue's
-   plan for conformance context. It reports severity-tagged findings — correctness, security, broken
-   tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a declared central
-   mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt` follow-up.
-   Ordinary findings are **surfaced in the round report**; my-review **never edits code**.
+8. **Close, file, reap.** Close the merged issues; file the lows + cap-remainder as `review-fix` +
+   `ready-for-agent` follow-ups and append them into any open dependent's `## Blocked by`
+   (`gh issue edit`). `prd-reap.sh` then checks whether any parent `prd` issue is now fully done
+   (every non-`hitl` child closed) and flags it ready-to-close, and the open `mock-debt` set is
+   mirrored into the PRD ledger.
 
 my-review is a backstop, not a fixer. `/orchestrate` **hard-depends** on the `personal-tools`
-`my-review` agent and **fails loud at launch** if it's missing (as `/pipeline` does). This slice
-**surfaces** ordinary findings in the round report and files `mock-debt` follow-ups from its audit;
-the fix loop that **acts** on the ordinary findings ships in a later slice. PR merges stay a human
-decision; the loop never merges PRs.
+`my-review` agent and **fails loud at launch** if it's missing (as `/pipeline` does). my-review
+**owns** the `mock-debt` filing from its audit; the workflow files only lows + cap-remainder as
+`review-fix` and re-blocks dependents. PR merges stay a human decision; the loop never merges PRs.
 
 ## Inside the pipeline (`/pipeline`)
 
