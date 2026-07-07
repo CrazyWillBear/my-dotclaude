@@ -206,6 +206,32 @@ echo "test: the implementer model is routed by the issue's tier"
 assert_contains "implementer tier-routed" "$content" "tier-routes its implementer"
 assert_contains "routed via the implementer column" "$content" "implementer column"
 
+# --- per-issue tier-routed plan stage (issue #65) --------------------------
+# A plan stage runs AFTER classify and BEFORE the implementer fan-out. The
+# planner model is routed by the tier table's PLANNER column
+# (trivial→sonnet minimal plan, standard→opus, complex→fable via
+# workflow:planner mode=plan). The plan is handed to the implementer as its
+# work order, and the run stays autonomous — no plan comment, no plan gate.
+echo "test: a plan stage runs before the implementer/build stage"
+assert_contains "plan step named in the round prose" "$content" "Plan each picked issue"
+assert_contains "PLANNER_MODEL map present" "$content" "PLANNER_MODEL"
+
+echo "test: PLANNER_MODEL routes the planner by tier (the tier table's planner column)"
+assert_contains "trivial → cheap sonnet minimal plan" "$content" "minimal-plan"
+assert_contains "standard → opus planner" "$content" 'standard: "opus"'
+assert_contains "complex → fable planner" "$content" 'complex: "fable"'
+assert_contains "standard/complex use workflow:planner in plan mode" "$content" "mode: plan"
+assert_contains "planner column drives the plan stage" "$content" "planner column"
+
+echo "test: the plan is handed to the implementer as a work order"
+assert_contains "implementer gets a work order" "$content" "work order"
+assert_contains "plan replaces the implementer self-plan" "$content" "replaces the implementer's self-plan"
+
+echo "test: the run stays autonomous — no plan comment, no plan-approval gate"
+assert_contains "no plan comment posted to the issue" "$content" "no plan comment is posted to the issue"
+assert_contains "no plan-approval gate fires" "$content" "no plan-approval gate fires"
+assert_not_contains "plan is never posted as an issue comment" "$content" "gh issue comment"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

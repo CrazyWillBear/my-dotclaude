@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its implementer model, builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, then closes the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its planner and implementer models, plans each issue into a work order (a cheap sonnet minimal plan for trivial, else the workflow:planner subagent at the tier's planner model), builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, then closes the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
@@ -21,8 +21,10 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
 push. Each round **classifies every ready issue in-workflow** (explore→classify, auto-accepted —
 **no interactive confirm**) and **tier-routes its implementer model** per the table below;
-`--complexity <tier>` pins every issue to one tier and skips classification. One **implementer**
-builds each issue (it self-plans); **per-issue review** still lands in a later slice.
+`--complexity <tier>` pins every issue to one tier and skips classification. A per-issue **plan
+stage** (tier-routed by the planner column) writes each issue's **work order** — a cheap **sonnet**
+minimal plan for a trivial issue, else the **`workflow:planner`** subagent — which one
+**implementer** then builds; **per-issue review** still lands in a later slice.
 
 ## Tier routing
 
@@ -38,12 +40,13 @@ drift-guard trio — never edit one table without the others):
 | standard | opus | sonnet | opus |
 | complex | fable | opus | fable |
 
-Only the **implementer** column routes here — the round has no per-issue planner or reviewer (the
-implementer self-plans; per-issue review lands in a later slice). A Workflow leaf `agent()`
-**can't** reuse the `classify-task` skill (that skill fans out its own Explore subagents from the
-main thread), so each issue is classified by two in-workflow stages that emit a **real tier**, then
-that tier picks the implementer model from the table's implementer column. **`--complexity <tier>`**
-pins every issue to that tier's row and **skips classification** entirely.
+The **planner** and **implementer** columns route here — the round now runs a per-issue **plan
+stage** before the build (its model comes from the **planner** column) but still has **no per-issue
+reviewer** (per-issue review lands in a later slice). A Workflow leaf `agent()` **can't** reuse the
+`classify-task` skill (that skill fans out its own Explore subagents from the main thread), so each
+issue is classified by two in-workflow stages that emit a **real tier**, then that tier picks the
+**planner** and **implementer** models from the table's planner and implementer columns.
+**`--complexity <tier>`** pins every issue to that tier's row and **skips classification** entirely.
 
 ## Step 0 — enter the orchestration worktree (once, before the Workflow)
 The **whole run executes in one worktree** so the merger writes to a linked worktree (the
@@ -88,8 +91,9 @@ export const meta = {
   //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
 
-// Tier → implementer model — the implementer column of the tier table above.
-const IMPLEMENTER_MODEL = { trivial: "sonnet", standard: "sonnet", complex: "opus" };
+// Tier → planner / implementer model — the planner and implementer columns of the tier table above.
+const PLANNER_MODEL     = { trivial: "sonnet", standard: "opus",   complex: "fable" };
+const IMPLEMENTER_MODEL = { trivial: "sonnet", standard: "sonnet", complex: "opus"  };
 
 // Repeat for N rounds, or until the ready set drains.
 for (let round = 0; round < rounds; round++) {
@@ -107,16 +111,27 @@ for (let round = 0; round < rounds; round++) {
     issue.tier  = cls.tier;                                       // real tier, auto-accepted
   }
 
-  // 3. One worktree + one implementer per picked issue, model routed by its tier.
+  // 3. Plan each picked issue → its work order. No plan comment, no gate — the run stays autonomous.
+  //    trivial: a cheap sonnet minimal-plan leaf agent(); standard/complex: workflow:planner mode=plan.
+  for (const issue of picked) {
+    issue.plan = (issue.tier === "trivial"
+      ? await agent({ model: "sonnet",   /* minimal plan: ordered steps + ## Acceptance criteria + done-check */ })
+      : await agent({ subagent_type: "workflow:planner", mode: "plan",
+                      model: PLANNER_MODEL[issue.tier] /* issue body in → plan text out; see step 3 */ })
+    ).text;                                                        // capture the plan text as the work order
+  }
+
+  // 4. One worktree + one implementer per picked issue: the plan text is handed over as the work order.
   const built = await pipeline(picked.map(issue =>
-    agent({ subagent_type: "workflow:implementer", model: IMPLEMENTER_MODEL[issue.tier] })));
+    agent({ subagent_type: "workflow:implementer", model: IMPLEMENTER_MODEL[issue.tier],
+            /* work order = issue.plan (steps + ## Acceptance criteria + done-check) + worktree path + branch + commit-scope hint */ })));
   if (built.some(b => b.failed)) return stop("implementer failure");
 
-  // 4. Merge serially in ascending issue number, conflicts gated by the done-check.
+  // 5. Merge serially in ascending issue number, conflicts gated by the done-check.
   const merged = await agent({ subagent_type: "workflow:merger" /* base = orchestration worktree */ });
   if (merged.conflictStop || merged.doneCheckRed) return stop("conflict-stop / red done-check");
 
-  // 5. Close the merged issues.
+  // 6. Close the merged issues.
   for (const n of merged.mergedIssues) gh(`issue close ${n} --comment "<merge commit>"`);
 }
 ```
@@ -146,14 +161,30 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    the launch gate), and it **tier-routes its implementer model** via the tier table's implementer
    column. **`--complexity <tier>`** short-circuits both stages — it **pins every issue** to that
    tier's row and **skips classification**, so no explore/classify runs.
-3. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
+3. **Plan each picked issue → its work order (autonomous — no plan comment, no gate).** Before the
+   build, a **plan stage** routes the **planner** by the issue's tier (the tier table's **planner**
+   column): a **trivial** issue gets a cheap **sonnet** minimal-plan leaf `agent()` — a lightweight
+   in-workflow author that writes a short plan (ordered steps + a `## Acceptance criteria` heading +
+   the project done-check); a **standard/complex** issue gets the **`workflow:planner`** subagent
+   (`subagent_type: workflow:planner`, `mode: plan`, `model: PLANNER_MODEL[issue.tier]` — `opus` /
+   `fable`) handed the issue body, which returns the plan as its **final text** (ordered steps with
+   file paths + `## Acceptance criteria` + the done-check + risks). Capture that plan text as the
+   issue's **work order**. This mirrors `/pipeline`'s Step-2 authorship ladder (trivial → minimal
+   plan, standard/complex → `workflow:planner` mode=plan), except orchestrate runs inside a Workflow
+   so "trivial" is a **cheap sonnet leaf `agent()`**, not main-thread inline authorship. The run
+   stays autonomous: **no plan comment is posted to the issue and no plan-approval gate fires** (the
+   Workflow launch gate was the only stop). `--complexity <tier>` still pins the tier, so the planner
+   model follows the pinned row.
+4. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
    base branch (C4): `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
-4. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each given
-   the issue number, its full body, the **absolute** worktree path, and the branch `issue-<N>`.
-   They run concurrently, **each on the model its tier routed** (the implementer column) — the
-   implementer still **self-plans** (per-issue review lands in a later slice). An **implementer
-   failure** stops the loop with a report.
-5. **Merge + verify via the merger (C4).** Collect the results, then hand the **completed branches**
+5. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each handed
+   its **work order** — the **plan text** from step 3 (ordered steps + `## Acceptance criteria` +
+   done-check) — plus the **absolute** worktree path, the branch `issue-<N>`, and a **commit-scope
+   hint** (the issue's `<scope>`). The plan **replaces the implementer's self-plan** for these issues
+   (the implementer builds against the work order, not a plan of its own). They run concurrently,
+   **each on the model its tier routed** (the implementer column; per-issue review lands in a later
+   slice). An **implementer failure** stops the loop with a report.
+6. **Merge + verify via the merger (C4).** Collect the results, then hand the **completed branches**
    to the **`workflow:merger`**, passing the **absolute orchestration-worktree** path as this run's
    base repo (a linked worktree → the guard allows the merger's writes) and its **base branch**, the
    **ordered list of completed issues** (each: `#N`, branch `issue-<N>`, and its **absolute worktree

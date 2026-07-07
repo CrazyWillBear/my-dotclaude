@@ -52,25 +52,30 @@ Each round:
 
 1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
    `hitl` issues (those need a human). Take up to K of them.
-2. **Classify (per-issue implementer model).** Route each ready issue's **implementer** model by
-   complexity **tier**, classified **in-workflow**: a Workflow leaf can't reuse the `classify-task`
-   skill (it fans out its own Explore subagents), so each ready issue gets an **explore→classify**
-   pass that emits a real tier, **auto-accepted — no interactive confirm** (the run is autonomous
-   past the launch gate). `--complexity <tier>` skips classification and pins every issue to that
-   tier. Only the implementer is routed per issue; the round's single merger and reviewer are
-   per-round.
-3. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
-   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
-   TDD-first, runs the project's done-check, and commits — never touching another worktree
-   or the base branch.
-4. **Merge.** Hand the completed branches to the **merger**, which merges them into
+2. **Classify (per-issue planner + implementer models).** Route each ready issue's **planner** and
+   **implementer** models by complexity **tier**, classified **in-workflow**: a Workflow leaf can't
+   reuse the `classify-task` skill (it fans out its own Explore subagents), so each ready issue gets
+   an **explore→classify** pass that emits a real tier, **auto-accepted — no interactive confirm**
+   (the run is autonomous past the launch gate). `--complexity <tier>` skips classification and pins
+   every issue to that tier. The planner and implementer are routed per issue; the round's single
+   merger and reviewer are per-round.
+3. **Plan (per-issue work order).** Before the build, route each issue's **planner** by its tier and
+   write its **work order** — a cheap **sonnet** minimal plan for a trivial issue, else the
+   **`workflow:planner`** subagent (mode=plan) at the tier's planner model. Ordered steps + a
+   `## Acceptance criteria` heading + the done-check. **No plan comment is posted and no approval
+   gate fires** — the run stays autonomous.
+4. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
+   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`), handed the step-3
+   plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
+   never touching another worktree or the base branch.
+5. **Merge.** Hand the completed branches to the **merger**, which merges them into
    the base branch serially in dependency (topological) order, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-5. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
+6. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
    `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-6. **Review.** Spawn the **reviewer** (opus, max effort) on the
+7. **Review.** Spawn the **reviewer** (opus, max effort) on the
    round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
    (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
    blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.
