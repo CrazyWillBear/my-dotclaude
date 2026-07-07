@@ -12,16 +12,26 @@ contradictions and omissions. Read-only — nothing is edited.
 
 ## Step 1 — Resolve the session log path
 
-Run this in a Bash block:
+Run this in a Bash block. The key is sha1 of the canonical `--git-common-dir` — identical
+from the primary checkout and every linked worktree, so the stash survives EnterWorktree
+(the hook keys the same way):
 
 ```bash
-root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
+if [ -n "$gcd" ]; then root="$(cd "$gcd" && pwd -P)"; else root="$(pwd)"; fi
 key="$(printf %s "$root" | sha1sum | cut -c1-16)"
 stash="${TMPDIR:-/tmp}/verify-plan-session-$key.path"
-[ -s "$stash" ] && cat "$stash"
+log="$([ -s "$stash" ] && cat "$stash" | tr -d '\n')"
+# Stale-path fallback: entering a worktree moves the transcript to another
+# ~/.claude/projects/<slug>/ dir — relocate it by session id (the filename).
+if [ -n "$log" ] && [ ! -s "$log" ]; then
+  log="$(ls -t "$HOME"/.claude/projects/*/"$(basename "$log")" 2>/dev/null | head -1)"
+fi
+printf '%s\n' "$log"
 ```
 
-If `$stash` is **missing or empty**: hard error, stop. Tell the user:
+If `$stash` is **missing or empty**, or `$log` resolves to no readable file: hard error,
+stop. Tell the user:
 
 > The session pointer isn't set yet — this usually means the hook hasn't fired yet.
 > Run `/reload-plugins`, submit one prompt (anything), then re-run `/verify-plan`.
@@ -30,10 +40,9 @@ Do nothing else until the user addresses this.
 
 ## Step 2 — Oversize guard
 
-Read the resolved log path from the stash, then measure its size:
+Using the `$log` path resolved in Step 1, measure its size:
 
 ```bash
-log="$(cat "$stash" | tr -d '\n')"
 bytes="$(wc -c < "$log")"
 marker="${TMPDIR:-/tmp}/verify-plan-oversize-$key"
 ```

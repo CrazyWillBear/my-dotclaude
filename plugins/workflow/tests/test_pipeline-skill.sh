@@ -14,6 +14,15 @@
 #   5. Models are tier-routed: a Step-0 classify-task call sets a confirmed
 #      roster (planner/implementer/reviewer placeholders), so no model is
 #      hardcoded — the old model: "sonnet" implementer pin is gone.
+#   5b. Optional inline (main-thread) Step-2 planning: a --self-plan flag or a
+#      trivial tier lets the main agent author the plan itself (no planner
+#      spawn). The authorship ladder is "first match wins"; trivial yields a
+#      "minimal inline plan" that still carries ## Acceptance criteria; grill
+#      standard/complex asks "inline or subagent"; the plan gate fires iff
+#      "tier=complex OR" the plan was subagent-authored; verify-plan is
+#      "skipped on trivial"; Step-5 planner spawns are "never inline"; the
+#      state doc records plan_author and a resume "never re-spawns" a Step-2
+#      planner.
 #   6. The reviewer is personal-tools:my-review on the baseline..HEAD range.
 #   7. Severity routes: lows filed as review-fix + ready-for-agent issues,
 #      mediums triaged into one ordered fix-list, highs get ONE collective
@@ -68,6 +77,8 @@ echo "test: worktree entry via EnterWorktree, exit via ExitWorktree(keep)"
 assert_contains "EnterWorktree call present" "$content" "EnterWorktree(name:"
 assert_contains "ExitWorktree keep present" "$content" "ExitWorktree(keep)"
 assert_contains "git-dir vs common-dir check" "$content" "--git-common-dir"
+assert_contains "base recorded before worktree entry" "$content" 'base=$(git rev-parse HEAD)'
+assert_contains "worktree base drift guard resets to base" "$content" 'git reset --hard "$base"'
 
 # ---------------------------------------------------------------------------
 echo "test: grill-mode drift check invokes verify-plan"
@@ -99,6 +110,19 @@ assert_contains "reviewer model held constant" "$content" "held constant"
 assert_contains "issue-mode carve-out — one interactive stop" "$content" "one interactive stop"
 assert_contains "tier rationale surfaced" "$content" "rationale"
 assert_contains "confirmed roster persisted in state doc" "$content" "confirmed roster"
+
+# ---------------------------------------------------------------------------
+echo "test: optional inline (main-thread) Step-2 planning"
+assert_contains "--self-plan in argument-hint" "$content" "--self-plan"
+assert_contains "authorship ladder — first match wins" "$content" "first match wins"
+assert_contains "trivial auto minimal inline plan" "$content" "minimal inline plan"
+assert_contains "minimal plan carries acceptance criteria" "$content" "## Acceptance criteria"
+assert_contains "grill std/complex authorship ask" "$content" "inline or subagent"
+assert_contains "gate fires on complex OR subagent-authored" "$content" "tier=complex OR"
+assert_contains "verify-plan skipped on trivial" "$content" "skipped on trivial"
+assert_contains "Step-5 planner spawns never inline" "$content" "never inline"
+assert_contains "state doc records plan_author" "$content" "plan_author"
+assert_contains "resume never re-spawns a Step-2 planner" "$content" "never re-spawns"
 
 # ---------------------------------------------------------------------------
 echo "test: reviewer is personal-tools:my-review on the branch range"
@@ -160,7 +184,8 @@ assert_contains "no substitute reviewer" "$content" "Do not substitute"
 # ---------------------------------------------------------------------------
 echo "test: issue mode guards"
 assert_contains "refuses open blockers" "$content" "## Blocked by"
-assert_contains "prd label refused" "$content" "prd"
+assert_contains "prd-labeled issue accepted" "$content" "\`prd\`-labeled issue is accepted"
+assert_not_contains "prd not in the refuse list" "$content" "labeled \`prd\`"
 assert_contains "hitl label refused" "$content" "hitl"
 assert_contains "plan posted as issue comment" "$content" "gh issue comment"
 

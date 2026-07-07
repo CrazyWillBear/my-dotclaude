@@ -102,10 +102,11 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    builds each in parallel, merges the finished branches back in order, closes them, and
    files follow-ups for anything a reviewer flags.
 
-For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>`**
-runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the
-planner/implementer/reviewer models to the task's complexity tier, the planner writes the plan,
-the implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
+For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>
+[--self-plan]`** runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the
+planner/implementer/reviewer models to the task's complexity tier, the plan is written by the
+planner subagent — or, with `--self-plan` or on a trivial task, by the main agent inline — the
+implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
 with severity-routed fixes.
 
 The machinery behind each step — worktrees, the merger, the reviewer, label conventions —

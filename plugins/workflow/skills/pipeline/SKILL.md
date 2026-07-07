@@ -1,16 +1,17 @@
 ---
 name: pipeline
-description: Run one task through the plan→build→review pipeline — a Step-0.5 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the planner writes a plan, the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
-argument-hint: "[issue# | task text] [--max-cycles K=2] [--complexity trivial|standard|complex]"
+description: Run one task through the plan→build→review pipeline — a Step-0.5 classify-task call routes the planner/implementer/reviewer models to the task's complexity tier, then the plan is written (planner subagent or inline), the implementer builds it in an isolated worktree, the my-review agent reviews the diff, and findings route by severity (low→issues, medium→triaged fix-list, high→collective replan, critical→own cycle). For single tasks not worth slicing into an issue graph. Use for "/pipeline <issue#|task>", "pipeline this".
+argument-hint: "[issue# | task text] [--max-cycles K=2] [--complexity trivial|standard|complex] [--self-plan]"
 effort: high
 allowed-tools: Read, Grep, Glob, Bash, Write, Agent, Skill, AskUserQuestion
 ---
 
 Run one task through the standardized pipeline with **models routed by complexity tier**
 (classified in Step 0.5), and a severity-routed fix loop.
-`$ARGUMENTS` = `[issue# | task text] [--max-cycles K] [--complexity trivial|standard|complex]` —
-**K** = max review cycles (default **2**). You run on the **main thread** because only the main
-thread can spawn subagents.
+`$ARGUMENTS` = `[issue# | task text] [--max-cycles K] [--complexity trivial|standard|complex]
+[--self-plan]` — **K** = max review cycles (default **2**); **`--self-plan`** makes the main
+thread author the Step-2 plan itself (no planner spawn). You run on the **main thread** because
+only the main thread can spawn subagents.
 
 This is the single-task sibling of `/orchestrate` — for work not worth slicing into an issue
 graph. The result is a **branch left for the user**: **never push**, never merge, never close
@@ -20,25 +21,30 @@ the issue.
 resumed run — re-enter the recorded worktree (`EnterWorktree(path: …)`), read the state doc in
 full, and continue from the recorded phase with the recorded cycle count and open findings.
 Do not redo completed phases. The state doc records the **confirmed roster** (tier + the three
-models) — reuse it; **never re-classify on resume**.
+models) — reuse it; **never re-classify on resume**. It also records **`plan_author`** and the
+**full plan text**; a resume **never re-authors the plan and never re-spawns a Step-2 planner** —
+the embedded plan is authoritative (Step-5 planner spawns still happen normally).
 
 ## Step 0 — preflight
 
 1. **Parse `$ARGUMENTS`.** A leading integer (`12`, `#12`) → **issue mode**. Otherwise the text
    is the task: **grill mode** if a `/grill-me` alignment exists in this session, else
    **bare mode**. Extract `--max-cycles K` (default 2) and `--complexity <tier>` (optional —
-   consumed in Step 0.5).
+   consumed in Step 0.5). Extract **`--self-plan`** (consumed in Step 2) — a natural-language
+   request for the main agent to plan it itself (e.g. "plan it yourself", "self-plan") counts as
+   the flag.
 2. **Hard-dep check.** The chain needs the `personal-tools` plugin: the `my-review` agent and
    the `verify-plan` skill. If either is missing (not in your available agents/skills), **fail
    loud naming the missing piece** — e.g. "personal-tools plugin not installed: my-review agent
    unavailable" — and stop. Do not substitute another reviewer.
 3. **Issue mode only:** `gh issue view <N> --json title,body,labels,state`. **Refuse** (report
    and stop, mirroring orchestrate's ready rule) if:
-   - the issue is closed, or labeled `prd` (a PRD tracking doc — slice it with `/to-issues`
-     first) or `hitl` (needs a human);
+   - the issue is closed, or labeled `hitl` (needs a human);
    - any `## Blocked by` ref (bare `#N` lines; `None - can start immediately` passes) is still
      **open** (`gh issue view <ref> --json state`). An issue is ready iff **every** blocker is
      closed.
+   A `prd`-labeled issue is accepted — pipeline runs the whole PRD as one (large but valid)
+   pipeline task; slicing it with `/to-issues` first is the alternative, not a requirement.
    Issue mode is **autonomous** — scope was pre-approved when the issue was filed — with
    **one interactive stop before the fix loop**: the Step-0.5 tier confirm, before any pipeline
    subagent (planner/implementer/reviewer) spawns (skipped when `--complexity` is passed). Exactly two writes go **to the target issue**: the plan comment
@@ -63,50 +69,77 @@ The models below are **tier-routed**, not fixed. This tier table is the source o
   the **confirmed roster** (no rationale — record `rationale=(--complexity <tier>)`).
 - **Otherwise** → invoke the **`classify-task` skill** (Skill tool) with the issue body (issue
   mode) or the distilled brief (grill/bare). It explores the touched code, classifies, and runs
-  **its own** confirm/override `AskUserQuestion` — the single interactive stop, in **both** modes,
-  before any pipeline subagent (planner/implementer/reviewer) spawns. Parse its output contract (`tier=` / `planner=` / `implementer=` /
+  **its own** confirm/override `AskUserQuestion` before any pipeline subagent
+  (planner/implementer/reviewer) spawns — in **issue mode** this stays the *only* interactive stop
+  (Step 2's authorship ask below is **unreachable** in issue mode); in **grill/bare** it precedes
+  every spawn. Parse its output contract (`tier=` / `planner=` / `implementer=` /
   `reviewer=` / `rationale=`) into the **confirmed roster** that drives every spawn below. Keep
   the `rationale` for Step 2 surfacing.
 
 The confirmed roster is fixed for the whole run — the **reviewer model is held constant across
 every re-review**. Substitute it into the `model:` placeholders (`<planner>`, `<implementer>`,
-`<reviewer>`) in Steps 2–5.
+`<reviewer>`) in Steps 2–5. Note: even when Step 2's plan is authored **inline** (main thread, no
+planner spawn), the **planner column still drives Step 5's** triage/replan/per-critical spawns.
+The confirmed roster the state doc records also carries **`plan_author=inline|subagent`**, set in
+Step 2.
 
 ## Step 1 — enter the worktree
 
 Orchestrate's step-0 pattern verbatim. Decide by where you are now — canonicalize both with
 `realpath` first, since git may print a relative `.git`:
 - **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir` resolve to the
-  **same** path) → call **`EnterWorktree(name: "issue-<N>")`** (issue mode) or
+  **same** path) → record `base=$(git rev-parse HEAD)` **before** the call, then call
+  **`EnterWorktree(name: "issue-<N>")`** (issue mode) or
   **`EnterWorktree(name: "pipeline-<slug>")`** (grill/bare; `<slug>` = short kebab slug of the
-  task). This creates the worktree off the current `HEAD` (`worktree.baseRef=head`) and
-  switches the session into it.
+  task). The worktree's branch point follows the `worktree.baseRef` setting: `head` (which the
+  kit's setup scripts install) branches off the current `HEAD`, but the built-in default is
+  `fresh` = `origin/<default-branch>`, which silently drops local commits. So **verify the base
+  after entering**: if `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"` — the
+  worktree is brand-new, so the reset is safe.
 - **Already in a linked worktree** (the two **differ**) → **skip**; this worktree is already
   isolated.
 
-Record `baseline=$(git rev-parse HEAD)` — the review diffs against it. Everything below runs
-from the worktree. At the very end, **`ExitWorktree(keep)`** — the branch and worktree stay for
-the user.
+Record `baseline=$(git rev-parse HEAD)` (= `$base` after the guard) — the review diffs against
+it. Everything below runs from the worktree. At the very end, **`ExitWorktree(keep)`** — the
+branch and worktree stay for the user.
 
 ## Step 2 — plan
 
-Spawn **`workflow:planner`** (one `Agent` call, `subagent_type: workflow:planner`,
-`model: "<planner>"`) with **mode=plan** and the issue body (issue mode) or distilled brief
-(grill/bare). The planner returns the plan as text; **you write it** to a scratchpad file
-(`<scratchpad>/pipeline-plan.md`).
+**Authorship ladder — first match wins** (records `plan_author` for the state doc):
+
+1. **`--self-plan`** (flag or the Step-0 natural-language request) → **inline**, any mode/tier.
+   `plan_author=inline`. Depth is your judgment: minimal for a trivial task, fuller when warranted.
+2. **`tier=trivial`** (any mode) → **auto minimal inline plan** — no ask. `plan_author=inline`.
+   Keep it short but still carry ordered steps, a `## Acceptance criteria` section, and the
+   project done-check.
+3. **grill mode, standard/complex** → **AskUserQuestion** — *inline or subagent?* Your pick sets
+   `plan_author` (unreachable in issue/bare mode — no new ask ever fires in issue mode).
+4. **bare or issue mode, standard/complex** → **subagent** (today's default).
+   `plan_author=subagent`.
+
+**Inline** (`plan_author=inline`): **you** (the main agent) write the plan straight to
+`<scratchpad>/pipeline-plan.md` — **no planner spawn for Step 2**.
+
+**Subagent** (`plan_author=subagent`): spawn **`workflow:planner`** (one `Agent` call,
+`subagent_type: workflow:planner`, `model: "<planner>"`) with **mode=plan** and the issue body
+(issue mode) or distilled brief (grill/bare); it returns the plan as text and **you write it** to
+`<scratchpad>/pipeline-plan.md`.
 
 Then, by mode:
-- **Grill mode:** invoke the **`verify-plan` skill** (Skill tool) to drift-check the plan
-  against this session's decisions. If it reports mismatches, fix the plan (edit the file
-  yourself for wording; respawn the planner only if the drift is structural). If verify-plan
-  errors because its session stash is missing, **relay its remedy verbatim** and stop — don't
-  reimplement the check.
-- **Grill + bare modes — plan gate:** show the plan to the user — alongside the **tier and its
-  rationale** from Step 0.5 — and iterate: **you** (the main agent) revise the plan file per
-  their feedback — no planner round-trip — until they approve. Do not proceed unapproved.
+- **Grill mode, standard/complex — verify-plan:** invoke the **`verify-plan` skill** (Skill tool)
+  to drift-check the plan against this session's decisions (**skipped on trivial**). If it reports
+  mismatches, fix the plan (edit the file yourself for wording; respawn the planner only if the
+  drift is structural and the plan was subagent-authored). If verify-plan errors because its
+  session stash is missing, **relay its remedy verbatim** and stop — don't reimplement the check.
+- **Grill + bare modes — plan gate:** the gate fires iff **`tier=complex OR` the plan was
+  subagent-authored** — an inline trivial/standard plan **skips** it (you already hold the
+  context). When it fires, show the plan — alongside the **tier and rationale** from Step 0.5 —
+  and iterate — **you** (the main agent) revise the plan file per their feedback until they
+  approve (no planner round-trip). Do not proceed unapproved. Issue mode stays autonomous — no
+  gate.
 - **Issue mode — no gate:** post the plan as an issue comment
-  (`gh issue comment <N> --body-file <plan>`), prefixing the **tier and rationale** (this is the
-  first outward write), then proceed.
+  (`gh issue comment <N> --body-file <plan>`) **regardless of author**, prefixing the **tier and
+  rationale** (this is the first outward write), then proceed.
 
 ## Step 3 — implement
 
@@ -155,6 +188,10 @@ to (a) verify each prior finding is addressed and (b) review **only the fix delt
 
 **Cycle budget:** `--max-cycles` (default 2) counts **re-reviews** — the initial review is
 free; each re-review decrements the budget.
+
+Step-5 planner spawns (triage / replan / per-critical) are **never inline** — they always spawn
+`workflow:planner` on `<planner>`, even when Step 2's plan was authored inline. Inline authorship
+is a Step-2-only lever.
 
 ## Step 6 — cap hit
 
@@ -205,9 +242,10 @@ gated / built / cycle-N**:
    `dir=~/.claude/handoffs/$repo_key` (`mkdir -p "$dir"`).
 2. **Write the state doc** `$dir/<branch-slug>-pipeline.md` (every `/` in the branch → `-`):
    mode, target (issue# or brief), branch, worktree path, current phase, cycles used, the
-   **confirmed roster** (tier + the three models — so a resume never re-classifies), **the
-   full current plan text embedded** (the scratchpad may not survive a clear), and open
-   findings. Overwrite on each boundary.
+   **confirmed roster** (tier + the three models — so a resume never re-classifies),
+   **`plan_author=inline|subagent`** (so a resume never re-authors the plan and **never
+   re-spawns** a Step-2 planner), **the full current plan text embedded** (the scratchpad may
+   not survive a clear), and open findings. Overwrite on each boundary.
 3. **Write the resume pointer** `$dir/.pending.json` with the **Write tool**, exactly the
    workflow schema (`resume.sh` consumes it and re-injects the resume order, including
    re-entering the worktree):
