@@ -19,6 +19,13 @@
 #  10. When nothing qualifies the final report is unchanged (no prompt).
 #  11. The offer/note appears only end-of-run — mid-loop rounds are uninterrupted.
 #  12. The skill never edits the PRD body.
+#  13. (issue #63) The skill invokes the Workflow tool for the round loop — the
+#      round no longer runs on the main thread, the Workflow permission dialog is
+#      the single launch gate, the orchestration worktree is passed in as the
+#      base and exited via ExitWorktree(keep), and the workflow runs
+#      build (workflow:implementer, up to K) -> merge (workflow:merger) -> close,
+#      stopping on an empty ready set / conflict-stop / red done-check /
+#      implementer failure.
 #
 # Run: bash plugins/workflow/tests/test_orchestrate-skill.sh  (non-zero if any fail)
 
@@ -137,39 +144,39 @@ assert_contains "result is left on the orchestration branch" "$content" "orchest
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"
 assert_contains "primary checkout is never touched" "$content" "primary checkout is never touched"
 
-# --- per-issue tier routing (issue #50) ------------------------------------
-echo "test: frontmatter gains Skill + AskUserQuestion for the classify + batch confirm"
+# --- Workflow-backed round (issue #63) -------------------------------------
+echo "test: frontmatter allows the Workflow tool"
+assert_contains "Workflow tool allowed" "$content" "Workflow"
+
+echo "test: frontmatter retains Skill + AskUserQuestion (end-of-run PRD-close offer)"
 assert_contains "Skill tool allowed" "$content" "Skill"
 assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
 
-echo "test: --complexity escape hatch is documented in the argument-hint"
-assert_contains "--complexity in argument-hint" "$content" "--complexity trivial|standard|complex"
+echo "test: argument-hint parses N rounds and --max K"
+assert_contains "N rounds + --max K in argument-hint" "$content" "[N rounds=1] [--max K=3]"
 
-echo "test: each ready issue is classified via the classify-task skill before fan-out"
-assert_contains "classify-task skill invoked" "$content" "classify-task"
-assert_contains "invoked in batch mode (no per-issue confirm)" "$content" "--no-confirm"
+echo "test: the round loop runs inside the Workflow, not on the main thread"
+assert_contains "skill invokes the Workflow tool" "$content" "Workflow tool"
+assert_contains "round no longer runs on the main thread" "$content" "no longer runs the round on the main thread"
+assert_contains "Workflow permission dialog is the single launch gate" "$content" "single launch gate"
 
-echo "test: tier table rows present verbatim (drift guard vs classify-task/pipeline)"
-assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
-assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
+echo "test: the orchestration worktree base is passed into the Workflow, exited with keep"
+assert_contains "orchestration worktree passed into the workflow as base" "$content" "passes the orchestration worktree"
+assert_contains "ExitWorktree(keep) on return" "$content" "ExitWorktree(keep)"
 
-echo "test: only the implementer model is routed per issue (merger/reviewer are per-round)"
-assert_contains "only implementer routed per issue" "$content" "only the implementer"
+echo "test: the workflow builds up to K issues, one implementer each"
+assert_contains "up to K issues per round" "$content" "up to **K**"
+assert_contains "one workflow:implementer per picked issue" "$content" "workflow:implementer"
 
-echo "test: exactly one batch confirmation per round — not one question per issue"
-assert_contains "one summary table for the whole round" "$content" "ONE summary table for the whole round"
-assert_contains "single AskUserQuestion, never per issue" "$content" "never one per issue"
+echo "test: completed branches go to the workflow:merger, merged issues are closed"
+assert_contains "merger merges the completed branches" "$content" "workflow:merger"
+assert_contains "merged issues are closed" "$content" "gh issue close"
 
-echo "test: an accept-all / zero-override path exists"
-assert_contains "accept-all path" "$content" "Accept all"
-
-echo "test: row-level override swaps the whole tier row"
-assert_contains "row-level override" "$content" "override"
-assert_contains "override swaps the whole row (never mixed)" "$content" "whole"
-
-echo "test: confirmed implementer model is passed explicitly on each implementer spawn"
-assert_contains "explicit implementer model placeholder on spawn" "$content" 'model: "<implementer>"'
+echo "test: stop conditions — empty ready set / conflict-stop / red done-check / implementer failure"
+assert_contains "empty ready set stops the loop" "$content" "empty ready set"
+assert_contains "conflict-stop stops the loop" "$content" "conflict-stop"
+assert_contains "red done-check stops the loop" "$content" "red done-check"
+assert_contains "implementer failure stops the loop" "$content" "implementer failure"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
