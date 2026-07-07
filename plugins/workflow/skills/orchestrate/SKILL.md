@@ -21,9 +21,14 @@ The **whole run executes in one worktree** so the merger writes to a linked work
 `PreToolUse` guard allows that) and the **primary checkout is never touched**. Decide by where you
 are now — canonicalize both with `realpath` first, since git may print a relative `.git`:
 - **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir` resolve to the
-  **same** path) → call **`EnterWorktree(name: "orchestrate-<n>")`** with a unique `<n>` (e.g.
-  `orchestrate-$(date +%s)`). This creates `.claude/worktrees/orchestrate-<n>` off the current
-  `HEAD` (`worktree.baseRef=head`) on branch `orchestrate-<n>` and switches this session into it.
+  **same** path) → record `base=$(git rev-parse HEAD)` **before** the call, then call
+  **`EnterWorktree(name: "orchestrate-<n>")`** with a unique `<n>` (e.g.
+  `orchestrate-$(date +%s)`). This creates `.claude/worktrees/orchestrate-<n>` on branch
+  `orchestrate-<n>` and switches this session into it. The branch point follows the
+  `worktree.baseRef` setting: `head` (which the kit's setup scripts install) uses the current
+  `HEAD`, but the built-in default is `fresh` = `origin/<default-branch>`, which silently drops
+  local commits. So **verify the base after entering**: if `git rev-parse HEAD` ≠ `$base`, run
+  `git reset --hard "$base"` — the worktree is brand-new, so the reset is safe.
 - **Already in a linked worktree** (the two **differ**) → **skip**; this worktree is already
   isolated and *is* the orchestration worktree. (`EnterWorktree(name:…)` refuses to nest a new
   worktree while you're in a worktree session anyway.)
