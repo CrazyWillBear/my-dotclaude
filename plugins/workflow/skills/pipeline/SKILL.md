@@ -71,7 +71,8 @@ The models below are **tier-routed**, not fixed. This tier table is the source o
   mode) or the distilled brief (grill/bare). It explores the touched code, classifies, and runs
   **its own** confirm/override `AskUserQuestion` before any pipeline subagent
   (planner/implementer/reviewer) spawns — in **issue mode** this stays the *only* interactive stop
-  (Step 2's authorship ask below is **unreachable** in issue mode); in **grill/bare** it precedes
+  **before the fix loop** (Step 2's authorship ask below is **unreachable** in issue mode; Step 6's
+  cap-hit ask is the exception, on the far side of the fix loop); in **grill/bare** it precedes
   every spawn. Parse its output contract (`tier=` / `planner=` / `implementer=` /
   `reviewer=` / `rationale=`) into the **confirmed roster** that drives every spawn below. Keep
   the `rationale` for Step 2 surfacing.
