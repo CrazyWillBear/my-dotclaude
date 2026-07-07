@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its planner and implementer models, plans each issue into a work order (a cheap sonnet minimal plan for trivial, else the workflow:planner subagent at the tier's planner model), builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, then closes the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its planner and implementer models, plans each issue into a work order (a cheap sonnet minimal plan for trivial, else the workflow:planner subagent at the tier's planner model), builds up to K ready issues with one implementer each in isolated git worktrees, hands the completed branches to a merger that merges in dependency order and resolves conflicts under the done-check, closes the merged issues, then reviews each built slice with `personal-tools:my-review` at the tier's reviewer model — running the central-mechanism / mock-drift audit and surfacing its findings in the round report. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
@@ -24,7 +24,8 @@ push. Each round **classifies every ready issue in-workflow** (explore→classif
 `--complexity <tier>` pins every issue to one tier and skips classification. A per-issue **plan
 stage** (tier-routed by the planner column) writes each issue's **work order** — a cheap **sonnet**
 minimal plan for a trivial issue, else the **`workflow:planner`** subagent — which one
-**implementer** then builds; **per-issue review** still lands in a later slice.
+**implementer** then builds; then **`personal-tools:my-review`** reviews each built slice at the
+tier's **reviewer** model and surfaces its findings (plus the mock-drift audit) in the round report.
 
 ## Tier routing
 
@@ -40,13 +41,22 @@ drift-guard trio — never edit one table without the others):
 | standard | opus | sonnet | opus |
 | complex | fable | opus | fable |
 
-The **planner** and **implementer** columns route here — the round now runs a per-issue **plan
-stage** before the build (its model comes from the **planner** column) but still has **no per-issue
-reviewer** (per-issue review lands in a later slice). A Workflow leaf `agent()` **can't** reuse the
-`classify-task` skill (that skill fans out its own Explore subagents from the main thread), so each
-issue is classified by two in-workflow stages that emit a **real tier**, then that tier picks the
-**planner** and **implementer** models from the table's planner and implementer columns.
-**`--complexity <tier>`** pins every issue to that tier's row and **skips classification** entirely.
+The **planner**, **implementer**, and **reviewer** columns all route here — the round runs a
+per-issue **plan stage** before the build (its model comes from the **planner** column) and a
+per-issue **review stage** after it (the reviewer column, via `personal-tools:my-review`). A
+Workflow leaf `agent()` **can't** reuse the `classify-task` skill (that skill fans out its own
+Explore subagents from the main thread), so each issue is classified by two in-workflow stages that
+emit a **real tier**, then that tier picks the **planner**, **implementer**, and **reviewer** models
+from the table's planner, implementer, and reviewer columns. **`--complexity <tier>`** pins every
+issue to that tier's row and **skips classification** entirely.
+
+## Hard dependency — fail loud at launch
+The loop **hard-depends on the `personal-tools` plugin**: the **`my-review`** agent reviews each
+built slice (Step 7) and runs the central-mechanism / mock-drift audit. **Before entering the
+worktree (Step 0)**, check it's available — if `personal-tools:my-review` is **not** in your
+available agents, **fail loud** naming the missing piece — e.g. "personal-tools plugin not
+installed: my-review agent unavailable" — and **stop**. Do **not** substitute another reviewer.
+This mirrors `/pipeline`'s Step-0 hard-dep check.
 
 ## Step 0 — enter the orchestration worktree (once, before the Workflow)
 The **whole run executes in one worktree** so the merger writes to a linked worktree (the
@@ -91,9 +101,11 @@ export const meta = {
   //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
 
-// Tier → planner / implementer model — the planner and implementer columns of the tier table above.
+// Tier → planner / implementer / reviewer model — the planner, implementer, and reviewer columns
+// of the tier table above (REVIEWER_MODEL reads the reviewer column: trivial/standard→opus, complex→fable).
 const PLANNER_MODEL     = { trivial: "sonnet", standard: "opus",   complex: "fable" };
 const IMPLEMENTER_MODEL = { trivial: "sonnet", standard: "sonnet", complex: "opus"  };
+const REVIEWER_MODEL    = { trivial: "opus",   standard: "opus",   complex: "fable" };
 
 // Repeat for N rounds, or until the ready set drains.
 for (let round = 0; round < rounds; round++) {
@@ -133,6 +145,16 @@ for (let round = 0; round < rounds; round++) {
 
   // 6. Close the merged issues.
   for (const n of merged.mergedIssues) gh(`issue close ${n} --comment "<merge commit>"`);
+
+  // 7. Review each built slice: personal-tools:my-review at the tier's reviewer model on the
+  //    issue's branch diff (<base>..issue-<N>), handed issue.plan for conformance context. It runs
+  //    the central-mechanism / mock-drift audit (declared → confirm; undeclared central mock →
+  //    auto-convert; both file a mock-debt follow-up) and returns a findings block. Surface the
+  //    findings in the round report; the fix loop that ACTS on them ships in a later slice (#67).
+  for (const issue of picked) {
+    issue.review = await agent({ subagent_type: "personal-tools:my-review", model: REVIEWER_MODEL[issue.tier],
+                                 /* target = <base>..issue-<N>; prompt carries issue.plan + the issue number */ });
+  }
 }
 ```
 
@@ -182,8 +204,8 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    done-check) — plus the **absolute** worktree path, the branch `issue-<N>`, and a **commit-scope
    hint** (the issue's `<scope>`). The plan **replaces the implementer's self-plan** for these issues
    (the implementer builds against the work order, not a plan of its own). They run concurrently,
-   **each on the model its tier routed** (the implementer column; per-issue review lands in a later
-   slice). An **implementer failure** stops the loop with a report.
+   **each on the model its tier routed** (the implementer column). An **implementer failure** stops
+   the loop with a report.
 6. **Merge + verify via the merger (C4).** Collect the results, then hand the **completed branches**
    to the **`workflow:merger`**, passing the **absolute orchestration-worktree** path as this run's
    base repo (a linked worktree → the guard allows the merger's writes) and its **base branch**, the
@@ -198,6 +220,18 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
      implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**
      with a report. **Never keep an unverified resolution** — that discipline lives in the merger.
+7. **Review each built slice (per-issue my-review).** For each issue the round built, spawn
+   **`personal-tools:my-review`** (one `Agent` call, `model: REVIEWER_MODEL[issue.tier]` —
+   REVIEWER_MODEL reads the tier table's **reviewer** column: trivial/standard → `opus`, complex →
+   `fable`) on that issue's **branch diff** — the commit range `<base>..issue-<N>` — with the issue's
+   **plan** (captured in step 3 as `issue.plan`) in the prompt for conformance context, plus the
+   **issue number** so the audit can read its `## Central mechanism` line. my-review returns a verdict
+   plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift audit**:
+   declared central mock → confirm; **undeclared** central mock → **auto-convert** — both file a
+   `mock-debt` follow-up (labels `mock-debt`, `ready-for-agent`) that the ready-rule's mock-debt gate
+   holds the `e2e-gate` on. **Surface the findings in the round report** (Step 2). The fix loop that
+   **acts** on the findings ships in a later slice (#67) — this round only surfaces them and runs the
+   audit.
 
 Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
 under the done-check; an **empty ready set**, a **conflict-stop** / **red done-check**, or an
@@ -213,9 +247,13 @@ When the Workflow returns, back on the main thread:
   worktree intact (or the session-exit prompt offers keep/remove). The merged rounds all land on the
   orchestration branch inside the orchestration worktree — never on the launch branch and never in
   the primary checkout.
-- Print a **status table**: issue `#` → title → merged? / closed? → done-check → notes (conflicts,
-  failures). If any `mock-debt` is open, add a one-line **ledger summary**
+- Print a **status table**: issue `#` → title → merged? / closed? → done-check → review verdict →
+  notes (conflicts, failures). If any `mock-debt` is open, add a one-line **ledger summary**
   (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held by it.
+- **Surface the review findings (Step 7).** For each built slice, include `my-review`'s verdict and
+  its severity-tagged findings (critical/high/medium/low), and name any `mock-debt` follow-up the
+  audit filed (it feeds the ledger summary above). The fix loop that **acts** on these findings is a
+  later slice (#67) — this run only surfaces them.
 - **Mirror the ledger (C7).** If this was a PRD run (slices carry `Part of #<prd>`), reflect the
   open `mock-debt` set into the PRD body for human visibility: rewrite **only** a delimited
   `## Mock-debt ledger` section (a checklist — `- [ ] #N — <what>` for open, `- [x]` for closed)

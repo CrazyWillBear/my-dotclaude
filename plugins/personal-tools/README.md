@@ -21,7 +21,7 @@ plugins/personal-tools/
 │   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 │   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
-│   └── my-review.md               # my-review — the reviewer brain (fable, xhigh reasoning)
+│   └── my-review.md               # my-review — the reviewer brain (fable, xhigh); also runs the central-mechanism/mock-drift audit on issue branches
 ├── hooks/
 │   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
@@ -96,7 +96,9 @@ plugins/personal-tools/
   a verdict plus findings graded **critical / high / medium / low**, ending in a
   machine-readable ` ```findings ` block that spawners (e.g. `/pipeline`) route on; never edits,
   posts, or comments. For a PR it checks the tree is clean, checks out, reviews, then restores
-  your original branch.
+  your original branch. (The `/my-review` command is always report-only; the agent gains a
+  single narrow write — filing a `mock-debt` follow-up — only on the central-mechanism audit path
+  it runs when `/orchestrate` points it at an `issue-<N>` branch.)
 - **`/check-updates`** — report whether a newer kit release is available. Runs
   `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
   queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or

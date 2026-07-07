@@ -1,7 +1,7 @@
 # Anti-mock-drift: keeping the build loop honest
 
 This is the design behind a set of guards woven through the `/to-prd` → `/to-issues` →
-`/orchestrate` (implementer → merger → reviewer) workflow. Their one job: stop a slice from
+`/orchestrate` (implementer → merger → my-review) workflow. Their one job: stop a slice from
 being marked **done** while the thing it exists to build is **mocked, not wired**.
 
 The pattern is portable. The second half of this doc is how to adopt it in a project that
@@ -24,7 +24,7 @@ band-aid "merge container" that tried to `git fetch` a branch nobody ever pushed
 smoke test (#17) literally could not start until #6's "done" work was actually built.
 
 That is mock-drift. None of the loop's gates — blockers-closed, project-done-check-green,
-reviewer-finds-no-bugs — caught it, because all three trust whatever the project's test suite
+my-review-finds-no-bugs — caught it, because all three trust whatever the project's test suite
 says, and the suite was satisfied by mocks.
 
 ## The key concept: the central mechanism
@@ -61,14 +61,14 @@ mechanism is real.
 
 ## The two guards
 
-### 1. Per-slice — reviewer audit (catch it the round it happens)
+### 1. Per-slice — my-review audit (catch it the round it happens)
 
 Every slice carries a `## Central mechanism` line (derived from the PRD). The implementer is
 expected to build it **real** (thin is fine — a tracer bullet, not a full implementation). If it
 genuinely must defer the real wiring, it **declares mock-debt** rather than hiding it.
 
-The reviewer audits each merged slice: *is the named central mechanism actually exercised, or
-mocked?*
+`my-review` audits each built slice on its branch diff: *is the named central mechanism actually
+exercised, or mocked?*
 
 - **Declared** mock → confirm it, file a `mock-debt` follow-up issue to wire it real later.
 - **Undeclared** central mock (the `the-retinue` #6 failure) → auto-convert: treat it as
@@ -110,14 +110,14 @@ that builds it, just deferred. Either way it's schedulable, never a phantom.
 | `/to-prd` | Names the **per-PRD central mechanism** (the outermost real interface) in the PRD body — extends the existing "highest test level" step. |
 | `/to-issues` | Derives a `## Central mechanism` line per slice; default = build it thin-real; allows a `## Mock-debt` escape hatch. Labels the final e2e/staging slice `e2e-gate`. Ensures the `mock-debt` + `e2e-gate` labels exist. |
 | `implementer` | Builds its slice's central mechanism real. If it must mock it, writes a `## Mock-debt` declaration (`Mocked: <X>. Real wiring blocked by: #N \| deferred`) — declare-only; it's sandboxed and never edits the cross-issue graph. |
-| `reviewer` | Audits each slice's central mechanism vs its test. Declared mock → confirm + file `mock-debt` follow-up. Undeclared central mock → auto-convert + file. Reuses its existing follow-up-filing machinery. |
+| `my-review` | Reviews each built slice on its branch diff and audits its central mechanism vs its test. Declared mock → confirm + file `mock-debt` follow-up. Undeclared central mock → auto-convert + file. Gains a narrow, audit-scoped `gh issue create` for mock-debt (its general review stays report-only). |
 | `orchestrator` | Maintains the ledger mirror in the PRD body; enforces the ready-rule (`e2e-gate` blocked while any open `mock-debt`); reports debt each round. |
 
 ## The mock-debt issue lifecycle
 
 1. **Declare** — implementer mocks the central mechanism and writes a `## Mock-debt` note naming
    the mock and its real-wiring blocker.
-2. **File** — reviewer files a `mock-debt` + `ready-for-agent` follow-up ("wire real X, from
+2. **File** — my-review files a `mock-debt` + `ready-for-agent` follow-up ("wire real X, from
    #N"), `## Blocked by` the declared blocker (or "None - integration" if deferred to the end).
 3. **Block** — the `e2e-gate` slice is held not-ready while this issue is open (ready-rule, via
    the label query — no per-ref wiring needed).

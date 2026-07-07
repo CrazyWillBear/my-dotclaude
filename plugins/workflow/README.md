@@ -3,8 +3,9 @@
 Three features in one plugin, versioned here with the rest of my setup:
 
 1. **`/orchestrate`** — an autonomous dev loop that solves GitHub issues in parallel
-   isolated worktrees, merges the finished branches in dependency order, and files
-   review follow-ups.
+   isolated worktrees, merges the finished branches in dependency order, then reviews each
+   built slice with `my-review` — surfacing findings in the round report and filing
+   `mock-debt` follow-ups from its central-mechanism audit.
 2. **`/pipeline`** — a single-task plan→build→review chain whose planner, implementer, and
    reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
    call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
@@ -22,8 +23,7 @@ plugins/workflow/
 ├── agents/
 │   ├── implementer.md                # inherits model, xhigh effort — builds one issue/work order in one worktree
 │   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
-│   ├── planner.md                    # fable, high effort — plans/replans/triages for /pipeline, read-only
-│   └── reviewer.md                   # opus, max effort — files review-fix follow-ups, never edits code
+│   └── planner.md                    # fable, high effort — plans/replans/triages for /pipeline, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
@@ -57,8 +57,8 @@ Each round:
    reuse the `classify-task` skill (it fans out its own Explore subagents), so each ready issue gets
    an **explore→classify** pass that emits a real tier, **auto-accepted — no interactive confirm**
    (the run is autonomous past the launch gate). `--complexity <tier>` skips classification and pins
-   every issue to that tier. The planner and implementer are routed per issue; the round's single
-   merger and reviewer are per-round.
+   every issue to that tier. The planner, implementer, and reviewer models are routed per issue; the
+   round's single merger is per-round.
 3. **Plan (per-issue work order).** Before the build, route each issue's **planner** by its tier and
    write its **work order** — a cheap **sonnet** minimal plan for a trivial issue, else the
    **`workflow:planner`** subagent (mode=plan) at the tier's planner model. Ordered steps + a
@@ -75,17 +75,18 @@ Each round:
    inspection.
 6. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
    `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-7. **Review.** Spawn the **reviewer** (opus, max effort) on the
-   round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
-   (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
-   blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.
-   It **never edits code**.
+7. **Review (per-issue).** Spawn **`personal-tools:my-review`** on each built slice's branch diff
+   (`<base>..issue-<N>`) at the tier's **reviewer** model (`opus`/`opus`/`fable`), handed the issue's
+   plan for conformance context. It reports severity-tagged findings — correctness, security, broken
+   tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a declared central
+   mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt` follow-up.
+   Ordinary findings are **surfaced in the round report**; my-review **never edits code**.
 
-The reviewer is a backstop, not a fixer, and the feedback path is **async**: each
-`review-fix` is itself a `ready-for-agent` issue a *fresh implementer builds in a later
-round*. So a single `/orchestrate` (N=1) **files** follow-ups but doesn't build them — run
-another round (`/orchestrate 2`, or re-run) to let the loop pick them up. PR merges stay a
-human decision; the loop never merges PRs.
+my-review is a backstop, not a fixer. `/orchestrate` **hard-depends** on the `personal-tools`
+`my-review` agent and **fails loud at launch** if it's missing (as `/pipeline` does). This slice
+**surfaces** ordinary findings in the round report and files `mock-debt` follow-ups from its audit;
+the fix loop that **acts** on the ordinary findings ships in a later slice. PR merges stay a human
+decision; the loop never merges PRs.
 
 ## Inside the pipeline (`/pipeline`)
 
@@ -145,8 +146,8 @@ start if it's missing) on the branch diff. Findings route by severity:
 | high | ONE collective replan covering all highs (mediums appended) |
 | critical | each gets its own full plan→implement→review cycle |
 
-Declared mock-debt is filed as a `mock-debt` issue at finish — there's no orchestrate
-reviewer on this path to do it. Fix rounds go to a fresh implementer (`model: <implementer>`),
+Declared mock-debt is filed as a `mock-debt` issue at finish — the pipeline files it directly.
+Fix rounds go to a fresh implementer (`model: <implementer>`),
 then a **scoped re-review** (prior findings addressed? + the fix delta only) — the reviewer
 model is **held constant** across every re-review. Re-reviews are capped at `--max-cycles`
 (default 2); hitting the cap with medium+ findings open pauses on an AskUserQuestion (continue /
@@ -188,8 +189,9 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
 - **`suggest-docs.sh`** (Stop) gives a soft nudge when a batch changed code but touched no
   docs (`*.md`), so usage/behavior docs land in the same commit. Advisory, deduped once per
   `HEAD`, silent the moment any `.md` is in the batch. This is the *interactive* counterpart
-  to the reviewer's stale-docs check: the Stop hook nudges you while you work; the reviewer
-  is the AFK backstop that files a `review-fix` when an autonomous round leaves a doc behind.
+  to `my-review`'s stale-docs check: the Stop hook nudges you while you work; `my-review`
+  is the AFK backstop that flags a stale doc in the round report when an autonomous round leaves
+  one behind.
 
 ### Long session, in practice
 
@@ -217,7 +219,7 @@ The 50k climb-refire step is hardcoded (a fixed design choice), not env-overrida
 ## Conventions
 
 - **Labels:** `prd` (PRD tracking issue), `ready-for-agent` (orchestrate-eligible), `hitl`
-  (needs a human, skipped by the loop), `review-fix` (reviewer follow-up; also
+  (needs a human, skipped by the loop), `review-fix` (a follow-up from `my-review` findings; also
   `ready-for-agent`).
 - **Dependencies:** each issue body ends with a `## Blocked by` section listing bare `#N`
   refs (one per line) or the literal `None - can start immediately`. An issue is *ready*

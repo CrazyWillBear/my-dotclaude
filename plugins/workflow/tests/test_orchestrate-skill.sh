@@ -232,6 +232,37 @@ assert_contains "no plan comment posted to the issue" "$content" "no plan commen
 assert_contains "no plan-approval gate fires" "$content" "no plan-approval gate fires"
 assert_not_contains "plan is never posted as an issue comment" "$content" "gh issue comment"
 
+# --- per-issue my-review + mock-drift audit; round reviewer removed (#66) ---
+# Each built slice is reviewed by personal-tools:my-review at the tier's
+# REVIEWER model (the tier table's reviewer column via a REVIEWER_MODEL map),
+# my-review runs the central-mechanism / mock-drift audit, /orchestrate
+# hard-deps on the my-review agent (fail loud at launch), and the round-level
+# workflow:reviewer agent is gone — no dangling references survive.
+echo "test: a per-issue my-review stage reviews each built slice"
+assert_contains "my-review agent spawned per issue" "$content" "personal-tools:my-review"
+assert_contains "review runs on the issue's branch diff" "$content" "issue-<N>"
+assert_contains "findings surface in the round report" "$content" "findings"
+
+echo "test: REVIEWER_MODEL routes the reviewer by the tier table's reviewer column"
+assert_contains "REVIEWER_MODEL map present" "$content" "REVIEWER_MODEL"
+assert_contains "trivial reviewer → opus" "$content" 'trivial: "opus"'
+assert_contains "standard reviewer → opus" "$content" 'standard: "opus"'
+assert_contains "complex reviewer → fable" "$content" 'complex: "fable"'
+assert_contains "reviewer column drives the review stage" "$content" "reviewer column"
+
+echo "test: /orchestrate hard-deps on the my-review agent (fail loud at launch)"
+assert_contains "hard-dependency on the personal-tools plugin" "$content" "personal-tools"
+assert_contains "fail loud when my-review unavailable" "$content" "fail loud"
+
+echo "test: the central-mechanism / mock-drift audit runs via my-review"
+assert_contains "mock-drift audit named" "$content" "mock-drift"
+assert_contains "central-mechanism audit named" "$content" "central-mechanism"
+
+echo "test: the round-level workflow:reviewer agent is gone (no dangling refs)"
+assert_not_contains "no workflow:reviewer round agent" "$content" "workflow:reviewer"
+assert_not_contains "no reference to the deleted reviewer.md" "$content" "reviewer.md"
+assert_not_contains "no stale 'per-issue review lands later' prose" "$content" "lands in a later slice"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
