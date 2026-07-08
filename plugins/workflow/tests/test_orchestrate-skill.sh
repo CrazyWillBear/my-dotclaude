@@ -113,20 +113,6 @@ assert_contains "end-of-run placement stated" "$content" "After **all rounds**"
 echo "test: mid-loop rounds are uninterrupted"
 assert_contains "mid-loop uninterrupted stated" "$content" "never interrupt mid-loop rounds"
 
-# --- mock-debt gate (C7) ---------------------------------------------------
-echo "test: ready-rule holds the e2e-gate while mock-debt is open"
-assert_contains "e2e-gate referenced in ready-rule" "$content" "e2e-gate"
-assert_contains "mock-debt gate tag present" "$content" "Mock-debt gate (C7)"
-assert_contains "mock-debt label query is the gate" "$content" "--label mock-debt --state open"
-assert_contains "gate holds while debt open" "$content" "not ready"
-
-echo "test: orchestrator mirrors the ledger into the PRD body (visibility, not enforcement)"
-assert_contains "ledger section named" "$content" "## Mock-debt ledger"
-assert_contains "label query is authoritative for the gate" "$content" "authoritative"
-
-echo "test: round report surfaces open mock-debt"
-assert_contains "report mentions mock-debt" "$content" "mock-debt: N open"
-
 # --- worktree isolation (step 0) -------------------------------------------
 echo "test: step 0 runs the whole loop in one orchestration worktree"
 assert_contains "step 0 enters an orchestration worktree via EnterWorktree" "$content" "EnterWorktree(name:"
@@ -137,39 +123,39 @@ assert_contains "result is left on the orchestration branch" "$content" "orchest
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"
 assert_contains "primary checkout is never touched" "$content" "primary checkout is never touched"
 
-# --- per-issue tier routing (issue #50) ------------------------------------
-echo "test: frontmatter gains Skill + AskUserQuestion for the classify + batch confirm"
-assert_contains "Skill tool allowed" "$content" "Skill"
-assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
+# --- Workflow-backed round loop (issue #63) --------------------------------
+echo "test: frontmatter allows exactly the Workflow-backed tool set"
+assert_contains "allowed-tools names the Workflow tool set" "$content" "allowed-tools: Read, Grep, Bash, Workflow, AskUserQuestion"
 
-echo "test: --complexity escape hatch is documented in the argument-hint"
-assert_contains "--complexity in argument-hint" "$content" "--complexity trivial|standard|complex"
+echo "test: the skill drives the committed Workflow script by scriptPath"
+assert_contains "scriptPath is passed to the Workflow tool" "$content" "scriptPath"
+assert_contains "names the committed workflow script" "$content" "orchestrate.workflow.js"
 
-echo "test: each ready issue is classified via the classify-task skill before fan-out"
-assert_contains "classify-task skill invoked" "$content" "classify-task"
-assert_contains "invoked in batch mode (no per-issue confirm)" "$content" "--no-confirm"
+echo "test: the Workflow permission dialog is the single launch gate"
+assert_contains "Workflow permission dialog named" "$content" "Workflow permission dialog"
+assert_contains "single launch gate stated" "$content" "single launch gate"
 
-echo "test: tier table rows present verbatim (drift guard vs classify-task/pipeline)"
-assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
-assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
+echo "test: the skill hands the round/max/branch/done-check args into the workflow"
+assert_contains "rounds arg passed"     "$content" "rounds"
+assert_contains "max arg passed"        "$content" "max"
+assert_contains "baseBranch arg passed" "$content" "baseBranch"
+assert_contains "doneCheck arg passed"  "$content" "doneCheck"
 
-echo "test: only the implementer model is routed per issue (merger/reviewer are per-round)"
-assert_contains "only implementer routed per issue" "$content" "only the implementer"
+echo "test: the skill exits the orchestration worktree keeping the branch"
+assert_contains "ExitWorktree(keep) at the end" "$content" "ExitWorktree(keep)"
 
-echo "test: exactly one batch confirmation per round — not one question per issue"
-assert_contains "one summary table for the whole round" "$content" "ONE summary table for the whole round"
-assert_contains "single AskUserQuestion, never per issue" "$content" "never one per issue"
+echo "test: the skill no longer fans out subagents itself (moved into the workflow)"
+assert_not_contains "no inline implementer spawn" "$content" "subagent_type: workflow:implementer"
+assert_not_contains "no inline merger spawn"      "$content" "subagent_type: workflow:merger"
+assert_not_contains "no inline reviewer spawn"    "$content" "subagent_type: workflow:reviewer"
 
-echo "test: an accept-all / zero-override path exists"
-assert_contains "accept-all path" "$content" "Accept all"
+echo "test: no tier table leaks into the skill in #63 (routing lands in a later slice)"
+assert_not_contains "no verbatim tier row" "$content" "| trivial | sonnet | sonnet | opus |"
 
-echo "test: row-level override swaps the whole tier row"
-assert_contains "row-level override" "$content" "override"
-assert_contains "override swaps the whole row (never mixed)" "$content" "whole"
-
-echo "test: confirmed implementer model is passed explicitly on each implementer spawn"
-assert_contains "explicit implementer model placeholder on spawn" "$content" 'model: "<implementer>"'
+echo "test: the pick/gate + stop prose survives in the skill body"
+assert_contains "e2e-gate referenced"    "$content" "e2e-gate"
+assert_contains "mock-debt referenced"   "$content" "mock-debt"
+assert_contains "a failure stops the loop" "$content" "stops the loop"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

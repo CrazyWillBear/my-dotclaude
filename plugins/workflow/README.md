@@ -2,9 +2,9 @@
 
 Three features in one plugin, versioned here with the rest of my setup:
 
-1. **`/orchestrate`** — an autonomous dev loop that solves GitHub issues in parallel
-   isolated worktrees, merges the finished branches in dependency order, and files
-   review follow-ups.
+1. **`/orchestrate`** — an autonomous dev loop, driven by a Workflow script, that solves
+   GitHub issues in parallel isolated worktrees and merges the finished branches in
+   dependency order under the project done-check.
 2. **`/pipeline`** — a single-task plan→build→review chain whose planner, implementer, and
    reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
    call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
@@ -37,49 +37,42 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K] [--complexity <tier>]` runs **N** rounds (default 1), building up to
-**K** issues in parallel per round (default 3). It runs on the **main thread** because only the
-main thread can spawn subagents.
+`/orchestrate [N] [--max K]` runs **N** rounds (default 1), building up to **K** issues in parallel
+per round (default 3).
 
-**The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
-into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
-worktree the `personal-tools` `worktree-guard` allows and the **primary checkout is never touched**.
-Per-issue implementer worktrees nest under it. The merged result is **left on the orchestration
-branch** for you to merge into `dev`/`main` yourself — the run never merges back to the launch
-branch, and cleanup removes only the per-issue child worktrees.
+**The whole run executes in one orchestration worktree, driven by a Workflow script.** A step-0
+`EnterWorktree` moves the run into a linked worktree off the launch branch (skipped if already in
+one), so the merger writes to a worktree the `personal-tools` `worktree-guard` allows and the
+**primary checkout is never touched**. The skill then invokes the **Workflow** tool once on the
+committed `orchestrate.workflow.js` — approving that **Workflow permission dialog is the single
+launch gate**, and the per-issue chatter runs inside the workflow's phase agents, never in the main
+thread's context. The merged result is **left on the orchestration branch** for you to merge into
+`dev`/`main` yourself — the run never merges back to the launch branch, and cleanup removes only the
+per-issue child worktrees.
 
-Each round:
+Each round runs four phases:
 
-1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
-   `hitl` issues (those need a human). Take up to K of them.
-2. **Classify (per-issue implementer model).** Route each ready issue's **implementer** model by
-   complexity **tier** via the `classify-task` skill (invoked `--no-confirm`, once per issue), then
-   confirm the whole round in **one** batch table (issue → tier → model) with row-level overrides —
-   **exactly one interactive stop per round**, never one per issue. `--complexity <tier>` skips
-   classification and pins every issue to that tier. Only the implementer is routed per issue; the
-   round's single merger and reviewer are per-round.
-3. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
-   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
-   TDD-first, runs the project's done-check, and commits — never touching another worktree
-   or the base branch.
-4. **Merge.** Hand the completed branches to the **merger**, which merges them into
-   the base branch serially in dependency (topological) order, attempting to resolve
-   conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
-   and reports** rather than keeping an unverified resolution — the worktree is left for
-   inspection.
-5. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
-   `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-6. **Review.** Spawn the **reviewer** (opus, max effort) on the
-   round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
-   (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
-   blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.
-   It **never edits code**.
+1. **pick.** Compute the ready set — every `## Blocked by` ref **closed**, skip `hitl`/`prd`, and
+   hold any `e2e-gate` issue while an open `mock-debt` issue exists. Take up to K, lowest number
+   first, and cut each a worktree (`issue-<N>` at `.worktrees/issue-<N>`).
+2. **build.** Fan out up to K **implementers** in parallel, one per ready issue in its own isolated
+   worktree. Each plans, builds TDD-first, runs the project's done-check, and commits — never
+   touching another worktree or the base branch.
+3. **merge.** Hand the completed branches (acceptance met and done-check green) to the **merger**,
+   which merges them into the base branch serially in ascending issue number, resolving conflicts
+   **gated by the done-check**. An unresolvable conflict or a red check **stops and reports** rather
+   than keeping an unverified resolution — the worktree is left for inspection.
+4. **close.** Close the merged issues (comment, never delete) and reclaim their child worktrees;
+   failures and conflict-stops are commented and left be. `prd-reap.sh` then checks whether any
+   parent `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
 
-The reviewer is a backstop, not a fixer, and the feedback path is **async**: each
-`review-fix` is itself a `ready-for-agent` issue a *fresh implementer builds in a later
-round*. So a single `/orchestrate` (N=1) **files** follow-ups but doesn't build them — run
-another round (`/orchestrate 2`, or re-run) to let the loop pick them up. PR merges stay a
-human decision; the loop never merges PRs.
+An empty ready set, a merger conflict-stop, a red final done-check, or an implementer failure
+**stops the loop** with a report; otherwise it runs until N rounds finish or the ready set drains.
+PR merges stay a human decision; the loop never merges PRs.
+
+Per-issue **tier routing** (per-issue implementer models) and **per-issue review** (a reviewer that
+files `review-fix` / `mock-debt` follow-ups) land in later slices; this slice surfaces any
+implementer-declared mock-debt in the final report only.
 
 ## Inside the pipeline (`/pipeline`)
 
