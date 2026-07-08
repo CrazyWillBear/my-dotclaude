@@ -1,14 +1,15 @@
 ---
 name: orchestrate
 description: Run N rounds of the autonomous issue-solving loop, backed by a Workflow script — pick the ready set (blockers closed, skip hitl/prd, hold the e2e-gate while any mock-debt is open), build up to K ready issues in parallel via workflow:implementer agents in isolated git worktrees, merge the completed branches serially via a workflow:merger under the project done-check, and close the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
-argument-hint: "[N rounds=1] [--max K=3]"
+argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Workflow, AskUserQuestion
 ---
 
 Run the autonomous issue-solving loop on this repo's GitHub issues.
-`$ARGUMENTS` = `[N] [--max K]` — **N** rounds (default 1); **K** = max issues built in parallel per
-round (default 3).
+`$ARGUMENTS` = `[N] [--max K] [--complexity trivial|standard|complex]` — **N** rounds (default 1);
+**K** = max issues built in parallel per round (default 3); **`--complexity <tier>`** pins every
+issue to that tier and skips per-issue classification (see below).
 
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
@@ -71,23 +72,32 @@ loop:
     baseBranch: "<base branch from Setup>",
     rounds:     N,          // from $ARGUMENTS (default 1)
     max:        K,          // from --max (default 3)
-    doneCheck:  "<the project done-check command>"
+    doneCheck:  "<the project done-check command>",
+    complexity: <tier|undefined>  // from --complexity: pins every issue, skips classify
   }
   ```
 
 Approving the **Workflow permission dialog** is the **single launch gate**; after it the run is
-autonomous. Each round the script runs four phases:
+autonomous. Each round the script runs five phases:
 
 1. **pick** — a Bash-capable agent computes the ready set (`--label ready-for-agent --state open`;
    every `## Blocked by` ref closed; skip `hitl`/`prd`; **hold any `e2e-gate` issue while an open
    `mock-debt` issue exists**), takes up to **K** lowest-numbered issues, and cuts each a
    deterministic worktree `.worktrees/issue-<N>` on branch `issue-<N>`.
-2. **build** — up to K **`workflow:implementer`** agents run **in parallel**, one per ready issue,
-   each in its own worktree: plan, build TDD-first, run the done-check, commit.
-3. **merge** — the completed branches (acceptance met **and** done-check green) go to one
+2. **classify** — one cheap leaf agent per ready issue **explores then classifies** it into a
+   complexity tier (trivial / standard / complex), and the workflow **routes that issue's
+   implementer model** by tier. The returned tier is **auto-accepted** — no interactive confirm,
+   since the run is autonomous after the launch gate. **`--complexity <tier>`** pins every issue to
+   that tier and skips this phase entirely. The tier → model routing table is embedded in
+   `orchestrate.workflow.js` byte-identical to the one in the `classify-task` and `pipeline` skills;
+   only the **implementer** column is used here (the loop has no per-issue planner/reviewer yet).
+3. **build** — up to K **`workflow:implementer`** agents run **in parallel**, one per ready issue,
+   each in its own worktree on the tier-routed model: plan, build TDD-first, run the done-check,
+   commit.
+4. **merge** — the completed branches (acceptance met **and** done-check green) go to one
    **`workflow:merger`** agent, which merges them serially in **ascending** issue number and
    resolves conflicts **gated by the done-check**.
-4. **close** — a Bash-capable agent closes each merged-green issue (`gh issue close … --comment`)
+5. **close** — a Bash-capable agent closes each merged-green issue (`gh issue close … --comment`)
    and reclaims its child worktree; failures and conflict-stops are commented, their worktrees left
    intact.
 

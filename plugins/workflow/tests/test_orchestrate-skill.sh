@@ -149,7 +149,7 @@ assert_not_contains "no inline implementer spawn" "$content" "subagent_type: wor
 assert_not_contains "no inline merger spawn"      "$content" "subagent_type: workflow:merger"
 assert_not_contains "no inline reviewer spawn"    "$content" "subagent_type: workflow:reviewer"
 
-echo "test: no tier table leaks into the skill in #63 (routing lands in a later slice)"
+echo "test: no tier table in the orchestrate skill (routing lives in the workflow script)"
 assert_not_contains "no verbatim tier row" "$content" "| trivial | sonnet | sonnet | opus |"
 
 echo "test: the pick/gate + stop prose survives in the skill body"

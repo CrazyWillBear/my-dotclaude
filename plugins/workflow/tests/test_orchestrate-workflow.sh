@@ -13,11 +13,14 @@
 #   5. The pick phase computes the ready set (label/state filter, Blocked by refs,
 #      skip hitl/prd) and holds the e2e-gate while mock-debt is open.
 #   6. The pick phase creates per-issue worktrees deterministically.
-#   7. The build phase fans out workflow:implementer agents via parallel() (no model).
+#   7. The build phase fans out workflow:implementer agents via parallel(), routing the
+#      implementer model per the issue's classified tier.
 #   8. The merge phase hands the completed branches to one workflow:merger, ascending.
 #   9. The close phase closes merged issues (comment, not delete) then removes worktrees.
 #  10. The loop stops on empty ready set / conflict-stop and returns a stopReason.
-#  11. No tier routing / classify / model option leaks into #63's script.
+#  11. Per-issue tiering (#64): a classify phase routes each issue's implementer model by
+#      tier, auto-accepted, with --complexity as a blanket escape hatch. The embedded tier
+#      table is byte-identical to classify-task/pipeline (the drift guard).
 #
 # Run: bash plugins/workflow/tests/test_orchestrate-workflow.sh  (non-zero if any fail)
 
@@ -137,10 +140,22 @@ assert_not_contains "no int shorthand type"   "$content" "number: 'int'"
 assert_not_contains "no bool shorthand type"  "$content" "acceptanceMet: 'bool'"
 
 # ---------------------------------------------------------------------------
-echo "test: no tier routing / classify / model option leaks into #63's script"
-assert_not_contains "no verbatim tier row" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_not_contains "no classify wiring"   "$content" "classify"
-assert_not_contains "no model option"      "$content" "model:"
+echo "test: per-issue tiering — classify phase + tier-routed implementer model (#64)"
+# The classify phase runs between pick and build.
+assert_contains "meta.phases includes classify" "$content" "'classify'"
+# The three canonical tier rows are embedded VERBATIM — this is the byte-identical
+# drift guard against classify-task/SKILL.md and pipeline/SKILL.md.
+assert_contains "verbatim trivial tier row"  "$content" "| trivial | sonnet | sonnet | opus |"
+assert_contains "verbatim standard tier row" "$content" "| standard | opus | sonnet | opus |"
+assert_contains "verbatim complex tier row"  "$content" "| complex | fable | opus | fable |"
+# The build stage routes the implementer model per tier — assert the exact routing
+# expression (a bare "model:" would also match the classify agent's model: 'sonnet').
+assert_contains "build routes model by tier"     "$content" "TIER_TABLE[tierOf[issue.number]].implementer"
+assert_contains "still fans out implementers"    "$content" "agentType: 'workflow:implementer'"
+# The blanket escape hatch pins every issue and skips classification.
+assert_contains "--complexity escape hatch"      "$content" "args.complexity"
+# Classification is auto-accepted — no interactive confirm inside the autonomous run.
+assert_contains "classification is auto-accepted" "$content" "auto-accept"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

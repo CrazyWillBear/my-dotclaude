@@ -37,8 +37,9 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K]` runs **N** rounds (default 1), building up to **K** issues in parallel
-per round (default 3).
+`/orchestrate [N] [--max K] [--complexity trivial|standard|complex]` runs **N** rounds (default 1),
+building up to **K** issues in parallel per round (default 3). `--complexity <tier>` pins every
+issue to that tier and skips per-issue classification.
 
 **The whole run executes in one orchestration worktree, driven by a Workflow script.** A step-0
 `EnterWorktree` moves the run into a linked worktree off the launch branch (skipped if already in
@@ -50,19 +51,23 @@ thread's context. The merged result is **left on the orchestration branch** for 
 `dev`/`main` yourself — the run never merges back to the launch branch, and cleanup removes only the
 per-issue child worktrees.
 
-Each round runs four phases:
+Each round runs five phases:
 
 1. **pick.** Compute the ready set — every `## Blocked by` ref **closed**, skip `hitl`/`prd`, and
    hold any `e2e-gate` issue while an open `mock-debt` issue exists. Take up to K, lowest number
    first, and cut each a worktree (`issue-<N>` at `.worktrees/issue-<N>`).
-2. **build.** Fan out up to K **implementers** in parallel, one per ready issue in its own isolated
-   worktree. Each plans, builds TDD-first, runs the project's done-check, and commits — never
-   touching another worktree or the base branch.
-3. **merge.** Hand the completed branches (acceptance met and done-check green) to the **merger**,
+2. **classify.** One cheap leaf agent per ready issue explores then classifies it into a complexity
+   tier (trivial / standard / complex), auto-accepted (no confirm), and the build phase **routes
+   that issue's implementer model** by tier. `--complexity <tier>` pins every issue and skips this
+   phase. The tier table is embedded byte-identical to `classify-task`/`pipeline`.
+3. **build.** Fan out up to K **implementers** in parallel, one per ready issue in its own isolated
+   worktree, each on the tier-routed model. Each plans, builds TDD-first, runs the project's
+   done-check, and commits — never touching another worktree or the base branch.
+4. **merge.** Hand the completed branches (acceptance met and done-check green) to the **merger**,
    which merges them into the base branch serially in ascending issue number, resolving conflicts
    **gated by the done-check**. An unresolvable conflict or a red check **stops and reports** rather
    than keeping an unverified resolution — the worktree is left for inspection.
-4. **close.** Close the merged issues (comment, never delete) and reclaim their child worktrees;
+5. **close.** Close the merged issues (comment, never delete) and reclaim their child worktrees;
    failures and conflict-stops are commented and left be. `prd-reap.sh` then checks whether any
    parent `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
 
@@ -70,9 +75,10 @@ An empty ready set, a merger conflict-stop, a red final done-check, or an implem
 **stops the loop** with a report; otherwise it runs until N rounds finish or the ready set drains.
 PR merges stay a human decision; the loop never merges PRs.
 
-Per-issue **tier routing** (per-issue implementer models) and **per-issue review** (a reviewer that
-files `review-fix` / `mock-debt` follow-ups) land in later slices; this slice surfaces any
-implementer-declared mock-debt in the final report only.
+Per-issue **tier routing** (the classify phase above routes each issue's implementer model by
+complexity tier) is in; **per-issue review** (a reviewer that files `review-fix` / `mock-debt`
+follow-ups) lands in a later slice, so this loop surfaces any implementer-declared mock-debt in the
+final report only.
 
 ## Inside the pipeline (`/pipeline`)
 
