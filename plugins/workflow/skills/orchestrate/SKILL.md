@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop, backed by a Workflow script — pick the ready set (blockers closed, skip hitl/prd, hold the e2e-gate while any mock-debt is open), build up to K ready issues in parallel via workflow:implementer agents in isolated git worktrees, merge the completed branches serially via a workflow:merger under the project done-check, and close the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop, backed by a Workflow script — pick the ready set (blockers closed, skip hitl/prd, hold the e2e-gate while any mock-debt is open), classify each ready issue into a complexity tier, plan it at the tier's planner model, build up to K in parallel via tier-routed workflow:implementer agents in isolated git worktrees, merge the completed branches serially via a workflow:merger under the project done-check, and close the merged issues. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Workflow, AskUserQuestion
@@ -78,7 +78,7 @@ loop:
   ```
 
 Approving the **Workflow permission dialog** is the **single launch gate**; after it the run is
-autonomous. Each round the script runs five phases:
+autonomous. Each round the script runs six phases:
 
 1. **pick** — a Bash-capable agent computes the ready set (`--label ready-for-agent --state open`;
    every `## Blocked by` ref closed; skip `hitl`/`prd`; **hold any `e2e-gate` issue while an open
@@ -90,14 +90,20 @@ autonomous. Each round the script runs five phases:
    since the run is autonomous after the launch gate. **`--complexity <tier>`** pins every issue to
    that tier and skips this phase entirely. The tier → model routing table is embedded in
    `orchestrate.workflow.js` byte-identical to the one in the `classify-task` and `pipeline` skills;
-   only the **implementer** column is used here (the loop has no per-issue planner/reviewer yet).
-3. **build** — up to K **`workflow:implementer`** agents run **in parallel**, one per ready issue,
-   each in its own worktree on the tier-routed model: plan, build TDD-first, run the done-check,
-   commit.
-4. **merge** — the completed branches (acceptance met **and** done-check green) go to one
+   the **implementer** and **planner** columns are used here (the loop has no per-issue reviewer yet).
+3. **plan** — one plan agent per ready issue writes its **work order** (ordered steps +
+   `## Acceptance criteria` + the done-check), routed by tier: a **trivial** issue gets a cheap
+   **sonnet minimal-plan** leaf; a **standard/complex** issue gets the **`workflow:planner`** agent
+   (mode=plan) on the tier's planner model. The plan is handed to that issue's implementer as its
+   work order — **no plan comment is posted and no plan-approval gate fires** (the run stays
+   autonomous), and a planner error falls back to the raw issue body so build still proceeds.
+4. **build** — up to K **`workflow:implementer`** agents run **in parallel**, one per ready issue,
+   each in its own worktree on the tier-routed model, building against the plan phase's work order:
+   build TDD-first, run the done-check, commit.
+5. **merge** — the completed branches (acceptance met **and** done-check green) go to one
    **`workflow:merger`** agent, which merges them serially in **ascending** issue number and
    resolves conflicts **gated by the done-check**.
-5. **close** — a Bash-capable agent closes each merged-green issue (`gh issue close … --comment`)
+6. **close** — a Bash-capable agent closes each merged-green issue (`gh issue close … --comment`)
    and reclaims its child worktree; failures and conflict-stops are commented, their worktrees left
    intact.
 

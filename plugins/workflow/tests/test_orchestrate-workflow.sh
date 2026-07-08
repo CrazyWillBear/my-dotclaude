@@ -21,6 +21,10 @@
 #  11. Per-issue tiering (#64): a classify phase routes each issue's implementer model by
 #      tier, auto-accepted, with --complexity as a blanket escape hatch. The embedded tier
 #      table is byte-identical to classify-task/pipeline (the drift guard).
+#  12. Per-issue planning (#65): a plan phase runs between classify and build. Trivial issues
+#      get a cheap sonnet minimal plan; standard/complex get a workflow:planner routed to the
+#      tier's planner model. The plan is threaded to the implementer as its work order. No plan
+#      comment is posted and no plan-approval gate fires (autonomous).
 #
 # Run: bash plugins/workflow/tests/test_orchestrate-workflow.sh  (non-zero if any fail)
 
@@ -156,6 +160,27 @@ assert_contains "still fans out implementers"    "$content" "agentType: 'workflo
 assert_contains "--complexity escape hatch"      "$content" "args.complexity"
 # Classification is auto-accepted — no interactive confirm inside the autonomous run.
 assert_contains "classification is auto-accepted" "$content" "auto-accept"
+
+# ---------------------------------------------------------------------------
+echo "test: per-issue planning — plan phase + planner routed by tier + work order (#65)"
+# The plan phase runs between classify and build — assert the exact ordered phase list
+# (a bare 'plan' would also match phase: 'plan' in an agent call).
+assert_contains "meta.phases lists plan in order" "$content" "'pick', 'classify', 'plan', 'build', 'merge', 'close'"
+# Standard/complex issues get a workflow:planner routed to the tier's planner model —
+# assert the exact routing expression (mirrors the build phase's implementer routing).
+assert_contains "plan uses workflow:planner"        "$content" "agentType: 'workflow:planner'"
+assert_contains "plan routes planner model by tier" "$content" "TIER_TABLE[tierOf[issue.number]].planner"
+# Trivial issues get a cheap sonnet minimal plan (a leaf agent, no agentType) — assert
+# the actual call site, not just the word "minimal" (which also appears in comments).
+assert_contains "trivial routes to the minimal-plan agent" "$content" "minimalPlanPrompt(issue)"
+assert_contains "minimal plan runs on sonnet"              "$content" "model: 'sonnet'"
+# The plan is handed to the implementer as its work order — implementerPrompt takes the plan
+# and the build call site threads the per-issue plan (planOf) into it.
+assert_contains "implementerPrompt takes the plan"  "$content" "function implementerPrompt(issue, plan)"
+assert_contains "build passes the plan work order"  "$content" "planOf[issue.number]"
+# No plan comment is posted and no plan-approval gate fires — the run stays autonomous.
+assert_not_contains "no plan issue comment"  "$content" "gh issue comment"
+assert_not_contains "no plan-approval gate"  "$content" "AskUserQuestion"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

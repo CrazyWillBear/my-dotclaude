@@ -51,23 +51,30 @@ thread's context. The merged result is **left on the orchestration branch** for 
 `dev`/`main` yourself — the run never merges back to the launch branch, and cleanup removes only the
 per-issue child worktrees.
 
-Each round runs five phases:
+Each round runs six phases:
 
 1. **pick.** Compute the ready set — every `## Blocked by` ref **closed**, skip `hitl`/`prd`, and
    hold any `e2e-gate` issue while an open `mock-debt` issue exists. Take up to K, lowest number
    first, and cut each a worktree (`issue-<N>` at `.worktrees/issue-<N>`).
 2. **classify.** One cheap leaf agent per ready issue explores then classifies it into a complexity
-   tier (trivial / standard / complex), auto-accepted (no confirm), and the build phase **routes
-   that issue's implementer model** by tier. `--complexity <tier>` pins every issue and skips this
-   phase. The tier table is embedded byte-identical to `classify-task`/`pipeline`.
-3. **build.** Fan out up to K **implementers** in parallel, one per ready issue in its own isolated
-   worktree, each on the tier-routed model. Each plans, builds TDD-first, runs the project's
-   done-check, and commits — never touching another worktree or the base branch.
-4. **merge.** Hand the completed branches (acceptance met and done-check green) to the **merger**,
+   tier (trivial / standard / complex), auto-accepted (no confirm), and the plan and build phases
+   **route that issue's planner and implementer models** by tier. `--complexity <tier>` pins every
+   issue and skips this phase. The tier table is embedded byte-identical to `classify-task`/`pipeline`.
+3. **plan.** One plan agent per ready issue writes its **work order** (ordered steps +
+   `## Acceptance criteria` + the done-check), routed by tier: a **trivial** issue gets a cheap
+   **sonnet minimal plan**; a **standard/complex** issue gets the **planner** (`workflow:planner`,
+   mode=plan) on the tier's planner model. The plan is handed to that issue's implementer as its
+   work order — no plan comment is posted and no plan-approval gate fires (autonomous); a planner
+   error falls back to the raw issue body so build still proceeds.
+4. **build.** Fan out up to K **implementers** in parallel, one per ready issue in its own isolated
+   worktree, each on the tier-routed model and building against the plan phase's work order. Each
+   builds TDD-first, runs the project's done-check, and commits — never touching another worktree
+   or the base branch.
+5. **merge.** Hand the completed branches (acceptance met and done-check green) to the **merger**,
    which merges them into the base branch serially in ascending issue number, resolving conflicts
    **gated by the done-check**. An unresolvable conflict or a red check **stops and reports** rather
    than keeping an unverified resolution — the worktree is left for inspection.
-5. **close.** Close the merged issues (comment, never delete) and reclaim their child worktrees;
+6. **close.** Close the merged issues (comment, never delete) and reclaim their child worktrees;
    failures and conflict-stops are commented and left be. `prd-reap.sh` then checks whether any
    parent `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
 
@@ -75,10 +82,12 @@ An empty ready set, a merger conflict-stop, a red final done-check, or an implem
 **stops the loop** with a report; otherwise it runs until N rounds finish or the ready set drains.
 PR merges stay a human decision; the loop never merges PRs.
 
-Per-issue **tier routing** (the classify phase above routes each issue's implementer model by
-complexity tier) is in; **per-issue review** (a reviewer that files `review-fix` / `mock-debt`
-follow-ups) lands in a later slice, so this loop surfaces any implementer-declared mock-debt in the
-final report only.
+Per-issue **tier routing** (the classify phase routes each issue's planner and implementer models
+by complexity tier) and **per-issue planning** (the plan phase writes each issue a work order —
+trivial → cheap sonnet minimal plan, standard/complex → `workflow:planner` at the tier's planner
+model) are in; **per-issue review** (a reviewer that files `review-fix` / `mock-debt` follow-ups)
+lands in a later slice, so this loop surfaces any implementer-declared mock-debt in the final
+report only.
 
 ## Inside the pipeline (`/pipeline`)
 
