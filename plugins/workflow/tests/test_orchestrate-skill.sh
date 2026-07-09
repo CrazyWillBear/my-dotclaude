@@ -372,6 +372,24 @@ echo "test: pipeline() receives the item list plus a stage callback"
 assert_contains "pipeline takes items + stage" "$js_block" "pipeline(picked, issue =>"
 assert_not_contains "pre-started promise array is gone" "$js_block" "pipeline(picked.map("
 
+# --- args parse-or-throw, never silent-empty (issue #74) -------------------
+# The Workflow tool may deliver the script's inputs as a JSON STRING, not an
+# object. A blind `const { rounds } = args` then yields undefined and the round
+# loop falls through spawning nothing — a silent empty success (the #53/#70/#73
+# class). Step 1 must normalize args and parse-or-throw. The absence check is
+# scoped to the ```js block alone (the prose is free to name the wrong form).
+echo "test: Step 1 states args may arrive as a JSON string and must be normalized"
+assert_contains "prose warns args may arrive as a JSON string" "$content" "may arrive as a JSON string"
+
+echo "test: the schematic normalizes args (JSON-string tolerant) before reading them"
+assert_contains "typeof-string normalization present" "$js_block" "typeof args === 'string'"
+
+echo "test: the schematic parses-or-throws on malformed rounds (never falls through)"
+assert_contains "parse-or-throw guard throws" "$js_block" "throw new Error"
+
+echo "test: the schematic never blind-destructures args"
+assert_not_contains "no bare const { rounds } = args in the js block" "$js_block" "const { rounds } = args"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
