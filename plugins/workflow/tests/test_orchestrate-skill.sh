@@ -372,6 +372,9 @@ echo "test: pipeline() receives the item list plus a stage callback"
 assert_contains "pipeline takes items + stage" "$js_block" "pipeline(picked, issue =>"
 assert_not_contains "pre-started promise array is gone" "$js_block" "pipeline(picked.map("
 
+echo "test: implementer spawns don't set isolation (worktree is created in step 4 prose)"
+assert_not_contains "isolation opt is gone from implementer spawns" "$js_block" "isolation:"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

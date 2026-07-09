@@ -195,7 +195,7 @@ for (let round = 0; round < rounds; round++) {
       { agentType: "workflow:implementer",
         model:     ROSTER[issue.tier].implementer.model,
         effort:    ROSTER[issue.tier].implementer.effort,
-        isolation: "worktree",
+        // worktree created by step 4, owned by the implementer — no isolation opt here
         schema:    BUILT_SCHEMA }));
   if (built.some(b => !b || b.failed)) return stop("implementer failure");   // null = agent died
 
@@ -234,7 +234,6 @@ for (let round = 0; round < rounds; round++) {
         { agentType: "workflow:implementer",
           model:     ROSTER[issue.tier].implementer.model,
           effort:    ROSTER[issue.tier].implementer.effort,
-          isolation: "worktree",
           schema:    BUILT_SCHEMA });
       issue.review = await agent(
         `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
