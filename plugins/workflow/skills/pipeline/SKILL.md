@@ -21,7 +21,7 @@ the issue.
 resumed run — re-enter the recorded worktree (`EnterWorktree(path: …)`), read the state doc in
 full, and continue from the recorded phase with the recorded cycle count and open findings.
 Do not redo completed phases. The state doc records the **confirmed roster** (tier + the three
-models) — reuse it; **never re-classify on resume**. It also records **`plan_author`** and the
+`{model, effort}` pairs) — reuse it; **never re-classify on resume**. It also records **`plan_author`** and the
 **full plan text**; a resume **never re-authors the plan and never re-spawns a Step-2 planner** —
 the embedded plan is authoritative (Step-5 planner spawns still happen normally).
 
@@ -56,33 +56,33 @@ the embedded plan is authoritative (Step-5 planner spawns still happen normally)
 
 ## Step 0.5 — classify (pick the roster)
 
-The models below are **tier-routed**, not fixed. This tier table is the source of truth
-(byte-identical to `classify-task`'s):
+The models **and efforts** below are **tier-routed**, not fixed. Obtain the **tier**, then resolve
+its roster from the plugin's config — the table is **not** duplicated here:
 
-| tier | planner | implementer | reviewer |
-|---|---|---|---|
-| trivial | sonnet | sonnet | opus |
-| standard | opus | sonnet | opus |
-| complex | fable | opus | fable |
-
-- **`--complexity <tier>` given** → skip classification; take that tier's row from the table as
-  the **confirmed roster** (no rationale — record `rationale=(--complexity <tier>)`).
+- **`--complexity <tier>` given** → skip classification; that tier is the confirmed tier (no
+  rationale — record `rationale=(--complexity <tier>)`).
 - **Otherwise** → invoke the **`classify-task` skill** (Skill tool) with the issue body (issue
   mode) or the distilled brief (grill/bare). It explores the touched code, classifies, and runs
   **its own** confirm/override `AskUserQuestion` before any pipeline subagent
   (planner/implementer/reviewer) spawns — in **issue mode** this stays the *only* interactive stop
   **before the fix loop** (Step 2's authorship ask below is **unreachable** in issue mode; Step 6's
   cap-hit ask is the exception, on the far side of the fix loop); in **grill/bare** it precedes
-  every spawn. Parse its output contract (`tier=` / `planner=` / `implementer=` /
-  `reviewer=` / `rationale=`) into the **confirmed roster** that drives every spawn below. Keep
+  every spawn. Parse its two-line output contract (`tier=` / `rationale=`) for the tier, and keep
   the `rationale` for Step 2 surfacing.
 
+Then resolve the roster **once**: run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>` and parse its seven `key=value` lines
+(`tier=`, `planner_model=` / `planner_effort=`, `implementer_model=` / `implementer_effort=`,
+`reviewer_model=` / `reviewer_effort=`) into the **confirmed roster** — the tier plus the three
+`{model, effort}` pairs — that drives every spawn below. If the helper prints a `WARN` (missing or
+invalid config), surface it to the user and continue on the fallback (standard) roster it returned.
+
 The confirmed roster is fixed for the whole run — the **reviewer model is held constant across
-every re-review**. Substitute it into the `model:` placeholders (`<planner>`, `<implementer>`,
-`<reviewer>`) in Steps 2–5. Note: even when Step 2's plan is authored **inline** (main thread, no
-planner spawn), the **planner column still drives Step 5's** triage/replan/per-critical spawns.
-The confirmed roster the state doc records also carries **`plan_author=inline|subagent`**, set in
-Step 2.
+every re-review**. Substitute it into the `model:` **and** `effort:` placeholders (`<planner>` /
+`<planner_effort>`, `<implementer>` / `<implementer_effort>`, `<reviewer>` / `<reviewer_effort>`) in
+Steps 2–5. Note: even when Step 2's plan is authored **inline** (main thread, no planner spawn), the
+roster's **planner pair still drives Step 5's** triage/replan/per-critical spawns. The confirmed
+roster the state doc records also carries **`plan_author=inline|subagent`**, set in Step 2.
 
 ## Step 1 — enter the worktree
 
@@ -122,7 +122,8 @@ branch and worktree stay for the user.
 `<scratchpad>/pipeline-plan.md` — **no planner spawn for Step 2**.
 
 **Subagent** (`plan_author=subagent`): spawn **`workflow:planner`** (one `Agent` call,
-`subagent_type: workflow:planner`, `model: "<planner>"`) with **mode=plan** and the issue body
+`subagent_type: workflow:planner`, `model: "<planner>"`, `effort: "<planner_effort>"`) with
+**mode=plan** and the issue body
 (issue mode) or distilled brief (grill/bare); it returns the plan as text and **you write it** to
 `<scratchpad>/pipeline-plan.md`.
 
@@ -145,7 +146,8 @@ Then, by mode:
 ## Step 3 — implement
 
 Spawn **`workflow:implementer`** on the confirmed roster's implementer (one `Agent` call,
-`subagent_type: workflow:implementer`, `model: "<implementer>"`) handing it a **work order**: the full
+`subagent_type: workflow:implementer`, `model: "<implementer>"`, `effort: "<implementer_effort>"`)
+handing it a **work order**: the full
 plan text (steps + `## Acceptance criteria`), the **absolute worktree path**, the **branch**,
 and a commit-scope hint from the repo log. It builds TDD-first, runs the project's done-check,
 and commits.
@@ -156,7 +158,8 @@ blind.
 
 ## Step 4 — review
 
-Spawn **`personal-tools:my-review`** (one `Agent` call, `model: "<reviewer>"`) on the branch
+Spawn **`personal-tools:my-review`** (one `Agent` call, `model: "<reviewer>"`,
+`effort: "<reviewer_effort>"`) on the branch
 diff — the commit range `<baseline>..HEAD` — with the plan file path in the prompt for
 conformance context. It returns
 a verdict plus findings ending in a machine-readable ```findings block:
@@ -181,9 +184,10 @@ Parse the ```findings block (empty block → clean; skip to step 7). Route by se
 mediums append to the collective replan only. At each scoped re-review, drop any finding a
 prior cycle already resolved.
 
-Fix rounds go to a **fresh implementer spawn** (`model: "<implementer>"`), work order = the
-fix-list or revised plan. Then a **scoped re-review**: spawn `personal-tools:my-review`
-(`model: "<reviewer>"` — **held constant** across every re-review in the run) again asking it
+Fix rounds go to a **fresh implementer spawn** (`model: "<implementer>"`,
+`effort: "<implementer_effort>"`), work order = the fix-list or revised plan. Then a **scoped
+re-review**: spawn `personal-tools:my-review` (`model: "<reviewer>"`, `effort: "<reviewer_effort>"`
+— **held constant** across every re-review in the run) again asking it
 to (a) verify each prior finding is addressed and (b) review **only the fix delta**
 (`<pre-fix HEAD>..HEAD`) — not the whole branch again.
 
@@ -243,7 +247,7 @@ gated / built / cycle-N**:
    `dir=~/.claude/handoffs/$repo_key` (`mkdir -p "$dir"`).
 2. **Write the state doc** `$dir/<branch-slug>-pipeline.md` (every `/` in the branch → `-`):
    mode, target (issue# or brief), branch, worktree path, current phase, cycles used, the
-   **confirmed roster** (tier + the three models — so a resume never re-classifies),
+   **confirmed roster** (tier + the three `{model, effort}` pairs — so a resume never re-classifies),
    **`plan_author=inline|subagent`** (so a resume never re-authors the plan and **never
    re-spawns** a Step-2 planner), **the full current plan text embedded** (the scratchpad may
    not survive a clear), and open findings. Overwrite on each boundary.

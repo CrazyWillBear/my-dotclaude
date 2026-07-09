@@ -9,8 +9,11 @@
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter names the skill and drops the `agent:` executor (it now
 #      spawns the agent explicitly via the Agent tool instead of running inside
-#      it), declaring Agent + AskUserQuestion in allowed-tools.
-#   3. The model ask offers opus and fable.
+#      it), declaring Agent + AskUserQuestion + git/gh Bash in allowed-tools.
+#   3. The reviewer model is picked forward-or-judge: --complexity wins, else a
+#      tier judged from a cheap diff peek; complex asks opus vs fable,
+#      not-complex picks opus with no prompt (no blind ask). It stays
+#      dependency-free of the workflow plugin (no classify-task / resolve-tier.sh).
 #   4. The spawn uses subagent_type: personal-tools:my-review with a model
 #      override.
 #   5. $ARGUMENTS passes through to the agent as the target.
@@ -50,15 +53,21 @@ assert_contains "name field present" "$content" "name: my-review"
 assert_not_contains "agent: executor dropped" "$content" "agent: my-review"
 
 # ---------------------------------------------------------------------------
-echo "test: allowed-tools declares Agent + AskUserQuestion"
+echo "test: allowed-tools declares Agent + AskUserQuestion + git/gh Bash"
 assert_contains "allowed-tools present" "$content" "allowed-tools:"
 assert_contains "Agent tool allowed" "$content" "Agent"
 assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
+assert_contains "git Bash allowed for the diff peek" "$content" "Bash(git:*)"
+assert_contains "gh Bash allowed for the PR diff peek" "$content" "Bash(gh:*)"
 
 # ---------------------------------------------------------------------------
-echo "test: model ask offers opus and fable"
-assert_contains "opus option" "$content" "opus"
-assert_contains "fable option" "$content" "fable"
+echo "test: forward-or-judge tier selection (--complexity wins, else a diff peek)"
+assert_contains "--complexity flag honored" "$content" "--complexity"
+assert_contains "forward-or-judge described" "$content" "forward-or-judge"
+assert_contains "cheap diff peek to judge the tier" "$content" "diff peek"
+assert_contains "complex offers opus" "$content" "opus"
+assert_contains "complex offers fable" "$content" "fable"
+assert_contains "not complex → no prompt" "$content" "no prompt"
 
 # ---------------------------------------------------------------------------
 echo "test: spawn literals — subagent_type + model override"
