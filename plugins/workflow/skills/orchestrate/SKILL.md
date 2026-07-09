@@ -114,6 +114,16 @@ is the `Agent` tool's spelling and is ignored here); and a bare `agent()` return
 **as a string**, so any result you destructure must pass a `schema:`. Likewise `pipeline(items,
 …stages)` takes the item list plus stage callbacks — not an array of already-started promises.
 
+**Normalize `args` before destructuring.** The Workflow tool hands the script its inputs — the
+base repo path and branch, `rounds`, `maxParallel`, `maxCycles`, and any pinned `complexity` — as a
+single value that **may arrive as a JSON string rather than an object**. Read it blindly and
+`const { rounds } = args` yields `undefined`; `round < undefined` is `false`, so the round loop
+falls straight through, spawns nothing, and reports a **silent empty success** (the #53 / #70 / #73
+class). The script must **parse-or-throw**: normalize with
+`typeof args === 'string' ? JSON.parse(args) : args`, then **throw** if `rounds` is missing or not a
+number, and only then destructure. A workflow that throws is loud; a workflow that reads `undefined`
+exits clean having done nothing.
+
 ```js
 export const meta = {
   name: "orchestrate-round-loop",
@@ -121,6 +131,13 @@ export const meta = {
   //         maxCycles (per-issue fix-loop cap, default 3), doneCheck (the project's done-check command),
   //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
+
+// `args` may reach the script as a JSON STRING, not an object — normalize before reading, then
+// parse-or-throw. A blind bare destructure of `args` on a string yields undefined and the round loop
+// falls through spawning nothing (silent empty success). Throw loud instead of exiting clean-empty.
+const input = typeof args === 'string' ? JSON.parse(args) : args;
+if (!input || typeof input.rounds !== 'number') throw new Error(`bad args: ${JSON.stringify(args)}`);
+const { baseRepo, baseBranch, rounds, maxParallel, maxCycles, complexity } = input;
 
 // JSON Schemas for the spawns whose results are read as objects. Without these,
 // agent() hands back a string and every property access below is undefined.
@@ -195,7 +212,7 @@ for (let round = 0; round < rounds; round++) {
       { agentType: "workflow:implementer",
         model:     ROSTER[issue.tier].implementer.model,
         effort:    ROSTER[issue.tier].implementer.effort,
-        isolation: "worktree",
+        // worktree created by step 4, owned by the implementer — no isolation opt here
         schema:    BUILT_SCHEMA }));
   if (built.some(b => !b || b.failed)) return stop("implementer failure");   // null = agent died
 
@@ -234,7 +251,6 @@ for (let round = 0; round < rounds; round++) {
         { agentType: "workflow:implementer",
           model:     ROSTER[issue.tier].implementer.model,
           effort:    ROSTER[issue.tier].implementer.effort,
-          isolation: "worktree",
           schema:    BUILT_SCHEMA });
       issue.review = await agent(
         `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
