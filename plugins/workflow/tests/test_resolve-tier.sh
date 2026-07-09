@@ -18,7 +18,9 @@
 #      effort — all literal heredocs, no jq transforms) and a wrong-JSON-type
 #      config each → the exact WARN line + standard fallback; exit 0. The
 #      wrong-type case absorbs #55's intent (a wrong shape leaks nothing but the
-#      one WARN line).
+#      one WARN line). Also covers a brace-in-a-string tier value paired with a
+#      missing role, and a role object holding a nested object — both must fall
+#      back rather than return a chimera roster or nested values (#70).
 #   5. Reformatted-but-valid configs (a mixed single-line tier, two roles on one
 #      line, and a fully minified config) resolve to the correct roster with no
 #      WARN — the extractor is layout-independent, not fooled by whitespace.
@@ -230,6 +232,65 @@ run_tier standard "$WORK/mal-e"
 assert_equals "wrong-type: exit 0" "$RC" "0"
 assert_equals "wrong-type: stderr is exactly the WARN line" "$ERR" "$WARN"
 assert_equals "wrong-type: standard fallback" "$(val "$OUT" tier)" "standard"
+
+# (i) brace-in-string tier value AND a missing role — the extra "note" string
+#     carries a "{"; the OLD scan counted it, ran trivial's block into standard,
+#     and let `cell trivial reviewer *` silently borrow standard's reviewer
+#     (chimera roster, clean stderr). String-aware, trivial's block is bounded
+#     correctly, its missing reviewer yields empty → the single-WARN fallback.
+write_cfg "$WORK/mal-i" <<'JSON'
+{
+  "trivial": {
+    "note": "has { brace",
+    "planner":     { "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" }
+  },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/mal-i"
+assert_equals "brace-in-string+missing-role: exit 0" "$RC" "0"
+assert_equals "brace-in-string+missing-role: stderr is exactly the WARN line" "$ERR" "$WARN"
+assert_equals "brace-in-string+missing-role: standard fallback (no chimera)" "$(val "$OUT" tier)" "standard"
+assert_equals "brace-in-string+missing-role: reviewer_model opus (from fallback, not borrowed)" "$(val "$OUT" reviewer_model)" "opus"
+
+# (j) a role whose object holds a NESTED object — the OLD first-"}" cut returned
+#     the nested fable/max silently. String-aware, the nested object is detected
+#     and the role reads as a miss → the single-WARN fallback (never the nested
+#     values, and never a clean-stderr success claiming tier=trivial).
+write_cfg "$WORK/mal-j" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "meta": { "model": "fable", "effort": "max" }, "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/mal-j"
+assert_equals "nested-role-object: exit 0" "$RC" "0"
+assert_equals "nested-role-object: stderr is exactly the WARN line" "$ERR" "$WARN"
+assert_equals "nested-role-object: standard fallback (not nested values)" "$(val "$OUT" tier)" "standard"
+assert_equals "nested-role-object: planner_effort high (fallback, not nested max)" "$(val "$OUT" planner_effort)" "high"
 
 # ---------------------------------------------------------------------------
 echo "test: reformatted-but-valid configs resolve correctly with no WARN (layout-independent)"
