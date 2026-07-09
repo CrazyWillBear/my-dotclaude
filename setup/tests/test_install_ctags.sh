@@ -6,7 +6,10 @@
 # directly, and assert on its output and exit behavior.
 #
 # Covers:
-#   * ctags already on PATH -> "already installed", exit 0, no install attempted.
+#   * universal-ctags already on PATH -> "already installed", exit 0, no install.
+#   * BSD ctags on PATH (macOS /usr/bin/ctags) -> still installs; the flavor
+#     check must not mistake it for universal-ctags.
+#   * install succeeds but a system ctags still shadows it -> warns, non-fatal.
 #   * ctags absent, brew present -> calls "brew install universal-ctags".
 #   * ctags absent, pacman present -> calls "pacman -S --noconfirm ctags".
 #   * ctags absent, apt present -> calls "apt-get install -y ctags".
@@ -65,6 +68,33 @@ make_passthrough_stub() {
   chmod +x "$WORK/stubs/$name"
 }
 
+# make_ctags_stub <universal|bsd> [dir] — create a ctags stub of the given
+# flavor. 'universal' answers --version with the Universal Ctags banner; 'bsd'
+# mimics macOS's /usr/bin/ctags, which has no --version: it errors and exits 1.
+make_ctags_stub() {
+  local kind="$1" dir="${2:-$WORK/stubs}"
+  mkdir -p "$dir" "$WORK/calls"
+  if [ "$kind" = "universal" ]; then
+    printf '#!/usr/bin/env bash\necho "ctags $*" >> "%s/calls/ctags"\nif [ "$1" = "--version" ]; then echo "Universal Ctags 6.2.1, Copyright (C) 2015-2025 Universal Ctags Team"; exit 0; fi\nexit 0\n' \
+      "$WORK" > "$dir/ctags"
+  else
+    printf '#!/usr/bin/env bash\necho "ctags $*" >> "%s/calls/ctags"\nif [ "$1" = "--version" ]; then echo "ctags: illegal option -- -" >&2; exit 1; fi\nexit 0\n' \
+      "$WORK" > "$dir/ctags"
+  fi
+  chmod +x "$dir/ctags"
+}
+
+# make_pkg_stub <name> — a package-manager stub that records its invocation and
+# succeeds by installing a universal ctags onto PATH, the way a real install
+# would. Without this the post-install verification would see no ctags at all.
+make_pkg_stub() {
+  local name="$1"
+  mkdir -p "$WORK/stubs" "$WORK/calls"
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "%s/calls/%s"\nprintf "#!/usr/bin/env bash\\nif [ \\"\$1\\" = \\"--version\\" ]; then echo \\"Universal Ctags 6.2.1\\"; exit 0; fi\\nexit 0\\n" > "%s/stubs/ctags"\nchmod +x "%s/stubs/ctags"\nexit 0\n' \
+    "$name" "$WORK" "$name" "$WORK" "$WORK" > "$WORK/stubs/$name"
+  chmod +x "$WORK/stubs/$name"
+}
+
 # make_id_stub <uid> — stub 'id' so that 'id -u' prints the given uid.
 make_id_stub() {
   local uid="$1"
@@ -91,7 +121,7 @@ mkdir -p "$_SYS_BIN"
 ln -sf "$REAL_BASH" "$_SYS_BIN/bash"
 [ -n "$REAL_PYTHON3" ] && ln -sf "$REAL_PYTHON3" "$_SYS_BIN/python3"
 # Link all the standard utilities common.sh and bash itself need.
-for _b in printf mkdir cp date mktemp dirname rm cat id; do
+for _b in printf mkdir cp date mktemp dirname rm cat id grep chmod; do
   _p="$(command -v "$_b" 2>/dev/null || true)"
   [ -n "$_p" ] && ln -sf "$_p" "$_SYS_BIN/$_b" 2>/dev/null || true
 done
@@ -116,24 +146,52 @@ reset_work() {
   rm -rf "$WORK/stubs" "$WORK/calls"
 }
 
-# ---- test: ctags already on PATH --------------------------------------------
-echo "test: ctags already on PATH -> skip install"
+# ---- test: universal-ctags already on PATH ----------------------------------
+echo "test: universal-ctags already on PATH -> skip install"
 reset_work
-# create a real ctags stub so `command -v ctags` succeeds
-make_stub ctags
+# a universal ctags stub, so both `command -v` and the --version check pass
+make_ctags_stub universal
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "reports already installed"  "$out" "already installed"
 assert_not_contains "does not attempt install" "$out" "installed ctags via"
 assert_contains "INSTALL_FAILED stays 0" "$out" "INSTALL_FAILED=0"
-# ctags stub itself should NOT have been invoked (only command -v fires)
+# the flavor check must actually interrogate the binary
 calls=$(stub_calls ctags)
-assert_equals "ctags stub not executed" "$calls" ""
+assert_contains "ctags probed with --version" "$calls" "--version"
+
+# ---- test: BSD ctags on PATH (macOS) -> NOT treated as installed -------------
+# macOS always ships /usr/bin/ctags (BSD). A bare `command -v ctags` sees it and
+# would wrongly skip the install; the flavor check must see through it.
+echo "test: BSD ctags on PATH -> proceeds with install (does not skip)"
+reset_work
+make_ctags_stub bsd
+make_pkg_stub brew          # overwrites the bsd stub with a universal one
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_not_contains "does NOT report already installed" "$out" "already installed"
+assert_contains "installs via brew"        "$out" "installed ctags via brew"
+assert_contains "INSTALL_FAILED stays 0"   "$out" "INSTALL_FAILED=0"
+calls=$(stub_calls brew)
+assert_contains "brew called with universal-ctags" "$calls" "universal-ctags"
+
+# ---- test: install succeeds but a system ctags still shadows it --------------
+# brew "succeeds" yet the ctags answering on PATH is still BSD (e.g. /usr/bin
+# ahead of /opt/homebrew/bin). The install is not actually usable -> warn.
+echo "test: install succeeds but BSD ctags still shadows -> warns, INSTALL_FAILED=1"
+reset_work
+make_stub brew              # succeeds, but installs nothing onto PATH
+make_ctags_stub bsd         # and BSD ctags keeps answering to the name
+FAKE_PATH="$WORK/stubs"
+out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
+assert_contains "still reports the install"  "$out" "installed ctags via brew"
+assert_contains "warns about shadowing"      "$out" "shadows universal-ctags"
+assert_contains "INSTALL_FAILED set to 1"    "$out" "INSTALL_FAILED=1"
 
 # ---- test: brew path --------------------------------------------------------
 echo "test: ctags absent, brew present -> uses brew install universal-ctags"
 reset_work
-make_stub brew
+make_pkg_stub brew
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
 assert_contains "ok message mentions brew" "$out" "installed ctags via brew"
@@ -145,7 +203,7 @@ assert_contains "brew called with universal-ctags" "$calls" "universal-ctags"
 # Non-root: sudo passthrough stub is required so the install succeeds.
 echo "test: ctags absent, pacman present -> uses pacman -S --noconfirm ctags"
 reset_work
-make_stub pacman
+make_pkg_stub pacman
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -158,7 +216,7 @@ assert_contains "pacman called with --noconfirm" "$calls" "--noconfirm"
 # ---- test: apt-get path -----------------------------------------------------
 echo "test: ctags absent, apt-get present -> uses apt-get install -y ctags"
 reset_work
-make_stub apt-get
+make_pkg_stub apt-get
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -170,7 +228,7 @@ assert_contains "apt-get called with ctags" "$calls" "ctags"
 # ---- test: dnf path ---------------------------------------------------------
 echo "test: ctags absent, dnf present -> uses dnf install -y ctags"
 reset_work
-make_stub dnf
+make_pkg_stub dnf
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -203,7 +261,7 @@ assert_contains "INSTALL_FAILED set to 1" "$out" "INSTALL_FAILED=1"
 # ---- test: non-root + sudo present -> Linux managers invoked via sudo -n -----
 echo "test: non-root + sudo present -> pacman invoked via sudo -n"
 reset_work
-make_stub pacman
+make_pkg_stub pacman
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -217,7 +275,7 @@ assert_contains "sudo called with ctags"      "$calls_sudo" "ctags"
 
 echo "test: non-root + sudo present -> apt-get invoked via sudo -n"
 reset_work
-make_stub apt-get
+make_pkg_stub apt-get
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -229,7 +287,7 @@ assert_contains "sudo called with apt-get"    "$calls_sudo" "apt-get"
 
 echo "test: non-root + sudo present -> dnf invoked via sudo -n"
 reset_work
-make_stub dnf
+make_pkg_stub dnf
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -242,7 +300,7 @@ assert_contains "sudo called with dnf"        "$calls_sudo" "dnf"
 # ---- test: brew is never prefixed with sudo ----------------------------------
 echo "test: brew is never prefixed with sudo (even when sudo is available)"
 reset_work
-make_stub brew
+make_pkg_stub brew
 make_passthrough_stub sudo
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
@@ -253,7 +311,7 @@ assert_equals "sudo not called for brew"  "$calls_sudo" ""
 # ---- test: root user (id -u == 0) -> Linux managers run WITHOUT sudo ---------
 echo "test: root user (EUID=0) -> pacman runs without sudo"
 reset_work
-make_stub pacman
+make_pkg_stub pacman
 make_id_stub 0   # simulate root
 # no sudo stub: if sudo were called, the subshell would fail to find it
 FAKE_PATH="$WORK/stubs"
@@ -286,14 +344,15 @@ reset_work
 make_stub pacman
 # sudo stub: exits 1 when -n is passed (credential required), exits 0 otherwise.
 mkdir -p "$WORK/stubs" "$WORK/calls"
-cat > "$WORK/stubs/sudo" <<'STUB'
+# Interpolate $WORK at write time. (An earlier version used a quoted here-doc
+# plus `sed -i`, which is not portable: BSD sed treats -i's next argument as a
+# backup suffix, so the substitution silently never ran.)
+cat > "$WORK/stubs/sudo" <<STUB
 #!/usr/bin/env bash
-echo "sudo $*" >> "$WORK/calls/sudo"
-for a in "$@"; do [ "$a" = "-n" ] && exit 1; done
-exec "$@"
+echo "sudo \$*" >> "$WORK/calls/sudo"
+for a in "\$@"; do [ "\$a" = "-n" ] && exit 1; done
+exec "\$@"
 STUB
-# Inject $WORK into the stub so the here-doc path resolves correctly.
-sed -i "s|\$WORK|$WORK|g" "$WORK/stubs/sudo"
 chmod +x "$WORK/stubs/sudo"
 FAKE_PATH="$WORK/stubs"
 out=$(run_ctags_with_path "$FAKE_PATH" 2>&1)
