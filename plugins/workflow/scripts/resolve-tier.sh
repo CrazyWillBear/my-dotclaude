@@ -51,8 +51,8 @@ fallback() {
 # ---------------------------------------------------------------------------
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$PLUGIN_ROOT" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" 2>/dev/null
-    PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)" 2>/dev/null
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
 
