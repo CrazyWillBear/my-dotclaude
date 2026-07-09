@@ -390,6 +390,9 @@ assert_contains "parse-or-throw guard throws" "$js_block" "throw new Error"
 echo "test: the schematic never blind-destructures args"
 assert_not_contains "no bare const { rounds } = args in the js block" "$js_block" "const { rounds } = args"
 
+echo "test: implementer spawns don't set isolation (worktree is created in step 4 prose)"
+assert_not_contains "isolation opt is gone from implementer spawns" "$js_block" "isolation:"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
