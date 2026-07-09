@@ -6,7 +6,7 @@
 # the content obligations the /pipeline chain depends on:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins model: fable and effort: high (effort can't be set per
+#   2. Frontmatter pins model: opus and effort: high (effort can't be set per
 #      Agent call, so the pin must live here), read-only tools.
 #   3. The three invocation modes (plan / replan / triage) are described,
 #      including collective-high replan and per-critical replan scoping.
@@ -48,8 +48,9 @@ echo "test: frontmatter contains 'name: planner'"
 assert_contains "name field present" "$content" "name: planner"
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter pins model: fable and effort: high"
-assert_contains "model pinned to fable" "$content" "model: fable"
+echo "test: frontmatter pins model: opus and effort: high"
+assert_contains "model pinned to opus" "$content" "model: opus"
+assert_not_contains "model: fable is gone" "$content" "model: fable"
 assert_contains "effort pinned to high" "$content" "effort: high"
 
 # ---------------------------------------------------------------------------

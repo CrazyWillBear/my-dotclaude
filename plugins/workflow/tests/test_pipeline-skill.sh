@@ -11,9 +11,10 @@
 #   3. Worktree entry via EnterWorktree (orchestrate step-0 pattern) and exit
 #      via ExitWorktree(keep).
 #   4. Grill-mode drift-check invokes the verify-plan skill.
-#   5. Models are tier-routed: a Step-0 classify-task call sets a confirmed
-#      roster (planner/implementer/reviewer placeholders), so no model is
-#      hardcoded — the old model: "sonnet" implementer pin is gone.
+#   5. Models AND efforts are tier-routed: a Step-0.5 classify-task call sets the
+#      tier, resolve-tier.sh resolves the confirmed roster, and Steps 2–5 carry
+#      model + effort placeholders — no model is hardcoded (the old
+#      model: "sonnet" pin is gone) and the tier table is no longer embedded.
 #   5b. Optional inline (main-thread) Step-2 planning: a --self-plan flag or a
 #      trivial tier lets the main agent author the plan itself (no planner
 #      spawn). The authorship ladder is "first match wins"; trivial yields a
@@ -101,11 +102,16 @@ echo "test: Step-0 tier routing via classify-task"
 assert_contains "--complexity flag in argument-hint" "$content" "--complexity"
 assert_contains "classify-task skill invoked" "$content" "classify-task"
 assert_contains "invoked via the Skill tool" "$content" "Skill tool"
-assert_contains "tier table row — trivial" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_contains "tier table row — standard" "$content" "| standard | opus | sonnet | opus |"
-assert_contains "tier table row — complex" "$content" "| complex | fable | opus | fable |"
+assert_contains "resolve-tier helper invoked" "$content" 'resolve-tier.sh'
+# Assemble the old tier row from a fragment so this guard does not itself
+# reintroduce the literal the repo-wide drift-sweep forbids.
+BAR='|'
+assert_not_contains "embedded tier table gone" "$content" "$BAR trivial $BAR sonnet $BAR sonnet $BAR opus $BAR"
 assert_contains "planner roster placeholder" "$content" 'model: "<planner>"'
 assert_contains "reviewer roster placeholder" "$content" 'model: "<reviewer>"'
+assert_contains "planner effort placeholder" "$content" 'effort: "<planner_effort>"'
+assert_contains "implementer effort placeholder" "$content" 'effort: "<implementer_effort>"'
+assert_contains "reviewer effort placeholder" "$content" 'effort: "<reviewer_effort>"'
 assert_contains "reviewer model held constant" "$content" "held constant"
 assert_contains "issue-mode carve-out — one interactive stop" "$content" "one interactive stop"
 assert_contains "tier rationale surfaced" "$content" "rationale"

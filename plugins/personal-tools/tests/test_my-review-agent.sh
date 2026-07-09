@@ -6,7 +6,7 @@
 # the content obligations the /pipeline severity-routing contract depends on:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins model: fable and effort: xhigh (effort can't be set per
+#   2. Frontmatter pins model: opus and effort: xhigh (effort can't be set per
 #      Agent call, so the pin must live here).
 #   3. The 4-tier severity taxonomy (critical/high/medium/low) is present and
 #      the old blocker/warning/nit vocabulary is gone.
@@ -55,8 +55,9 @@ echo "test: frontmatter contains 'name: my-review'"
 assert_contains "name field present" "$content" "name: my-review"
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter pins model: fable"
-assert_contains "model pinned to fable" "$content" "model: fable"
+echo "test: frontmatter pins model: opus"
+assert_contains "model pinned to opus" "$content" "model: opus"
+assert_not_contains "model: fable is gone" "$content" "model: fable"
 assert_not_contains "model: inherit is gone" "$content" "model: inherit"
 
 # ---------------------------------------------------------------------------

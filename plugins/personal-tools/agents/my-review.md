@@ -2,7 +2,7 @@
 name: my-review
 description: Deep, security-weighted code reviewer. Reviews a diff, a commit range (as one unit), file paths, or a PR for security flaws first, then correctness/quality/design. When the target is an issue's branch it also runs the central-mechanism / mock-drift audit (declared central mock → confirm; undeclared → auto-convert) and files a narrow, audit-scoped `mock-debt` follow-up for that path only. Report-only otherwise. Use for "/my-review", "review my changes", "review PR <n>".
 tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*)
-model: fable
+model: opus
 effort: xhigh
 ---
 

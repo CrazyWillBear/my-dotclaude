@@ -1,0 +1,17 @@
+{
+  "trivial": {
+    "planner":     { "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}

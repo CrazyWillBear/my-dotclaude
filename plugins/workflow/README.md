@@ -16,21 +16,23 @@ Three features in one plugin, versioned here with the rest of my setup:
 ```
 plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
+├── model-tiers.json                  # tier → {model, effort} roster, resolved by scripts/resolve-tier.sh
 ├── skills/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the parallel issue-solving loop
 │   ├── pipeline/SKILL.md             # /pipeline — plan→build→review one task
-│   └── classify-task/SKILL.md        # /classify-task — tier a task, return the model roster
+│   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via resolve-tier.sh
 ├── agents/
-│   ├── implementer.md                # inherits model, xhigh effort — builds one issue/work order in one worktree
-│   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
-│   └── planner.md                    # fable, high effort — plans/replans/triages for /pipeline, read-only
+│   ├── implementer.md                # sonnet, xhigh effort — builds one issue/work order in one worktree
+│   ├── merger.md                     # sonnet, xhigh effort — merges branches in dep order, resolves conflicts
+│   └── planner.md                    # opus, high effort — plans/replans/triages for /pipeline, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
 │   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
-│   └── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
+│   ├── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
+│   └── resolve-tier.sh               # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
 ├── tests/                            # one bash test per script + the orchestrate skill
 └── README.md                         # this file
 ```
@@ -60,8 +62,8 @@ Each round:
    every issue to that tier. The planner, implementer, and reviewer models are routed per issue; the
    round's single merger is per-round.
 3. **Plan (per-issue work order).** Before the build, route each issue's **planner** by its tier and
-   write its **work order** — a cheap **sonnet** minimal plan for a trivial issue, else the
-   **`workflow:planner`** subagent (mode=plan) at the tier's planner model. Ordered steps + a
+   write its **work order** — a cheap minimal plan at the tier's planner model for a trivial issue,
+   else the **`workflow:planner`** subagent (mode=plan) at the tier's planner model. Ordered steps + a
    `## Acceptance criteria` heading + the done-check. **No plan comment is posted and no approval
    gate fires** — the run stays autonomous.
 4. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
@@ -69,7 +71,7 @@ Each round:
    plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
    never touching another worktree or the base branch.
 5. **Review (per-issue) — initial review, free.** Spawn **`personal-tools:my-review`** on each built
-   slice's branch diff (`<base>..issue-<N>`) at the tier's **reviewer** model (`opus`/`opus`/`fable`),
+   slice's branch diff (`<base>..issue-<N>`) at the tier's **reviewer** model,
    handed the issue's plan for conformance context. It reports severity-tagged findings — correctness,
    security, broken tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a
    declared central mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt`
@@ -111,19 +113,15 @@ with `/verify-plan` and gated on user approval, per the conditions below), or **
 gate, no drift-check).
 
 **Step 0.5 — tier routing.** Before the worktree or any planner/implementer/reviewer spawn, a
-`classify-task` call explores the touched code and classifies the task into a complexity tier,
-which fixes the roster for the whole run:
-
-| tier | planner | implementer | reviewer |
-|---|---|---|---|
-| trivial | sonnet | sonnet | opus |
-| standard | opus | sonnet | opus |
-| complex | fable | opus | fable |
-
-`classify-task` runs its own confirm/override ask — the **one interactive stop before the fix
-loop** even in autonomous issue mode, before any planner/implementer/reviewer spawns.
-`--complexity <tier>` skips classification and
-takes that row directly. (The old hardwired roster ≈ the **complex** tier.)
+`classify-task` call explores the touched code and classifies the task into a complexity tier —
+emitting the **tier + rationale only**. The tier→`{model, effort}` mapping is **not** hardwired in
+the skills: it lives in the plugin's `model-tiers.json`, resolved at runtime by
+`scripts/resolve-tier.sh` (an awk parser, no `jq`), which falls back to the **standard** roster plus
+a single warning if the config is missing or invalid. `/pipeline` resolves the roster **once** and
+carries both **model and effort** into every spawn. `classify-task` runs its own confirm/override
+ask — the **one interactive stop before the fix loop** even in autonomous issue mode, before any
+planner/implementer/reviewer spawns. `--complexity <tier>` skips classification and takes that tier
+directly. (The old hardwired roster ≈ the **complex** tier.)
 
 **Step 2 — who writes the plan (authorship ladder, first match wins).** A four-rule ladder
 decides authorship: (1) **`--self-plan`** (flag or a natural-language "plan it yourself") →

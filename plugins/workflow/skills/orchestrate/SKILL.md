@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its planner and implementer models, plans each issue into a work order (a cheap sonnet minimal plan for trivial, else the workflow:planner subagent at the tier's planner model), builds up to K ready issues with one implementer each in isolated git worktrees, reviews each built slice with `personal-tools:my-review` at the tier's reviewer model — running the central-mechanism / mock-drift audit — and acts on the findings through a per-issue severity-routed fix loop (capped by --max-cycles, default 3: critical→own cycle, high→collective replan, medium→triage, low→file) before handing the clean-or-capped branches to a merger that merges in dependency order and resolves conflicts under the done-check, closes the merged issues, and files the lows + cap-remainder as review-fix follow-ups while re-blocking dependents and mirroring open mock-debt into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run N rounds of the autonomous issue-solving loop inside a Workflow — each round an agent picks the ready set (blockers closed, skip hitl), classifies each ready issue in-workflow (explore→classify, auto-accepted) to tier-route its planner and implementer models, plans each issue into a work order (a cheap minimal plan at the tier's planner model for trivial, else the workflow:planner subagent at the tier's planner model), builds up to K ready issues with one implementer each in isolated git worktrees, reviews each built slice with `personal-tools:my-review` at the tier's reviewer model — running the central-mechanism / mock-drift audit — and acts on the findings through a per-issue severity-routed fix loop (capped by --max-cycles, default 3: critical→own cycle, high→collective replan, medium→triage, low→file) before handing the clean-or-capped branches to a merger that merges in dependency order and resolves conflicts under the done-check, closes the merged issues, and files the lows + cap-remainder as review-fix follow-ups while re-blocking dependents and mirroring open mock-debt into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[N rounds=1] [--max K=3] [--max-cycles K=3] [--complexity trivial|standard|complex]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
@@ -22,10 +22,11 @@ and the cap **counts re-reviews**, each re-review decrementing the budget; **`--
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
 push. Each round **classifies every ready issue in-workflow** (explore→classify, auto-accepted —
-**no interactive confirm**) and **tier-routes its implementer model** per the table below;
-`--complexity <tier>` pins every issue to one tier and skips classification. A per-issue **plan
-stage** (tier-routed by the planner column) writes each issue's **work order** — a cheap **sonnet**
-minimal plan for a trivial issue, else the **`workflow:planner`** subagent — which one
+**no interactive confirm**) and **tier-routes its implementer model** via the launch-resolved
+`ROSTER`; `--complexity <tier>` pins every issue to one tier and skips classification. A per-issue
+**plan stage** (tier-routed by `ROSTER[issue.tier].planner`) writes each issue's **work order** — a
+cheap minimal plan at the tier's planner model for a trivial issue, else the **`workflow:planner`**
+subagent — which one
 **implementer** then builds; then **`personal-tools:my-review`** reviews each built slice at the
 tier's **reviewer** model, and a per-issue **severity-routed fix loop** (capped by `--max-cycles`,
 default 3) acts on the findings — re-planning, re-implementing, and re-reviewing for real — before
@@ -33,26 +34,22 @@ the clean-or-capped branch merges.
 
 ## Tier routing
 
-Each ready issue's **implementer** model is routed by its complexity **tier**, classified
-**in-workflow** (explore→classify) and **auto-accepted** — there is **no interactive confirm**,
-because the whole run is autonomous past the launch gate. This tier table must stay
-**byte-identical** to the copies in the `classify-task` and `/pipeline` skills (the three form a
-drift-guard trio — never edit one table without the others):
+Each ready issue's **planner**, **implementer**, and **reviewer** `{model, effort}` are routed by
+its complexity **tier**, classified **in-workflow** (explore→classify) and **auto-accepted** —
+there is **no interactive confirm**, because the whole run is autonomous past the launch gate. The
+tier→`{model, effort}` mapping lives in the plugin's `model-tiers.json`, resolved by
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>`; the **main thread runs that helper
+once per tier at launch** (Step 1) and inlines the results into a single **`ROSTER`** const in the
+workflow script, so the round itself never re-resolves.
 
-| tier | planner | implementer | reviewer |
-|---|---|---|---|
-| trivial | sonnet | sonnet | opus |
-| standard | opus | sonnet | opus |
-| complex | fable | opus | fable |
-
-The **planner**, **implementer**, and **reviewer** columns all route here — the round runs a
-per-issue **plan stage** before the build (its model comes from the **planner** column) and a
-per-issue **review stage** after it (the reviewer column, via `personal-tools:my-review`). A
-Workflow leaf `agent()` **can't** reuse the `classify-task` skill (that skill fans out its own
+A Workflow leaf `agent()` **can't** reuse the `classify-task` skill (that skill fans out its own
 Explore subagents from the main thread), so each issue is classified by two in-workflow stages that
-emit a **real tier**, then that tier picks the **planner**, **implementer**, and **reviewer** models
-from the table's planner, implementer, and reviewer columns. **`--complexity <tier>`** pins every
-issue to that tier's row and **skips classification** entirely.
+emit a **real tier**, and that tier indexes the launch-resolved `ROSTER` —
+`ROSTER[issue.tier].planner`, `ROSTER[issue.tier].implementer`, `ROSTER[issue.tier].reviewer`, each
+a `{model, effort}` pair. The round runs a per-issue **plan stage** before the build (its
+`{model, effort}` is `ROSTER[issue.tier].planner`) and a per-issue **review stage** after it
+(`ROSTER[issue.tier].reviewer`, via `personal-tools:my-review`). **`--complexity <tier>`** pins
+every issue to that tier and **skips classification** entirely.
 
 ## Hard dependency — fail loud at launch
 The loop **hard-depends on the `personal-tools` plugin**: the **`my-review`** agent reviews each
@@ -87,6 +84,15 @@ record the run's base for the workflow:
   here and the `PreToolUse` guard allows that);
 - **base branch** = `git rev-parse --abbrev-ref HEAD` (the **orchestration branch** from Step 0).
 
+**Resolve the ROSTER at launch (main thread).** Before invoking the Workflow, run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>` **once per tier** — three calls,
+`trivial` / `standard` / `complex` — parse each output's seven `key=value` lines (`planner_model` /
+`planner_effort` / `implementer_model` / `implementer_effort` / `reviewer_model` /
+`reviewer_effort`), and inline the resolved values into the single `ROSTER` const of the workflow
+script you pass to the Workflow tool — **never hand-write those values**. If any call prints a
+`WARN` (missing or invalid config), surface it to the user and continue on the fallback (standard)
+roster it returned. The `ROSTER` is then frozen for the whole run.
+
 Then **invoke the Workflow tool** with the orchestrate round-loop workflow, passing `rounds=N`,
 `maxParallel=K`, `maxCycles=<--max-cycles K, default 3>` (the per-issue fix-loop cap), the
 **pinned `--complexity <tier>` if given** (else unset — classify per issue),
@@ -107,11 +113,20 @@ export const meta = {
   //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
 
-// Tier → planner / implementer / reviewer model — the planner, implementer, and reviewer columns
-// of the tier table above (REVIEWER_MODEL reads the reviewer column: trivial/standard→opus, complex→fable).
-const PLANNER_MODEL     = { trivial: "sonnet", standard: "opus",   complex: "fable" };
-const IMPLEMENTER_MODEL = { trivial: "sonnet", standard: "sonnet", complex: "opus"  };
-const REVIEWER_MODEL    = { trivial: "opus",   standard: "opus",   complex: "fable" };
+// Tier → { planner, implementer, reviewer } × { model, effort }. The main thread resolves each
+// tier through resolve-tier.sh at launch (Step 1) and inlines the values below — resolved at
+// launch, NEVER hand-write these values (they are placeholders in this doc):
+const ROSTER = {
+  trivial:  { planner:     { model: "<trivial_planner_model>",     effort: "<trivial_planner_effort>"     },
+              implementer: { model: "<trivial_implementer_model>", effort: "<trivial_implementer_effort>" },
+              reviewer:    { model: "<trivial_reviewer_model>",    effort: "<trivial_reviewer_effort>"    } },
+  standard: { planner:     { model: "<standard_planner_model>",     effort: "<standard_planner_effort>"     },
+              implementer: { model: "<standard_implementer_model>", effort: "<standard_implementer_effort>" },
+              reviewer:    { model: "<standard_reviewer_model>",    effort: "<standard_reviewer_effort>"    } },
+  complex:  { planner:     { model: "<complex_planner_model>",     effort: "<complex_planner_effort>"     },
+              implementer: { model: "<complex_implementer_model>", effort: "<complex_implementer_effort>" },
+              reviewer:    { model: "<complex_reviewer_model>",    effort: "<complex_reviewer_effort>"    } },
+};
 
 // Repeat for N rounds, or until the ready set drains.
 for (let round = 0; round < rounds; round++) {
@@ -130,18 +145,22 @@ for (let round = 0; round < rounds; round++) {
   }
 
   // 3. Plan each picked issue → its work order. No plan comment, no gate — the run stays autonomous.
-  //    trivial: a cheap sonnet minimal-plan leaf agent(); standard/complex: workflow:planner mode=plan.
+  //    trivial: a cheap minimal-plan leaf agent() at the tier's planner {model, effort};
+  //    standard/complex: workflow:planner mode=plan, also at ROSTER[issue.tier].planner.
   for (const issue of picked) {
     issue.plan = (issue.tier === "trivial"
-      ? await agent({ model: "sonnet",   /* minimal plan: ordered steps + ## Acceptance criteria + done-check */ })
+      ? await agent({ model: ROSTER[issue.tier].planner.model, effort: ROSTER[issue.tier].planner.effort,
+                      /* minimal plan: ordered steps + ## Acceptance criteria + done-check */ })
       : await agent({ subagent_type: "workflow:planner", mode: "plan",
-                      model: PLANNER_MODEL[issue.tier] /* issue body in → plan text out; see step 3 */ })
+                      model: ROSTER[issue.tier].planner.model, effort: ROSTER[issue.tier].planner.effort
+                      /* issue body in → plan text out; see step 3 */ })
     ).text;                                                        // capture the plan text as the work order
   }
 
   // 4. One worktree + one implementer per picked issue: the plan text is handed over as the work order.
   const built = await pipeline(picked.map(issue =>
-    agent({ subagent_type: "workflow:implementer", model: IMPLEMENTER_MODEL[issue.tier],
+    agent({ subagent_type: "workflow:implementer",
+            model: ROSTER[issue.tier].implementer.model, effort: ROSTER[issue.tier].implementer.effort,
             /* work order = issue.plan (steps + ## Acceptance criteria + done-check) + worktree path + branch + commit-scope hint */ })));
   if (built.some(b => b.failed)) return stop("implementer failure");
 
@@ -151,7 +170,8 @@ for (let round = 0; round < rounds; round++) {
   //    / mock-drift audit (declared → confirm; undeclared central mock → auto-convert; both file a
   //    mock-debt follow-up — my-review OWNS that filing) and returns a findings block.
   for (const issue of picked) {
-    issue.review = await agent({ subagent_type: "personal-tools:my-review", model: REVIEWER_MODEL[issue.tier],
+    issue.review = await agent({ subagent_type: "personal-tools:my-review",
+                                 model: ROSTER[issue.tier].reviewer.model, effort: ROSTER[issue.tier].reviewer.effort,
                                  /* target = <base>..issue-<N>; prompt carries issue.plan + the issue number */ });
   }
 
@@ -161,17 +181,19 @@ for (let round = 0; round < rounds; round++) {
   //    critical → per-critical planner mode=replan cycle (criticals first, ascending path);
   //    high → ONE collective planner mode=replan (all highs, mediums appended);
   //    medium → planner mode=triage fix-list; low → filed in step 9, never fixed in-run.
-  //    Fix round = fresh workflow:implementer (IMPLEMENTER_MODEL[issue.tier]) on the fix-list/replan,
+  //    Fix round = fresh workflow:implementer (ROSTER[issue.tier].implementer) on the fix-list/replan,
   //    then a scoped re-review over ONLY the fix delta (<pre-fix HEAD>..HEAD). Planner spawns are
   //    NEVER inline. No cap AskUserQuestion gate — autonomous.
   for (const issue of picked) {
     let cycles = 0;
     while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
       const preFix = revParse(`issue-${issue.n}`);                    // <pre-fix HEAD> for the delta
-      const fixOrder = await routeBySeverity(issue.review, {          // workflow:planner, model: PLANNER_MODEL[issue.tier]
+      const fixOrder = await routeBySeverity(issue.review, {          // workflow:planner, model: ROSTER[issue.tier].planner.model
         /* critical → per-critical replan · high → collective replan · medium → triage; never inline */ });
-      await agent({ subagent_type: "workflow:implementer", model: IMPLEMENTER_MODEL[issue.tier] /* work order = fixOrder */ });
-      issue.review = await agent({ subagent_type: "personal-tools:my-review", model: REVIEWER_MODEL[issue.tier],
+      await agent({ subagent_type: "workflow:implementer",
+                    model: ROSTER[issue.tier].implementer.model, effort: ROSTER[issue.tier].implementer.effort /* work order = fixOrder */ });
+      issue.review = await agent({ subagent_type: "personal-tools:my-review",
+                                   model: ROSTER[issue.tier].reviewer.model, effort: ROSTER[issue.tier].reviewer.effort,
                                    /* (a) verify prior findings addressed, (b) review ONLY <preFix>..HEAD */ });
       cycles++;
     }
@@ -216,20 +238,23 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    emits a **real tier** (trivial/standard/complex) by classify-task's rubric — *size is not the
    signal*: a seam move or new infrastructure is **complex**, mechanical no-decision edits are
    **trivial**. The tier is **auto-accepted — no interactive confirm** (the run is autonomous past
-   the launch gate), and it **tier-routes its implementer model** via the tier table's implementer
-   column. **`--complexity <tier>`** short-circuits both stages — it **pins every issue** to that
-   tier's row and **skips classification**, so no explore/classify runs.
+   the launch gate), and it **tier-routes its implementer model** via `ROSTER[issue.tier].implementer`.
+   **`--complexity <tier>`** short-circuits both stages — it **pins every issue** to that
+   tier and **skips classification**, so no explore/classify runs.
 3. **Plan each picked issue → its work order (autonomous — no plan comment, no gate).** Before the
-   build, a **plan stage** routes the **planner** by the issue's tier (the tier table's **planner**
-   column): a **trivial** issue gets a cheap **sonnet** minimal-plan leaf `agent()` — a lightweight
+   build, a **plan stage** routes the **planner** by the issue's tier (`ROSTER[issue.tier].planner`):
+   a **trivial** issue gets a cheap minimal-plan leaf `agent()` at the tier's planner
+   `{model, effort}` — a lightweight
    in-workflow author that writes a short plan (ordered steps + a `## Acceptance criteria` heading +
    the project done-check); a **standard/complex** issue gets the **`workflow:planner`** subagent
-   (`subagent_type: workflow:planner`, `mode: plan`, `model: PLANNER_MODEL[issue.tier]` — `opus` /
-   `fable`) handed the issue body, which returns the plan as its **final text** (ordered steps with
+   (`subagent_type: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
+   `effort: ROSTER[issue.tier].planner.effort`) handed the issue body, which returns the plan as its
+   **final text** (ordered steps with
    file paths + `## Acceptance criteria` + the done-check + risks). Capture that plan text as the
    issue's **work order**. This mirrors `/pipeline`'s Step-2 authorship ladder (trivial → minimal
    plan, standard/complex → `workflow:planner` mode=plan), except orchestrate runs inside a Workflow
-   so "trivial" is a **cheap sonnet leaf `agent()`**, not main-thread inline authorship. The run
+   so "trivial" is a **cheap minimal-plan leaf `agent()`** at the tier's planner model, not
+   main-thread inline authorship. The run
    stays autonomous: **no plan comment is posted to the issue and no plan-approval gate fires** (the
    Workflow launch gate was the only stop). `--complexity <tier>` still pins the tier, so the planner
    model follows the pinned row.
@@ -240,12 +265,11 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    done-check) — plus the **absolute** worktree path, the branch `issue-<N>`, and a **commit-scope
    hint** (the issue's `<scope>`). The plan **replaces the implementer's self-plan** for these issues
    (the implementer builds against the work order, not a plan of its own). They run concurrently,
-   **each on the model its tier routed** (the implementer column). An **implementer failure** stops
+   **each on the model its tier routed** (`ROSTER[issue.tier].implementer`). An **implementer failure** stops
    the loop with a report.
 6. **Review each built slice — initial review (free).** For each issue the round built, spawn
-   **`personal-tools:my-review`** (one `Agent` call, `model: REVIEWER_MODEL[issue.tier]` —
-   REVIEWER_MODEL reads the tier table's **reviewer** column: trivial/standard → `opus`, complex →
-   `fable`) on that issue's **branch diff** — the commit range `<base>..issue-<N>` — with the issue's
+   **`personal-tools:my-review`** (one `Agent` call, `model: ROSTER[issue.tier].reviewer.model`,
+   `effort: ROSTER[issue.tier].reviewer.effort`) on that issue's **branch diff** — the commit range `<base>..issue-<N>` — with the issue's
    **plan** (captured in step 3 as `issue.plan`) in the prompt for conformance context, plus the
    **issue number** so the audit can read its `## Central mechanism` line. my-review returns a verdict
    plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift audit**:
@@ -259,7 +283,7 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    until the slice is **clean-or-capped** before it merges. `--max-cycles K` (**default 3** for
    orchestrate — `/pipeline`'s is 2; the divergence is deliberate) **counts re-reviews**: the step-6
    review is free, and each re-review decrements the budget. The **reviewer model is held constant**
-   across every re-review (`REVIEWER_MODEL[issue.tier]`, fixed for the run). Route by severity —
+   across every re-review (`ROSTER[issue.tier].reviewer`, fixed for the run). Route by severity —
    mirroring `/pipeline`'s Step-5 table:
 
    | severity | route |
@@ -272,8 +296,9 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    When one review returns **both criticals and highs**: run the per-critical cycles **first**
    (ascending by path — deterministic), then the ONE collective high replan; at each scoped re-review
    drop any finding a prior cycle resolved. Every step-7 planner spawn is **`workflow:planner`** on
-   `PLANNER_MODEL[issue.tier]` — **never inline** (inline authorship is a step-3-only lever). Each fix
-   round then goes to a **fresh `workflow:implementer`** (`model: IMPLEMENTER_MODEL[issue.tier]`, work
+   `ROSTER[issue.tier].planner` — **never inline** (inline authorship is a step-3-only lever). Each fix
+   round then goes to a **fresh `workflow:implementer`** (`model: ROSTER[issue.tier].implementer.model`,
+   `effort: ROSTER[issue.tier].implementer.effort`, work
    order = the fix-list / revised plan), followed by a **scoped re-review**: spawn
    **`personal-tools:my-review`** again asking it to (a) verify each prior finding is addressed and
    (b) review **only the fix delta** — the commit range `<pre-fix HEAD>..HEAD`, not the whole branch.

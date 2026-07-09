@@ -178,15 +178,24 @@ assert_contains "conflict-stop stops the loop" "$content" "conflict-stop"
 assert_contains "red done-check stops the loop" "$content" "red done-check"
 assert_contains "implementer failure stops the loop" "$content" "implementer failure"
 
-# --- per-issue in-workflow classify + tier routing (issue #64) -------------
-# orchestrate now carries the tier table, so it JOINS the drift-guard trio
-# (classify-task + pipeline). The three rows must appear byte-identical.
-echo "test: tier table present verbatim (drift guard vs classify-task + pipeline)"
-assert_contains "tier table header" "$content" "| tier | planner | implementer | reviewer |"
-assert_contains "tier table separator" "$content" "|---|---|---|---|"
-assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
-assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
+# --- per-issue in-workflow classify + launch-resolved ROSTER (issue #64, #53) --
+# orchestrate no longer embeds the tier table: the main thread resolves each
+# tier via resolve-tier.sh at launch and inlines the values into ONE ROSTER
+# const (placeholder form in prose, no literal model/effort values), indexed as
+# ROSTER[issue.tier].<role>.model / .effort. The old *_MODEL maps are gone.
+echo "test: launch-resolved ROSTER const replaces the embedded tier table + *_MODEL maps"
+assert_contains "resolve-tier helper invoked" "$content" 'resolve-tier.sh'
+assert_contains "launch-time ROSTER const" "$content" "const ROSTER"
+assert_contains "resolved values never hand-written" "$content" "never hand-write"
+assert_contains "efforts routed too (ROSTER carries .effort)" "$content" ".effort"
+# Assemble the forbidden literals from fragments so these guards don't themselves
+# reintroduce the strings the repo-wide drift-sweep forbids (tier row + *_MODEL maps).
+BAR='|'
+MMAP='_MODEL'
+assert_not_contains "embedded tier table gone" "$content" "$BAR trivial $BAR sonnet $BAR sonnet $BAR opus $BAR"
+assert_not_contains "old planner-model map gone" "$content" "PLANNER${MMAP}"
+assert_not_contains "old implementer-model map gone" "$content" "IMPLEMENTER${MMAP}"
+assert_not_contains "old reviewer-model map gone" "$content" "REVIEWER${MMAP}"
 
 echo "test: --complexity escape hatch pins every issue and skips classification"
 assert_contains "--complexity in argument-hint" "$content" "[--complexity trivial|standard|complex]"
@@ -204,24 +213,21 @@ assert_contains "no interactive confirm" "$content" "no interactive confirm"
 
 echo "test: the implementer model is routed by the issue's tier"
 assert_contains "implementer tier-routed" "$content" "tier-routes its implementer"
-assert_contains "routed via the implementer column" "$content" "implementer column"
+assert_contains "implementer routed via ROSTER" "$content" "ROSTER[issue.tier].implementer"
 
-# --- per-issue tier-routed plan stage (issue #65) --------------------------
+# --- per-issue tier-routed plan stage (issue #65, #53) ---------------------
 # A plan stage runs AFTER classify and BEFORE the implementer fan-out. The
-# planner model is routed by the tier table's PLANNER column
-# (trivial→sonnet minimal plan, standard→opus, complex→fable via
-# workflow:planner mode=plan). The plan is handed to the implementer as its
-# work order, and the run stays autonomous — no plan comment, no plan gate.
+# planner {model, effort} is routed by ROSTER[issue.tier].planner
+# (trivial→minimal plan, standard/complex→workflow:planner mode=plan). The plan
+# is handed to the implementer as its work order, and the run stays autonomous —
+# no plan comment, no plan gate.
 echo "test: a plan stage runs before the implementer/build stage"
 assert_contains "plan step named in the round prose" "$content" "Plan each picked issue"
-assert_contains "PLANNER_MODEL map present" "$content" "PLANNER_MODEL"
+assert_contains "ROSTER routes the planner by tier" "$content" "ROSTER[issue.tier].planner"
 
-echo "test: PLANNER_MODEL routes the planner by tier (the tier table's planner column)"
-assert_contains "trivial → cheap sonnet minimal plan" "$content" "minimal-plan"
-assert_contains "standard → opus planner" "$content" 'standard: "opus"'
-assert_contains "complex → fable planner" "$content" 'complex: "fable"'
+echo "test: ROSTER routes the planner by tier (trivial minimal-plan, standard/complex mode: plan)"
+assert_contains "trivial → cheap minimal plan" "$content" "minimal-plan"
 assert_contains "standard/complex use workflow:planner in plan mode" "$content" "mode: plan"
-assert_contains "planner column drives the plan stage" "$content" "planner column"
 
 echo "test: the plan is handed to the implementer as a work order"
 assert_contains "implementer gets a work order" "$content" "work order"
@@ -234,21 +240,17 @@ assert_not_contains "plan is never posted as an issue comment" "$content" "gh is
 
 # --- per-issue my-review + mock-drift audit; round reviewer removed (#66) ---
 # Each built slice is reviewed by personal-tools:my-review at the tier's
-# REVIEWER model (the tier table's reviewer column via a REVIEWER_MODEL map),
-# my-review runs the central-mechanism / mock-drift audit, /orchestrate
-# hard-deps on the my-review agent (fail loud at launch), and the round-level
-# workflow:reviewer agent is gone — no dangling references survive.
+# reviewer {model, effort} (ROSTER[issue.tier].reviewer), my-review runs the
+# central-mechanism / mock-drift audit, /orchestrate hard-deps on the my-review
+# agent (fail loud at launch), and the round-level workflow:reviewer agent is
+# gone — no dangling references survive.
 echo "test: a per-issue my-review stage reviews each built slice"
 assert_contains "my-review agent spawned per issue" "$content" "personal-tools:my-review"
 assert_contains "review runs on the issue's branch diff" "$content" "issue-<N>"
 assert_contains "findings surface in the round report" "$content" "findings"
 
-echo "test: REVIEWER_MODEL routes the reviewer by the tier table's reviewer column"
-assert_contains "REVIEWER_MODEL map present" "$content" "REVIEWER_MODEL"
-assert_contains "trivial reviewer → opus" "$content" 'trivial: "opus"'
-assert_contains "standard reviewer → opus" "$content" 'standard: "opus"'
-assert_contains "complex reviewer → fable" "$content" 'complex: "fable"'
-assert_contains "reviewer column drives the review stage" "$content" "reviewer column"
+echo "test: ROSTER routes the reviewer by tier"
+assert_contains "reviewer routed via ROSTER" "$content" "ROSTER[issue.tier].reviewer"
 
 echo "test: /orchestrate hard-deps on the my-review agent (fail loud at launch)"
 assert_contains "hard-dependency on the personal-tools plugin" "$content" "personal-tools"
