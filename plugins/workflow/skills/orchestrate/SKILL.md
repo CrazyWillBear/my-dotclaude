@@ -105,6 +105,15 @@ approve it the run is autonomous; no per-round prompt fires until the end-of-run
 The workflow the tool runs (an `export const meta {…}` + `agent()`/`pipeline()` script) implements
 the round loop below. Its shape:
 
+**Transcribe the call signatures exactly.** Every spawn is `agent(prompt, opts)` — the prompt is the
+**first positional argument**, never a field inside an object. `opts` is
+`{ model, effort, agentType, schema, label, phase, isolation }`. Three traps, each of which fails
+*silently*: passing one object (`agent({ … })`) sends the whole thing as the prompt and no `opts`, so
+tier routing degrades to session defaults; the opts key is **`agentType`**, not `subagent_type` (that
+is the `Agent` tool's spelling and is ignored here); and a bare `agent()` returns the subagent's text
+**as a string**, so any result you destructure must pass a `schema:`. Likewise `pipeline(items,
+…stages)` takes the item list plus stage callbacks — not an array of already-started promises.
+
 ```js
 export const meta = {
   name: "orchestrate-round-loop",
@@ -112,6 +121,14 @@ export const meta = {
   //         maxCycles (per-issue fix-loop cap, default 3), doneCheck (the project's done-check command),
   //         complexity (pinned tier from --complexity, or undefined → classify per issue)
 };
+
+// JSON Schemas for the spawns whose results are read as objects. Without these,
+// agent() hands back a string and every property access below is undefined.
+//   READY_SCHEMA  → { issues: [{ n, title, body }] }
+//   CLS_SCHEMA    → { tier }
+//   BUILT_SCHEMA  → { n, branch, failed }
+//   REVIEW_SCHEMA → { findings: [{ severity, path, summary }] }
+//   MERGE_SCHEMA  → { mergedIssues, conflictStop, doneCheckRed }
 
 // Tier → { planner, implementer, reviewer } × { model, effort }. The main thread resolves each
 // tier through resolve-tier.sh at launch (Step 1) and inlines the values below — resolved at
@@ -131,7 +148,9 @@ const ROSTER = {
 // Repeat for N rounds, or until the ready set drains.
 for (let round = 0; round < rounds; round++) {
   // 1. Pick the ready set — a Workflow agent, since a Workflow can't run gh/git itself.
-  const ready = await agent({ /* picks ready-for-agent issues; see "Each round" step 1 */ });
+  const ready = await agent(
+    `List the ready-for-agent issues; see "Each round" step 1`,
+    { schema: READY_SCHEMA });
   if (ready.issues.length === 0) return stop("empty ready set");   // empty ready set → stop
 
   // 2. Classify each picked issue in-workflow (explore→classify), tier auto-accepted.
@@ -139,30 +158,43 @@ for (let round = 0; round < rounds; round++) {
   const picked = ready.issues.slice(0, maxParallel);   // up to K, lowest number first
   for (const issue of picked) {
     if (complexity) { issue.tier = complexity; continue; }        // escape hatch: pin, no classify
-    const found = await agent({ /* explores this issue's touched code; see step 2 */ });
-    const cls   = await agent({ /* reads `found` + issue body → { tier }; see step 2 */ });
+    const found = await agent(                                    // no schema → returns text
+      `Explore issue #${issue.n}'s touched code; see step 2`);
+    const cls   = await agent(
+      `Read this exploration + issue #${issue.n}'s body → tier; see step 2\n\n${found}`,
+      { schema: CLS_SCHEMA });
     issue.tier  = cls.tier;                                       // real tier, auto-accepted
   }
 
   // 3. Plan each picked issue → its work order. No plan comment, no gate — the run stays autonomous.
   //    trivial: a cheap minimal-plan leaf agent() at the tier's planner {model, effort};
   //    standard/complex: workflow:planner mode=plan, also at ROSTER[issue.tier].planner.
+  //    Neither passes a schema — the plan text IS the return value, and it is the work order.
   for (const issue of picked) {
-    issue.plan = (issue.tier === "trivial"
-      ? await agent({ model: ROSTER[issue.tier].planner.model, effort: ROSTER[issue.tier].planner.effort,
-                      /* minimal plan: ordered steps + ## Acceptance criteria + done-check */ })
-      : await agent({ subagent_type: "workflow:planner", mode: "plan",
-                      model: ROSTER[issue.tier].planner.model, effort: ROSTER[issue.tier].planner.effort
-                      /* issue body in → plan text out; see step 3 */ })
-    ).text;                                                        // capture the plan text as the work order
+    issue.plan = issue.tier === "trivial"
+      ? await agent(
+          `Minimal plan for #${issue.n}: ordered steps + ## Acceptance criteria + done-check`,
+          { model:  ROSTER[issue.tier].planner.model,
+            effort: ROSTER[issue.tier].planner.effort })
+      : await agent(
+          `mode=plan · issue #${issue.n} body in → plan text out; see step 3`,
+          { agentType: "workflow:planner",
+            model:     ROSTER[issue.tier].planner.model,
+            effort:    ROSTER[issue.tier].planner.effort });
   }
 
   // 4. One worktree + one implementer per picked issue: the plan text is handed over as the work order.
-  const built = await pipeline(picked.map(issue =>
-    agent({ subagent_type: "workflow:implementer",
-            model: ROSTER[issue.tier].implementer.model, effort: ROSTER[issue.tier].implementer.effort,
-            /* work order = issue.plan (steps + ## Acceptance criteria + done-check) + worktree path + branch + commit-scope hint */ })));
-  if (built.some(b => b.failed)) return stop("implementer failure");
+  //    pipeline(items, stage) — pass the ITEM LIST and a stage callback, not pre-started promises.
+  const built = await pipeline(picked, issue =>
+    agent(
+      `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the worktree
+       path, the branch, and a commit-scope hint from the repo log.\n\n${issue.plan}`,
+      { agentType: "workflow:implementer",
+        model:     ROSTER[issue.tier].implementer.model,
+        effort:    ROSTER[issue.tier].implementer.effort,
+        isolation: "worktree",
+        schema:    BUILT_SCHEMA }));
+  if (built.some(b => !b || b.failed)) return stop("implementer failure");   // null = agent died
 
   // 5. Review each built slice (INITIAL review — FREE, does not count against maxCycles):
   //    personal-tools:my-review at the tier's reviewer model on the issue's branch diff
@@ -170,9 +202,12 @@ for (let round = 0; round < rounds; round++) {
   //    / mock-drift audit (declared → confirm; undeclared central mock → auto-convert; both file a
   //    mock-debt follow-up — my-review OWNS that filing) and returns a findings block.
   for (const issue of picked) {
-    issue.review = await agent({ subagent_type: "personal-tools:my-review",
-                                 model: ROSTER[issue.tier].reviewer.model, effort: ROSTER[issue.tier].reviewer.effort,
-                                 /* target = <base>..issue-<N>; prompt carries issue.plan + the issue number */ });
+    issue.review = await agent(
+      `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}`,
+      { agentType: "personal-tools:my-review",
+        model:     ROSTER[issue.tier].reviewer.model,
+        effort:    ROSTER[issue.tier].reviewer.effort,
+        schema:    REVIEW_SCHEMA });
   }
 
   // 6. Severity-routed fix loop per issue — re-plan / re-implement / re-review FOR REAL until the
@@ -190,11 +225,19 @@ for (let round = 0; round < rounds; round++) {
       const preFix = revParse(`issue-${issue.n}`);                    // <pre-fix HEAD> for the delta
       const fixOrder = await routeBySeverity(issue.review, {          // workflow:planner, model: ROSTER[issue.tier].planner.model
         /* critical → per-critical replan · high → collective replan · medium → triage; never inline */ });
-      await agent({ subagent_type: "workflow:implementer",
-                    model: ROSTER[issue.tier].implementer.model, effort: ROSTER[issue.tier].implementer.effort /* work order = fixOrder */ });
-      issue.review = await agent({ subagent_type: "personal-tools:my-review",
-                                   model: ROSTER[issue.tier].reviewer.model, effort: ROSTER[issue.tier].reviewer.effort,
-                                   /* (a) verify prior findings addressed, (b) review ONLY <preFix>..HEAD */ });
+      await agent(
+        `Work order:\n\n${fixOrder}`,
+        { agentType: "workflow:implementer",
+          model:     ROSTER[issue.tier].implementer.model,
+          effort:    ROSTER[issue.tier].implementer.effort,
+          isolation: "worktree",
+          schema:    BUILT_SCHEMA });
+      issue.review = await agent(
+        `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
+        { agentType: "personal-tools:my-review",
+          model:     ROSTER[issue.tier].reviewer.model,
+          effort:    ROSTER[issue.tier].reviewer.effort,
+          schema:    REVIEW_SCHEMA });
       cycles++;
     }
     issue.capRemainder = mediumOrWorse(issue.review);                 // open at cap → filed in step 9, merges anyway
@@ -202,7 +245,9 @@ for (let round = 0; round < rounds; round++) {
 
   // 7. Merge the clean/capped branches serially in ascending issue number, conflicts gated by the
   //    done-check. Runs AFTER the fix loop — all-lows/clean and cap-exhausted slices both merge.
-  const merged = await agent({ subagent_type: "workflow:merger" /* base = orchestration worktree */ });
+  const merged = await agent(                       // no model/effort → the merger's frontmatter pins govern
+    "Merge this round's branches serially, ascending issue number. Base = the orchestration worktree.",
+    { agentType: "workflow:merger", schema: MERGE_SCHEMA });
   if (merged.conflictStop || merged.doneCheckRed) return stop("conflict-stop / red done-check");
 
   // 8. Close the merged issues.
@@ -247,7 +292,7 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    `{model, effort}` — a lightweight
    in-workflow author that writes a short plan (ordered steps + a `## Acceptance criteria` heading +
    the project done-check); a **standard/complex** issue gets the **`workflow:planner`** subagent
-   (`subagent_type: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
+   (`agentType: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
    `effort: ROSTER[issue.tier].planner.effort`) handed the issue body, which returns the plan as its
    **final text** (ordered steps with
    file paths + `## Acceptance criteria` + the done-check + risks). Capture that plan text as the

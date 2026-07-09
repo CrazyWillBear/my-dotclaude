@@ -317,6 +317,47 @@ echo "test: end-of-run still mirrors the mock-debt ledger + prints a summary"
 assert_contains "ledger mirror still present" "$content" "## Mock-debt ledger"
 assert_contains "ledger summary still printed" "$content" "mock-debt: N open"
 
+# --- round-loop schematic matches the real Workflow agent() API (issue #73) --
+# The JS block is a schematic the main thread transcribes into the script it
+# hands the Workflow tool. Its call sites must therefore match the runtime's
+# actual signature:
+#
+#   agent(prompt, { model, effort, agentType, schema, ... })
+#
+# The single-object form agent({...}) passes everything as the *prompt* and no
+# opts at all, so model/effort/agentType would be silently dropped and every
+# spawn would fall back to session defaults. `subagent_type` is the Agent
+# tool's key and means nothing here; the opts key is `agentType`. Bare agent()
+# returns a string, so any spawn whose result is destructured needs `schema:`.
+#
+# The absence checks run against the ```js block ALONE, not the whole file: the
+# surrounding prose deliberately names both wrong forms in order to warn about
+# them, and must stay free to do so.
+js_block=""
+if [ -f "$SKILL_FILE" ]; then
+    js_block="$(awk '/^```js$/{inblock=1; next} /^```$/{inblock=0} inblock' "$SKILL_FILE")"
+fi
+
+echo "test: schematic uses the real two-arg agent(prompt, opts) form"
+if [ -n "$js_block" ]; then
+    ok "js round-loop block extracted"
+else
+    no "js round-loop block not found in SKILL.md"
+fi
+assert_not_contains "single-object agent({...}) call form is gone" "$js_block" "agent({"
+assert_contains "real signature is documented" "$content" "agent(prompt, opts)"
+
+echo "test: schematic uses the Workflow opts key agentType, not subagent_type"
+assert_contains "agentType is the opts key" "$js_block" "agentType:"
+assert_not_contains "Agent-tool spelling subagent_type is gone" "$js_block" "subagent_type"
+
+echo "test: structured-return spawns pass schema so their results are objects"
+assert_contains "schema passed on structured-return spawns" "$js_block" "schema:"
+
+echo "test: pipeline() receives the item list plus a stage callback"
+assert_contains "pipeline takes items + stage" "$js_block" "pipeline(picked, issue =>"
+assert_not_contains "pre-started promise array is gone" "$js_block" "pipeline(picked.map("
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
