@@ -19,12 +19,15 @@
 #      config each → the exact WARN line + standard fallback; exit 0. The
 #      wrong-type case absorbs #55's intent (a wrong shape leaks nothing but the
 #      one WARN line).
-#   5. Bad/missing tier arg against a good shipped config → the exact WARN line +
+#   5. Reformatted-but-valid configs (a mixed single-line tier, two roles on one
+#      line, and a fully minified config) resolve to the correct roster with no
+#      WARN — the extractor is layout-independent, not fooled by whitespace.
+#   6. Bad/missing tier arg against a good shipped config → the exact WARN line +
 #      standard fallback; exit 0.
-#   6. The shipped config is structurally complete: 9 tier×role cells resolve
+#   7. The shipped config is structurally complete: 9 tier×role cells resolve
 #      through the REAL helper to a model in {sonnet,opus,fable} and an effort in
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
-#   7. Fallback lockstep: the missing-config fallback output is byte-identical,
+#   8. Fallback lockstep: the missing-config fallback output is byte-identical,
 #      line for line, to resolving `standard` from the shipped config.
 #
 # Run: bash plugins/workflow/tests/test_resolve-tier.sh  (non-zero if any fail)
@@ -227,6 +230,84 @@ run_tier standard "$WORK/mal-e"
 assert_equals "wrong-type: exit 0" "$RC" "0"
 assert_equals "wrong-type: stderr is exactly the WARN line" "$ERR" "$WARN"
 assert_equals "wrong-type: standard fallback" "$(val "$OUT" tier)" "standard"
+
+# ---------------------------------------------------------------------------
+echo "test: reformatted-but-valid configs resolve correctly with no WARN (layout-independent)"
+
+# (f) mixed layout — trivial's WHOLE block on one line; standard/complex multi-line.
+#     Every value is exactly as shipped; only whitespace differs. The old extractor
+#     let `trivial` steal standard's roster (opus/high) with clean stderr — the
+#     planner_model=sonnet / planner_effort=medium asserts are the discriminators.
+write_cfg "$WORK/fmt-f" <<'JSON'
+{
+  "trivial": { "planner": { "model": "sonnet", "effort": "medium" }, "implementer": { "model": "sonnet", "effort": "medium" }, "reviewer": { "model": "opus", "effort": "high" } },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/fmt-f"
+assert_equals "mixed-layout: exit 0" "$RC" "0"
+assert_equals "mixed-layout: stderr empty (no WARN)" "$ERR" ""
+assert_equals "mixed-layout: tier echoed trivial" "$(val "$OUT" tier)" "trivial"
+assert_equals "mixed-layout: planner_model sonnet (not stolen opus)" "$(val "$OUT" planner_model)" "sonnet"
+assert_equals "mixed-layout: planner_effort medium (not stolen high)" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "mixed-layout: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "mixed-layout: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "mixed-layout: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
+run_tier standard "$WORK/fmt-f"
+assert_equals "mixed-layout: standard planner_model opus" "$(val "$OUT" planner_model)" "opus"
+assert_equals "mixed-layout: standard stderr empty (no WARN)" "$ERR" ""
+
+# (g) two roles on one line — standard's planner+implementer share a single line.
+#     The old extractor grabbed the FIRST "model" on the line (planner's) as the
+#     implementer's; the fix must scope the field to the role's own {...}.
+write_cfg "$WORK/fmt-g" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "standard": {
+    "planner": { "model": "opus", "effort": "high" }, "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier standard "$WORK/fmt-g"
+assert_equals "two-roles-one-line: exit 0" "$RC" "0"
+assert_equals "two-roles-one-line: stderr empty (no WARN)" "$ERR" ""
+assert_equals "two-roles-one-line: implementer_model sonnet (not planner's opus)" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "two-roles-one-line: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
+assert_equals "two-roles-one-line: planner_model opus" "$(val "$OUT" planner_model)" "opus"
+assert_equals "two-roles-one-line: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
+
+# (h) fully minified — the whole config on ONE line, zero whitespace (jq -c shape).
+write_cfg "$WORK/fmt-h" <<'JSON'
+{"trivial":{"planner":{"model":"sonnet","effort":"medium"},"implementer":{"model":"sonnet","effort":"medium"},"reviewer":{"model":"opus","effort":"high"}},"standard":{"planner":{"model":"opus","effort":"high"},"implementer":{"model":"sonnet","effort":"high"},"reviewer":{"model":"opus","effort":"high"}},"complex":{"planner":{"model":"fable","effort":"xhigh"},"implementer":{"model":"opus","effort":"high"},"reviewer":{"model":"fable","effort":"xhigh"}}}
+JSON
+run_tier trivial "$WORK/fmt-h"
+assert_equals "minified: trivial stderr empty (no WARN)" "$ERR" ""
+assert_equals "minified: trivial planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "minified: trivial exactly 7 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "7"
+run_tier standard "$WORK/fmt-h"
+assert_equals "minified: standard planner_model opus" "$(val "$OUT" planner_model)" "opus"
+run_tier complex "$WORK/fmt-h"
+assert_equals "minified: complex reviewer_model fable" "$(val "$OUT" reviewer_model)" "fable"
+assert_equals "minified: complex stderr empty (no WARN)" "$ERR" ""
 
 # ---------------------------------------------------------------------------
 echo "test: bad/missing tier arg against a good shipped config → exact WARN + standard fallback"

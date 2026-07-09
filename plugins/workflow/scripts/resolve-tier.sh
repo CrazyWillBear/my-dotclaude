@@ -57,22 +57,38 @@ fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
 
 # cell <tier> <role> <field> — print the cell's string value, or nothing on any
-# miss. Reads the shipped one-role-per-line format; anything it can't parse
-# yields empty, which the validation below turns into the standard fallback
-# (fail-open). A cell is scoped to its tier: `in_tier` is set only when the
-# requested tier's key opens and cleared at that tier's closing brace, so a role
-# name shared across tiers never leaks the wrong tier's value.
+# miss. The whole config is read into one buffer, then parsed structurally rather
+# than line-by-line, so layout does not matter: the tier's object is bounded by a
+# brace-depth scan (a later tier can never bleed in, however the file is wrapped),
+# the role key is matched only inside that tier's block, and the field is matched
+# only inside the role's own {...}. One-line, multi-line, and mixed formattings
+# resolve identically. Anything the scanner cannot locate (missing tier/role/
+# field, wrong shape, non-JSON) yields empty, which the validation below turns
+# into the standard fallback (fail-open). Since [[:space:]] matches newlines in
+# awk, a "tier": spread across lines before its { parses too.
 cell() {
     awk -v tier="$1" -v role="$2" -v field="$3" '
-        $0 ~ "\"" tier "\"[[:space:]]*:" { in_tier = 1; next }
-        in_tier && /^[[:space:]]*}/      { in_tier = 0 }
-        in_tier && $0 ~ "\"" role "\"[[:space:]]*:" {
-            if (match($0, "\"" field "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"")) {
-                v = substr($0, RSTART, RLENGTH)
+        { buf = buf $0 "\n" }
+        END {
+            if (!match(buf, "\"" tier "\"[[:space:]]*:[[:space:]]*\\{")) exit
+            rest = substr(buf, RSTART + RLENGTH)
+            depth = 1; end = 0; n = length(rest)
+            for (i = 1; i <= n; i++) {
+                c = substr(rest, i, 1)
+                if (c == "{") depth++
+                else if (c == "}") { depth--; if (depth == 0) { end = i; break } }
+            }
+            if (end == 0) exit
+            block = substr(rest, 1, end - 1)
+            if (!match(block, "\"" role "\"[[:space:]]*:[[:space:]]*\\{")) exit
+            rb = substr(block, RSTART + RLENGTH)
+            if (!match(rb, /}/)) exit
+            rb = substr(rb, 1, RSTART - 1)
+            if (match(rb, "\"" field "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"")) {
+                v = substr(rb, RSTART, RLENGTH)
                 sub(/^.*:[[:space:]]*"/, "", v); sub(/"$/, "", v)
                 print v
             }
-            exit
         }
     ' "$CONFIG" 2>/dev/null
 }
