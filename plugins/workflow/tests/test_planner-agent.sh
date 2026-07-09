@@ -6,9 +6,11 @@
 # the content obligations the /pipeline chain depends on:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins model: opus and effort: high (the frontmatter effort is
-#      the planner's STANDALONE default; a tier-routed Agent spawn overrides
-#      effort per call, same as model), read-only tools.
+#   2. Frontmatter pins model: opus and effort: high, read-only tools. The Agent
+#      tool has no effort parameter, so this pin GOVERNS every Agent-tool spawn
+#      — including /pipeline's tier-routed one, which overrides model per call
+#      but cannot touch effort. (Workflow agent() does take opts.effort, so
+#      /orchestrate routes it per call.)
 #   3. The three invocation modes (plan / replan / triage) are described,
 #      including collective-high replan and per-critical replan scoping.
 #   4. The output contract: ordered steps with file paths, a verbatim

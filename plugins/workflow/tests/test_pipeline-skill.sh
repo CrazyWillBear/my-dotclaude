@@ -11,10 +11,14 @@
 #   3. Worktree entry via EnterWorktree (orchestrate step-0 pattern) and exit
 #      via ExitWorktree(keep).
 #   4. Grill-mode drift-check invokes the verify-plan skill.
-#   5. Models AND efforts are tier-routed: a Step-0.5 classify-task call sets the
-#      tier, resolve-tier.sh resolves the confirmed roster, and Steps 2–5 carry
-#      model + effort placeholders — no model is hardcoded (the old
-#      model: "sonnet" pin is gone) and the tier table is no longer embedded.
+#   5. Models are tier-routed: a Step-0.5 classify-task call sets the tier,
+#      resolve-tier.sh resolves the confirmed roster, and Steps 2–5 carry model
+#      placeholders — no model is hardcoded (the old model: "sonnet" pin is
+#      gone) and the tier table is no longer embedded. Effort is NOT routed:
+#      /pipeline spawns through the Agent tool, which has no effort parameter,
+#      so each agent's frontmatter effort pin governs. The roster's *_effort
+#      cells are inert here (they are live for /orchestrate, which spawns
+#      through Workflow agent()), and no effort: placeholder may appear.
 #   5b. Optional inline (main-thread) Step-2 planning: a --self-plan flag or a
 #      trivial tier lets the main agent author the plan itself (no planner
 #      spawn). The authorship ladder is "first match wins"; trivial yields a
@@ -109,10 +113,18 @@ BAR='|'
 assert_not_contains "embedded tier table gone" "$content" "$BAR trivial $BAR sonnet $BAR sonnet $BAR opus $BAR"
 assert_contains "planner roster placeholder" "$content" 'model: "<planner>"'
 assert_contains "reviewer roster placeholder" "$content" 'model: "<reviewer>"'
-assert_contains "planner effort placeholder" "$content" 'effort: "<planner_effort>"'
-assert_contains "implementer effort placeholder" "$content" 'effort: "<implementer_effort>"'
-assert_contains "reviewer effort placeholder" "$content" 'effort: "<reviewer_effort>"'
 assert_contains "reviewer model held constant" "$content" "held constant"
+
+# Effort is NOT a per-spawn lever here: /pipeline spawns via the Agent tool,
+# whose parameters are description/isolation/model/prompt/run_in_background/
+# subagent_type — no effort. A placeholder would silently do nothing.
+assert_not_contains "no planner effort placeholder" "$content" 'effort: "<planner_effort>"'
+assert_not_contains "no implementer effort placeholder" "$content" 'effort: "<implementer_effort>"'
+assert_not_contains "no reviewer effort placeholder" "$content" 'effort: "<reviewer_effort>"'
+assert_contains "Agent tool's lack of an effort param is stated" "$content" \
+    'has no `effort` parameter'
+assert_contains "effort named inert for pipeline" "$content" 'inert for `/pipeline`'
+assert_contains "frontmatter effort pin named as governing" "$content" "frontmatter"
 assert_contains "issue-mode carve-out — one interactive stop" "$content" "one interactive stop"
 assert_contains "tier rationale surfaced" "$content" "rationale"
 assert_contains "confirmed roster persisted in state doc" "$content" "confirmed roster"
