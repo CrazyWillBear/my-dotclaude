@@ -18,7 +18,9 @@
 #      effort — all literal heredocs, no jq transforms) and a wrong-JSON-type
 #      config each → the exact WARN line + standard fallback; exit 0. The
 #      wrong-type case absorbs #55's intent (a wrong shape leaks nothing but the
-#      one WARN line).
+#      one WARN line). Also covers a brace-in-a-string tier value paired with a
+#      missing role, and a role object holding a nested object — both must fall
+#      back rather than return a chimera roster or nested values (#70).
 #   5. Reformatted-but-valid configs (a mixed single-line tier, two roles on one
 #      line, and a fully minified config) resolve to the correct roster with no
 #      WARN — the extractor is layout-independent, not fooled by whitespace.
@@ -29,6 +31,14 @@
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
 #   8. Fallback lockstep: the missing-config fallback output is byte-identical,
 #      line for line, to resolving `standard` from the shipped config.
+#   9. A `cd` failure inside the BASH_SOURCE fallback (the SCRIPT_DIR/PLUGIN_ROOT
+#      lines, exercised when CLAUDE_PLUGIN_ROOT is unset) is fully suppressed —
+#      stderr is EXACTLY the one WARN line, never that plus a leaked
+#      `cd: ...: No such file or directory`. Reproduced by running the REAL,
+#      unmodified fallback lines against a directory that is removed out from
+#      under them mid-run (a synchronization barrier line is spliced in only to
+#      pause execution at that exact point — the tested lines themselves are
+#      byte-identical to the shipped script).
 #
 # Run: bash plugins/workflow/tests/test_resolve-tier.sh  (non-zero if any fail)
 
@@ -231,6 +241,65 @@ assert_equals "wrong-type: exit 0" "$RC" "0"
 assert_equals "wrong-type: stderr is exactly the WARN line" "$ERR" "$WARN"
 assert_equals "wrong-type: standard fallback" "$(val "$OUT" tier)" "standard"
 
+# (i) brace-in-string tier value AND a missing role — the extra "note" string
+#     carries a "{"; the OLD scan counted it, ran trivial's block into standard,
+#     and let `cell trivial reviewer *` silently borrow standard's reviewer
+#     (chimera roster, clean stderr). String-aware, trivial's block is bounded
+#     correctly, its missing reviewer yields empty → the single-WARN fallback.
+write_cfg "$WORK/mal-i" <<'JSON'
+{
+  "trivial": {
+    "note": "has { brace",
+    "planner":     { "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" }
+  },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/mal-i"
+assert_equals "brace-in-string+missing-role: exit 0" "$RC" "0"
+assert_equals "brace-in-string+missing-role: stderr is exactly the WARN line" "$ERR" "$WARN"
+assert_equals "brace-in-string+missing-role: standard fallback (no chimera)" "$(val "$OUT" tier)" "standard"
+assert_equals "brace-in-string+missing-role: reviewer_model opus (from fallback, not borrowed)" "$(val "$OUT" reviewer_model)" "opus"
+
+# (j) a role whose object holds a NESTED object — the OLD first-"}" cut returned
+#     the nested fable/max silently. String-aware, the nested object is detected
+#     and the role reads as a miss → the single-WARN fallback (never the nested
+#     values, and never a clean-stderr success claiming tier=trivial).
+write_cfg "$WORK/mal-j" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "meta": { "model": "fable", "effort": "max" }, "model": "sonnet", "effort": "medium" },
+    "implementer": { "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "model": "opus",   "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "high" },
+    "reviewer":    { "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "implementer": { "model": "opus",   "effort": "high" },
+    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/mal-j"
+assert_equals "nested-role-object: exit 0" "$RC" "0"
+assert_equals "nested-role-object: stderr is exactly the WARN line" "$ERR" "$WARN"
+assert_equals "nested-role-object: standard fallback (not nested values)" "$(val "$OUT" tier)" "standard"
+assert_equals "nested-role-object: planner_effort high (fallback, not nested max)" "$(val "$OUT" planner_effort)" "high"
+
 # ---------------------------------------------------------------------------
 echo "test: reformatted-but-valid configs resolve correctly with no WARN (layout-independent)"
 
@@ -323,6 +392,58 @@ NOARG_RC=$?
 assert_equals "no arg: exit 0" "$NOARG_RC" "0"
 assert_equals "no arg: exact WARN" "$(cat "$NOARG_ERR")" "$WARN"
 assert_equals "no arg: standard fallback" "$(val "$NOARG_OUT" tier)" "standard"
+
+# ---------------------------------------------------------------------------
+echo "test: a cd failure inside the BASH_SOURCE fallback leaks no stderr but the one WARN"
+
+CDFAIL_DIR="$WORK/cdfail-dir"
+CDFAIL_BARRIER="$WORK/cdfail-barrier"
+mkdir -p "$CDFAIL_DIR"
+mkfifo "$CDFAIL_BARRIER"
+
+# Splice a synchronization barrier immediately before the `if [ -z "$PLUGIN_ROOT" ]`
+# line so the background run below can pause execution right at the SCRIPT_DIR/
+# PLUGIN_ROOT lines and delete their target directory out from under them. Every
+# other line — including the two fixed `cd ... 2>/dev/null` lines themselves — is
+# copied byte-for-byte from the shipped script; nothing under test is duplicated
+# or reworded.
+SPLIT_AT="$(grep -n '^if \[ -z "\$PLUGIN_ROOT" \]; then$' "$SCRIPT" | head -n1 | cut -d: -f1)"
+if [ -z "$SPLIT_AT" ]; then
+    no "cdfail: could not locate the PLUGIN_ROOT fallback line to splice a barrier into"
+else
+    {
+        head -n "$((SPLIT_AT - 1))" "$SCRIPT"
+        printf 'read -r _ < "%s"\n' "$CDFAIL_BARRIER"
+        tail -n "+${SPLIT_AT}" "$SCRIPT"
+    } > "$CDFAIL_DIR/resolve-tier.sh"
+    chmod +x "$CDFAIL_DIR/resolve-tier.sh"
+
+    CDFAIL_OUTFILE="$WORK/cdfail-out"
+    CDFAIL_ERRFILE="$WORK/cdfail-err"
+    env -u CLAUDE_PLUGIN_ROOT bash "$CDFAIL_DIR/resolve-tier.sh" trivial >"$CDFAIL_OUTFILE" 2>"$CDFAIL_ERRFILE" &
+    CDFAIL_PID=$!
+
+    # Block here (not a timed sleep) until the background script has actually
+    # opened the barrier fifo for reading, i.e. it is parked exactly before the
+    # cd lines — this is what makes the removal below race-free.
+    exec 8>"$CDFAIL_BARRIER"
+
+    rm -rf "$CDFAIL_DIR"
+
+    # Release the barrier: the open above already satisfied the reader's blocking
+    # open, so closing fd 8 delivers EOF and lets the script resume straight into
+    # the now-missing-directory cd.
+    exec 8>&-
+
+    wait "$CDFAIL_PID"
+    CDFAIL_RC=$?
+    CDFAIL_OUT="$(cat "$CDFAIL_OUTFILE")"
+    CDFAIL_ERR="$(cat "$CDFAIL_ERRFILE")"
+
+    assert_equals "cdfail: exit 0" "$CDFAIL_RC" "0"
+    assert_equals "cdfail: stderr is exactly the WARN line (no leaked cd error)" "$CDFAIL_ERR" "$WARN"
+    assert_equals "cdfail: standard fallback" "$(val "$CDFAIL_OUT" tier)" "standard"
+fi
 
 # ---------------------------------------------------------------------------
 echo "test: shipped config is structurally complete (9 cells resolve via the REAL helper)"

@@ -5,10 +5,10 @@
 # The agent is prose — not executable code — so we validate its frontmatter pins:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins name: merger, model: sonnet, and effort: xhigh (effort
-#      can't be set per Agent call, so the pin must live here). orchestrate's
-#      merger spawn passes no explicit model, so this pin IS the merger's
-#      standalone default — the PRD's deliberate merger=sonnet decision.
+#   2. Frontmatter pins name: merger, model: sonnet, and effort: xhigh.
+#      orchestrate's merger spawn passes no explicit model or effort, so this
+#      pin governs outright — the PRD's deliberate merger=sonnet decision. The
+#      merger is never tier-routed; it runs once per round, after the slices.
 #
 # Run: bash plugins/workflow/tests/test_merger-agent.sh  (non-zero if any fail)
 

@@ -51,39 +51,72 @@ fallback() {
 # ---------------------------------------------------------------------------
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$PLUGIN_ROOT" ]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
 
 # cell <tier> <role> <field> — print the cell's string value, or nothing on any
-# miss. The whole config is read into one buffer, then parsed structurally rather
-# than line-by-line, so layout does not matter: the tier's object is bounded by a
-# brace-depth scan (a later tier can never bleed in, however the file is wrapped),
-# the role key is matched only inside that tier's block, and the field is matched
-# only inside the role's own {...}. One-line, multi-line, and mixed formattings
-# resolve identically. Anything the scanner cannot locate (missing tier/role/
-# field, wrong shape, non-JSON) yields empty, which the validation below turns
-# into the standard fallback (fail-open). Since [[:space:]] matches newlines in
-# awk, a "tier": spread across lines before its { parses too.
+# miss. The whole config is read into one buffer and parsed structurally, so
+# layout does not matter. The tier's object is bounded by a STRING-AWARE
+# brace-depth scan (findclose): a "{" or "}" inside a JSON string value is
+# skipped, so a later tier can never bleed in — however the file is wrapped and
+# whatever the string values contain. The role key is matched only inside that
+# tier's block, and the role's own {...} is bounded by the same string-aware
+# scan; a role body that itself contains a nested object is treated as a miss
+# (hasbrace), so the flat field match only ever reads the role's own top-level
+# model/effort. Anything the scanner cannot locate (missing tier/role/field,
+# wrong shape, nested role object, non-JSON) yields empty, which the validation
+# below turns into the standard fallback (fail-open). Since [[:space:]] matches
+# newlines in awk, a "tier": spread across lines before its { parses too.
 cell() {
     awk -v tier="$1" -v role="$2" -v field="$3" '
+        # Index of the "}" that closes the object we are already inside (depth
+        # starts at 1, just past its opening "{"), skipping any brace that falls
+        # inside a JSON string. 0 if the braces never balance.
+        function findclose(s,   depth, instr, esc, i, n, c) {
+            depth = 1; instr = 0; esc = 0; n = length(s)
+            for (i = 1; i <= n; i++) {
+                c = substr(s, i, 1)
+                if (instr) {
+                    if (esc)            esc = 0
+                    else if (c == "\\") esc = 1
+                    else if (c == "\"") instr = 0
+                } else if (c == "\"")   instr = 1
+                else if (c == "{")      depth++
+                else if (c == "}")    { depth--; if (depth == 0) return i }
+            }
+            return 0
+        }
+        # 1 if s holds a "{" outside any string — i.e. a nested object in an
+        # already-extracted role body, which the flat field match cannot read
+        # safely, so we treat it as a miss (fail-open).
+        function hasbrace(s,   instr, esc, i, n, c) {
+            instr = 0; esc = 0; n = length(s)
+            for (i = 1; i <= n; i++) {
+                c = substr(s, i, 1)
+                if (instr) {
+                    if (esc)            esc = 0
+                    else if (c == "\\") esc = 1
+                    else if (c == "\"") instr = 0
+                } else if (c == "\"")   instr = 1
+                else if (c == "{")      return 1
+            }
+            return 0
+        }
         { buf = buf $0 "\n" }
         END {
             if (!match(buf, "\"" tier "\"[[:space:]]*:[[:space:]]*\\{")) exit
             rest = substr(buf, RSTART + RLENGTH)
-            depth = 1; end = 0; n = length(rest)
-            for (i = 1; i <= n; i++) {
-                c = substr(rest, i, 1)
-                if (c == "{") depth++
-                else if (c == "}") { depth--; if (depth == 0) { end = i; break } }
-            }
+            end = findclose(rest)
             if (end == 0) exit
             block = substr(rest, 1, end - 1)
             if (!match(block, "\"" role "\"[[:space:]]*:[[:space:]]*\\{")) exit
             rb = substr(block, RSTART + RLENGTH)
-            if (!match(rb, /}/)) exit
-            rb = substr(rb, 1, RSTART - 1)
+            rend = findclose(rb)
+            if (rend == 0) exit
+            rb = substr(rb, 1, rend - 1)
+            if (hasbrace(rb)) exit
             if (match(rb, "\"" field "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"")) {
                 v = substr(rb, RSTART, RLENGTH)
                 sub(/^.*:[[:space:]]*"/, "", v); sub(/"$/, "", v)

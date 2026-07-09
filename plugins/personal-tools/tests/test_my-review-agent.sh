@@ -6,8 +6,11 @@
 # the content obligations the /pipeline severity-routing contract depends on:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins model: opus and effort: xhigh (effort can't be set per
-#      Agent call, so the pin must live here).
+#   2. Frontmatter pins model: opus and effort: xhigh. The Agent tool has no
+#      effort parameter, so this pin GOVERNS every Agent-tool spawn — including
+#      /pipeline's tier-routed one, which overrides model per call but cannot
+#      touch effort. (Workflow agent() does take opts.effort, so /orchestrate
+#      routes it per call.)
 #   3. The 4-tier severity taxonomy (critical/high/medium/low) is present and
 #      the old blocker/warning/nit vocabulary is gone.
 #   4. The verdict line re-anchors APPROVE WITH NITS to only-low findings.

@@ -56,8 +56,9 @@ the embedded plan is authoritative (Step-5 planner spawns still happen normally)
 
 ## Step 0.5 — classify (pick the roster)
 
-The models **and efforts** below are **tier-routed**, not fixed. Obtain the **tier**, then resolve
-its roster from the plugin's config — the table is **not** duplicated here:
+The **models** below are **tier-routed**, not fixed (effort is not — see the end of this step).
+Obtain the **tier**, then resolve its roster from the plugin's config — the table is **not**
+duplicated here:
 
 - **`--complexity <tier>` given** → skip classification; that tier is the confirmed tier (no
   rationale — record `rationale=(--complexity <tier>)`).
@@ -78,9 +79,17 @@ Then resolve the roster **once**: run
 invalid config), surface it to the user and continue on the fallback (standard) roster it returned.
 
 The confirmed roster is fixed for the whole run — the **reviewer model is held constant across
-every re-review**. Substitute it into the `model:` **and** `effort:` placeholders (`<planner>` /
-`<planner_effort>`, `<implementer>` / `<implementer_effort>`, `<reviewer>` / `<reviewer_effort>`) in
-Steps 2–5. Note: even when Step 2's plan is authored **inline** (main thread, no planner spawn), the
+every re-review**. Substitute its models into the `model:` placeholders (`<planner>`,
+`<implementer>`, `<reviewer>`) in Steps 2–5.
+
+**Effort is not a per-spawn lever here.** Every spawn below is an **`Agent` tool** call, and the
+`Agent` tool has no `effort` parameter — its parameters are `description`, `isolation`, `model`,
+`prompt`, `run_in_background`, `subagent_type`. Each agent's **frontmatter `effort:` pin governs**
+(planner `high`, implementer `xhigh`, my-review `xhigh`), and passing an `effort:` on an `Agent`
+call is **silently dropped**. So the roster's `*_effort` values are **inert for `/pipeline`** —
+parse them (the helper's seven-line contract is fixed) but do not try to spawn with them. They are
+**live for `/orchestrate`**, which spawns through Workflow `agent(prompt, opts)`, and `opts.effort`
+*is* honored there. Note: even when Step 2's plan is authored **inline** (main thread, no planner spawn), the
 roster's **planner pair still drives Step 5's** triage/replan/per-critical spawns. The confirmed
 roster the state doc records also carries **`plan_author=inline|subagent`**, set in Step 2.
 
@@ -122,8 +131,8 @@ branch and worktree stay for the user.
 `<scratchpad>/pipeline-plan.md` — **no planner spawn for Step 2**.
 
 **Subagent** (`plan_author=subagent`): spawn **`workflow:planner`** (one `Agent` call,
-`subagent_type: workflow:planner`, `model: "<planner>"`, `effort: "<planner_effort>"`) with
-**mode=plan** and the issue body
+`subagent_type: workflow:planner`, `model: "<planner>"`; effort comes from the agent's frontmatter
+pin) with **mode=plan** and the issue body
 (issue mode) or distilled brief (grill/bare); it returns the plan as text and **you write it** to
 `<scratchpad>/pipeline-plan.md`.
 
@@ -146,8 +155,8 @@ Then, by mode:
 ## Step 3 — implement
 
 Spawn **`workflow:implementer`** on the confirmed roster's implementer (one `Agent` call,
-`subagent_type: workflow:implementer`, `model: "<implementer>"`, `effort: "<implementer_effort>"`)
-handing it a **work order**: the full
+`subagent_type: workflow:implementer`, `model: "<implementer>"`; effort comes from the agent's
+frontmatter pin) handing it a **work order**: the full
 plan text (steps + `## Acceptance criteria`), the **absolute worktree path**, the **branch**,
 and a commit-scope hint from the repo log. It builds TDD-first, runs the project's done-check,
 and commits.
@@ -158,8 +167,8 @@ blind.
 
 ## Step 4 — review
 
-Spawn **`personal-tools:my-review`** (one `Agent` call, `model: "<reviewer>"`,
-`effort: "<reviewer_effort>"`) on the branch
+Spawn **`personal-tools:my-review`** (one `Agent` call, `model: "<reviewer>"`; effort comes from the
+agent's frontmatter pin) on the branch
 diff — the commit range `<baseline>..HEAD` — with the plan file path in the prompt for
 conformance context. It returns
 a verdict plus findings ending in a machine-readable ```findings block:
@@ -184,10 +193,10 @@ Parse the ```findings block (empty block → clean; skip to step 7). Route by se
 mediums append to the collective replan only. At each scoped re-review, drop any finding a
 prior cycle already resolved.
 
-Fix rounds go to a **fresh implementer spawn** (`model: "<implementer>"`,
-`effort: "<implementer_effort>"`), work order = the fix-list or revised plan. Then a **scoped
-re-review**: spawn `personal-tools:my-review` (`model: "<reviewer>"`, `effort: "<reviewer_effort>"`
-— **held constant** across every re-review in the run) again asking it
+Fix rounds go to a **fresh implementer spawn** (`model: "<implementer>"`), work order = the fix-list
+or revised plan. Then a **scoped
+re-review**: spawn `personal-tools:my-review` (`model: "<reviewer>"` — **held constant** across
+every re-review in the run) again asking it
 to (a) verify each prior finding is addressed and (b) review **only the fix delta**
 (`<pre-fix HEAD>..HEAD`) — not the whole branch again.
 

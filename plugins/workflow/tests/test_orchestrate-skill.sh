@@ -172,6 +172,20 @@ echo "test: completed branches go to the workflow:merger, merged issues are clos
 assert_contains "merger merges the completed branches" "$content" "workflow:merger"
 assert_contains "merged issues are closed" "$content" "gh issue close"
 
+echo "test: the ready-set stage reads each issue's comments, not just its body"
+# A human (or a prior review) may leave the definitive answer as an issue
+# comment. Fetching body-only makes that guidance structurally invisible to the
+# planner, the implementer AND the reviewer — they rediscover the open question
+# and guess. This is what landed the wrong claim in #71.
+assert_contains "ready-set fetches comments alongside the body" "$content" \
+    "--json number,title,labels,body,comments"
+# The old body-only fetch ended at `body` + closing backtick. Pin its absence.
+assert_not_contains "no body-only ready-set fetch" "$content" 'number,title,labels,body`'
+assert_contains "READY_SCHEMA carries comments" "$content" "{ n, title, body, comments }"
+assert_contains "comments ride the work order into the planner" "$content" \
+    "body **and its comments**"
+assert_contains "comment-blindness named as the failure mode" "$content" "comment-blind"
+
 echo "test: stop conditions — empty ready set / conflict-stop / red done-check / implementer failure"
 assert_contains "empty ready set stops the loop" "$content" "empty ready set"
 assert_contains "conflict-stop stops the loop" "$content" "conflict-stop"

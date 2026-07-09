@@ -124,7 +124,7 @@ export const meta = {
 
 // JSON Schemas for the spawns whose results are read as objects. Without these,
 // agent() hands back a string and every property access below is undefined.
-//   READY_SCHEMA  → { issues: [{ n, title, body }] }
+//   READY_SCHEMA  → { issues: [{ n, title, body, comments }] }   // comments: never body-only
 //   CLS_SCHEMA    → { tier }
 //   BUILT_SCHEMA  → { n, branch, failed }
 //   REVIEW_SCHEMA → { findings: [{ severity, path, summary }] }
@@ -161,7 +161,7 @@ for (let round = 0; round < rounds; round++) {
     const found = await agent(                                    // no schema → returns text
       `Explore issue #${issue.n}'s touched code; see step 2`);
     const cls   = await agent(
-      `Read this exploration + issue #${issue.n}'s body → tier; see step 2\n\n${found}`,
+      `Read this exploration + issue #${issue.n}'s body and comments → tier; see step 2\n\n${found}`,
       { schema: CLS_SCHEMA });
     issue.tier  = cls.tier;                                       // real tier, auto-accepted
   }
@@ -170,14 +170,16 @@ for (let round = 0; round < rounds; round++) {
   //    trivial: a cheap minimal-plan leaf agent() at the tier's planner {model, effort};
   //    standard/complex: workflow:planner mode=plan, also at ROSTER[issue.tier].planner.
   //    Neither passes a schema — the plan text IS the return value, and it is the work order.
+  //    Both get the issue's COMMENTS as well as its body — a comment may hold the answer.
   for (const issue of picked) {
+    const brief = `${issue.body}\n\n## Issue comments\n${issue.comments}`;
     issue.plan = issue.tier === "trivial"
       ? await agent(
-          `Minimal plan for #${issue.n}: ordered steps + ## Acceptance criteria + done-check`,
+          `Minimal plan for #${issue.n}: ordered steps + ## Acceptance criteria + done-check\n\n${brief}`,
           { model:  ROSTER[issue.tier].planner.model,
             effort: ROSTER[issue.tier].planner.effort })
       : await agent(
-          `mode=plan · issue #${issue.n} body in → plan text out; see step 3`,
+          `mode=plan · issue #${issue.n} body + comments in → plan text out; see step 3\n\n${brief}`,
           { agentType: "workflow:planner",
             model:     ROSTER[issue.tier].planner.model,
             effort:    ROSTER[issue.tier].planner.effort });
@@ -187,8 +189,9 @@ for (let round = 0; round < rounds; round++) {
   //    pipeline(items, stage) — pass the ITEM LIST and a stage callback, not pre-started promises.
   const built = await pipeline(picked, issue =>
     agent(
-      `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the worktree
-       path, the branch, and a commit-scope hint from the repo log.\n\n${issue.plan}`,
+      `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the issue's
+       comments, the worktree path, the branch, and a commit-scope hint from the repo log.
+       \n\n${issue.plan}\n\n## Issue comments\n${issue.comments}`,
       { agentType: "workflow:implementer",
         model:     ROSTER[issue.tier].implementer.model,
         effort:    ROSTER[issue.tier].implementer.effort,
@@ -203,7 +206,8 @@ for (let round = 0; round < rounds; round++) {
   //    mock-debt follow-up — my-review OWNS that filing) and returns a findings block.
   for (const issue of picked) {
     issue.review = await agent(
-      `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}`,
+      `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}
+       \n\nIssue #${issue.n}'s comments — ground truth for the review:\n${issue.comments}`,
       { agentType: "personal-tools:my-review",
         model:     ROSTER[issue.tier].reviewer.model,
         effort:    ROSTER[issue.tier].reviewer.effort,
@@ -265,7 +269,12 @@ for (let round = 0; round < rounds; round++) {
 Everything in this section happens **inside the Workflow**, over up to **K** ready issues:
 
 1. **Pick the ready set** (a workflow agent, since a Workflow can't run `gh`/git itself).
-   `gh issue list --label ready-for-agent --state open --json number,title,labels,body`. For each
+   `gh issue list --label ready-for-agent --state open --json number,title,labels,body,comments`.
+   **Fetch the comments, not just the body** — an issue's **comments carry guidance** (a human's
+   answer, a prior review's ruling) that the body may never absorb, and a **comment-blind** loop
+   rediscovers the settled question and guesses at it. Carry each issue's comments through the
+   round: they ride the work order into the planner (step 3), the implementer (step 5), and the
+   reviewer (step 6). For each
    issue, parse the `## Blocked by` section (C2): bare `#N` refs, or `None - can start immediately`.
    An issue is **ready** iff **every** `#N` blocker is **closed** (`gh issue view <N> --json state`).
    **Skip** any issue also labeled `hitl` or `prd` (the `--label ready-for-agent` filter already
@@ -279,7 +288,8 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    `agent()` **can't** reuse the `classify-task` skill (it fans out its own Explore subagents from
    the main thread), so each picked issue is classified by **two in-workflow stages**: an
    **explore** agent maps the issue's touched code (relevant files, the seams/contracts it moves,
-   downstream consumers), then a **classify** agent reads that exploration plus the issue body and
+   downstream consumers), then a **classify** agent reads that exploration plus the issue body **and
+   its comments** and
    emits a **real tier** (trivial/standard/complex) by classify-task's rubric — *size is not the
    signal*: a seam move or new infrastructure is **complex**, mechanical no-decision edits are
    **trivial**. The tier is **auto-accepted — no interactive confirm** (the run is autonomous past
@@ -293,7 +303,8 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    in-workflow author that writes a short plan (ordered steps + a `## Acceptance criteria` heading +
    the project done-check); a **standard/complex** issue gets the **`workflow:planner`** subagent
    (`agentType: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
-   `effort: ROSTER[issue.tier].planner.effort`) handed the issue body, which returns the plan as its
+   `effort: ROSTER[issue.tier].planner.effort`) handed the issue body **and its comments** (step 1
+   fetched both — a comment may carry the settled answer), which returns the plan as its
    **final text** (ordered steps with
    file paths + `## Acceptance criteria` + the done-check + risks). Capture that plan text as the
    issue's **work order**. This mirrors `/pipeline`'s Step-2 authorship ladder (trivial → minimal
@@ -307,7 +318,8 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    base branch (C4): `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
 5. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each handed
    its **work order** — the **plan text** from step 3 (ordered steps + `## Acceptance criteria` +
-   done-check) — plus the **absolute** worktree path, the branch `issue-<N>`, and a **commit-scope
+   done-check) — plus the issue's **comments** (step 1), the **absolute** worktree path, the branch
+   `issue-<N>`, and a **commit-scope
    hint** (the issue's `<scope>`). The plan **replaces the implementer's self-plan** for these issues
    (the implementer builds against the work order, not a plan of its own). They run concurrently,
    **each on the model its tier routed** (`ROSTER[issue.tier].implementer`). An **implementer failure** stops
@@ -315,7 +327,8 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
 6. **Review each built slice — initial review (free).** For each issue the round built, spawn
    **`personal-tools:my-review`** (one `Agent` call, `model: ROSTER[issue.tier].reviewer.model`,
    `effort: ROSTER[issue.tier].reviewer.effort`) on that issue's **branch diff** — the commit range `<base>..issue-<N>` — with the issue's
-   **plan** (captured in step 3 as `issue.plan`) in the prompt for conformance context, plus the
+   **plan** (captured in step 3 as `issue.plan`) in the prompt for conformance context, the issue's
+   **comments** (step 1 — they are the ground truth the review checks the slice against), plus the
    **issue number** so the audit can read its `## Central mechanism` line. my-review returns a verdict
    plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift audit**:
    declared central mock → confirm; **undeclared** central mock → **auto-convert** — both file a
