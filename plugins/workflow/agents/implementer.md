@@ -45,8 +45,8 @@ paths, and `git -C <worktree>` for git.
      commit body): `Mocked: <what>. Real wiring blocked by: #N` (or, for a work order, the plan
      step that builds it) — or `... deferred to integration` if nothing yet builds the real
      dependency. You only **declare**; the spawner's review path files the follow-up —
-     orchestrate's reviewer, or /pipeline's finish step (you're sandboxed and never edit the
-     cross-issue graph). Hiding a central mock doesn't help — orchestrate's reviewer
+     orchestrate's my-review stage, or /pipeline's finish step (you're sandboxed and never edit the
+     cross-issue graph). Hiding a central mock doesn't help — orchestrate's my-review stage
      auto-converts undeclared ones to the same mock-debt.
 3. **Satisfy every acceptance criterion.** Work the list; don't declare done with a box unchecked.
 4. **Run the project's done-check** in the worktree — its tests, linter, type-checker (from the

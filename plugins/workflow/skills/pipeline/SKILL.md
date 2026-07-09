@@ -216,7 +216,7 @@ depends on this branch landing — then name the issue/branch).
 Also file any **`## Mock-debt` the implementer declared** — there is no orchestrate reviewer
 on this path, so the pipeline files it or nobody does. Ensure the label
 (`gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`),
-then file with reviewer.md's mock-debt template: `## What to build` (wire real `<X>`, removing
+then file with the my-review agent's mock-debt template: `## What to build` (wire real `<X>`, removing
 the mock), `## Central mechanism` (the now-real interface), `## Acceptance criteria` (the
 central mechanism runs real and the test exercises it), `## Blocked by` (from the declaration,
 or `None - can start immediately`).

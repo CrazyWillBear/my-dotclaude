@@ -14,6 +14,12 @@
 #   5. The machine-readable ```findings block spec is present (the pipeline
 #      routes off this block), including the replan flag and empty-when-clean.
 #   6. The ❓ unverified tag survives the migration.
+#   7. (issue #66) my-review now folds in the central-mechanism / mock-drift
+#      audit: it reads the issue's `## Central mechanism` line, confirms a
+#      declared central mock and auto-converts an undeclared one, exempts
+#      boundary mocks, and files a `mock-debt` follow-up (a narrow,
+#      audit-scoped `gh issue create` — ordinary findings stay report-only),
+#      not wired into dependents (the label query is the gate).
 #
 # Run: bash plugins/personal-tools/tests/test_my-review-agent.sh  (non-zero if any fail)
 
@@ -84,6 +90,25 @@ assert_contains "empty block when clean" "$content" "empty"
 # ---------------------------------------------------------------------------
 echo "test: unverified tag survives"
 assert_contains "unverified tag present" "$content" "❓ unverified"
+
+# --- central-mechanism / mock-drift audit folded in (issue #66) ------------
+echo "test: my-review performs the central-mechanism / mock-drift audit"
+assert_contains "central-mechanism audit present" "$content" "Central-mechanism audit"
+assert_contains "reads the issue's Central mechanism line" "$content" "## Central mechanism"
+
+echo "test: declared central mock is confirmed, undeclared is auto-converted"
+assert_contains "declared path present" "$content" "Declared"
+assert_contains "auto-convert present" "$content" "auto-convert"
+
+echo "test: boundary mocks are exempt from the audit"
+assert_contains "boundary mocks exempt" "$content" "Boundary mocks"
+
+echo "test: mock-debt follow-ups are filed with the mock-debt label"
+assert_contains "mock-debt label on follow-up" "$content" "--label mock-debt"
+assert_contains "audit-scoped gh issue create" "$content" "gh issue create"
+
+echo "test: mock-debt is NOT wired into dependents (label query is the gate)"
+assert_contains "no dependent wiring for mock-debt" "$content" "do **not** wire mock-debt into dependents"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

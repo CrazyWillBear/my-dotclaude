@@ -19,6 +19,13 @@
 #  10. When nothing qualifies the final report is unchanged (no prompt).
 #  11. The offer/note appears only end-of-run — mid-loop rounds are uninterrupted.
 #  12. The skill never edits the PRD body.
+#  13. (issue #63) The skill invokes the Workflow tool for the round loop — the
+#      round no longer runs on the main thread, the Workflow permission dialog is
+#      the single launch gate, the orchestration worktree is passed in as the
+#      base and exited via ExitWorktree(keep), and the workflow runs
+#      build (workflow:implementer, up to K) -> merge (workflow:merger) -> close,
+#      stopping on an empty ready set / conflict-stop / red done-check /
+#      implementer failure.
 #
 # Run: bash plugins/workflow/tests/test_orchestrate-skill.sh  (non-zero if any fail)
 
@@ -137,39 +144,176 @@ assert_contains "result is left on the orchestration branch" "$content" "orchest
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"
 assert_contains "primary checkout is never touched" "$content" "primary checkout is never touched"
 
-# --- per-issue tier routing (issue #50) ------------------------------------
-echo "test: frontmatter gains Skill + AskUserQuestion for the classify + batch confirm"
+# --- Workflow-backed round (issue #63) -------------------------------------
+echo "test: frontmatter allows the Workflow tool"
+assert_contains "Workflow tool allowed" "$content" "Workflow"
+
+echo "test: frontmatter retains Skill + AskUserQuestion (end-of-run PRD-close offer)"
 assert_contains "Skill tool allowed" "$content" "Skill"
 assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
 
-echo "test: --complexity escape hatch is documented in the argument-hint"
-assert_contains "--complexity in argument-hint" "$content" "--complexity trivial|standard|complex"
+echo "test: argument-hint parses N rounds and --max K"
+assert_contains "N rounds + --max K in argument-hint" "$content" "[N rounds=1] [--max K=3]"
 
-echo "test: each ready issue is classified via the classify-task skill before fan-out"
-assert_contains "classify-task skill invoked" "$content" "classify-task"
-assert_contains "invoked in batch mode (no per-issue confirm)" "$content" "--no-confirm"
+echo "test: the round loop runs inside the Workflow, not on the main thread"
+assert_contains "skill invokes the Workflow tool" "$content" "Workflow tool"
+assert_contains "round no longer runs on the main thread" "$content" "no longer runs the round on the main thread"
+assert_contains "Workflow permission dialog is the single launch gate" "$content" "single launch gate"
 
-echo "test: tier table rows present verbatim (drift guard vs classify-task/pipeline)"
+echo "test: the orchestration worktree base is passed into the Workflow, exited with keep"
+assert_contains "orchestration worktree passed into the workflow as base" "$content" "passes the orchestration worktree"
+assert_contains "ExitWorktree(keep) on return" "$content" "ExitWorktree(keep)"
+
+echo "test: the workflow builds up to K issues, one implementer each"
+assert_contains "up to K issues per round" "$content" "up to **K**"
+assert_contains "one workflow:implementer per picked issue" "$content" "workflow:implementer"
+
+echo "test: completed branches go to the workflow:merger, merged issues are closed"
+assert_contains "merger merges the completed branches" "$content" "workflow:merger"
+assert_contains "merged issues are closed" "$content" "gh issue close"
+
+echo "test: stop conditions — empty ready set / conflict-stop / red done-check / implementer failure"
+assert_contains "empty ready set stops the loop" "$content" "empty ready set"
+assert_contains "conflict-stop stops the loop" "$content" "conflict-stop"
+assert_contains "red done-check stops the loop" "$content" "red done-check"
+assert_contains "implementer failure stops the loop" "$content" "implementer failure"
+
+# --- per-issue in-workflow classify + tier routing (issue #64) -------------
+# orchestrate now carries the tier table, so it JOINS the drift-guard trio
+# (classify-task + pipeline). The three rows must appear byte-identical.
+echo "test: tier table present verbatim (drift guard vs classify-task + pipeline)"
+assert_contains "tier table header" "$content" "| tier | planner | implementer | reviewer |"
+assert_contains "tier table separator" "$content" "|---|---|---|---|"
 assert_contains "trivial row" "$content" "| trivial | sonnet | sonnet | opus |"
 assert_contains "standard row" "$content" "| standard | opus | sonnet | opus |"
 assert_contains "complex row" "$content" "| complex | fable | opus | fable |"
 
-echo "test: only the implementer model is routed per issue (merger/reviewer are per-round)"
-assert_contains "only implementer routed per issue" "$content" "only the implementer"
+echo "test: --complexity escape hatch pins every issue and skips classification"
+assert_contains "--complexity in argument-hint" "$content" "[--complexity trivial|standard|complex]"
+assert_contains "--complexity pins every issue" "$content" "pins every issue"
+assert_contains "--complexity skips classification" "$content" "skips classification"
 
-echo "test: exactly one batch confirmation per round — not one question per issue"
-assert_contains "one summary table for the whole round" "$content" "ONE summary table for the whole round"
-assert_contains "single AskUserQuestion, never per issue" "$content" "never one per issue"
+echo "test: each ready issue is classified in-workflow (explore->classify)"
+assert_contains "in-workflow explore→classify stage" "$content" "explore→classify"
+assert_contains "classify emits a real tier" "$content" "real tier"
+assert_contains "classify runs inside the workflow leaf" "$content" "in-workflow"
 
-echo "test: an accept-all / zero-override path exists"
-assert_contains "accept-all path" "$content" "Accept all"
+echo "test: classification is auto-accepted with no interactive confirm"
+assert_contains "tier auto-accepted" "$content" "auto-accepted"
+assert_contains "no interactive confirm" "$content" "no interactive confirm"
 
-echo "test: row-level override swaps the whole tier row"
-assert_contains "row-level override" "$content" "override"
-assert_contains "override swaps the whole row (never mixed)" "$content" "whole"
+echo "test: the implementer model is routed by the issue's tier"
+assert_contains "implementer tier-routed" "$content" "tier-routes its implementer"
+assert_contains "routed via the implementer column" "$content" "implementer column"
 
-echo "test: confirmed implementer model is passed explicitly on each implementer spawn"
-assert_contains "explicit implementer model placeholder on spawn" "$content" 'model: "<implementer>"'
+# --- per-issue tier-routed plan stage (issue #65) --------------------------
+# A plan stage runs AFTER classify and BEFORE the implementer fan-out. The
+# planner model is routed by the tier table's PLANNER column
+# (trivial→sonnet minimal plan, standard→opus, complex→fable via
+# workflow:planner mode=plan). The plan is handed to the implementer as its
+# work order, and the run stays autonomous — no plan comment, no plan gate.
+echo "test: a plan stage runs before the implementer/build stage"
+assert_contains "plan step named in the round prose" "$content" "Plan each picked issue"
+assert_contains "PLANNER_MODEL map present" "$content" "PLANNER_MODEL"
+
+echo "test: PLANNER_MODEL routes the planner by tier (the tier table's planner column)"
+assert_contains "trivial → cheap sonnet minimal plan" "$content" "minimal-plan"
+assert_contains "standard → opus planner" "$content" 'standard: "opus"'
+assert_contains "complex → fable planner" "$content" 'complex: "fable"'
+assert_contains "standard/complex use workflow:planner in plan mode" "$content" "mode: plan"
+assert_contains "planner column drives the plan stage" "$content" "planner column"
+
+echo "test: the plan is handed to the implementer as a work order"
+assert_contains "implementer gets a work order" "$content" "work order"
+assert_contains "plan replaces the implementer self-plan" "$content" "replaces the implementer's self-plan"
+
+echo "test: the run stays autonomous — no plan comment, no plan-approval gate"
+assert_contains "no plan comment posted to the issue" "$content" "no plan comment is posted to the issue"
+assert_contains "no plan-approval gate fires" "$content" "no plan-approval gate fires"
+assert_not_contains "plan is never posted as an issue comment" "$content" "gh issue comment"
+
+# --- per-issue my-review + mock-drift audit; round reviewer removed (#66) ---
+# Each built slice is reviewed by personal-tools:my-review at the tier's
+# REVIEWER model (the tier table's reviewer column via a REVIEWER_MODEL map),
+# my-review runs the central-mechanism / mock-drift audit, /orchestrate
+# hard-deps on the my-review agent (fail loud at launch), and the round-level
+# workflow:reviewer agent is gone — no dangling references survive.
+echo "test: a per-issue my-review stage reviews each built slice"
+assert_contains "my-review agent spawned per issue" "$content" "personal-tools:my-review"
+assert_contains "review runs on the issue's branch diff" "$content" "issue-<N>"
+assert_contains "findings surface in the round report" "$content" "findings"
+
+echo "test: REVIEWER_MODEL routes the reviewer by the tier table's reviewer column"
+assert_contains "REVIEWER_MODEL map present" "$content" "REVIEWER_MODEL"
+assert_contains "trivial reviewer → opus" "$content" 'trivial: "opus"'
+assert_contains "standard reviewer → opus" "$content" 'standard: "opus"'
+assert_contains "complex reviewer → fable" "$content" 'complex: "fable"'
+assert_contains "reviewer column drives the review stage" "$content" "reviewer column"
+
+echo "test: /orchestrate hard-deps on the my-review agent (fail loud at launch)"
+assert_contains "hard-dependency on the personal-tools plugin" "$content" "personal-tools"
+assert_contains "fail loud when my-review unavailable" "$content" "fail loud"
+
+echo "test: the central-mechanism / mock-drift audit runs via my-review"
+assert_contains "mock-drift audit named" "$content" "mock-drift"
+assert_contains "central-mechanism audit named" "$content" "central-mechanism"
+
+echo "test: the round-level workflow:reviewer agent is gone (no dangling refs)"
+assert_not_contains "no workflow:reviewer round agent" "$content" "workflow:reviewer"
+assert_not_contains "no reference to the deleted reviewer.md" "$content" "reviewer.md"
+assert_not_contains "no stale 'per-issue review lands later' prose" "$content" "lands in a later slice"
+
+# --- severity-routed fix loop + finding filing + mock-debt (issue #67) ------
+# The round now ACTS on findings via a per-issue severity-routed fix loop capped
+# by --max-cycles (default 3), BEFORE the branch merges: critical→own cycle,
+# high→collective replan, medium→triage, low→file. All-lows/clean passes;
+# cap-exhausted-with-medium+ files those as review-fix follow-ups and merges
+# anyway (autonomous — no cap gate). The workflow files lows + cap-remainder and
+# re-blocks dependents; mock-debt filing stays my-review's job.
+echo "test: --max-cycles caps the per-issue fix loop (default 3, initial review free)"
+assert_contains "--max-cycles in argument-hint" "$content" "[--max-cycles K=3]"
+assert_contains "--max-cycles named in the body" "$content" "--max-cycles K"
+assert_contains "fix-loop cap default 3" "$content" "default **3**"
+assert_contains "initial review is free" "$content" "initial review is free"
+assert_contains "cap counts re-reviews" "$content" "counts re-reviews"
+
+echo "test: findings route by severity (critical/high/medium/low)"
+assert_contains "critical → own full cycle" "$content" "own full plan→implement→review cycle"
+assert_contains "high → collective replan" "$content" "collective replan"
+assert_contains "high/critical replan uses planner mode=replan" "$content" "mode=replan"
+assert_contains "medium → triage" "$content" "mode=triage"
+assert_contains "low → filed, never fixed in-run" "$content" "never fixed in-run"
+
+echo "test: re-reviews cover only the fix delta; reviewer model held constant"
+assert_contains "re-review scoped to the fix delta" "$content" "<pre-fix HEAD>..HEAD"
+assert_contains "reviewer model held constant across re-reviews" "$content" "held constant"
+
+echo "test: all-lows/clean passes; cap-exhausted-with-medium+ merges anyway (autonomous)"
+assert_contains "all-lows passes the branch" "$content" "all-lows"
+assert_contains "cap remainder merges the branch anyway" "$content" "merges anyway"
+assert_contains "no interactive cap gate (autonomous)" "$content" "No cap gate"
+assert_not_contains "no pipeline-style +1-cycle grant at the cap" "$content" "grant +1 cycle"
+
+echo "test: workflow files lows + cap-remainder as review-fix + ready-for-agent"
+assert_contains "review-fix label filed by the workflow" "$content" "--label review-fix"
+assert_contains "ready-for-agent label filed by the workflow" "$content" "--label ready-for-agent"
+assert_contains "cap-remainder is filed as a follow-up" "$content" "cap-remainder"
+
+echo "test: workflow re-blocks dependents' ## Blocked by via gh issue edit"
+assert_contains "dependent re-block uses gh issue edit" "$content" "gh issue edit"
+assert_contains "re-block appends into the dependent's existing Blocked by" "$content" "into that dependent's existing"
+
+echo "test: mock-debt filing stays my-review's job — the workflow does not re-file it"
+assert_contains "mock-debt filing owned by my-review" "$content" "my-review OWNS"
+assert_contains "workflow does not re-file mock-debt" "$content" "does not re-file mock-debt"
+
+echo "test: round reorder — review + fix loop run BEFORE the merge"
+assert_contains "fix loop acts before the branch merges" "$content" "before it merges"
+assert_contains "merge runs after the fix loop" "$content" "After the fix loop"
+
+echo "test: end-of-run still mirrors the mock-debt ledger + prints a summary"
+assert_contains "ledger mirror still present" "$content" "## Mock-debt ledger"
+assert_contains "ledger summary still printed" "$content" "mock-debt: N open"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

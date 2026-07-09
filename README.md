@@ -99,8 +99,9 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    layers and is demoable alone), publishing them in dependency order so each issue's
    `## Blocked by` section carries real `#N` refs.
 4. **`/orchestrate [N] [--max K]`** then runs N rounds AFK: it picks the ready issues,
-   builds each in parallel, merges the finished branches back in order, closes them, and
-   files follow-ups for anything a reviewer flags.
+   builds each in parallel, merges the finished branches back in order, closes them, then
+   reviews each built slice with `my-review` — surfacing findings in the round report and
+   filing `mock-debt` follow-ups from its central-mechanism audit.
 
 For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>
 [--self-plan]`** runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the
@@ -109,9 +110,9 @@ planner subagent — or, with `--self-plan` or on a trivial task, by the main ag
 implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
 with severity-routed fixes.
 
-The machinery behind each step — worktrees, the merger, the reviewer, label conventions —
-is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command details
-are in [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
+The machinery behind each step — worktrees, the merger, the per-issue `my-review` stage, label
+conventions — is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command
+details are in [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 
 ### Working a long session
 
