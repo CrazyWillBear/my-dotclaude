@@ -39,9 +39,11 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K] [--complexity <tier>]` runs **N** rounds (default 1), building up to
-**K** issues in parallel per round (default 3). It runs on the **main thread** because only the
-main thread can spawn subagents.
+`/orchestrate [N] [--max K] [--max-cycles K] [--complexity <tier>]` runs **N** rounds (default 1),
+building up to **K** issues in parallel per round (default 3), with a per-issue fix-loop cap of
+`--max-cycles` (default 3). The round loop runs inside a **Workflow**, not on the main thread: the
+main thread only enters the orchestration worktree, launches the Workflow, and reports on return, so
+per-issue chatter stays out of the conversation and only compact results come back.
 
 **The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
 into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
@@ -84,7 +86,7 @@ Each round:
    is free; the cap counts re-reviews. **All-lows (or clean) passes**; a cap exhausted with medium+
    open files those as follow-ups and **merges anyway** — no interactive cap gate.
 7. **Merge.** Hand the clean-or-capped branches to the **merger**, which merges them into
-   the base branch serially in dependency (topological) order, attempting to resolve
+   the base branch serially in **ascending issue number**, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.

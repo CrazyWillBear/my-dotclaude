@@ -1,6 +1,6 @@
 {
   "name": "personal-tools",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "My personal Claude Code slash commands and subagents.",
   "author": {
     "name": "William Chastain",
