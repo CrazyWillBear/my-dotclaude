@@ -31,6 +31,7 @@ plugins/workflow/
 │   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
+│   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
 │   └── resolve-tier.sh               # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
 ├── tests/                            # one bash test per script + the orchestrate skill
@@ -39,13 +40,23 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K] [--max-cycles K] [--complexity <tier>]` runs **N** rounds (default 1),
+`/orchestrate [N] [--max K] [--max-cycles K] [--complexity <tier>] [--prd N] [--issues N,N,...]` runs
+**N** rounds (default 1),
 building up to **K** issues in parallel per round (default 3), with a per-issue fix-loop cap of
 `--max-cycles` (default 2). The round loop runs inside a **Workflow**, not on the main thread: the
-main thread only enters the orchestration worktree, launches the Workflow, and reports on return, so
-per-issue chatter stays out of the conversation and only compact results come back.
+main thread resolves the run's scope, enters the orchestration worktree, launches the Workflow, and
+on return **closes the merged issues** and reports — so per-issue chatter stays out of the
+conversation and only compact results come back.
 
-**The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
+**The run only ever builds an explicit allowlist.** Before anything else the main thread resolves the
+run's **scope**: `--issues N,N,...` is a literal list, `--prd N` walks PRD #N's child slices
+(`scripts/prd-children.sh`), and with neither flag the skill infers the open PRD (asking you if
+there's more than one). The loop **never runs a repo-wide `ready-for-agent` query** — one that did
+swept an unrelated issue into a PRD's branch (#77). The allowlist is **frozen at launch**, so
+**nothing the run files can be built by the run**: a `review-fix` follow-up filed mid-run — including
+a cap-remainder — waits for a future run instead of being rebuilt next round.
+
+**The whole run executes in one orchestration worktree.** A step-0b `EnterWorktree` moves the run
 into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
 worktree the `personal-tools` `worktree-guard` allows and the **primary checkout is never touched**.
 Per-issue implementer worktrees nest under it. The merged result is **left on the orchestration
@@ -54,7 +65,8 @@ branch, and cleanup removes only the per-issue child worktrees.
 
 Each round:
 
-1. **Ready set + tiers — one haiku call.** Compute the issues whose every `## Blocked by` ref is
+1. **Ready set + tiers — one haiku call.** From the **scoped allowlist only** (minus anything already
+   merged this run — the **re-pick guard**), compute the issues whose every `## Blocked by` ref is
    **closed**; skip `hitl` issues (those need a human). Take up to K of them. The **same call tiers
    every issue** — it already reads each body + comment thread for readiness, so classification is
    a free rider.
@@ -97,10 +109,20 @@ Each round:
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-8. **Close, file, reap — one haiku call.** All the round's gh writes batch into a **single cheap
-   `haiku` agent**: close the merged issues; file the lows + cap-remainder as `review-fix` +
-   `ready-for-agent` follow-ups and append them into any open dependent's `## Blocked by`
-   (`gh issue edit`). `prd-reap.sh` then checks whether any parent `prd` issue is now fully done
+8. **File — one haiku call. (No closes here.)** The round's **additive** gh writes batch into a
+   **single cheap `haiku` agent**: file each slice's lows as **one grouped, parked** follow-up
+   (`review-fix` **only** — no `ready-for-agent`, so a nit never costs a full plan→build→review) and
+   each cap-remainder as a `review-fix` + `ready-for-agent` follow-up, then append them into any open
+   dependent's `## Blocked by` (`gh issue edit`). It **never closes and never deletes** — that is what
+   makes it safe to hand a cheap, low-context subagent.
+9. **Close — on the main thread, then verify.** The workflow **returns** the merged-issue list; the
+   **main thread** closes each (`gh issue close <N> --comment "<merge commit>"`) and then **re-reads
+   each issue's state**, stopping loudly if one is still open. A close is an **irreversible
+   outward-facing** write and belongs where the conversational context can account for it — run from
+   inside a low-context subagent, this exact call was killed by a safety classifier, the ready set
+   never drained, and the loop rebuilt the same issues for 1.84M tokens (#77). The loop stays
+   convergent regardless: the re-pick guard never re-picks a merged issue, close or no close.
+   `prd-reap.sh` then checks whether any parent `prd` issue is now fully done
    (every non-`hitl` child closed) and flags it ready-to-close, and the open `mock-debt` set is
    mirrored into the PRD ledger.
 
