@@ -37,7 +37,7 @@ TIER="${1:-}"
 fallback() {
     printf 'WARN: model-tiers.json missing or invalid — falling back to standard tier defaults\n' >&2
     printf 'tier=standard\n'
-    printf 'planner_model=opus\n'
+    printf 'planner_model=sonnet\n'
     printf 'planner_effort=high\n'
     printf 'implementer_model=sonnet\n'
     printf 'implementer_effort=high\n'

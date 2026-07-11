@@ -5,10 +5,11 @@
 # The agent is prose — not executable code — so we validate its frontmatter pins:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins name: merger, model: sonnet, and effort: xhigh.
+#   2. Frontmatter pins name: merger, model: opus, and effort: xhigh.
 #      orchestrate's merger spawn passes no explicit model or effort, so this
-#      pin governs outright — the PRD's deliberate merger=sonnet decision. The
-#      merger is never tier-routed; it runs once per round, after the slices.
+#      pin governs outright. The merger is never tier-routed: it runs once per
+#      round, after the slices, and a bad conflict resolution corrupts the base
+#      branch for every issue in the round — so it never gets a cheap model.
 #
 # Run: bash plugins/workflow/tests/test_merger-agent.sh  (non-zero if any fail)
 
@@ -40,9 +41,10 @@ if [ -f "$AGENT_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter pins name: merger, model: sonnet, effort: xhigh"
+echo "test: frontmatter pins name: merger, model: opus, effort: xhigh"
 assert_contains "name field present" "$content" "name: merger"
-assert_contains "model pinned to sonnet" "$content" "model: sonnet"
+assert_contains "model pinned to opus" "$content" "model: opus"
+assert_not_contains "cheap merger model is gone" "$content" "model: sonnet"
 assert_not_contains "model: inherit is gone" "$content" "model: inherit"
 assert_contains "effort pinned to xhigh" "$content" "effort: xhigh"
 

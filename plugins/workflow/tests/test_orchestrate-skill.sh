@@ -181,7 +181,7 @@ assert_contains "ready-set fetches comments alongside the body" "$content" \
     "--json number,title,labels,body,comments"
 # The old body-only fetch ended at `body` + closing backtick. Pin its absence.
 assert_not_contains "no body-only ready-set fetch" "$content" 'number,title,labels,body`'
-assert_contains "READY_SCHEMA carries comments" "$content" "{ n, title, body, comments }"
+assert_contains "READY_SCHEMA carries comments + tier" "$content" "{ n, title, body, comments, tier }"
 assert_contains "comments ride the work order into the planner" "$content" \
     "body **and its comments**"
 assert_contains "comment-blindness named as the failure mode" "$content" "comment-blind"
@@ -216,10 +216,20 @@ assert_contains "--complexity in argument-hint" "$content" "[--complexity trivia
 assert_contains "--complexity pins every issue" "$content" "pins every issue"
 assert_contains "--complexity skips classification" "$content" "skips classification"
 
-echo "test: each ready issue is classified in-workflow (explore->classify)"
-assert_contains "in-workflow explore→classify stage" "$content" "explore→classify"
-assert_contains "classify emits a real tier" "$content" "real tier"
-assert_contains "classify runs inside the workflow leaf" "$content" "in-workflow"
+# Classification RIDES the ready-set pick: the ONE haiku call that lists the
+# ready issues emits each issue's tier in the same pass. No per-issue classify
+# agents, no explore stage — dedicated agents to produce a one-word routing hint
+# cost more than the routing saved (the 3-issue/41-agent run). The picker is
+# pinned to haiku (NOT tier-routed: routing is what it is deciding, and an
+# unpinned picker silently runs on the session model).
+echo "test: the ready-set picker tiers every issue in the same single haiku call"
+assert_contains "pick and tier merged into one call" "$content" "picks and tiers the ready set in ONE cheap haiku call"
+assert_contains "picker pinned to haiku" "$content" 'model: "haiku"'
+assert_contains "picker emits a real tier" "$content" "real tier"
+assert_contains "no per-issue classify agent" "$content" "no per-issue classify agent"
+assert_not_contains "the explore→classify two-stage pass is gone" "$content" "explore→classify"
+assert_not_contains "no separate explore agent per issue" "$content" "Explore issue #"
+assert_not_contains "the per-issue CLS_SCHEMA classify spawn is gone" "$content" "CLS_SCHEMA"
 
 echo "test: classification is auto-accepted with no interactive confirm"
 assert_contains "tier auto-accepted" "$content" "auto-accepted"
@@ -229,19 +239,23 @@ echo "test: the implementer model is routed by the issue's tier"
 assert_contains "implementer tier-routed" "$content" "tier-routes its implementer"
 assert_contains "implementer routed via ROSTER" "$content" "ROSTER[issue.tier].implementer"
 
-# --- per-issue tier-routed plan stage (issue #65, #53) ---------------------
-# A plan stage runs AFTER classify and BEFORE the implementer fan-out. The
-# planner {model, effort} is routed by ROSTER[issue.tier].planner
-# (trivial→minimal plan, standard/complex→workflow:planner mode=plan). The plan
-# is handed to the implementer as its work order, and the run stays autonomous —
-# no plan comment, no plan gate.
+# --- tier-routed plan stage, standard/complex ONLY (issue #65, #53) --------
+# A plan stage runs AFTER classify and BEFORE the implementer fan-out, but ONLY
+# for standard/complex issues (workflow:planner mode=plan at
+# ROSTER[issue.tier].planner). A TRIVIAL issue gets NO plan stage: the issue body
+# is the work order and the implementer self-plans, which its own contract
+# already covers — a planner spawn there just restated the issue. The plan is
+# handed to the implementer as its work order, and the run stays autonomous — no
+# plan comment, no plan gate.
 echo "test: a plan stage runs before the implementer/build stage"
-assert_contains "plan step named in the round prose" "$content" "Plan each picked issue"
+assert_contains "plan step named in the round prose" "$content" "Plan the standard/complex issues"
 assert_contains "ROSTER routes the planner by tier" "$content" "ROSTER[issue.tier].planner"
 
-echo "test: ROSTER routes the planner by tier (trivial minimal-plan, standard/complex mode: plan)"
-assert_contains "trivial → cheap minimal plan" "$content" "minimal-plan"
+echo "test: standard/complex are planned by workflow:planner; trivial skips the plan stage"
 assert_contains "standard/complex use workflow:planner in plan mode" "$content" "mode: plan"
+assert_contains "trivial gets no plan stage at all" "$content" "no plan stage"
+assert_contains "trivial implementer self-plans instead" "$content" "self-plans"
+assert_not_contains "the trivial minimal-plan leaf agent is gone" "$content" "minimal-plan"
 
 echo "test: the plan is handed to the implementer as a work order"
 assert_contains "implementer gets a work order" "$content" "work order"
@@ -279,26 +293,31 @@ assert_not_contains "no workflow:reviewer round agent" "$content" "workflow:revi
 assert_not_contains "no reference to the deleted reviewer.md" "$content" "reviewer.md"
 assert_not_contains "no stale 'per-issue review lands later' prose" "$content" "lands in a later slice"
 
-# --- severity-routed fix loop + finding filing + mock-debt (issue #67) ------
-# The round now ACTS on findings via a per-issue severity-routed fix loop capped
-# by --max-cycles (default 3), BEFORE the branch merges: critical→own cycle,
-# high→collective replan, medium→triage, low→file. All-lows/clean passes;
-# cap-exhausted-with-medium+ files those as review-fix follow-ups and merges
-# anyway (autonomous — no cap gate). The workflow files lows + cap-remainder and
-# re-blocks dependents; mock-debt filing stays my-review's job.
-echo "test: --max-cycles caps the per-issue fix loop (default 3, initial review free)"
-assert_contains "--max-cycles in argument-hint" "$content" "[--max-cycles K=3]"
+# --- planner-free fix loop + finding filing + mock-debt (issue #67) ---------
+# The round ACTS on findings via a per-issue fix loop capped by --max-cycles
+# (default 2), BEFORE the branch merges. NO planner runs in the loop: a finding
+# already names the path, the defect and the fix, so the findings block itself is
+# the implementer's work order (criticals first, then highs, then mediums, each
+# ascending by path); low→file. All-lows/clean passes; cap-exhausted-with-medium+
+# files those as review-fix follow-ups and merges anyway (autonomous — no cap
+# gate). The workflow files lows + cap-remainder and re-blocks dependents;
+# mock-debt filing stays my-review's job.
+echo "test: --max-cycles caps the per-issue fix loop (default 2, initial review free)"
+assert_contains "--max-cycles in argument-hint" "$content" "[--max-cycles K=2]"
 assert_contains "--max-cycles named in the body" "$content" "--max-cycles K"
-assert_contains "fix-loop cap default 3" "$content" "default **3**"
+assert_contains "fix-loop cap default 2" "$content" "default **2**"
 assert_contains "initial review is free" "$content" "initial review is free"
 assert_contains "cap counts re-reviews" "$content" "counts re-reviews"
 
-echo "test: findings route by severity (critical/high/medium/low)"
-assert_contains "critical → own full cycle" "$content" "own full plan→implement→review cycle"
-assert_contains "high → collective replan" "$content" "collective replan"
-assert_contains "high/critical replan uses planner mode=replan" "$content" "mode=replan"
-assert_contains "medium → triage" "$content" "mode=triage"
+echo "test: the fix loop is planner-free — the findings block IS the work order"
+assert_contains "fix loop named planner-free" "$content" "Planner-free fix loop"
+assert_contains "no planner spawns in the loop" "$content" "No planner runs in the fix loop"
+assert_contains "findings block is the fix work order" "$content" "findings block itself is the fix work order"
+assert_contains "criticals lead, then highs, then mediums" "$content" "criticals first"
 assert_contains "low → filed, never fixed in-run" "$content" "never fixed in-run"
+assert_not_contains "no per-critical plan cycle" "$content" "own full plan→implement→review cycle"
+assert_not_contains "no collective high replan spawn" "$content" "ONE collective replan"
+assert_not_contains "no triage spawn in the fix loop" "$content" "spawn **workflow:planner** in **mode=triage**"
 
 echo "test: re-reviews cover only the fix delta; reviewer model held constant"
 assert_contains "re-review scoped to the fix delta" "$content" "<pre-fix HEAD>..HEAD"
@@ -318,6 +337,19 @@ assert_contains "cap-remainder is filed as a follow-up" "$content" "cap-remainde
 echo "test: workflow re-blocks dependents' ## Blocked by via gh issue edit"
 assert_contains "dependent re-block uses gh issue edit" "$content" "gh issue edit"
 assert_contains "re-block appends into the dependent's existing Blocked by" "$content" "into that dependent's existing"
+
+# All the round's gh writes (closes, follow-up filings, dependent re-blocks) are
+# mechanical templating over text the round already produced — they batch into
+# ONE haiku agent instead of unpinned per-item spawns on the session model.
+echo "test: closes + filings + re-blocks batch into one cheap haiku bookkeeping agent"
+assert_contains "one bookkeeping agent for all gh writes" "$content" "ONE haiku agent for all the gh writes"
+assert_contains "bookkeeping spawn pinned cheap in the script" "$content" "never the session model"
+
+# Build -> review -> fix runs as ONE pipeline per issue, no cross-issue barrier:
+# issue A can be in its fix loop while issue B still builds.
+echo "test: build->review->fix pipelines per issue with no cross-issue barrier"
+assert_contains "per-issue pipeline named in the prose" "$content" "no cross-issue barrier"
+assert_contains "review starts as soon as its build finishes" "$content" "As soon as an issue's build finishes"
 
 echo "test: mock-debt filing stays my-review's job — the workflow does not re-file it"
 assert_contains "mock-debt filing owned by my-review" "$content" "my-review OWNS"
@@ -369,7 +401,7 @@ echo "test: structured-return spawns pass schema so their results are objects"
 assert_contains "schema passed on structured-return spawns" "$js_block" "schema:"
 
 echo "test: pipeline() receives the item list plus a stage callback"
-assert_contains "pipeline takes items + stage" "$js_block" "pipeline(picked, issue =>"
+assert_contains "pipeline takes items + stage callbacks" "$js_block" "pipeline(picked,"
 assert_not_contains "pre-started promise array is gone" "$js_block" "pipeline(picked.map("
 
 # --- args parse-or-throw, never silent-empty (issue #74) -------------------
