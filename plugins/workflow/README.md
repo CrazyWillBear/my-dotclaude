@@ -23,7 +23,7 @@ plugins/workflow/
 │   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via resolve-tier.sh
 ├── agents/
 │   ├── implementer.md                # sonnet, xhigh effort — builds one issue/work order in one worktree
-│   ├── merger.md                     # sonnet, xhigh effort — merges branches in dep order, resolves conflicts
+│   ├── merger.md                     # opus, xhigh effort — merges branches in dep order, resolves conflicts
 │   └── planner.md                    # opus, high effort — plans/replans/triages for /pipeline, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
@@ -41,7 +41,7 @@ plugins/workflow/
 
 `/orchestrate [N] [--max K] [--max-cycles K] [--complexity <tier>]` runs **N** rounds (default 1),
 building up to **K** issues in parallel per round (default 3), with a per-issue fix-loop cap of
-`--max-cycles` (default 3). The round loop runs inside a **Workflow**, not on the main thread: the
+`--max-cycles` (default 2). The round loop runs inside a **Workflow**, not on the main thread: the
 main thread only enters the orchestration worktree, launches the Workflow, and reports on return, so
 per-issue chatter stays out of the conversation and only compact results come back.
 
@@ -56,18 +56,20 @@ Each round:
 
 1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
    `hitl` issues (those need a human). Take up to K of them.
-2. **Classify (per-issue planner + implementer models).** Route each ready issue's **planner** and
-   **implementer** models by complexity **tier**, classified **in-workflow**: a Workflow leaf can't
-   reuse the `classify-task` skill (it fans out its own Explore subagents), so each ready issue gets
-   an **explore→classify** pass that emits a real tier, **auto-accepted — no interactive confirm**
-   (the run is autonomous past the launch gate). `--complexity <tier>` skips classification and pins
-   every issue to that tier. The planner, implementer, and reviewer models are routed per issue; the
-   round's single merger is per-round.
-3. **Plan (per-issue work order).** Before the build, route each issue's **planner** by its tier and
-   write its **work order** — a cheap minimal plan at the tier's planner model for a trivial issue,
-   else the **`workflow:planner`** subagent (mode=plan) at the tier's planner model. Ordered steps + a
-   `## Acceptance criteria` heading + the done-check. **No plan comment is posted and no approval
-   gate fires** — the run stays autonomous.
+2. **Classify (one cheap call per issue).** Route each ready issue's **planner**, **implementer** and
+   **reviewer** models by complexity **tier**, classified **in-workflow**: a Workflow leaf can't reuse
+   the `classify-task` skill (it fans out its own Explore subagents), so each ready issue gets a
+   **single `haiku` classify call** — no separate explore pass — that emits a real tier,
+   **auto-accepted — no interactive confirm** (the run is autonomous past the launch gate).
+   `--complexity <tier>` skips classification and pins every issue to that tier. The round's single
+   **merger is not tier-routed** — it runs on **opus** (its frontmatter pin), because a bad merge
+   resolution corrupts the base branch for every issue in the round.
+3. **Plan (standard/complex only).** Before the build, route each **standard/complex** issue's
+   **planner** by its tier and write its **work order** with the **`workflow:planner`** subagent
+   (mode=plan): ordered steps + a `## Acceptance criteria` heading + the done-check. A **trivial**
+   issue gets **no plan stage** — the **issue body is the work order** and its implementer
+   **self-plans** (planning is already in the implementer's contract). **No plan comment is posted
+   and no approval gate fires** — the run stays autonomous.
 4. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
    each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`), handed the step-3
    plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
@@ -78,11 +80,12 @@ Each round:
    security, broken tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a
    declared central mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt`
    follow-up. my-review **never edits code**.
-6. **Severity-routed fix loop (capped by `--max-cycles`, default 3, autonomous).** Act on the findings
-   **before the branch merges**: **critical**→its own plan→implement→review cycle, **high**→one
-   collective replan (mediums appended), **medium**→a planner triage fix-list, **low**→filed, never
-   fixed in-run. Fix rounds re-plan (`workflow:planner`), re-implement (`workflow:implementer`), and
-   re-review (`my-review`, reviewer model held constant) over only the fix delta. The initial review
+6. **Planner-free fix loop (capped by `--max-cycles`, default 2, autonomous).** Act on the findings
+   **before the branch merges**. **No planner spawns here** — a finding already names the path, the
+   defect and the fix, so the **findings block itself is the work order**: medium/high/critical go
+   straight to a fresh **`workflow:implementer`** in one ordered list (criticals first, then highs,
+   then mediums, each ascending by path); **low** is filed, never fixed in-run. Each fix round is then
+   re-reviewed (`my-review`, reviewer model held constant) over only the fix delta. The initial review
    is free; the cap counts re-reviews. **All-lows (or clean) passes**; a cap exhausted with medium+
    open files those as follow-ups and **merges anyway** — no interactive cap gate.
 7. **Merge.** Hand the clean-or-capped branches to the **merger**, which merges them into

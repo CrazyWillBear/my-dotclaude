@@ -239,7 +239,7 @@ Node ≥ 18 (Playwright runs via `npx`). The issue loop (`/to-prd`, `/to-issues`
   proceed. The wrap nudge at 250k is likewise a model-directed instruction, not a hard
   runtime gate.
 - `/orchestrate` runs subagents via the Agent tool on the main thread (subagents can't spawn
-  subagents); the sonnet merger attempts to resolve merge conflicts gated by the done-check,
+  subagents); the opus merger attempts to resolve merge conflicts gated by the done-check,
   but an **unresolvable conflict or a failed done-check stops and reports** rather than
   keeping an unverified resolution, leaving the worktree for inspection.
 

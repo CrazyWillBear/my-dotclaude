@@ -2,7 +2,7 @@
 name: merger
 description: Merges a round's completed issue-<N> branches into the base branch serially in ascending issue number, attempts to resolve conflicts (gated by the project done-check), and returns a structured merge result. Used by /orchestrate after the implementers finish; never closes issues, comments, pushes, or reviews — the orchestrator drives those.
 tools: Read, Grep, Bash, Edit
-model: sonnet
+model: opus
 effort: xhigh
 ---
 

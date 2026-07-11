@@ -5,12 +5,12 @@
     "reviewer":    { "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
+    "planner":     { "model": "sonnet", "effort": "high" },
     "implementer": { "model": "sonnet", "effort": "high" },
     "reviewer":    { "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
+    "planner":     { "model": "opus",   "effort": "xhigh" },
     "implementer": { "model": "opus",   "effort": "high" },
     "reviewer":    { "model": "fable",  "effort": "xhigh" }
   }
