@@ -2,7 +2,7 @@
   "trivial": {
     "planner":     { "model": "sonnet", "effort": "medium" },
     "implementer": { "model": "sonnet", "effort": "medium" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "reviewer":    { "model": "sonnet", "effort": "high" }
   },
   "standard": {
     "planner":     { "model": "sonnet", "effort": "high" },

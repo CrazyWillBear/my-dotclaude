@@ -104,7 +104,7 @@ assert_equals "trivial: planner_model sonnet" "$(val "$OUT" planner_model)" "son
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "trivial: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
 assert_equals "trivial: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
-assert_equals "trivial: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
+assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
 assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 
 run_tier standard
