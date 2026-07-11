@@ -181,7 +181,7 @@ assert_contains "ready-set fetches comments alongside the body" "$content" \
     "--json number,title,labels,body,comments"
 # The old body-only fetch ended at `body` + closing backtick. Pin its absence.
 assert_not_contains "no body-only ready-set fetch" "$content" 'number,title,labels,body`'
-assert_contains "READY_SCHEMA carries comments" "$content" "{ n, title, body, comments }"
+assert_contains "READY_SCHEMA carries comments + tier" "$content" "{ n, title, body, comments, tier }"
 assert_contains "comments ride the work order into the planner" "$content" \
     "body **and its comments**"
 assert_contains "comment-blindness named as the failure mode" "$content" "comment-blind"
@@ -216,17 +216,20 @@ assert_contains "--complexity in argument-hint" "$content" "[--complexity trivia
 assert_contains "--complexity pins every issue" "$content" "pins every issue"
 assert_contains "--complexity skips classification" "$content" "skips classification"
 
-# Classification is ONE cheap haiku call per issue — the separate explore stage
-# is gone. Two agents per issue to produce a one-word routing hint cost more than
-# the routing saved (the 3-issue/41-agent run). The classifier is pinned to haiku
-# and NOT tier-routed: routing is what it is deciding.
-echo "test: each ready issue is classified by one cheap haiku call (no explore stage)"
-assert_contains "single in-workflow classify stage" "$content" "one in-workflow stage"
-assert_contains "classifier pinned to haiku" "$content" 'model: "haiku"'
-assert_contains "classify emits a real tier" "$content" "real tier"
-assert_contains "classify runs inside the workflow leaf" "$content" "in-workflow"
+# Classification RIDES the ready-set pick: the ONE haiku call that lists the
+# ready issues emits each issue's tier in the same pass. No per-issue classify
+# agents, no explore stage — dedicated agents to produce a one-word routing hint
+# cost more than the routing saved (the 3-issue/41-agent run). The picker is
+# pinned to haiku (NOT tier-routed: routing is what it is deciding, and an
+# unpinned picker silently runs on the session model).
+echo "test: the ready-set picker tiers every issue in the same single haiku call"
+assert_contains "pick and tier merged into one call" "$content" "picks and tiers the ready set in ONE cheap haiku call"
+assert_contains "picker pinned to haiku" "$content" 'model: "haiku"'
+assert_contains "picker emits a real tier" "$content" "real tier"
+assert_contains "no per-issue classify agent" "$content" "no per-issue classify agent"
 assert_not_contains "the explore→classify two-stage pass is gone" "$content" "explore→classify"
 assert_not_contains "no separate explore agent per issue" "$content" "Explore issue #"
+assert_not_contains "the per-issue CLS_SCHEMA classify spawn is gone" "$content" "CLS_SCHEMA"
 
 echo "test: classification is auto-accepted with no interactive confirm"
 assert_contains "tier auto-accepted" "$content" "auto-accepted"
@@ -335,6 +338,19 @@ echo "test: workflow re-blocks dependents' ## Blocked by via gh issue edit"
 assert_contains "dependent re-block uses gh issue edit" "$content" "gh issue edit"
 assert_contains "re-block appends into the dependent's existing Blocked by" "$content" "into that dependent's existing"
 
+# All the round's gh writes (closes, follow-up filings, dependent re-blocks) are
+# mechanical templating over text the round already produced — they batch into
+# ONE haiku agent instead of unpinned per-item spawns on the session model.
+echo "test: closes + filings + re-blocks batch into one cheap haiku bookkeeping agent"
+assert_contains "one bookkeeping agent for all gh writes" "$content" "ONE haiku agent for all the gh writes"
+assert_contains "bookkeeping spawn pinned cheap in the script" "$content" "never the session model"
+
+# Build -> review -> fix runs as ONE pipeline per issue, no cross-issue barrier:
+# issue A can be in its fix loop while issue B still builds.
+echo "test: build->review->fix pipelines per issue with no cross-issue barrier"
+assert_contains "per-issue pipeline named in the prose" "$content" "no cross-issue barrier"
+assert_contains "review starts as soon as its build finishes" "$content" "As soon as an issue's build finishes"
+
 echo "test: mock-debt filing stays my-review's job — the workflow does not re-file it"
 assert_contains "mock-debt filing owned by my-review" "$content" "my-review OWNS"
 assert_contains "workflow does not re-file mock-debt" "$content" "does not re-file mock-debt"
@@ -385,7 +401,7 @@ echo "test: structured-return spawns pass schema so their results are objects"
 assert_contains "schema passed on structured-return spawns" "$js_block" "schema:"
 
 echo "test: pipeline() receives the item list plus a stage callback"
-assert_contains "pipeline takes items + stage" "$js_block" "pipeline(picked, issue =>"
+assert_contains "pipeline takes items + stage callbacks" "$js_block" "pipeline(picked,"
 assert_not_contains "pre-started promise array is gone" "$js_block" "pipeline(picked.map("
 
 # --- args parse-or-throw, never silent-empty (issue #74) -------------------

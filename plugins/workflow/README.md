@@ -54,13 +54,15 @@ branch, and cleanup removes only the per-issue child worktrees.
 
 Each round:
 
-1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
-   `hitl` issues (those need a human). Take up to K of them.
-2. **Classify (one cheap call per issue).** Route each ready issue's **planner**, **implementer** and
-   **reviewer** models by complexity **tier**, classified **in-workflow**: a Workflow leaf can't reuse
-   the `classify-task` skill (it fans out its own Explore subagents), so each ready issue gets a
-   **single `haiku` classify call** — no separate explore pass — that emits a real tier,
-   **auto-accepted — no interactive confirm** (the run is autonomous past the launch gate).
+1. **Ready set + tiers — one haiku call.** Compute the issues whose every `## Blocked by` ref is
+   **closed**; skip `hitl` issues (those need a human). Take up to K of them. The **same call tiers
+   every issue** — it already reads each body + comment thread for readiness, so classification is
+   a free rider.
+2. **Tier routing.** Route each ready issue's **planner**, **implementer** and **reviewer** models by
+   the complexity **tier** the step-1 picker emitted: a Workflow leaf can't reuse the `classify-task`
+   skill (it fans out its own Explore subagents), so the picker applies the rubric itself — **no
+   per-issue classify agents, no explore pass** — and the tiers are **auto-accepted — no interactive
+   confirm** (the run is autonomous past the launch gate).
    `--complexity <tier>` skips classification and pins every issue to that tier. The round's single
    **merger is not tier-routed** — it runs on **opus** (its frontmatter pin), because a bad merge
    resolution corrupts the base branch for every issue in the round.
@@ -73,8 +75,10 @@ Each round:
 4. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
    each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`), handed the step-3
    plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
-   never touching another worktree or the base branch.
-5. **Review (per-issue) — initial review, free.** Spawn **`personal-tools:my-review`** on each built
+   never touching another worktree or the base branch. Steps 4–6 run as **one pipeline per issue
+   with no cross-issue barrier**: issue A enters review and its fix loop while issue B still builds.
+5. **Review (per-issue) — initial review, free.** As soon as an issue's build finishes, spawn
+   **`personal-tools:my-review`** on the built
    slice's branch diff (`<base>..issue-<N>`) at the tier's **reviewer** model,
    handed the issue's plan for conformance context. It reports severity-tagged findings — correctness,
    security, broken tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a
@@ -93,7 +97,8 @@ Each round:
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-8. **Close, file, reap.** Close the merged issues; file the lows + cap-remainder as `review-fix` +
+8. **Close, file, reap — one haiku call.** All the round's gh writes batch into a **single cheap
+   `haiku` agent**: close the merged issues; file the lows + cap-remainder as `review-fix` +
    `ready-for-agent` follow-ups and append them into any open dependent's `## Blocked by`
    (`gh issue edit`). `prd-reap.sh` then checks whether any parent `prd` issue is now fully done
    (every non-`hitl` child closed) and flags it ready-to-close, and the open `mock-debt` set is
