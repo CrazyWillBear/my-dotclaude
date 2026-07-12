@@ -338,12 +338,51 @@ echo "test: workflow re-blocks dependents' ## Blocked by via gh issue edit"
 assert_contains "dependent re-block uses gh issue edit" "$content" "gh issue edit"
 assert_contains "re-block appends into the dependent's existing Blocked by" "$content" "into that dependent's existing"
 
-# All the round's gh writes (closes, follow-up filings, dependent re-blocks) are
+# The round's ADDITIVE gh writes (follow-up filings, dependent re-blocks) are
 # mechanical templating over text the round already produced — they batch into
 # ONE haiku agent instead of unpinned per-item spawns on the session model.
-echo "test: closes + filings + re-blocks batch into one cheap haiku bookkeeping agent"
-assert_contains "one bookkeeping agent for all gh writes" "$content" "ONE haiku agent for all the gh writes"
+# The CLOSES are NOT among them: see the #77 block below — an irreversible
+# outward-facing write does not belong in a low-context subagent.
+echo "test: filings + re-blocks batch into one cheap haiku bookkeeping agent"
+assert_contains "one bookkeeping agent for the additive gh writes" "$content" "ONE haiku agent for the round's additive gh writes"
 assert_contains "bookkeeping spawn pinned cheap in the script" "$content" "never the session model"
+
+# --- #77: PRD-scoped ready set + main-thread close + re-pick guard ----------
+# Two defects burned 1.84M tokens on a real run:
+#   A. the ready set was a repo-wide `--label ready-for-agent` sweep, so it built
+#      an unrelated issue (#101) into the PRD's branch.
+#   B. the close ran inside a workflow subagent; a safety classifier killed it
+#      (correctly — the subagent could not account for #101), the closes never
+#      landed, the ready set never drained, and rounds 2-5 rebuilt the same
+#      issues at full cost.
+echo "test: #77 defect A — the ready set is scoped to an explicit allowlist, never repo-wide"
+assert_contains "--prd / --issues scope in argument-hint" "$content" "[--prd N] [--issues N,N,...]"
+assert_contains "scope resolved to an explicit issue allowlist" "$content" "explicit issue allowlist"
+assert_contains "PRD children resolved via the prd-children helper" "$content" "prd-children.sh"
+assert_contains "the allowlist is frozen at launch" "$content" "allowlist is frozen at launch"
+# The repo-wide sweep is the bug. The picker now reads only the allowlisted issues.
+assert_not_contains "no repo-wide ready-for-agent sweep" "$content" "gh issue list --label ready-for-agent --state open"
+assert_contains "picker reads only the allowlisted issues" "$content" "gh issue view <N> --json number,title,labels,body,comments"
+
+echo "test: #77 defect B — closes run on the main thread, not in a subagent"
+assert_contains "close from the main thread stated" "$content" "Close from the main thread"
+assert_contains "the workflow returns the merged-issue list instead of closing" "$content" "returns the merged-issue list"
+assert_contains "an irreversible outward-facing write stays out of a subagent" "$content" "irreversible outward-facing"
+assert_not_contains "the bookkeeping agent no longer closes issues" "$content" "close each merged issue"
+
+echo "test: #77 — every close is verified by re-reading state, and fails loud if still open"
+assert_contains "close verified by re-reading state" "$content" "gh issue view <N> --json state"
+assert_contains "a silently-failed close is loud" "$content" "still open after its close"
+
+echo "test: #77 — a re-pick guard makes the loop convergent even if a close never lands"
+assert_contains "merged-this-run set named" "$content" "mergedThisRun"
+assert_contains "re-pick guard named" "$content" "re-pick guard"
+assert_contains "already-merged issues are excluded from later rounds" "$content" "excluded from every later round"
+
+echo "test: #77 — lows are filed grouped and parked (no ready-for-agent, so nothing rebuilds them)"
+assert_contains "lows parked without the ready-for-agent label" "$content" "parked"
+assert_contains "lows filed grouped, one issue per slice" "$content" "one grouped"
+assert_contains "nothing the run files can be built by the run" "$content" "nothing the run files can be built by the run"
 
 # Build -> review -> fix runs as ONE pipeline per issue, no cross-issue barrier:
 # issue A can be in its fix loop while issue B still builds.
