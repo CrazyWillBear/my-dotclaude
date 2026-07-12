@@ -15,13 +15,13 @@ plugins/personal-tools/
 │   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
 │   ├── handoff-plan/SKILL.md      # /handoff-plan — capture the approved plan + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
-│   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted code review
+│   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted review; forward-or-judge model pick
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
 │   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 │   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
-│   └── my-review.md               # my-review — the reviewer brain (fable, xhigh reasoning)
+│   └── my-review.md               # my-review — the reviewer brain (opus, xhigh); also runs the central-mechanism/mock-drift audit on issue branches
 ├── hooks/
 │   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
@@ -87,16 +87,22 @@ plugins/personal-tools/
   `templates/` and substitutes the Python commands; it does *not* create a
   `pyproject.toml` or venv (left to `uv init`). The base templates are shared, so a future
   `init-node` / `init-go` can fill the same files for another stack.
-- **`/my-review [PR#]`** — a deep, **security-weighted** code review of your local working diff
-  (no arg) or a named **PR** (`/my-review 42`). It first **asks whether to run on opus** (cheaper,
-  faster) **or fable** (deepest), then spawns the `my-review` agent (**xhigh** reasoning) on that
-  model: a dedicated security pass first (injection, authn/authz,
-  secrets, unsafe deserialization, SSRF, crypto misuse, …), then a general correctness/quality
-  pass driven by the repo's own `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits
-  a verdict plus findings graded **critical / high / medium / low**, ending in a
-  machine-readable ` ```findings ` block that spawners (e.g. `/pipeline`) route on; never edits,
-  posts, or comments. For a PR it checks the tree is clean, checks out, reviews, then restores
-  your original branch.
+- **`/my-review [PR#] [--complexity <tier>]`** — a deep, **security-weighted** code review of your
+  local working diff (no arg) or a named **PR** (`/my-review 42`). It picks the reviewer model
+  **forward-or-judge**: `--complexity <tier>` wins, else a tier already confirmed this session, else
+  it judges one from a cheap **diff peek** (`git diff HEAD --stat` / `gh pr diff <N> --stat`) — then
+  a **complex** diff prompts **opus** (default) vs **fable** while anything lighter runs **opus**
+  with no prompt. It then spawns the `my-review` agent (**xhigh** reasoning) on that model: a
+  dedicated security pass first (injection, authn/authz, secrets, unsafe deserialization, SSRF,
+  crypto misuse, …), then a general correctness/quality pass driven by the repo's own
+  `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits a verdict plus findings graded
+  **critical / high / medium / low**, ending in a machine-readable ` ```findings ` block that
+  spawners (e.g. `/pipeline`) route on; never edits, posts, or comments. For a PR it checks the tree
+  is clean, checks out, reviews, then restores your original branch. The skill stays
+  **dependency-free of the `workflow` plugin** — the tier judgment is its own, never a
+  `classify-task` / `resolve-tier.sh` call. (The `/my-review` command is always report-only; the
+  agent gains a single narrow write — filing a `mock-debt` follow-up — only on the central-mechanism
+  audit path it runs when `/orchestrate` points it at an `issue-<N>` branch.)
 - **`/check-updates`** — report whether a newer kit release is available. Runs
   `scripts/check-update.sh`, which reads the installed plugin version from `plugin.json`,
   queries the GitHub Releases API, and prints either `kit is up to date (vX.Y.Z)` or

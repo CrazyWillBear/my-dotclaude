@@ -2,7 +2,7 @@
 name: planner
 description: Plans one task for the /pipeline loop — reads the repo, writes an ordered implementation plan with file paths, testable acceptance criteria, the project done-check, and risks. Also replans after review findings and triages medium findings into an ordered fix-list. Read-only — it plans, never edits.
 tools: Read, Grep, Glob, Bash(git:*)
-model: fable
+model: opus
 effort: high
 ---
 

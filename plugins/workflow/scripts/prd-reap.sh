@@ -40,6 +40,12 @@ fi
 
 export INPUT_NUMBERS="$NUMBERS"
 
+# The PRD -> children resolution (and its `Part of #N` trailer matching) lives in
+# prd-children.sh, which /orchestrate also uses to scope its ready set. Share it
+# rather than keeping a second copy of the matcher here.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CHILDREN_HELPER="$SCRIPT_DIR/prd-children.sh"
+
 python3 <<"PY" || exit 0
 import os, json, subprocess, sys, re
 
@@ -85,50 +91,48 @@ def get_body(issue_number):
 
 
 def get_children(prd_number):
-    """Return list of {number, state, labels} dicts for issues that genuinely reference 'Part of #<prd>'.
+    """Return list of {number, state, labels} dicts for PRD <prd_number>'s child slices.
 
-    GitHub's --search is tokenized full-text, so searching 'Part of #1' may return
-    issues whose bodies contain 'Part of #10' or 'Part of #100'.  We re-verify each
-    candidate by fetching its body and requiring an exact-number match (the digit
-    sequence after # must equal prd_number, with no further digits following).
+    Delegates to prd-children.sh — the shared resolver that /orchestrate also uses
+    to scope its ready set.  It owns the `Part of #N` trailer matching (own-line
+    anchored, so it drops both the prefix collisions GitHub's tokenized --search
+    returns and bodies that merely quote the convention in prose) and its
+    fail-open behaviour on an unverifiable candidate.
+
+    Its output is one line per child: "<number> <state> <labels-csv>", labels-csv
+    being "-" when unlabeled.  Re-inflate that into the dict shape this script's
+    callers expect.
     """
-    search = "Part of #%s" % prd_number
-    out = gh(
-        "issue", "list",
-        "--search", search,
-        "--state", "all",
-        "--json", "number,state,labels",
-        "--limit", "200",
-    )
-    if not out:
+    helper = os.environ.get("CHILDREN_HELPER", "")
+    if not helper:
         return []
     try:
-        candidates = json.loads(out)
+        result = subprocess.run(
+            ["bash", helper, str(prd_number)],
+            capture_output=True, text=True, timeout=120,
+        )
     except Exception:
         return []
+    if result.returncode != 0:
+        return []
 
-    # Build a regex that matches a real 'Part of #N' trailer — the reference on its
-    # own line, not the substring quoted inside prose (e.g. an issue body that
-    # *explains* the convention with `Part of #1` mid-sentence).  Anchoring to the
-    # line ($ after the number) also excludes prefix collisions like '#10'/'#100'.
-    exact_pattern = re.compile(
-        r"(?m)^[Pp]art\s+of\s+#" + re.escape(str(prd_number)) + r"\s*$"
-    )
-
-    verified = []
-    for child in candidates:
-        child_body = get_body(child["number"])
-        if child_body is None:
-            # Body fetch failed (transient error).  We cannot confirm the exact
-            # reference, but search already returned this issue as a candidate.
-            # Dropping it would silently hide a genuine open child (fail-closed).
-            # Keep it so an open child still blocks a 'ready' verdict (fail-open).
-            verified.append(child)
-        elif exact_pattern.search(child_body):
-            # Body fetched and exact reference confirmed — genuine child.
-            verified.append(child)
-        # else: body fetched, reference absent — search false-positive; exclude.
-    return verified
+    children = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        number, state, labels_csv = parts
+        try:
+            number = int(number)
+        except ValueError:
+            continue
+        names = [] if labels_csv == "-" else labels_csv.split(",")
+        children.append({
+            "number": number,
+            "state": state,
+            "labels": [{"name": n} for n in names],
+        })
+    return children
 
 
 def parse_prd_refs(body):

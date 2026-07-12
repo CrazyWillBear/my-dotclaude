@@ -3,8 +3,9 @@
 Three features in one plugin, versioned here with the rest of my setup:
 
 1. **`/orchestrate`** — an autonomous dev loop that solves GitHub issues in parallel
-   isolated worktrees, merges the finished branches in dependency order, and files
-   review follow-ups.
+   isolated worktrees, merges the finished branches in dependency order, then reviews each
+   built slice with `my-review` — surfacing findings in the round report and filing
+   `mock-debt` follow-ups from its central-mechanism audit.
 2. **`/pipeline`** — a single-task plan→build→review chain whose planner, implementer, and
    reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
    call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
@@ -15,33 +16,47 @@ Three features in one plugin, versioned here with the rest of my setup:
 ```
 plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
+├── model-tiers.json                  # tier → {model, effort} roster, resolved by scripts/resolve-tier.sh
 ├── skills/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the parallel issue-solving loop
 │   ├── pipeline/SKILL.md             # /pipeline — plan→build→review one task
-│   └── classify-task/SKILL.md        # /classify-task — tier a task, return the model roster
+│   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via resolve-tier.sh
 ├── agents/
-│   ├── implementer.md                # inherits model, xhigh effort — builds one issue/work order in one worktree
-│   ├── merger.md                     # inherits model, xhigh effort — merges branches in dep order, resolves conflicts
-│   ├── planner.md                    # fable, high effort — plans/replans/triages for /pipeline, read-only
-│   └── reviewer.md                   # opus, max effort — files review-fix follow-ups, never edits code
+│   ├── implementer.md                # sonnet, xhigh effort — builds one issue/work order in one worktree
+│   ├── merger.md                     # opus, xhigh effort — merges branches in dep order, resolves conflicts
+│   └── planner.md                    # opus, high effort — plans/replans/triages for /pipeline, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
 │   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
 │   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
-│   └── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
+│   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
+│   ├── prd-reap.sh                   # detect fully-closed PRDs from a round's closed slice issues
+│   └── resolve-tier.sh               # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
 ├── tests/                            # one bash test per script + the orchestrate skill
 └── README.md                         # this file
 ```
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [N] [--max K] [--complexity <tier>]` runs **N** rounds (default 1), building up to
-**K** issues in parallel per round (default 3). It runs on the **main thread** because only the
-main thread can spawn subagents.
+`/orchestrate [N] [--max K] [--max-cycles K] [--complexity <tier>] [--prd N] [--issues N,N,...]` runs
+**N** rounds (default 1),
+building up to **K** issues in parallel per round (default 3), with a per-issue fix-loop cap of
+`--max-cycles` (default 2). The round loop runs inside a **Workflow**, not on the main thread: the
+main thread resolves the run's scope, enters the orchestration worktree, launches the Workflow, and
+on return **closes the merged issues** and reports — so per-issue chatter stays out of the
+conversation and only compact results come back.
 
-**The whole run executes in one orchestration worktree.** A step-0 `EnterWorktree` moves the run
+**The run only ever builds an explicit allowlist.** Before anything else the main thread resolves the
+run's **scope**: `--issues N,N,...` is a literal list, `--prd N` walks PRD #N's child slices
+(`scripts/prd-children.sh`), and with neither flag the skill infers the open PRD (asking you if
+there's more than one). The loop **never runs a repo-wide `ready-for-agent` query** — one that did
+swept an unrelated issue into a PRD's branch (#77). The allowlist is **frozen at launch**, so
+**nothing the run files can be built by the run**: a `review-fix` follow-up filed mid-run — including
+a cap-remainder — waits for a future run instead of being rebuilt next round.
+
+**The whole run executes in one orchestration worktree.** A step-0b `EnterWorktree` moves the run
 into a linked worktree off the launch branch (skipped if already in one), so the merger writes to a
 worktree the `personal-tools` `worktree-guard` allows and the **primary checkout is never touched**.
 Per-issue implementer worktrees nest under it. The merged result is **left on the orchestration
@@ -50,36 +65,71 @@ branch, and cleanup removes only the per-issue child worktrees.
 
 Each round:
 
-1. **Ready set.** Compute the issues whose every `## Blocked by` ref is **closed**; skip
-   `hitl` issues (those need a human). Take up to K of them.
-2. **Classify (per-issue implementer model).** Route each ready issue's **implementer** model by
-   complexity **tier** via the `classify-task` skill (invoked `--no-confirm`, once per issue), then
-   confirm the whole round in **one** batch table (issue → tier → model) with row-level overrides —
-   **exactly one interactive stop per round**, never one per issue. `--complexity <tier>` skips
-   classification and pins every issue to that tier. Only the implementer is routed per issue; the
-   round's single merger and reviewer are per-round.
-3. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
-   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`). Each plans, builds
-   TDD-first, runs the project's done-check, and commits — never touching another worktree
-   or the base branch.
-4. **Merge.** Hand the completed branches to the **merger**, which merges them into
-   the base branch serially in dependency (topological) order, attempting to resolve
+1. **Ready set + tiers — one haiku call.** From the **scoped allowlist only** (minus anything already
+   merged this run — the **re-pick guard**), compute the issues whose every `## Blocked by` ref is
+   **closed**; skip `hitl` issues (those need a human). Take up to K of them. The **same call tiers
+   every issue** — it already reads each body + comment thread for readiness, so classification is
+   a free rider.
+2. **Tier routing.** Route each ready issue's **planner**, **implementer** and **reviewer** models by
+   the complexity **tier** the step-1 picker emitted: a Workflow leaf can't reuse the `classify-task`
+   skill (it fans out its own Explore subagents), so the picker applies the rubric itself — **no
+   per-issue classify agents, no explore pass** — and the tiers are **auto-accepted — no interactive
+   confirm** (the run is autonomous past the launch gate).
+   `--complexity <tier>` skips classification and pins every issue to that tier. The round's single
+   **merger is not tier-routed** — it runs on **opus** (its frontmatter pin), because a bad merge
+   resolution corrupts the base branch for every issue in the round.
+3. **Plan (standard/complex only).** Before the build, route each **standard/complex** issue's
+   **planner** by its tier and write its **work order** with the **`workflow:planner`** subagent
+   (mode=plan): ordered steps + a `## Acceptance criteria` heading + the done-check. A **trivial**
+   issue gets **no plan stage** — the **issue body is the work order** and its implementer
+   **self-plans** (planning is already in the implementer's contract). **No plan comment is posted
+   and no approval gate fires** — the run stays autonomous.
+4. **Fan out implementers.** Spawn one **implementer** per ready issue on its **confirmed model**,
+   each in its own isolated git worktree (`issue-<N>` at `.worktrees/issue-<N>`), handed the step-3
+   plan as its **work order**. Each builds TDD-first, runs the project's done-check, and commits —
+   never touching another worktree or the base branch. Steps 4–6 run as **one pipeline per issue
+   with no cross-issue barrier**: issue A enters review and its fix loop while issue B still builds.
+5. **Review (per-issue) — initial review, free.** As soon as an issue's build finishes, spawn
+   **`personal-tools:my-review`** on the built
+   slice's branch diff (`<base>..issue-<N>`) at the tier's **reviewer** model,
+   handed the issue's plan for conformance context. It reports severity-tagged findings — correctness,
+   security, broken tests, **stale docs** — and runs the **central-mechanism / mock-drift audit**: a
+   declared central mock is confirmed and an undeclared one auto-converted, each filing a `mock-debt`
+   follow-up. my-review **never edits code**.
+6. **Planner-free fix loop (capped by `--max-cycles`, default 2, autonomous).** Act on the findings
+   **before the branch merges**. **No planner spawns here** — a finding already names the path, the
+   defect and the fix, so the **findings block itself is the work order**: medium/high/critical go
+   straight to a fresh **`workflow:implementer`** in one ordered list (criticals first, then highs,
+   then mediums, each ascending by path); **low** is filed, never fixed in-run. Each fix round is then
+   re-reviewed (`my-review`, reviewer model held constant) over only the fix delta. The initial review
+   is free; the cap counts re-reviews. **All-lows (or clean) passes**; a cap exhausted with medium+
+   open files those as follow-ups and **merges anyway** — no interactive cap gate.
+7. **Merge.** Hand the clean-or-capped branches to the **merger**, which merges them into
+   the base branch serially in **ascending issue number**, attempting to resolve
    conflicts **gated by the done-check**. An unresolvable conflict or a red check **stops
    and reports** rather than keeping an unverified resolution — the worktree is left for
    inspection.
-5. **Close + reap.** Close the merged issues. `prd-reap.sh` then checks whether any parent
-   `prd` issue is now fully done (every non-`hitl` child closed) and flags it ready-to-close.
-6. **Review.** Spawn the **reviewer** (opus, max effort) on the
-   round's merged diff. It reads for correctness, security, broken tests, and **stale docs**
-   (a code change that left its README / `CLAUDE.md` describing the old behavior), then files
-   blocking `review-fix` follow-up issues and wires them into dependents' `## Blocked by`.
-   It **never edits code**.
+8. **File — one haiku call. (No closes here.)** The round's **additive** gh writes batch into a
+   **single cheap `haiku` agent**: file each slice's lows as **one grouped, parked** follow-up
+   (`review-fix` **only** — no `ready-for-agent`, so a nit never costs a full plan→build→review) and
+   each cap-remainder as a `review-fix` + `ready-for-agent` follow-up, then append them into any open
+   dependent's `## Blocked by` (`gh issue edit`). It **never closes and never deletes** — that is what
+   makes it safe to hand a cheap, low-context subagent.
+9. **Close — on the main thread, then verify.** The workflow **returns** the merged-issue list; the
+   **main thread** closes each (`gh issue close <N> --comment "<merge commit>"`) and then **re-reads
+   each issue's state**, stopping loudly if one is still open. A close is an **irreversible
+   outward-facing** write and belongs where the conversational context can account for it — run from
+   inside a low-context subagent, this exact call was killed by a safety classifier, the ready set
+   never drained, and the loop rebuilt the same issues for 1.84M tokens (#77). The loop stays
+   convergent regardless: the re-pick guard never re-picks a merged issue, close or no close.
+   `prd-reap.sh` then checks whether any parent `prd` issue is now fully done
+   (every non-`hitl` child closed) and flags it ready-to-close, and the open `mock-debt` set is
+   mirrored into the PRD ledger.
 
-The reviewer is a backstop, not a fixer, and the feedback path is **async**: each
-`review-fix` is itself a `ready-for-agent` issue a *fresh implementer builds in a later
-round*. So a single `/orchestrate` (N=1) **files** follow-ups but doesn't build them — run
-another round (`/orchestrate 2`, or re-run) to let the loop pick them up. PR merges stay a
-human decision; the loop never merges PRs.
+my-review is a backstop, not a fixer. `/orchestrate` **hard-depends** on the `personal-tools`
+`my-review` agent and **fails loud at launch** if it's missing (as `/pipeline` does). my-review
+**owns** the `mock-debt` filing from its audit; the workflow files only lows + cap-remainder as
+`review-fix` and re-blocks dependents. PR merges stay a human decision; the loop never merges PRs.
 
 ## Inside the pipeline (`/pipeline`)
 
@@ -95,29 +145,26 @@ with `/verify-plan` and gated on user approval, per the conditions below), or **
 gate, no drift-check).
 
 **Step 0.5 — tier routing.** Before the worktree or any planner/implementer/reviewer spawn, a
-`classify-task` call explores the touched code and classifies the task into a complexity tier,
-which fixes the roster for the whole run:
+`classify-task` call explores the touched code and classifies the task into a complexity tier —
+emitting the **tier + rationale only**. The tier→`{model, effort}` mapping is **not** hardwired in
+the skills: it lives in the plugin's `model-tiers.json`, resolved at runtime by
+`scripts/resolve-tier.sh` (an awk parser, no `jq`), which falls back to the **standard** roster plus
+a single warning if the config is missing or invalid. `/pipeline` resolves the roster **once** and
+carries both **model and effort** into every spawn. `classify-task` runs its own confirm/override
+ask — the **one interactive stop before the fix loop** even in autonomous issue mode, before any
+planner/implementer/reviewer spawns. `--complexity <tier>` skips classification and takes that tier
+directly. (The old hardwired roster ≈ the **complex** tier.)
 
-| tier | planner | implementer | reviewer |
-|---|---|---|---|
-| trivial | sonnet | sonnet | opus |
-| standard | opus | sonnet | opus |
-| complex | fable | opus | fable |
-
-`classify-task` runs its own confirm/override ask — the **one interactive stop before the fix
-loop** even in autonomous issue mode, before any planner/implementer/reviewer spawns.
-`--complexity <tier>` skips classification and
-takes that row directly. (The old hardwired roster ≈ the **complex** tier.)
-
-**Step 2 — who writes the plan (authorship ladder, first match wins).** The Step-2 plan is
-normally written by the `workflow:planner` subagent, but two levers let the **main thread**
-author it inline (no planner spawn), since it often holds fuller context — especially after a
-`/grill-me`: (1) **`--self-plan`** (flag or a natural-language "plan it yourself") → inline, any
-mode/tier; (2) **trivial tier** → an automatic **minimal inline plan** that still carries ordered
-steps, `## Acceptance criteria`, and the done-check; (3) **grill mode, standard/complex** → an
-`AskUserQuestion` picks inline or subagent; (4) **bare/issue mode, standard/complex** → the
-planner subagent (today's default). Issue mode adds **no new ask** — its authorship is flag- or
-tier-driven, and classify's tier confirm stays the only interactive stop. The **plan gate**
+**Step 2 — who writes the plan (authorship ladder, first match wins).** A four-rule ladder
+decides authorship: (1) **`--self-plan`** (flag or a natural-language "plan it yourself") →
+inline, any mode/tier; (2) **trivial tier** → an automatic **minimal inline plan** that still
+carries ordered steps, `## Acceptance criteria`, and the done-check; (3) **grill mode,
+standard/complex** → an `AskUserQuestion` picks inline or subagent; (4) **bare/issue mode,
+standard/complex** → the `workflow:planner` subagent (today's default). Rules **1–2 are the
+inline levers** — they hand authorship to the **main thread** (no planner spawn), since it often
+holds fuller context, especially after a `/grill-me`; rule 3 is an ask and rule 4 the subagent
+default. Issue mode adds **no new ask** — its authorship is flag- or tier-driven, and classify's
+tier confirm stays the only interactive stop. The **plan gate**
 (grill/bare) now fires only when **tier is complex or the plan was subagent-authored** — an inline
 trivial/standard plan skips it; and **verify-plan** runs on grill standard/complex only (skipped
 on trivial). Step-5 replans always spawn the planner subagent, never inline; a `/clear` + `go`
@@ -125,7 +172,8 @@ resume reuses the embedded plan and never re-spawns a Step-2 planner.
 
 The run then enters an isolated worktree (orchestrate's step-0 pattern; `issue-<N>` or
 `pipeline-<slug>`), and chains: **planner** (`model: <planner>`, high — ordered steps with file
-paths, testable acceptance criteria, the project done-check, risks) → **implementer** (spawned
+paths, testable acceptance criteria, the project done-check, risks; **only when the plan is
+subagent-authored** — an inline plan per rules 1–2 skips this spawn) → **implementer** (spawned
 with `model: <implementer>`, handed the plan as a *work order*) → **my-review** (the
 `personal-tools` xhigh reviewer on `model: <reviewer>`, hard dependency — the run fails loud at
 start if it's missing) on the branch diff. Findings route by severity:
@@ -137,8 +185,8 @@ start if it's missing) on the branch diff. Findings route by severity:
 | high | ONE collective replan covering all highs (mediums appended) |
 | critical | each gets its own full plan→implement→review cycle |
 
-Declared mock-debt is filed as a `mock-debt` issue at finish — there's no orchestrate
-reviewer on this path to do it. Fix rounds go to a fresh implementer (`model: <implementer>`),
+Declared mock-debt is filed as a `mock-debt` issue at finish — the pipeline files it directly.
+Fix rounds go to a fresh implementer (`model: <implementer>`),
 then a **scoped re-review** (prior findings addressed? + the fix delta only) — the reviewer
 model is **held constant** across every re-review. Re-reviews are capped at `--max-cycles`
 (default 2); hitting the cap with medium+ findings open pauses on an AskUserQuestion (continue /
@@ -180,8 +228,9 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
 - **`suggest-docs.sh`** (Stop) gives a soft nudge when a batch changed code but touched no
   docs (`*.md`), so usage/behavior docs land in the same commit. Advisory, deduped once per
   `HEAD`, silent the moment any `.md` is in the batch. This is the *interactive* counterpart
-  to the reviewer's stale-docs check: the Stop hook nudges you while you work; the reviewer
-  is the AFK backstop that files a `review-fix` when an autonomous round leaves a doc behind.
+  to `my-review`'s stale-docs check: the Stop hook nudges you while you work; `my-review`
+  is the AFK backstop that flags a stale doc in the round report when an autonomous round leaves
+  one behind.
 
 ### Long session, in practice
 
@@ -209,7 +258,7 @@ The 50k climb-refire step is hardcoded (a fixed design choice), not env-overrida
 ## Conventions
 
 - **Labels:** `prd` (PRD tracking issue), `ready-for-agent` (orchestrate-eligible), `hitl`
-  (needs a human, skipped by the loop), `review-fix` (reviewer follow-up; also
+  (needs a human, skipped by the loop), `review-fix` (a follow-up from `my-review` findings; also
   `ready-for-agent`).
 - **Dependencies:** each issue body ends with a `## Blocked by` section listing bare `#N`
   refs (one per line) or the literal `None - can start immediately`. An issue is *ready*

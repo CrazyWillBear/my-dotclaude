@@ -11,9 +11,14 @@
 #   3. Worktree entry via EnterWorktree (orchestrate step-0 pattern) and exit
 #      via ExitWorktree(keep).
 #   4. Grill-mode drift-check invokes the verify-plan skill.
-#   5. Models are tier-routed: a Step-0 classify-task call sets a confirmed
-#      roster (planner/implementer/reviewer placeholders), so no model is
-#      hardcoded — the old model: "sonnet" implementer pin is gone.
+#   5. Models are tier-routed: a Step-0.5 classify-task call sets the tier,
+#      resolve-tier.sh resolves the confirmed roster, and Steps 2–5 carry model
+#      placeholders — no model is hardcoded (the old model: "sonnet" pin is
+#      gone) and the tier table is no longer embedded. Effort is NOT routed:
+#      /pipeline spawns through the Agent tool, which has no effort parameter,
+#      so each agent's frontmatter effort pin governs. The roster's *_effort
+#      cells are inert here (they are live for /orchestrate, which spawns
+#      through Workflow agent()), and no effort: placeholder may appear.
 #   5b. Optional inline (main-thread) Step-2 planning: a --self-plan flag or a
 #      trivial tier lets the main agent author the plan itself (no planner
 #      spawn). The authorship ladder is "first match wins"; trivial yields a
@@ -101,12 +106,25 @@ echo "test: Step-0 tier routing via classify-task"
 assert_contains "--complexity flag in argument-hint" "$content" "--complexity"
 assert_contains "classify-task skill invoked" "$content" "classify-task"
 assert_contains "invoked via the Skill tool" "$content" "Skill tool"
-assert_contains "tier table row — trivial" "$content" "| trivial | sonnet | sonnet | opus |"
-assert_contains "tier table row — standard" "$content" "| standard | opus | sonnet | opus |"
-assert_contains "tier table row — complex" "$content" "| complex | fable | opus | fable |"
+assert_contains "resolve-tier helper invoked" "$content" 'resolve-tier.sh'
+# Assemble the old tier row from a fragment so this guard does not itself
+# reintroduce the literal the repo-wide drift-sweep forbids.
+BAR='|'
+assert_not_contains "embedded tier table gone" "$content" "$BAR trivial $BAR sonnet $BAR sonnet $BAR opus $BAR"
 assert_contains "planner roster placeholder" "$content" 'model: "<planner>"'
 assert_contains "reviewer roster placeholder" "$content" 'model: "<reviewer>"'
 assert_contains "reviewer model held constant" "$content" "held constant"
+
+# Effort is NOT a per-spawn lever here: /pipeline spawns via the Agent tool,
+# whose parameters are description/isolation/model/prompt/run_in_background/
+# subagent_type — no effort. A placeholder would silently do nothing.
+assert_not_contains "no planner effort placeholder" "$content" 'effort: "<planner_effort>"'
+assert_not_contains "no implementer effort placeholder" "$content" 'effort: "<implementer_effort>"'
+assert_not_contains "no reviewer effort placeholder" "$content" 'effort: "<reviewer_effort>"'
+assert_contains "Agent tool's lack of an effort param is stated" "$content" \
+    'has no `effort` parameter'
+assert_contains "effort named inert for pipeline" "$content" 'inert for `/pipeline`'
+assert_contains "frontmatter effort pin named as governing" "$content" "frontmatter"
 assert_contains "issue-mode carve-out — one interactive stop" "$content" "one interactive stop"
 assert_contains "tier rationale surfaced" "$content" "rationale"
 assert_contains "confirmed roster persisted in state doc" "$content" "confirmed roster"
@@ -116,7 +134,7 @@ echo "test: optional inline (main-thread) Step-2 planning"
 assert_contains "--self-plan in argument-hint" "$content" "--self-plan"
 assert_contains "authorship ladder — first match wins" "$content" "first match wins"
 assert_contains "trivial auto minimal inline plan" "$content" "minimal inline plan"
-assert_contains "minimal plan carries acceptance criteria" "$content" "## Acceptance criteria"
+assert_contains "minimal plan carries acceptance criteria" "$content" "still carry ordered steps, a \`## Acceptance criteria\` section"
 assert_contains "grill std/complex authorship ask" "$content" "inline or subagent"
 assert_contains "gate fires on complex OR subagent-authored" "$content" "tier=complex OR"
 assert_contains "verify-plan skipped on trivial" "$content" "skipped on trivial"

@@ -6,9 +6,9 @@
 # controlled HOME / CLAUDE_CONFIG_DIR / XDG_CACHE_HOME (so the real machine's
 # caveman flag and update cache never leak in) and assert on the printed line.
 #
-# Covers: dir (~-relative), git branch (+ non-repo omits it), model, token
-# formatting + 0k fallback, cost, line churn, caveman fold (+ symlink
-# refusal), and the update flag.
+# Covers: dir (~-relative), git branch (+ non-repo omits it), model, effort
+# level (+ absent-hides), token formatting + 0k fallback, cost, caveman fold
+# (+ symlink refusal), and the update flag.
 #
 # Run: bash setup/tests/test_statusline.sh  (non-zero if any fail)
 
@@ -46,28 +46,38 @@ git -C "$REPO" -c user.email=t@e -c user.name=t commit -q --allow-empty -m init
 
 # ---- test: full render ------------------------------------------------------
 echo "test: full render"
-json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$REPO"'"},"context_window":{"total_input_tokens":47000},"cost":{"total_cost_usd":0.42,"total_lines_added":12,"total_lines_removed":3}}'
+json='{"model":{"display_name":"Opus 4.8"},"effort":{"level":"high"},"workspace":{"current_dir":"'"$REPO"'"},"context_window":{"total_input_tokens":47000},"cost":{"total_cost_usd":0.42}}'
 out=$(run_sl "$json")
 has "dir is ~-relative"     "$out" "~/repo"
 has "git branch shown"      "$out" "⎇ main"
 has "model shown"           "$out" "Opus 4.8"
+has "effort level shown"    "$out" "high"
 has "tokens k-formatted"    "$out" "47k"
 has "cost shown"            "$out" "\$0.42"
 has "tokens/cost combined"  "$out" "47k / \$0.42"
-has "line churn shown"      "$out" "+12/-3"
+has_not "line churn removed" "$out" "+0/-0"
 
 # ---- test: control chars stripped from human-text segments -----------------
-# A directory name can legally contain a raw ESC byte; the model/style names
+# A directory name can legally contain an ESC byte; the model/style names
 # arrive on stdin. None may smuggle a terminal escape into the rendered line.
-# The dim separator legitimately uses ESC "[2m"/"[0m", so we assert on the
-# *injected* sequences specifically (ESC "[31m", ESC "[2J").
+# The ESC bytes are carried as JSON \u001b escapes (a raw ESC byte would make
+# the JSON invalid and short-circuit to the empty-data fallback, exercising
+# nothing). The dim separator legitimately uses ESC "[2m"/"[0m", so we assert
+# on the *injected* sequences specifically (ESC "[31m", ESC "[2J").
 echo "test: control-char/escape stripping"
 esc=$(printf '\033')
-json='{"model":{"display_name":"Op'"$esc"'[31mus"},"workspace":{"current_dir":"'"$HOME_DIR"'/p'"$esc"'[2Jlain"}}'
+json='{"model":{"display_name":"Op\u001b[31mus"},"workspace":{"current_dir":"'"$HOME_DIR"'/p\u001b[2Jlain"}}'
 out=$(run_sl "$json")
 case "$out" in *"${esc}[31m"*) no "injected ESC[31m stripped" ;; *) ok "injected ESC[31m stripped" ;; esac
 case "$out" in *"${esc}[2J"*)  no "injected ESC[2J stripped"  ;; *) ok "injected ESC[2J stripped"  ;; esac
 has "separator ESC preserved" "$out" "${esc}[2m"
+
+# ---- test: effort absent -> no effort segment ------------------------------
+echo "test: effort absent -> segment hidden"
+json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$REPO"'"},"context_window":{"total_input_tokens":47000},"cost":{"total_cost_usd":0.42}}'
+out=$(run_sl "$json")
+has "model still shown"     "$out" "Opus 4.8"
+has_not "no stray effort seg when absent" "$out" "medium"
 
 # ---- test: token fallback when context_window absent ------------------------
 echo "test: token fallback -> 0k"
@@ -97,6 +107,28 @@ printf 'lite\n' > "$WORK/secret-mode"
 ln -s "$WORK/secret-mode" "$CFG2/.caveman-active"
 out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$CFG2" XDG_CACHE_HOME="$EMPTY_CACHE" python3 "$SL")
 has_not "symlinked flag ignored" "$out" "caveman"
+
+# ---- test: cost resets on /clear (session_id change) -----------------------
+# cost.total_cost_usd is process-scoped and survives /clear; the renderer
+# anchors a per-session baseline and subtracts it, so the shown cost resets
+# when session_id changes and re-arms when the raw total drops (new process).
+echo "test: cost baseline reset on session change"
+COSTC="$WORK/cache-cost"; mkdir -p "$COSTC"
+cost_sl() {  # cost_sl <session_id> <total_cost_usd>
+  printf '{"model":{"display_name":"Opus 4.8"},"session_id":"%s","workspace":{"current_dir":"%s"},"cost":{"total_cost_usd":%s}}' \
+    "$1" "$PLAIN" "$2" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$EMPTY_CFG" \
+    XDG_CACHE_HOME="$COSTC" python3 "$SL"
+}
+has     "first sighting anchors baseline -> \$0.00" "$(cost_sl sessA 0.42)" "\$0.00"
+has     "same session shows delta -> \$0.08"        "$(cost_sl sessA 0.50)" "\$0.08"
+has     "new session_id (/clear) resets -> \$0.00"  "$(cost_sl sessB 0.55)" "\$0.00"
+has     "cost climbs in new session -> \$0.05"      "$(cost_sl sessB 0.60)" "\$0.05"
+has     "raw total drop re-arms -> \$0.00"          "$(cost_sl sessB 0.02)" "\$0.00"
+
+echo "test: cost without session_id shows raw total"
+json='{"model":{"display_name":"Opus 4.8"},"session_id":"","workspace":{"current_dir":"'"$PLAIN"'"},"cost":{"total_cost_usd":0.77}}'
+out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$EMPTY_CFG" XDG_CACHE_HOME="$COSTC" python3 "$SL")
+has "no session_id -> raw cost" "$out" "\$0.77"
 
 # ---- test: update flag ------------------------------------------------------
 echo "test: update flag"

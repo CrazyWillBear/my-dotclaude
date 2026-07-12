@@ -6,14 +6,23 @@
 # the content obligations the /pipeline severity-routing contract depends on:
 #
 #   1. File exists at the expected discovery path.
-#   2. Frontmatter pins model: fable and effort: xhigh (effort can't be set per
-#      Agent call, so the pin must live here).
+#   2. Frontmatter pins model: opus and effort: xhigh. The Agent tool has no
+#      effort parameter, so this pin GOVERNS every Agent-tool spawn — including
+#      /pipeline's tier-routed one, which overrides model per call but cannot
+#      touch effort. (Workflow agent() does take opts.effort, so /orchestrate
+#      routes it per call.)
 #   3. The 4-tier severity taxonomy (critical/high/medium/low) is present and
 #      the old blocker/warning/nit vocabulary is gone.
 #   4. The verdict line re-anchors APPROVE WITH NITS to only-low findings.
 #   5. The machine-readable ```findings block spec is present (the pipeline
 #      routes off this block), including the replan flag and empty-when-clean.
 #   6. The ❓ unverified tag survives the migration.
+#   7. (issue #66) my-review now folds in the central-mechanism / mock-drift
+#      audit: it reads the issue's `## Central mechanism` line, confirms a
+#      declared central mock and auto-converts an undeclared one, exempts
+#      boundary mocks, and files a `mock-debt` follow-up (a narrow,
+#      audit-scoped `gh issue create` — ordinary findings stay report-only),
+#      not wired into dependents (the label query is the gate).
 #
 # Run: bash plugins/personal-tools/tests/test_my-review-agent.sh  (non-zero if any fail)
 
@@ -49,8 +58,9 @@ echo "test: frontmatter contains 'name: my-review'"
 assert_contains "name field present" "$content" "name: my-review"
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter pins model: fable"
-assert_contains "model pinned to fable" "$content" "model: fable"
+echo "test: frontmatter pins model: opus"
+assert_contains "model pinned to opus" "$content" "model: opus"
+assert_not_contains "model: fable is gone" "$content" "model: fable"
 assert_not_contains "model: inherit is gone" "$content" "model: inherit"
 
 # ---------------------------------------------------------------------------
@@ -84,6 +94,25 @@ assert_contains "empty block when clean" "$content" "empty"
 # ---------------------------------------------------------------------------
 echo "test: unverified tag survives"
 assert_contains "unverified tag present" "$content" "❓ unverified"
+
+# --- central-mechanism / mock-drift audit folded in (issue #66) ------------
+echo "test: my-review performs the central-mechanism / mock-drift audit"
+assert_contains "central-mechanism audit present" "$content" "Central-mechanism audit"
+assert_contains "reads the issue's Central mechanism line" "$content" "## Central mechanism"
+
+echo "test: declared central mock is confirmed, undeclared is auto-converted"
+assert_contains "declared path present" "$content" "Declared"
+assert_contains "auto-convert present" "$content" "auto-convert"
+
+echo "test: boundary mocks are exempt from the audit"
+assert_contains "boundary mocks exempt" "$content" "Boundary mocks"
+
+echo "test: mock-debt follow-ups are filed with the mock-debt label"
+assert_contains "mock-debt label on follow-up" "$content" "--label mock-debt"
+assert_contains "audit-scoped gh issue create" "$content" "gh issue create"
+
+echo "test: mock-debt is NOT wired into dependents (label query is the gate)"
+assert_contains "no dependent wiring for mock-debt" "$content" "do **not** wire mock-debt into dependents"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

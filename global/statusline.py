@@ -4,13 +4,19 @@
 Claude Code runs this on every status refresh, piping a JSON blob on stdin
 (model, workspace, cost, context_window, ...). We print ONE line:
 
-    <model> · <tokens>/<cost> · <dir> · ⎇ <branch> · +a/-r · <caveman> · <update>
+    <model> · <effort> · <tokens>/<cost> · <dir> · ⎇ <branch> · <caveman> · <update>
 
 Design notes:
   * No network, no transcript parsing. Token usage comes straight from the
     stdin `context_window` object (Claude Code >= 2.1.132). The "update
     available" flag is read from the cache the personal-tools SessionStart
     notifier already maintains (`~/.cache/my-dotclaude/last-check.json`).
+  * The cost figure is net-of-baseline, not the raw stdin total. Claude Code's
+    `cost.total_cost_usd` is process-scoped and keeps climbing across a
+    `/clear` (which mints a new `session_id` without restarting the process),
+    so we persist a small per-session baseline (`statusline-cost.json` in the
+    cache dir) and subtract it — resetting the meter on `/clear`. This is the
+    one bit of state the renderer keeps; the write is atomic and fail-open.
   * Output is rendered straight into the terminal on every refresh, so EVERY
     segment is passed through `_clean()` (strips C0/C1 control chars + DEL)
     before it is joined into the line — no matter its source. This is the
@@ -121,6 +127,16 @@ def seg_model(data):
     return ""
 
 
+# Reasoning-effort levels Claude Code reports in `effort.level`. Absent when the
+# model doesn't support the effort parameter — then the segment stays empty.
+EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+
+
+def seg_effort(data):
+    level = (data.get("effort") or {}).get("level")
+    return level if level in EFFORT_LEVELS else ""
+
+
 def _fmt_tokens(n):
     try:
         n = int(n)
@@ -138,28 +154,68 @@ def seg_tokens(data):
     return "0k"  # missing (older Claude Code, or before the first API response)
 
 
-def seg_cost(data):
+def _cost_state_path():
+    return os.path.join(_cache_dir(), "my-dotclaude", "statusline-cost.json")
+
+
+def _write_cost_state(path, session_id, baseline):
+    """Persist the cost baseline for a session, atomically, never via symlink."""
+    try:
+        if os.path.islink(path):  # refuse a planted symlink target
+            return
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"session_id": session_id, "baseline": baseline}, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _net_cost(data):
+    """Session cost with the pre-/clear baseline subtracted.
+
+    Claude Code's `cost.total_cost_usd` is *process*-scoped: it keeps climbing
+    across a `/clear`, which mints a fresh `session_id` but does not restart
+    the process. To show spend for the *current* conversation we persist the
+    cost seen at the last session boundary and subtract it. The baseline
+    re-arms when `session_id` changes (a `/clear`) or when the raw total drops
+    below it (a fresh process from `--resume`/restart starts cost at 0), so the
+    figure resets on `/clear` and never goes negative.
+    """
     cost = data.get("cost") or {}
     try:
-        usd = float(cost.get("total_cost_usd", 0) or 0)
+        total = float(cost.get("total_cost_usd", 0) or 0)
     except (TypeError, ValueError):
-        usd = 0.0
-    return "$%.2f" % usd
+        total = 0.0
+    sid = data.get("session_id")
+    if not isinstance(sid, str) or not sid:
+        return max(0.0, total)  # no session id -> can't anchor, show raw
+
+    path = _cost_state_path()
+    stored_sid, baseline = None, 0.0
+    raw = _read_safe(path, 256)
+    if raw:
+        try:
+            state = json.loads(raw)
+            if isinstance(state, dict):
+                stored_sid = state.get("session_id")
+                baseline = float(state.get("baseline", 0) or 0)
+        except (ValueError, TypeError):
+            stored_sid, baseline = None, 0.0
+    if stored_sid != sid or total < baseline:
+        baseline = total
+        _write_cost_state(path, sid, baseline)
+    return max(0.0, total - baseline)
+
+
+def seg_cost(data):
+    return "$%.2f" % _net_cost(data)
 
 
 def seg_meters(data):
     # tokens-in-context and session cost, shown as one "47k / $0.42" segment.
     return seg_tokens(data) + " / " + seg_cost(data)
-
-
-def seg_lines(data):
-    cost = data.get("cost") or {}
-    try:
-        added = int(cost.get("total_lines_added", 0) or 0)
-        removed = int(cost.get("total_lines_removed", 0) or 0)
-    except (TypeError, ValueError):
-        added = removed = 0
-    return "+%d/-%d" % (added, removed)
 
 
 def seg_caveman():
@@ -190,10 +246,10 @@ def main():
 
     segments = [
         seg_model(data),
+        seg_effort(data),   # reasoning-effort level
         seg_meters(data),   # tokens / cost
         seg_dir(data),
         seg_branch(data),
-        seg_lines(data),    # diff churn
         seg_caveman(),
         seg_update(),
     ]
