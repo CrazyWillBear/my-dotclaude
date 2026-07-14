@@ -6,7 +6,7 @@
 # share it:
 #
 #   * prd-reap.sh  — to decide whether every child is closed (PRD ready to close).
-#   * /orchestrate — to scope a round's ready set to the PRD being built, rather
+#   * /orchestrate — to scope the run's allowlist to the PRD being built, rather
 #                    than sweeping every `ready-for-agent` issue in the repo.
 #                    (#77 defect A: the repo-wide sweep built an unrelated issue
 #                    into a PRD's branch.)

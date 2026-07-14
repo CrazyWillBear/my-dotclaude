@@ -81,9 +81,10 @@ files/seams from the exploration, not generalities).
 ## Step 4 — confirm / override
 
 **Batch mode (`--no-confirm`):** **skip this step** — emit the Step-5 contract directly,
-with no `AskUserQuestion`. A batch caller (e.g. `/orchestrate`'s round classify) invokes
-you once per issue and runs **one** confirmation over the whole set itself, so a per-issue
-confirm here would double-prompt.
+with no `AskUserQuestion`. The batch caller is **`/orchestrate`'s launch-time tier backfill**
+(Step 0a): it invokes you once per scoped issue that carries no `tier:*` label, **auto-accepts**
+the tier and writes it back as a label. That run is autonomous past its launch gate, so a
+per-issue confirm here would stall it — never prompt in batch mode.
 
 Otherwise, show the user the tier, the rationale, and the classified tier's resolved roster — run
 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>` to fetch it — then `AskUserQuestion`:

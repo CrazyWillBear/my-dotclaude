@@ -1,86 +1,84 @@
 ---
 name: orchestrate
-description: Run N rounds of the autonomous issue-solving loop inside a Workflow — the main thread first resolves the run's scope to an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), then each round ONE cheap haiku call picks that round's ready set from the allowlist (blockers closed, skip hitl) and tiers every issue in the same pass (auto-accepted) to tier-route its planner, implementer and reviewer models, plans each standard/complex issue into a work order with the workflow:planner subagent at the tier's planner model (a trivial issue skips the plan stage — its implementer self-plans), builds up to K ready issues with one implementer each in isolated git worktrees, reviews each built slice with `personal-tools:my-review` at the tier's reviewer model — running the central-mechanism / mock-drift audit — and acts on the findings through a per-issue planner-free fix loop (capped by --max-cycles, default 2: the findings themselves are the implementer's work order; low→file), build→review→fix pipelining per issue with no cross-issue barrier, before handing the clean-or-capped branches to a merger that merges in dependency order and resolves conflicts under the done-check; one haiku bookkeeping call then files the lows (grouped and parked) + cap-remainder as review-fix follow-ups while re-blocking dependents, the workflow hands the merged-issue list back to the main thread, which closes those issues itself and verifies every close, and open mock-debt mirrors into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
-argument-hint: "[N rounds=1] [--max K=3] [--max-cycles K=2] [--complexity trivial|standard|complex] [--prd N] [--issues N,N,...]"
+description: Run the autonomous issue-solving loop inside a Workflow — the main thread resolves the run's scope to an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), reads each scoped issue's persisted complexity tier from its `tier:trivial|standard|complex` label (backfilling a missing one with the classify-task skill and writing the label back), and fetches the whole issue graph once with scope-graph.sh; the Workflow then runs a continuous scheduler over that frozen graph — readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed in plain JS, not by a model — keeping --max N issues in flight, each slot running plan (workflow:planner at the tier's planner model; a trivial issue self-plans) → build (workflow:implementer in an isolated git worktree at the tier's implementer model) → review (personal-tools:my-review at the tier's reviewer model, running the central-mechanism / mock-drift audit) → a planner-free fix loop capped by --max-cycles → a serial merge queue (one workflow:merger, opus, merges in dependency order under the done-check). A merged issue unblocks its dependents and the freed slot admits the next ready issue; a failure drains the run instead of killing it mid-flight. Per-issue haiku bookkeeping files the lows (grouped, parked) + cap-remainder as review-fix follow-ups and re-blocks dependents; the workflow hands the merged-issue list back to the main thread, which closes those issues itself and verifies every close, and open mock-debt mirrors into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
+argument-hint: "[--max N=5] [--max-cycles K=2] [--prd N] [--issues N,N,...]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
 ---
 
-Run the autonomous issue-solving loop on this repo's GitHub issues. The round loop runs inside a
-**Workflow** — the skill body **no longer runs the round on the main thread**. The main thread does
-only four things: resolve the run's **scope** (Step 0a), enter the orchestration worktree (Step 0b),
-invoke the Workflow (Step 1), and, on return, **close the merged issues**, exit the worktree and
-report (Step 2 + end-of-run PRD reap). Running the round inside the Workflow keeps per-issue chatter
-(implementer reports, merge results) out of the main conversational context — only compact results
-return. The **closes are the deliberate exception**: they stay on the main thread (Step 2), because
-an **irreversible outward-facing** GitHub write belongs where the conversational context can account
-for it — see Step 0a's note on #77.
+Run the autonomous issue-solving loop on this repo's GitHub issues. The loop runs inside a
+**Workflow** — the skill body **no longer runs the loop on the main thread**. The main thread does
+only four things: resolve the run's **scope, tiers and graph** (Step 0a), enter the orchestration
+worktree (Step 0b), invoke the Workflow (Step 1), and, on return, **close the merged issues**, exit
+the worktree and report (Step 2 + end-of-run PRD reap). Running the loop inside the Workflow keeps
+per-issue chatter (implementer reports, merge results) out of the main conversational context — only
+compact results return. The **closes are the deliberate exception**: they stay on the main thread
+(Step 2), because an **irreversible outward-facing** GitHub write belongs where the conversational
+context can account for it — see Step 0a's note on #77.
 
-`$ARGUMENTS` = `[N] [--max K] [--max-cycles K] [--complexity <tier>] [--prd N] [--issues N,N,...]` —
-**N** rounds (default 1);
-**`--max K`** = max issues built in parallel per round (default 3); **`--max-cycles K`** = the
-per-issue fix-loop cap (default **2**) — the **initial review is free**
-and the cap **counts re-reviews**, each re-review decrementing the budget; **`--complexity <tier>`**
-(trivial|standard|complex) pins every issue to that tier and skips per-issue classification;
-**`--prd N`** scopes the run to PRD #N's child slices, and **`--issues N,N,...`** scopes it to a
-literal issue list (Step 0a).
+`$ARGUMENTS` = `[--max N] [--max-cycles K] [--prd N] [--issues N,N,...]` —
+**`--max N`** = the number of **concurrent issues in flight** (default **5**), *not* a batch size:
+each slot runs its own plan → build → review/fix → merge chain, and the moment one issue merges its
+dependents unblock and the freed slot **takes the** next ready issue. **`--max-cycles K`** = the
+per-issue fix-loop cap (default **2**) — the **initial review is free** and the cap **counts
+re-reviews**, each re-review decrementing the budget. **`--prd N`** scopes the run to PRD #N's child
+slices, and **`--issues N,N,...`** scopes it to a literal issue list (Step 0a).
+
+There are **no rounds** and **no tier flag**. A tier is a **persisted label** — edit
+`tier:trivial` / `tier:standard` / `tier:complex` on the issue to change how it routes.
 
 Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch issues labeled
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
-push. Each round **picks and tiers the ready set in ONE cheap haiku call** (tiers auto-accepted —
-**no interactive confirm**) and **tier-routes its implementer model** via the launch-resolved
-`ROSTER`; `--complexity <tier>` pins every issue to one tier and skips classification. A per-issue
-**plan stage** (tier-routed by `ROSTER[issue.tier].planner`) writes each **standard/complex**
-issue's **work order** with the **`workflow:planner`** subagent — a **trivial** issue **skips the
-plan stage entirely** and its implementer self-plans. One
-**implementer** then builds each issue; then **`personal-tools:my-review`** reviews each built slice
-at the tier's **reviewer** model, and a per-issue **planner-free fix loop** (capped by
-`--max-cycles`, default 2) acts on the findings — the review's own findings block **is** the fix
-work order, handed straight to a fresh implementer — before the clean-or-capped branch merges.
+push. Each admitted issue **tier-routes its implementer** (and its planner and reviewer) model via
+the launch-resolved `ROSTER`. A per-issue **plan stage** (tier-routed by `ROSTER[issue.tier].planner`)
+writes each **standard/complex** issue's **work order** with the **`workflow:planner`** subagent — a
+**trivial** issue **skips the plan stage entirely** and its implementer self-plans. One
+**implementer** then builds the issue; then **`personal-tools:my-review`** reviews the built slice at
+the tier's **reviewer** model, and a per-issue **planner-free fix loop** (capped by `--max-cycles`,
+default 2) acts on the findings — the review's own findings block **is** the fix work order, handed
+straight to a fresh implementer — before the clean-or-capped branch merges.
 
 ## Tier routing
 
-Each ready issue's **planner**, **implementer**, and **reviewer** `{model, effort}` are routed by
-its complexity **tier**, emitted by the **ready-set picker itself** and **auto-accepted** —
-there is **no interactive confirm**, because the whole run is autonomous past the launch gate. The
-tier→`{model, effort}` mapping lives in the plugin's `model-tiers.json`, resolved by
+Each issue's **planner**, **implementer**, and **reviewer** `{model, effort}` are routed by its
+complexity **tier**, and the tier is a **persisted GitHub label**: `tier:trivial`, `tier:standard`,
+`tier:complex`. `/to-issues` sets it at slice time, grounded in the exploration it already did; this
+skill **reads** it at launch (Step 0a) and **backfills** any issue that is missing one. The tier is
+therefore **visible, editable and durable** — not a guess re-made on every run.
+
+This replaced a cheap `haiku` leaf that emitted the tier as a free rider on the ready-set pick:
+ungrounded, invisible, never persisted. **Under-tiering is the expensive failure** — it routes real
+work to a model too cheap for it, and you pay for the bad build *and* the fix cycles that chase it.
+
+The tier→`{model, effort}` mapping lives in the plugin's `model-tiers.json`, resolved by
 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>`; the **main thread runs that helper
 once per tier at launch** (Step 1) and inlines the results into a single **`ROSTER`** const in the
-workflow script, so the round itself never re-resolves.
-
-A Workflow leaf `agent()` **can't** reuse the `classify-task` skill (that skill fans out its own
-Explore subagents from the main thread), so classification **rides the ready-set pick**: the ONE
-**`haiku` `agent()` call** that lists the ready issues already reads every body + comments to decide
-readiness, and it emits a **real tier** per issue in the same pass. There is **no per-issue classify
-agent and no separate explore stage**: the picker is a cheap leaf that may grep the repo itself, and
-a tier is a model-routing hint, not a deliverable — spending extra agents to produce a one-word
-answer was pure overhead. The emitted tier indexes the launch-resolved `ROSTER` —
-`ROSTER[issue.tier].planner`, `ROSTER[issue.tier].implementer`, `ROSTER[issue.tier].reviewer`, each
-a `{model, effort}` pair. The round runs a per-issue **plan stage** before the build for
-standard/complex issues only (its `{model, effort}` is `ROSTER[issue.tier].planner`) and a per-issue
-**review stage** after it (`ROSTER[issue.tier].reviewer`, via `personal-tools:my-review`).
-**`--complexity <tier>`** pins every issue to that tier and **skips classification** entirely.
+workflow script, so the scheduler never re-resolves. The emitted tier indexes it —
+`ROSTER[issue.tier].planner`, `ROSTER[issue.tier].implementer`, `ROSTER[issue.tier].reviewer`, each a
+`{model, effort}` pair.
 
 The **`workflow:merger`** is **not** tier-routed — it is spawned with no `model`/`effort` and its
 frontmatter pins govern (**opus**). A bad merge resolution corrupts the base branch for every issue
-in the round, so the merger is the one stage that never gets a cheap model.
+in the run, so the merger is the one stage that never gets a cheap model.
 
 ## Hard dependency — fail loud at launch
 The loop **hard-depends on the `personal-tools` plugin**: the **`my-review`** agent reviews each
-built slice (Step 6) and runs the central-mechanism / mock-drift audit; the planner-free fix
-loop (Step 7) then re-reviews with the same agent. **Before entering the
+built slice (step 5) and runs the central-mechanism / mock-drift audit; the planner-free fix
+loop (step 6) then re-reviews with the same agent. **Before entering the
 worktree (Step 0b)**, check it's available — if `personal-tools:my-review` is **not** in your
 available agents, **fail loud** naming the missing piece — e.g. "personal-tools plugin not
 installed: my-review agent unavailable" — and **stop**. Do **not** substitute another reviewer.
 This mirrors `/pipeline`'s Step-0 hard-dep check.
 
-## Step 0a — resolve the run's scope to an explicit issue allowlist
+## Step 0a — resolve the scope, the tiers, and the graph (main thread)
+
+### The allowlist
 **This is the fix for #77's defect A, and it runs on the main thread before anything else.** The
 loop used to pick its work with a repo-wide `ready-for-agent` label query. That is a correctness
 bug, not a convenience one: on a real run it swept in an unrelated issue from a different PRD and
 **built it into the PRD's branch**. Nothing tied the picked issues back to the work you asked for.
 
-So the round **never queries for work**. The main thread resolves an **explicit issue allowlist**
+So the run **never queries for work**. The main thread resolves an **explicit issue allowlist**
 first, and the workflow may only ever build from it:
 
 - **`--issues N,N,...`** → that literal list *is* the allowlist. Highest precedence.
@@ -97,17 +95,53 @@ first, and the workflow may only ever build from it:
   which issues it will therefore consider. (This prompt is *pre*-gate — it does not break the
   autonomous contract, which starts at the Workflow permission dialog.)
 
-The resolved allowlist is passed into the Workflow as `scope` (an array of issue numbers). **The
-allowlist is frozen at launch** and never re-queried. That freeze is load-bearing twice over:
+**The allowlist is frozen at launch** and never re-queried. That freeze is load-bearing twice over:
 
-- **Nothing the run files can be built by the run.** A `review-fix` follow-up the round files in
-  step 9 is not in the allowlist, so a later round cannot pick it up and build it. Without the
-  freeze, a **cap-remainder** filed at `--max-cycles` would be rebuilt next round — silently
-  bypassing the very cap that parked it.
+- **Nothing the run files can be built by the run.** A `review-fix` follow-up the scheduler files in
+  step 8 is not in the allowlist, so it cannot be picked up and built. Without the freeze, a
+  **cap-remainder** filed at `--max-cycles` would be rebuilt immediately — silently bypassing the
+  very cap that parked it.
 - It bounds the blast radius to the work you named, which is what #77 asked for.
 
 If the allowlist is **empty**, stop before entering the worktree and say why — an empty scope is
 never a reason to widen the query.
+
+### Tier resolution
+Read each scoped issue's labels and take its tier from `tier:trivial` / `tier:standard` /
+`tier:complex`.
+
+- **Missing a `tier:*` label → backfill it.** Run the **`classify-task`** skill in **batch mode**
+  (`/classify-task <N> --no-confirm`) — it fans out its own Explore agents from the main thread, so
+  the tier is *grounded*, and batch mode suppresses its per-issue confirm. Then **persist it**:
+  ensure the labels exist
+  (`gh label create tier:standard --description "complexity tier: standard" 2>/dev/null || true`,
+  same for `tier:trivial` and `tier:complex`) and write it back with
+  `gh issue edit <N> --add-label tier:<t>`. The next run reads the label instead of re-classifying.
+- **The tier is auto-accepted.** **Never prompt** to confirm or override a tier — the run is
+  autonomous past the launch gate, and a tier is a model-routing hint, not a deliverable. Report the
+  backfilled tiers in the launch report; that is the whole interaction.
+- **Conflicting labels** (an issue carrying two `tier:*` labels) → the **highest tier wins**
+  (complex > standard > trivial) and you **warn** in the launch report. A mislabel must never route
+  real work to a model too cheap for it.
+
+The scope is now `[{ n, tier }]` for every allowlisted issue.
+
+### Graph fetch
+Run the graph helper **once**, over the whole allowlist:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/scope-graph.sh" <N1> [N2 ...]
+```
+
+It prints **one JSON document** — `{ issues: [{ n, title, state, labels, tier, body, comments,
+blockedBy }], blockerStates, mockDebtOpen }` — and that JSON **is the workflow's world**: the issue
+bodies **and their comments**, every issue's `blockedBy` refs parsed from its `## Blocked by` section
+(bare `#N` refs; a `#N` in prose is not a blocker), the `blockerStates` of every ref (in scope or
+not), and the open `mock-debt` ledger. Empty output → the workflow's empty-graph throw fires, loudly.
+
+The graph is **frozen at launch**, exactly like the allowlist: bodies, comments and blocker states
+are read once. This is what lets the scheduler compute readiness itself, with **no model call** and
+no mid-run `gh` re-reads (a Workflow cannot run `gh` at all).
 
 ## Step 0b — enter the orchestration worktree (once, before the Workflow)
 The **whole run executes in one worktree** so the merger writes to a linked worktree (the
@@ -127,7 +161,7 @@ are now — canonicalize both with `realpath` first, since git may print a relat
   worktree while you're in a worktree session anyway.)
 
 ## Step 1 — invoke the Workflow (the single launch gate)
-The round loop runs as a **Workflow**, not on the main thread. From the orchestration worktree,
+The scheduler runs as a **Workflow**, not on the main thread. From the orchestration worktree,
 record the run's base for the workflow:
 - **base repo path** = `git rev-parse --show-toplevel` (a linked worktree — the merger's writes land
   here and the `PreToolUse` guard allows that);
@@ -135,25 +169,25 @@ record the run's base for the workflow:
 
 **Resolve the ROSTER at launch (main thread).** Before invoking the Workflow, run
 `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>` **once per tier** — three calls,
-`trivial` / `standard` / `complex` — parse each output's seven `key=value` lines (`planner_model` /
+`trivial` / `standard` / `complex` — parse each output's `key=value` lines (`planner_model` /
 `planner_effort` / `implementer_model` / `implementer_effort` / `reviewer_model` /
 `reviewer_effort`), and inline the resolved values into the single `ROSTER` const of the workflow
 script you pass to the Workflow tool — **never hand-write those values**. If any call prints a
 `WARN` (missing or invalid config), surface it to the user and continue on the fallback (standard)
 roster it returned. The `ROSTER` is then frozen for the whole run.
 
-Then **invoke the Workflow tool** with the orchestrate round-loop workflow, passing `rounds=N`,
-`maxParallel=K`, `maxCycles=<--max-cycles K, default 2>` (the per-issue fix-loop cap), the
-**`scope` allowlist resolved in Step 0a** (the only issues the run may ever build), the
-**pinned `--complexity <tier>` if given** (else unset — classify per issue),
-and that base repo path + branch as the run's base. The skill
+Then **invoke the Workflow tool** with the orchestrate scheduler workflow, passing
+`maxParallel=<--max N, default 5>`, `maxCycles=<--max-cycles K, default 2>`, the project's
+`doneCheck` command, the **`graph`** resolved in Step 0a (the frozen JSON — the only issues the run
+may ever build), and that base repo path + branch as the run's base. The skill
 **passes the orchestration worktree** path and branch into the workflow as its base, so every
 per-issue worktree and the merger operate **under** the orchestration worktree and the
-**primary checkout is never touched**. Approving the **Workflow permission dialog is the single launch gate** — after you
-approve it the run is autonomous; no per-round prompt fires until the end-of-run PRD offer.
+**primary checkout is never touched**. Approving the **Workflow permission dialog is the single
+launch gate** — after you approve it the run is autonomous; no prompt fires until the end-of-run PRD
+offer.
 
-The workflow the tool runs (an `export const meta {…}` + `agent()`/`pipeline()` script) implements
-the round loop below. Its shape:
+The workflow the tool runs (an `export const meta {…}` + `agent()` script) implements the scheduler
+below. Its shape:
 
 **Transcribe the call signatures exactly.** Every spawn is `agent(prompt, opts)` — the prompt is the
 **first positional argument**, never a field inside an object. `opts` is
@@ -161,45 +195,46 @@ the round loop below. Its shape:
 *silently*: passing one object (`agent({ … })`) sends the whole thing as the prompt and no `opts`, so
 tier routing degrades to session defaults; the opts key is **`agentType`**, not `subagent_type` (that
 is the `Agent` tool's spelling and is ignored here); and a bare `agent()` returns the subagent's text
-**as a string**, so any result you destructure must pass a `schema:`. Likewise `pipeline(items,
-…stages)` takes the item list plus stage callbacks — not an array of already-started promises.
+**as a string**, so any result you destructure must pass a `schema:`.
 
 **Normalize `args` before destructuring.** The Workflow tool hands the script its inputs — the
-base repo path and branch, `rounds`, `maxParallel`, `maxCycles`, and any pinned `complexity` — as a
-single value that **may arrive as a JSON string rather than an object**. Read it blindly and
-`const { rounds } = args` yields `undefined`; `round < undefined` is `false`, so the round loop
-falls straight through, spawns nothing, and reports a **silent empty success** (the #53 / #70 / #73
-class). The script must **parse-or-throw**: normalize with
-`typeof args === 'string' ? JSON.parse(args) : args`, then **throw** if `rounds` is missing or not a
-number, and only then destructure. A workflow that throws is loud; a workflow that reads `undefined`
-exits clean having done nothing.
+base repo path and branch, `maxParallel`, `maxCycles`, `doneCheck`, and the `graph` — as a
+single value that **may arrive as a JSON string rather than an object**. Read it blindly and every
+field yields `undefined`; the scheduler's slot loop then falls straight through, spawns nothing, and
+reports a **silent empty success** (the #53 / #70 / #73 class). The script must **parse-or-throw**:
+normalize with `typeof args === 'string' ? JSON.parse(args) : args`, then **throw** if `maxParallel`
+is missing or not a number, or if the `graph` has no issues, and only then destructure. A workflow
+that throws is loud; a workflow that reads `undefined` exits clean having done nothing.
 
 ```js
 export const meta = {
-  name: "orchestrate-round-loop",
-  // inputs: baseRepo (orchestration-worktree path), baseBranch, rounds (N), maxParallel (K),
-  //         maxCycles (per-issue fix-loop cap, default 2), doneCheck (the project's done-check command),
-  //         complexity (pinned tier from --complexity, or undefined → classify per issue),
-  //         scope (the Step-0a issue allowlist — the ONLY issues this run may build)
+  name: "orchestrate-scheduler",
+  // inputs: baseRepo (orchestration-worktree path), baseBranch,
+  //         maxParallel (--max N, default 5 — CONCURRENT issues in flight, NOT a batch size),
+  //         maxCycles (per-issue fix-loop cap, default 2),
+  //         doneCheck (the project's done-check command),
+  //         graph (scope-graph.sh's JSON, resolved in Step 0a and FROZEN at launch:
+  //                { issues: [{ n, title, state, labels, tier, body, comments, blockedBy }],
+  //                  blockerStates, mockDebtOpen })
 };
 
 // `args` may reach the script as a JSON STRING, not an object — normalize before reading, then
-// parse-or-throw. A blind bare destructure of `args` on a string yields undefined and the round loop
-// falls through spawning nothing (silent empty success). Throw loud instead of exiting clean-empty.
+// parse-or-throw. A blind bare destructure on a string yields undefined and the slot loop falls
+// through spawning nothing (silent empty success). Throw loud instead of exiting clean-empty.
 const input = typeof args === 'string' ? JSON.parse(args) : args;
-if (!input || typeof input.rounds !== 'number') throw new Error(`bad args: ${JSON.stringify(args)}`);
-// The scope allowlist is REQUIRED (#77 defect A). An absent/empty scope must throw, never degrade
+if (!input || typeof input.maxParallel !== 'number') throw new Error(`bad args: ${JSON.stringify(args)}`);
+// The graph IS the Step-0a allowlist (#77 defect A). An absent/empty graph must throw, never degrade
 // into a repo-wide query — a run that picks its own work can build issues nobody asked for.
-if (!Array.isArray(input.scope) || input.scope.length === 0)
-  throw new Error(`empty scope: refusing to pick work repo-wide — see Step 0a`);
-const { baseRepo, baseBranch, rounds, maxParallel, maxCycles, complexity, scope } = input;
+if (!input.graph || !Array.isArray(input.graph.issues) || input.graph.issues.length === 0)
+  throw new Error(`empty graph: refusing to pick work repo-wide — see Step 0a`);
+const { baseRepo, baseBranch, maxParallel, maxCycles, doneCheck, graph } = input;
 
 // JSON Schemas for the spawns whose results are read as objects. Without these,
 // agent() hands back a string and every property access below is undefined.
-//   READY_SCHEMA  → { issues: [{ n, title, body, comments, tier }] }  // comments: never body-only;
-//                                                                     // tier emitted by the same call
 //   BUILT_SCHEMA  → { n, branch, failed }
-//   REVIEW_SCHEMA → { findings: [{ severity, path, summary }] }
+//   REVIEW_SCHEMA → { findings: [{ severity, path, summary }], mockDebtFiled: [numbers] }
+//                    // mockDebtFiled: the mock-debt issues THIS review filed — they union into
+//                    // openMockDebt, so the e2e-gate is held by debt the run itself created
 //   MERGE_SCHEMA  → { mergedIssues: [{ n, mergeCommit }], conflictStop, doneCheckRed }
 //                    // mergeCommit rides along: the main thread quotes it in the close comment
 //                    // (Step 2), so the merger must return it, not just the issue number
@@ -219,206 +254,216 @@ const ROSTER = {
               reviewer:    { model: "<complex_reviewer_model>",    effort: "<complex_reviewer_effort>"    } },
 };
 
-// The RE-PICK GUARD (#77 fix 3). The workflow no longer closes the issues it merges — the main
-// thread does, on return (Step 2). So an issue merged in round 1 is STILL OPEN in round 2 and the
-// picker will hand it back. Track what this run merged and exclude it from every later round: that
-// makes the loop convergent WHETHER OR NOT the close ever lands, which is exactly what the 1.84M-token
-// spin lacked. (A blocked close used to leave the ready set undrained, so rounds 2-5 rebuilt the same
-// issues at full cost.) Convergence must not depend on a GitHub write succeeding.
-const mergedThisRun = new Map();   // issue number → merge commit, accumulated across rounds
+// ---- state (all plain data — the scheduler never asks a model anything) ----
+const byNumber   = n => graph.issues.find(i => i.n === n);
+const dependents = n => graph.issues.filter(i => i.blockedBy.includes(n));   // direct dependents, in scope
+const closed = new Set([                                    // launch-frozen: states, not queries
+  ...Object.entries(graph.blockerStates).filter(([, s]) => s === "closed").map(([n]) => Number(n)),
+  ...graph.issues.filter(i => i.state === "closed").map(i => i.n),
+]);
+// The RE-ADMIT GUARD (#77 fix 3). The workflow no longer closes the issues it merges — the main
+// thread does, on return (Step 2). So a merged issue is STILL OPEN in the frozen graph. Track what
+// this run merged and never re-admit it: that makes the run convergent WHETHER OR NOT the close ever
+// lands, which is exactly what the 1.84M-token spin lacked. Convergence must not depend on a GitHub
+// write succeeding.
+const mergedThisRun = new Map();          // issue number → merge commit
+const held          = new Set();          // dependents of a CAPPED merge — held for the rest of the run
+const openMockDebt  = new Set(graph.mockDebtOpen);   // seeded at launch, unioned with mockDebtFiled
+const inFlight      = new Map();          // issue number → its chain promise (one per slot)
+const mergeQueue    = [];                 // built+reviewed issues waiting to merge (SERIAL)
+const bookkeeping   = [];                 // fire-and-forget filing promises, awaited before the return
+let mergeWorker = null;                   // the ONE merge worker's promise, or null
+let stopReason  = null;                   // set → DRAIN MODE: admit nothing new, let in-flight finish
 
-// Repeat for N rounds, or until the ready set drains.
-for (let round = 0; round < rounds; round++) {
-  // 1.+2. Pick the ready set AND tier every issue — ONE haiku call for the whole round. The picker
-  //    reads ONLY the Step-0a allowlist (never a repo-wide label query — #77 defect A), already
-  //    reads each issue's body + comments to decide readiness, so it emits the tier in the same pass
-  //    (rubric in step 2) — no per-issue classify agents. Tiers auto-accepted. Pinned to haiku at low
-  //    effort: NOT tier-routed (routing is what it is deciding), and never left to the session default
-  //    (an unpinned picker silently runs on the expensive session model).
-  const candidates = scope.filter(n => !mergedThisRun.has(n));    // re-pick guard, applied BEFORE the spawn
-  if (candidates.length === 0) return stop("scope drained");      // every scoped issue is built → done
-  const ready = await agent(
-    `Of these issues ONLY — ${JSON.stringify(candidates)} — list the ready ones AND tier each
-     (trivial|standard|complex); see steps 1–2`,
-    { model: "haiku", effort: "low", schema: READY_SCHEMA });
-  // Belt to the filter's suspenders: a picker that hallucinates an out-of-scope or already-merged
-  // issue gets it dropped here, loudly, rather than building work nobody asked for.
-  const inScope = ready.issues.filter(i => {
-    if (mergedThisRun.has(i.n)) { log(`re-pick guard: dropping #${i.n} — already merged this run`); return false; }
-    if (!scope.includes(i.n))   { log(`scope guard: dropping #${i.n} — outside the run's allowlist`); return false; }
-    return true;
-  });
-  if (inScope.length === 0) return stop("empty ready set");       // empty ready set → stop
-  const picked = inScope.slice(0, maxParallel);                   // up to K, lowest number first
-  if (complexity) picked.forEach(i => { i.tier = complexity; });  // escape hatch: pin overrides
-                                                                  // the emitted tiers
+const drain = reason => {                 // drain-then-stop: never kill in-flight work mid-chain
+  if (!stopReason) { stopReason = reason; log(`draining: ${reason}`); }
+};
 
-  // 3. Plan the STANDARD/COMPLEX issues → their work order. No plan comment, no gate — autonomous.
-  //    trivial: NO plan stage at all — issue.plan stays null and the implementer self-plans (it
-  //    already plans TDD-first by its own contract; a separate planner spawn was duplicated work).
-  //    standard/complex: workflow:planner mode=plan at ROSTER[issue.tier].planner.
-  //    No schema — the plan text IS the return value, and it is the work order.
-  //    The planner gets the issue's COMMENTS as well as its body — a comment may hold the answer.
-  for (const issue of picked) {
-    if (issue.tier === "trivial") { issue.plan = null; continue; }   // implementer self-plans
-    issue.plan = await agent(
+// Readiness is a topological check over the frozen graph — PLAIN JS, no model call. (It used to be a
+// haiku "picker" agent only because a Workflow can't run gh; a model doing DAG arithmetic can, and
+// did, hallucinate.) The graph IS the allowlist, so the scope guard is structural: an issue that
+// isn't in graph.issues can never be admitted.
+const isReady = i =>
+  i.state === "open" &&
+  !mergedThisRun.has(i.n) &&                        // re-admit guard
+  !held.has(i.n) &&                                 // dependent of a capped merge
+  !inFlight.has(i.n) &&
+  !i.labels.includes("hitl") && !i.labels.includes("prd") &&
+  i.blockedBy.every(b => closed.has(b) || mergedThisRun.has(b)) &&
+  (!i.labels.includes("e2e-gate") || openMockDebt.size === 0);   // Mock-debt gate (C7)
+
+// ---- the scheduler: continuous, no round barrier ----
+while (true) {
+  while (!stopReason && inFlight.size < maxParallel) {          // fill every free slot
+    const next = graph.issues.filter(isReady).sort((a, b) => a.n - b.n)[0];   // lowest number first
+    if (!next) break;                                          // nothing admissible right now
+    inFlight.set(next.n, runIssue(next));
+  }
+  if (inFlight.size === 0) {
+    if (mergeWorker) { await mergeWorker; continue; }           // let the last merges land, re-scan
+    break;                                                      // scope drained (or fully drained by a stop)
+  }
+  await Promise.race([...inFlight.values()]);                   // a chain finished → re-scan, refill
+}
+await Promise.all(bookkeeping);                                 // never lose a filing to an early return
+return { mergedIssues: [...mergedThisRun].map(([n, mergeCommit]) => ({ n, mergeCommit })), stopReason };
+
+// ---- one slot's chain: plan → build → review → fix loop → merge ----
+async function runIssue(issue) {
+  try {
+    // 1. Plan — STANDARD/COMPLEX only. No plan comment, no gate — autonomous.
+    //    trivial: NO plan stage at all — issue.plan stays null and the implementer self-plans (it
+    //    already plans TDD-first by its own contract; a separate planner spawn was duplicated work).
+    //    No schema — the plan text IS the return value, and it is the work order.
+    //    The planner gets the issue's COMMENTS as well as its body — a comment may hold the answer.
+    issue.plan = issue.tier === "trivial" ? null : await agent(
       `mode=plan · issue #${issue.n} body + comments in → plan text out; see step 3
        \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
       { agentType: "workflow:planner",
         model:     ROSTER[issue.tier].planner.model,
         effort:    ROSTER[issue.tier].planner.effort });
-  }
 
-  // 4.–6. Build → initial review → fix loop, per issue, as ONE pipeline — NO barrier between the
-  //    stages: issue A runs its fix loop while issue B is still building. Wall-clock = the slowest
-  //    single issue's chain, not sum-of-slowest-per-stage.
-  const results = await pipeline(picked,
-    // 4. One worktree + one implementer per picked issue. Work order = the plan text when there is
-    //    one; for a trivial issue (issue.plan === null) the ISSUE BODY is the work order and the
-    //    implementer self-plans.
-    issue =>
-      agent(
-        issue.plan
-          ? `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the issue's
-             comments, the worktree path, the branch, and a commit-scope hint from the repo log.
-             \n\n${issue.plan}\n\n## Issue comments\n${issue.comments}`
-          : `Work order = issue #${issue.n} below — SELF-PLAN it (trivial tier, no planner ran), then
-             build it TDD-first. Plus the worktree path, the branch, and a commit-scope hint.
-             \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
+    // 2. Build — one worktree, one implementer. Work order = the plan text when there is one; for a
+    //    trivial issue (issue.plan === null) the ISSUE BODY is the work order.
+    const built = await agent(
+      issue.plan
+        ? `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the issue's
+           comments, the worktree path, the branch, and a commit-scope hint from the repo log.
+           \n\n${issue.plan}\n\n## Issue comments\n${issue.comments}`
+        : `Work order = issue #${issue.n} below — SELF-PLAN it (trivial tier, no planner ran), then
+           build it TDD-first. Plus the worktree path, the branch, and a commit-scope hint.
+           \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
+      { agentType: "workflow:implementer",
+        model:     ROSTER[issue.tier].implementer.model,
+        effort:    ROSTER[issue.tier].implementer.effort,
+        // worktree created per issue (step 4 prose), owned by the implementer — no isolation opt here
+        schema:    BUILT_SCHEMA });
+    if (!built || built.failed) { drain(`implementer failure on #${issue.n}`); return; }   // null = agent died
+
+    // 3. Initial review (FREE — does not count against maxCycles), then the PLANNER-FREE fix loop.
+    //    my-review runs the central-mechanism / mock-drift audit and OWNS the mock-debt filing; it
+    //    reports what it filed as mockDebtFiled, which unions into openMockDebt so the e2e-gate is
+    //    held by debt THIS RUN created, not just debt that predated it.
+    issue.review = await agent(
+      `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}
+       \n\nIssue #${issue.n}'s comments — ground truth for the review:\n${issue.comments}`,
+      { agentType: "personal-tools:my-review",
+        model:     ROSTER[issue.tier].reviewer.model,
+        effort:    ROSTER[issue.tier].reviewer.effort,
+        schema:    REVIEW_SCHEMA });
+    absorbMockDebt(issue.review);
+    let cycles = 0;
+    while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
+      const preFix = revParse(`issue-${issue.n}`);                  // <pre-fix HEAD> for the delta
+      const fixOrder = orderFindings(issue.review);                 // plain code: critical → high →
+                                                                    // medium, ascending path. NO
+                                                                    // planner spawn.
+      await agent(
+        `Work order = these review findings — fix each, TDD-first, then run the done-check.
+         Do NOT re-plan the issue; fix exactly what is listed.\n\n${fixOrder}`,
         { agentType: "workflow:implementer",
           model:     ROSTER[issue.tier].implementer.model,
           effort:    ROSTER[issue.tier].implementer.effort,
-          // worktree created by step 4, owned by the implementer — no isolation opt here
-          schema:    BUILT_SCHEMA }),
-    // 5.+6. Initial review (FREE — does not count against maxCycles), then the PLANNER-FREE fix
-    //    loop. personal-tools:my-review at the tier's reviewer model on the branch diff
-    //    (<base>..issue-<N>), handed issue.plan for conformance context. It runs the central-
-    //    mechanism / mock-drift audit (declared → confirm; undeclared central mock → auto-convert;
-    //    both file a mock-debt follow-up — my-review OWNS that filing) and returns a findings block.
-    //    The fix loop hands the medium-or-worse findings STRAIGHT to a fresh implementer — a finding
-    //    already names the path, the defect, and the fix, so re-planning it was a whole extra agent
-    //    restating the reviewer. Loop until clean-or-capped, BEFORE it merges. maxCycles (default 2)
-    //    counts RE-REVIEWS. Reviewer model HELD CONSTANT. Criticals lead the work order (ascending
-    //    path — deterministic), then highs, then mediums. low → filed in step 9, never fixed in-run.
-    //    No cap AskUserQuestion gate — autonomous.
-    async (b, issue) => {
-      if (!b || b.failed) return b;                                   // dead build → no review; caught below
+          schema:    BUILT_SCHEMA });
       issue.review = await agent(
-        `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}
-         \n\nIssue #${issue.n}'s comments — ground truth for the review:\n${issue.comments}`,
+        `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
         { agentType: "personal-tools:my-review",
           model:     ROSTER[issue.tier].reviewer.model,
           effort:    ROSTER[issue.tier].reviewer.effort,
           schema:    REVIEW_SCHEMA });
-      let cycles = 0;
-      while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
-        const preFix = revParse(`issue-${issue.n}`);                  // <pre-fix HEAD> for the delta
-        const fixOrder = orderFindings(issue.review);                 // plain code: critical → high →
-                                                                      // medium, ascending path. NO
-                                                                      // planner spawn.
-        await agent(
-          `Work order = these review findings — fix each, TDD-first, then run the done-check.
-           Do NOT re-plan the issue; fix exactly what is listed.\n\n${fixOrder}`,
-          { agentType: "workflow:implementer",
-            model:     ROSTER[issue.tier].implementer.model,
-            effort:    ROSTER[issue.tier].implementer.effort,
-            schema:    BUILT_SCHEMA });
-        issue.review = await agent(
-          `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
-          { agentType: "personal-tools:my-review",
-            model:     ROSTER[issue.tier].reviewer.model,
-            effort:    ROSTER[issue.tier].reviewer.effort,
-            schema:    REVIEW_SCHEMA });
-        cycles++;
-      }
-      issue.capRemainder = mediumOrWorse(issue.review);               // open at cap → filed in step 9,
-      return b;                                                       // merges anyway
-    });
-  if (results.some(b => !b || b.failed)) return stop("implementer failure");   // null = agent died
+      absorbMockDebt(issue.review);
+      cycles++;
+    }
+    issue.capRemainder = mediumOrWorse(issue.review);   // open at the cap → filed in step 8, merges anyway
 
-  // 7. Merge the clean/capped branches serially in ascending issue number, conflicts gated by the
-  //    done-check. Runs AFTER the fix loop — all-lows/clean and cap-exhausted slices both merge.
-  const merged = await agent(                       // no model/effort → the merger's frontmatter pins govern
-    "Merge this round's branches serially, ascending issue number. Base = the orchestration worktree.",
-    { agentType: "workflow:merger", schema: MERGE_SCHEMA });
-  if (merged.conflictStop || merged.doneCheckRed) return stop("conflict-stop / red done-check");
-
-  // 8. NO CLOSE HERE (#77 fix 1). The workflow records what it merged and hands the list back; the
-  //    MAIN THREAD closes and verifies (Step 2). A close is an irreversible outward-facing write, and
-  //    from inside a low-context subagent it reads as an unexplained destructive act against a
-  //    pre-existing GitHub issue — a safety classifier killed exactly this call on the run that burned
-  //    1.84M tokens, and it was right to. Recording into mergedThisRun is what keeps the loop
-  //    convergent in the meantime (see the re-pick guard above).
-  for (const m of merged.mergedIssues) mergedThisRun.set(m.n, m.mergeCommit);
-
-  // 9. ONE haiku agent for the round's ADDITIVE gh writes — a Workflow can't run gh itself, and these
-  //    spawns were previously unpinned (→ session model) and per-item. They are mechanical templating
-  //    over text the round already produced, and they only ever ADD (file / append) — never close,
-  //    never delete — which is what makes them safe to hand a cheap subagent at all. It files each
-  //    slice's lows as ONE grouped, PARKED follow-up (label review-fix ONLY — no ready-for-agent, so
-  //    nothing ever auto-builds a nit) and each cap-remainder as a review-fix + ready-for-agent
-  //    follow-up, then appends the filed #N into any open dependent's ## Blocked by via gh issue edit —
-  //    touching no other part of the dependent's body. my-review already filed the mock-debt
-  //    (steps 5–6) — do NOT re-file it.
-  await agent(
-    `Round bookkeeping via gh; see step 9. File these follow-ups, then re-block dependents.
-     Do NOT close any issue — the main thread owns that.
-     \n\n${ghWriteManifest(picked)}`,                                 // plain code: lows + capRemainder per issue
-    { model: "haiku", effort: "low" });                               // mechanical writes — never the session model
+    // 4. Hand off to the SERIAL merge queue and wait for it: merging is the one stage that is never
+    //    concurrent. Awaiting the worker is also what makes an issue's dependents unblock only after
+    //    it really merged (mergedThisRun is written by the worker, below).
+    mergeQueue.push(issue);
+    await pumpMerge();
+  } finally {
+    inFlight.delete(issue.n);                                       // free the slot, whatever happened
+  }
 }
 
-// The merged-issue list is the workflow's RETURN VALUE — the main thread closes these itself and
-// verifies each close (Step 2). Returning them is the only way they ever get closed.
-return { mergedIssues: [...mergedThisRun].map(([n, mergeCommit]) => ({ n, mergeCommit })) };
+const absorbMockDebt = review => (review?.mockDebtFiled || []).forEach(n => openMockDebt.add(n));
+
+// ---- the merge worker: SERIAL, one merger spawn at a time ----
+function pumpMerge() {
+  // Start a worker only when no merge is running; otherwise ride the running one — it drains the
+  // whole queue, including whatever was pushed after it started.
+  if (!mergeWorker && mergeQueue.length) mergeWorker = runMerges().finally(() => { mergeWorker = null; });
+  return mergeWorker;
+}
+
+async function runMerges() {
+  while (mergeQueue.length) {
+    const batch = mergeQueue.splice(0).sort((a, b) => a.n - b.n);   // everything queued, ascending
+    const merged = await agent(                  // no model/effort → the merger's frontmatter pins govern
+      `Merge these branches serially, in ascending issue number, into the orchestration worktree's base
+       branch; resolve conflicts under the done-check.\n\n${mergeManifest(batch, baseRepo, baseBranch, doneCheck)}`,
+      { agentType: "workflow:merger", schema: MERGE_SCHEMA });
+    for (const m of merged.mergedIssues) {
+      // NO CLOSE HERE (#77 fix 1) — the workflow records what it merged and hands the list back; the
+      // MAIN THREAD closes and verifies (Step 2).
+      mergedThisRun.set(m.n, m.mergeCommit);
+      const issue = byNumber(m.n);
+      // A CAPPED merge (medium+ findings still open at maxCycles) landed a KNOWN-DEFECTIVE slice.
+      // Its direct dependents would otherwise unblock in-memory and build straight on top of it —
+      // so hold them for the rest of the run. (The old round loop re-read GitHub each round and got
+      // this for free; an in-memory scheduler must do it explicitly.)
+      if (issue?.capRemainder)
+        for (const d of dependents(m.n)) { held.add(d.n); log(`held #${d.n}: #${m.n} merged capped`); }
+      bookkeeping.push(fileFollowUps(issue));    // fire-and-forget: never blocks the slot
+    }
+    if (merged.conflictStop || merged.doneCheckRed) drain("conflict-stop / red done-check");
+  }
+}
+
+// ---- per-issue bookkeeping: ONE cheap haiku call, fired as the issue clears ----
+// Mechanical templating over text the run already produced, and ONLY ever additive (file / append) —
+// never a close, never a delete — which is what makes it safe to hand a cheap subagent at all.
+// Per issue, not batched at the end: a killed run keeps every filing made so far.
+function fileFollowUps(issue) {
+  return agent(
+    `Bookkeeping for issue #${issue.n} via gh; see step 8. File its follow-ups, then re-block dependents.
+     Do NOT close any issue — the main thread owns that.\n\n${ghWriteManifest(issue)}`,   // lows + capRemainder
+    { model: "haiku", effort: "low" });      // mechanical additive writes — never the session model
+}
 ```
 
-## Each round (inside the Workflow)
-Everything in this section happens **inside the Workflow**, over up to **K** ready issues:
+## The scheduler (inside the Workflow)
+Everything in this section happens **inside the Workflow**. There is **no round barrier**: the
+scheduler keeps up to **`--max N`** issues in flight and refills a slot the moment one clears.
 
-1. **Pick the ready set — and tier it — in ONE haiku call** (a workflow agent, since a Workflow
-   can't run `gh`/git itself; pinned `model: "haiku"`, `effort: "low"` — an unpinned picker silently
-   runs on the expensive session model). It reads **only the Step-0a allowlist**, one issue at a
-   time — `gh issue view <N> --json number,title,labels,body,comments` for each `N` in `scope`,
-   minus anything already merged this run (the **re-pick guard**). It **never runs a repo-wide label
-   query**: a picker that can discover its own work can build issues nobody asked for, which is #77's
-   defect A.
-   The same call **emits each issue's tier** by the step-2 rubric — it is already reading every
-   body and comment thread to judge readiness, so classification is a free rider, not a second pass.
-   **Fetch the comments, not just the body** — an issue's **comments carry guidance** (a human's
-   answer, a prior review's ruling) that the body may never absorb, and a **comment-blind** loop
-   rediscovers the settled question and guesses at it. Carry each issue's comments through the
-   round: they ride the work order into the planner (step 3), the implementer (step 5), and the
-   reviewer (step 6). For each
-   issue, parse the `## Blocked by` section (C2): bare `#N` refs, or `None - can start immediately`.
-   An issue is **ready** iff **every** `#N` blocker is **closed** (`gh issue view <N> --json state`).
-   **Skip** any issue also labeled `hitl` or `prd` (the `--label ready-for-agent` filter already
-   excludes a correctly-labeled PRD; this is a belt-and-suspenders guard against a hand-added
-   label). **Mock-debt gate (C7):** an issue labeled `e2e-gate` is **not ready** while **any** open
-   `mock-debt` issue exists (`gh issue list --label mock-debt --state open --json number` —
-   non-empty → hold the gate), even if all its `## Blocked by` refs are closed; report it as
-   `blocked — N mock-debt open`. The open `mock-debt` set **is** the ledger (the source of truth).
-   If the ready set is empty → an **empty ready set** stops the loop with a report.
-2. **Tier rubric (applied by the step-1 picker, auto-accepted).** A Workflow leaf `agent()`
-   **can't** reuse the `classify-task` skill (it fans out its own Explore subagents from the main
-   thread), so the **step-1 picker itself** — already pinned to `haiku` at `low` effort, **not**
-   tier-routed, since routing is what it is *deciding* — reads each issue's body **and its
-   comments** and emits a **real tier** (trivial/standard/complex) by classify-task's rubric.
-   *Size is not the signal*: a seam move or new infrastructure is **complex**, mechanical
-   no-decision edits are **trivial**. It may grep the repo itself if the issue text is thin; there
-   is **no per-issue classify agent and no separate explore stage** — a tier is a one-word
-   model-routing hint, and spending dedicated agents to produce it cost more than the routing
-   saved. The tier is **auto-accepted — no interactive confirm** (the run is autonomous past
-   the launch gate), and it **tier-routes the planner, implementer and reviewer** via `ROSTER`.
-   **`--complexity <tier>`** overrides the emitted tiers — it **pins every issue** to that tier and
-   **skips classification** (the picker still runs; only its tier output is ignored).
+1. **Readiness — plain script code, no agent.** An issue is **ready** iff it is **open**, not already
+   merged this run (the **re-admit guard**), not **held**, not in flight, carries neither `hitl` nor
+   `prd`, and **every** `#N` in its `## Blocked by` is **closed** — either closed at launch
+   (`graph.blockerStates`) or merged by this run (`mergedThisRun`). This is a topological sweep over
+   the launch-frozen graph, so it is computed in **plain JS with no model call**. (It was a `haiku`
+   picker agent only because a Workflow can't run `gh` — a model doing DAG arithmetic could
+   hallucinate a blocker closed, and the tier it guessed on the side was never persisted anyway.)
+   **Mock-debt gate (C7):** an issue labeled `e2e-gate` is **not ready** while `openMockDebt` is
+   non-empty — that set is seeded from `graph.mockDebtOpen` at launch and **unioned with every
+   review's `mockDebtFiled`**, so debt the run *itself* creates holds the gate too. Report a held
+   gate as `blocked — N mock-debt open`. The open `mock-debt` set **is** the ledger.
+2. **Admission — the slot loop.** While the run is not draining and a slot is free, admit the
+   **lowest-numbered** ready issue. Each slot runs one issue's whole chain (steps 3–7) and, when the
+   chain clears, the next ready issue **takes the slot**. A merge unblocks that issue's dependents,
+   which become ready on the next scan. The run ends when the scope drains — nothing in flight and
+   nothing admissible.
+
+   **Failure is drain-then-stop, not kill.** An **implementer failure**, a **conflict-stop** or a
+   **red done-check** puts the run into **drain mode**: **admit nothing new**, let the in-flight
+   chains **finish through merge**, then return with the stop reason. Killing the loop mid-chain
+   would strand built, reviewed branches that had already earned their merge.
 3. **Plan the standard/complex issues → their work order (autonomous — no plan comment, no gate).**
-   Before the build, a **plan stage** runs **only for standard and complex** issues: the
-   **`workflow:planner`** subagent (`agentType: workflow:planner`, `mode: plan`,
-   `model: ROSTER[issue.tier].planner.model`, `effort: ROSTER[issue.tier].planner.effort`) handed the
-   issue body **and its comments** (step 1 fetched both — a comment may carry the settled answer),
-   which returns the plan as its **final text** (ordered steps with file paths +
-   `## Acceptance criteria` + the done-check + risks). Capture that plan text as the issue's **work
-   order**.
+   A **plan stage** runs **only for standard and complex** issues: the **`workflow:planner`** subagent
+   (`agentType: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
+   `effort: ROSTER[issue.tier].planner.effort`) handed the issue body **and its comments** (the graph
+   carried both — a comment may carry the settled answer), which returns the plan as its **final
+   text** (ordered steps with file paths + `## Acceptance criteria` + the done-check + risks). Capture
+   that plan text as the issue's **work order**.
 
    A **trivial** issue gets **no plan stage at all** — `issue.plan` stays null, the **issue body is
    the work order**, and the **implementer self-plans** (planning TDD-first is already in the
@@ -427,42 +472,35 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    minimal plan inline for trivial: inside a Workflow that ladder costs a whole extra agent, and it
    bought nothing the implementer wasn't already doing.
 
-   The run stays autonomous:
-   **no plan comment is posted to the issue and no plan-approval gate fires**
-   (the Workflow launch gate was the only stop). `--complexity <tier>` still pins the tier, so the
-   planner model follows the pinned row — and **`--complexity trivial` skips the plan stage for
-   every issue**.
-4. **Create worktrees.** Take up to **K** ready issues (lowest number first). For each, from the
-   base branch (C4): `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`.
-5. **Fan out implementers in parallel.** One **`workflow:implementer`** per picked issue, each handed
-   its **work order** — the **plan text** from step 3 (ordered steps + `## Acceptance criteria` +
-   done-check) — plus the issue's **comments** (step 1), the **absolute** worktree path, the branch
-   `issue-<N>`, and a **commit-scope
-   hint** (the issue's `<scope>`). The plan **replaces the implementer's self-plan** for these issues
-   (the implementer builds against the work order, not a plan of its own). They run concurrently,
-   **each on the model its tier routed** (`ROSTER[issue.tier].implementer`). Steps 5–7 run as **one
-   `pipeline()` per issue with no cross-issue barrier** — issue A enters review and its fix loop
-   while issue B is still building, so the round's wall-clock is the slowest single issue's chain,
-   not sum-of-slowest-per-stage. An **implementer failure** stops the loop — **before any merge** —
-   with a report.
-6. **Review each built slice — initial review (free).** As soon as an issue's build finishes (the
-   per-issue pipeline — no waiting on sibling builds), spawn
-   **`personal-tools:my-review`** (one `Agent` call, `model: ROSTER[issue.tier].reviewer.model`,
-   `effort: ROSTER[issue.tier].reviewer.effort`) on that issue's **branch diff** — the commit range `<base>..issue-<N>` — with the issue's
-   **plan** (captured in step 3 as `issue.plan`; **null for a trivial issue**, which had no plan
-   stage — then the **issue body** is the conformance context) in the prompt, the issue's
-   **comments** (step 1 — they are the ground truth the review checks the slice against), plus the
-   **issue number** so the audit can read its `## Central mechanism` line. my-review returns a verdict
-   plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift audit**:
-   declared central mock → confirm; **undeclared** central mock → **auto-convert** — both file a
-   `mock-debt` follow-up (labels `mock-debt`, `ready-for-agent`) that the ready-rule's mock-debt gate
-   holds the `e2e-gate` on. **my-review OWNS the mock-debt filing** — the workflow does not re-file it
-   (step 9). This **initial review is free** — it does not count against `--max-cycles`; the fix loop
-   (step 7) acts on its findings **before it merges**.
-7. **Planner-free fix loop (capped by `--max-cycles`, autonomous).** Parse each slice's `findings`
-   block and act on it **per issue** — re-implementing and re-reviewing **for real** until the slice
-   is **clean-or-capped** before it merges. `--max-cycles K` (**default 2**, matching `/pipeline`)
-   **counts re-reviews**: the step-6 review is free, and each re-review decrements the budget. The
+   The run stays autonomous: **no plan comment is posted to the issue** and
+   **no plan-approval gate fires** (the Workflow launch gate was the only stop).
+4. **Build.** Create the issue's worktree from the base branch (C4):
+   `git worktree add .worktrees/issue-<N> -b issue-<N> <base>`, then spawn one
+   **`workflow:implementer`** handed its **work order** — the **plan text** from step 3 (ordered steps
+   + `## Acceptance criteria` + done-check) — plus the issue's **comments**, the **absolute** worktree
+   path, the branch `issue-<N>`, and a **commit-scope hint** (the issue's `<scope>`). The plan
+   **replaces the implementer's self-plan** for these issues (it builds against the work order, not a
+   plan of its own). It runs on the model its tier routed (`ROSTER[issue.tier].implementer`).
+   Chains run **concurrently with no cross-issue barrier** — issue A is in its fix loop while issue B
+   is still building.
+5. **Review the built slice — initial review (free).** **As soon as an issue's build finishes** (no
+   waiting on sibling builds), spawn **`personal-tools:my-review`** (`model:
+   ROSTER[issue.tier].reviewer.model`, `effort: ROSTER[issue.tier].reviewer.effort`) on that issue's
+   **branch diff** — the commit range `<base>..issue-<N>` — with the issue's **plan** (captured in
+   step 3; **null for a trivial issue**, which had no plan stage — then the **issue body** is the
+   conformance context), the issue's **comments** (they are the ground truth the review checks the
+   slice against — a **comment-blind** loop rediscovers a settled question and guesses at it), plus
+   the **issue number** so the audit can read its `## Central mechanism` line. my-review returns a
+   verdict plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift
+   audit**: declared central mock → confirm; **undeclared** central mock → **auto-convert** — both
+   file a `mock-debt` follow-up. **my-review OWNS the mock-debt filing** — the workflow
+   **does not re-file mock-debt** (step 8) — and it **reports the numbers it filed** as
+   `mockDebtFiled`, which the scheduler unions into `openMockDebt` (step 1's gate). This **initial
+   review is free** — it does not count against `--max-cycles`.
+6. **Planner-free fix loop (capped by `--max-cycles`, autonomous).** Parse the slice's `findings`
+   block and act on it — re-implementing and re-reviewing **for real** until the slice is
+   **clean-or-capped**, **before it merges**. `--max-cycles K` (**default 2**, matching `/pipeline`)
+   **counts re-reviews**: the step-5 review is free, and each re-review decrements the budget. The
    **reviewer model is held constant** across every re-review (`ROSTER[issue.tier].reviewer`, fixed
    for the run).
 
@@ -472,7 +510,7 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
 
    | severity | route |
    |---|---|
-   | **low** | filed as a follow-up (step 9), **never fixed in-run** |
+   | **low** | filed as a follow-up (step 8), **never fixed in-run** |
    | **medium / high / critical** | goes into the fix work order handed straight to a fresh implementer |
 
    Order the work order **criticals first, then highs, then mediums**, each group **ascending by
@@ -489,76 +527,80 @@ Everything in this section happens **inside the Workflow**, over up to **K** rea
    range `<pre-fix HEAD>..HEAD`, not the whole branch.
 
    **No cap gate** — unlike `/pipeline`, orchestrate never prompts at the cap (the run is autonomous
-   past the launch gate; no interactive +1-cycle grant fires). A slice reaching **all-lows (or a
+   past the launch gate; no interactive extra-cycle grant fires). A slice reaching **all-lows (or a
    clean review) passes the branch**. When the **cap is exhausted with medium-or-worse findings still
-   open**, those become the **cap-remainder**: they are filed as follow-ups (step 9) and the branch
+   open**, those become the **cap-remainder**: they are filed as follow-ups (step 8) and the branch
    **merges anyway**.
-8. **Merge + verify via the merger — but do NOT close (C4).** After the fix loop clears or caps each slice,
-   hand the **completed branches** to the **`workflow:merger`**, passing the **absolute
+7. **Merge — the serial merge queue.** **After the fix loop** clears or caps a slice, its branch joins
+   the **merge queue**. Merging is **serial**: whenever the queue is non-empty and **no merge is
+   running**, spawn **ONE `workflow:merger`** (no `model`/`effort` — its frontmatter opus pins govern)
+   and hand it **everything queued, in ascending issue number**, the **absolute
    orchestration-worktree** path as this run's base repo (a linked worktree → the guard allows the
-   merger's writes) and its **base branch**, the **ordered list of completed issues** (each: `#N`,
-   branch `issue-<N>`, and its **absolute worktree path**) in **ascending issue number**, and the
-   project's **done-check command**. Ascending issue number is the **deterministic** merge order; the
-   picked issues' blockers were already closed, but file-level overlap can still collide — **conflicts
-   are expected and the merger resolves them under the done-check**. The merger merges serially,
-   **resolves conflicts by default (gated by the done-check)**, and returns per-issue results plus the
-   final done-check result and any conflict-stops. Act on its result:
+   merger's writes) and its base branch, each issue's branch `issue-<N>` and **absolute worktree
+   path**, and the project's **done-check command**. Ascending issue number is the **deterministic**
+   merge order; blockers were already closed, but file-level overlap can still collide — **conflicts
+   are expected and the merger resolves them under the done-check**. Act on its result:
    - issues it merged green → recorded into **`mergedThisRun`** (issue number → merge commit) and
      **returned to the main thread**, which closes them in Step 2. **The workflow never closes an
      issue.** The close is an **irreversible outward-facing** GitHub write, and inside a low-context
      subagent it reads as an unexplained destructive act against a pre-existing issue — on the run
      behind #77 a safety classifier killed exactly this call, correctly, and the resulting undrained
-     ready set spun rounds 2–5 into rebuilding the same issues at full cost (1.84M tokens). Because
-     they stay open until the run ends, `mergedThisRun` is what drains the loop: an issue merged in
-     one round is **excluded from every later round** by the step-1 **re-pick guard**, so convergence
-     never depends on a GitHub write succeeding;
-   - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution), or an
-     implementer-reported failure → comment that issue, leave its worktree, and **stop the loop**
-     with a report. **Never keep an unverified resolution** — that discipline lives in the merger.
-     (A stop still **returns** whatever `mergedThisRun` holds — those issues really did merge and
-     must still be closed.)
-9. **Round bookkeeping — ONE haiku agent for the round's additive gh writes.** These filings are
-   **mechanical templating over text the round already produced**, so they batch into a
-   **single `agent()` call pinned to `haiku` at `low` effort** (previously these spawns were unpinned
-   — silently running per-item on the session model). That one agent files the follow-ups below and
-   re-blocks dependents. It **only ever adds** — files an issue, appends to a body — and **never
-   closes and never deletes**; that is precisely what makes it safe to hand a cheap, low-context
-   subagent, and it is why the **closes moved out** to the main thread (step 8). Ensure the labels
-   exist (`gh label create review-fix 2>/dev/null || true`, same for `ready-for-agent`). The workflow
-   absorbs the filing `my-review` does not — two kinds, routed differently:
+     ready set rebuilt the same issues at full cost (1.84M tokens). Because they stay open in the
+     frozen graph, `mergedThisRun` is what drains the run: a merged issue is **never re-admitted**
+     (step 1's guard), so convergence never depends on a GitHub write succeeding;
+   - **a slice that merged CAPPED holds its dependents.** If the merged issue had a **cap-remainder**
+     (medium-or-worse findings still open at `--max-cycles`), it landed a **known-defective** slice —
+     so every direct dependent still in scope is added to **`held`** and stays held **for the rest of
+     the run**, logged in the report. Otherwise it would unblock in-memory and build straight on top
+     of a slice the reviewer just condemned;
+   - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution) → **drain
+     mode** (step 2): comment that issue, leave its worktree, admit nothing new, let the in-flight
+     chains finish, and report. **Never keep an unverified resolution** — that discipline lives in the
+     merger. (A drain still **returns** whatever `mergedThisRun` holds — those issues really did merge
+     and must still be closed.)
+8. **Per-issue bookkeeping — ONE cheap haiku call, fire-and-forget.** As each issue clears its merge,
+   a **single `agent()` call pinned to `haiku` at `low` effort** files that issue's follow-ups and
+   re-blocks its dependents. It is **fire-and-forget**: the slot does not wait on it, and it runs
+   **per issue rather than batched at the end**, so a run that is killed keeps every filing it already
+   made. Every such promise is collected and awaited **before the workflow returns**, so nothing is
+   lost to an early exit either. It **only ever adds** — files an issue, appends to a body — and
+   **never closes and never deletes**; that is precisely what makes it safe to hand a cheap,
+   low-context subagent, and it is why the **closes moved out** to the main thread (step 7). Ensure
+   the labels exist (`gh label create review-fix 2>/dev/null || true`, same for `ready-for-agent`).
+   Two kinds of filing, routed differently:
 
    | what | label(s) | why |
    |---|---|---|
-   | **lows** — **one grouped** follow-up per slice, collecting that slice's low findings | `review-fix` **only** | **Parked.** A low is by definition not worth an agent, so it must not be *auto-buildable*: `ready-for-agent` would make the loop pick it up and spend a full plan→build→review on a nit. A human promotes it when they judge it worth doing. |
+   | **lows** — **one grouped** follow-up per slice, collecting that slice's low findings | `review-fix` **only** | **Parked.** A low is by definition not worth an agent, so it must not be *auto-buildable*: `ready-for-agent` would make a future run spend a full plan→build→review on a nit. A human promotes it when they judge it worth doing. |
    | **cap-remainder** — medium-or-worse left open when `--max-cycles` exhausted | `review-fix` + `ready-for-agent` | Real work, genuinely ready for a future run. |
 
    File each with `gh issue create --title '<one-line fix>' --label review-fix --body-file <tmp>`
    (adding `--label ready-for-agent` for the cap-remainder only; single-quote the title — it embeds
    review-derived text that may carry shell metacharacters) with the template `## What to build` (the
    fix) / `## Acceptance criteria` / `## Blocked by` (`None - can start immediately` unless the fix
-   depends on this branch landing — then name it).
+   depends on this branch landing — then name it). Issues filed mid-run get **no `tier:*` label** —
+   they are outside the launch freeze, and a future run backfills the tier when it scopes them.
 
    Note the labels are only the *second* line of defence. The first is Step 0a's frozen allowlist:
    **nothing the run files can be built by the run**, because the scope is fixed at launch and a
    newly-filed issue is not in it. That freeze is what stops a **cap-remainder** — which *is*
-   `ready-for-agent` — from being rebuilt next round and silently bypassing the very cap that parked
-   it.
+   `ready-for-agent` — from being rebuilt by the same run and silently bypassing the very cap that
+   parked it.
 
-   **Mock-debt stays my-review's job:** the central-mechanism audit already filed the
-   declared / auto-converted `mock-debt` follow-ups in step 6, so the **workflow does not re-file mock-debt**
-   — it only files lows + cap-remainder as `review-fix`. **Re-block dependents:** when a
-   filed `review-fix` / cap-remainder issue is one a still-open **dependent** must not build on, append
-   its `#N` into that dependent's existing `## Blocked by` section — read the dependent's body, add the
+   **Mock-debt stays my-review's job:** the central-mechanism audit already filed the declared /
+   auto-converted `mock-debt` follow-ups in step 5, so the workflow **does not re-file mock-debt** —
+   it only files lows + cap-remainder as `review-fix`. **Re-block dependents:** when a filed
+   `review-fix` / cap-remainder issue is one a still-open **dependent** must not build on, append its
+   `#N` into that dependent's existing `## Blocked by` section — read the dependent's body, add the
    ref to the `## Blocked by` block only, and write it back with
    `gh issue edit <dependent> --body-file <patched>`. Touch **no other part** of the dependent's body.
    (my-review explicitly disclaims this dependent re-wiring — the workflow owns it.)
 
-Repeat for **N** rounds or until the ready set drains. The merger attempts to resolve conflicts
-under the done-check; an **empty ready set**, a **conflict-stop** / **red done-check**, or an
-**implementer failure** stops the loop with a clear report; everything else continues to the next
-round. The result is **left on the orchestration branch** for you to merge into `dev`/`main`
-yourself — the run never merges back to the launch branch and never removes the orchestration
-worktree.
+The run ends when the **scope drains** (nothing in flight, nothing admissible) or a **drain-then-stop**
+condition — an **implementer failure**, a **conflict-stop**, or a **red done-check** — empties the
+in-flight set. Either way the result is **left on the orchestration branch** for you to merge into
+`dev`/`main` yourself — the run never merges back to the launch branch and never removes the
+orchestration worktree.
 
 ## Step 2 — on return: close the merged issues, exit the worktree, report
 When the Workflow returns, back on the main thread. **Close first** — before the worktree exit and
@@ -566,32 +608,31 @@ before the report — so a failed close is loud and stops the run rather than be
 success table:
 
 - **Close from the main thread (#77 fix 1).** The workflow **returns the merged-issue list**
-  (`{ mergedIssues: [{ n, mergeCommit }] }`) instead of closing anything itself. Close each one here:
-  `gh issue close <N> --comment "Merged in <mergeCommit> by /orchestrate."` This is the **only** place
-  the run closes an issue. An **irreversible outward-facing** write belongs on the main thread, where
-  the conversational context can account for it: the same call, made from inside a low-context
-  subagent, was killed by a safety classifier on the run behind #77 — and it *should* have been,
-  because that subagent had been handed an issue it could not explain.
+  (`{ mergedIssues: [{ n, mergeCommit }], stopReason }`) instead of closing anything itself. Close
+  each one here: `gh issue close <N> --comment "Merged in <mergeCommit> by /orchestrate."` This is the
+  **only** place the run closes an issue. An **irreversible outward-facing** write belongs on the main
+  thread, where the conversational context can account for it: the same call, made from inside a
+  low-context subagent, was killed by a safety classifier on the run behind #77 — and it *should* have
+  been, because that subagent had been handed an issue it could not explain.
 - **Verify every close (#77 fix 2).** A close that silently fails must not pass as success. After
   closing, re-read each issue's state — `gh issue view <N> --json state` — and if any issue is
   **still open after its close**, **stop and report it loudly**, naming the issue and the merge commit
   it was merged in. Do **not** run the PRD reap on an unverified close: the reap would read a
-  still-open child and draw the wrong conclusion. (The loop itself stays convergent regardless — the
-  workflow's `mergedThisRun` re-pick guard never re-picks a merged issue, close or no close — so this
-  check is about *reporting the truth*, not about rescuing the loop.)
+  still-open child and draw the wrong conclusion. (The run itself stays convergent regardless — the
+  workflow's `mergedThisRun` re-admit guard never re-admits a merged issue, close or no close — so
+  this check is about *reporting the truth*, not about rescuing the loop.)
 - **`ExitWorktree(keep)`** — return to the original directory with the **orchestration branch** and
-  worktree intact (or the session-exit prompt offers keep/remove). The merged rounds all land on the
-  orchestration branch inside the orchestration worktree — never on the launch branch and never in
+  worktree intact (or the session-exit prompt offers keep/remove). Everything the run merged lands on
+  the orchestration branch inside the orchestration worktree — never on the launch branch and never in
   the primary checkout.
-- Print a **status table**: issue `#` → title → merged? / closed? → done-check → review verdict →
-  notes (conflicts, failures). If any `mock-debt` is open, add a one-line **ledger summary**
+- Print a **status table**: issue `#` → title → tier (and whether it was **backfilled**) → merged? /
+  closed? → done-check → review verdict → notes (conflicts, failures, **held** dependents, the
+  `stopReason` if the run drained). If any `mock-debt` is open, add a one-line **ledger summary**
   (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held by it.
-- **Report the review + fix-loop outcome (Steps 6–9).** For each built slice, include `my-review`'s
+- **Report the review + fix-loop outcome (steps 5–8).** For each built slice, include `my-review`'s
   final verdict and how the **planner-free fix loop** resolved its findings — what it fixed in-run,
   and any **lows / cap-remainder** filed as `review-fix` follow-ups (with the dependents re-blocked
-  onto them). Name any `mock-debt` follow-up the audit filed (it feeds the ledger summary above). The
-  fix loop **acts** on the findings **before each branch merges**; this report records what it fixed
-  and what it filed.
+  onto them). Name any `mock-debt` follow-up the audit filed (it feeds the ledger summary above).
 - **Mirror the ledger (C7).** If this was a PRD run (slices carry `Part of #<prd>`), reflect the
   open `mock-debt` set into the PRD body for human visibility: rewrite **only** a delimited
   `## Mock-debt ledger` section (a checklist — `- [ ] #N — <what>` for open, `- [x]` for closed)
@@ -603,7 +644,7 @@ success table:
 
 ## End-of-run: PRD reap
 
-After **all rounds** finish (or the loop stops), collect every issue number closed during this
+After the run drains (or a stop drains it), collect every issue number closed during this
 run and pass them to the reap helper. Locate the repo root with
 `git rev-parse --show-toplevel`, then run:
 
@@ -634,5 +675,5 @@ Never edit the PRD's spec content or delete the issue. (The one exception is the
 
 > PRD #N is blocked — open `hitl` issue(s): #H [#H …] need human review before closing.
 
-These PRD offers and notes appear only in the **final report** (Step 2), after all rounds. They
-never interrupt mid-loop rounds.
+These PRD offers and notes appear only in the **final report** (Step 2), after the run drains. They
+**never interrupt the scheduler**.

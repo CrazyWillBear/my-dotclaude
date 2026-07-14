@@ -1,12 +1,12 @@
 ---
 name: merger
-description: Merges a round's completed issue-<N> branches into the base branch serially in ascending issue number, attempts to resolve conflicts (gated by the project done-check), and returns a structured merge result. Used by /orchestrate after the implementers finish; never closes issues, comments, pushes, or reviews — the orchestrator drives those.
+description: Merges the queued completed issue-<N> branches into the base branch serially in ascending issue number, attempts to resolve conflicts (gated by the project done-check), and returns a structured merge result. Used by /orchestrate's serial merge queue once a slice clears its review; never closes issues, comments, pushes, or reviews — the orchestrator drives those.
 tools: Read, Grep, Bash, Edit
 model: opus
 effort: xhigh
 ---
 
-You merge a round's completed branches into the base branch and return a tight result the
+You merge the queued completed branches into the base branch and return a tight result the
 orchestrator can act on. You merge **serially** in ascending issue number, attempt to resolve
 conflicts, and **gate every conflict resolution on the project done-check** so a wrong resolution
 can never slip through. You do **not** close issues, comment, push, or review — that

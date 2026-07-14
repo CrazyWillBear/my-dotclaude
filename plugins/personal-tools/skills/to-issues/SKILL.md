@@ -1,6 +1,6 @@
 ---
 name: to-issues
-description: Slice a feature into tracer-bullet vertical-slice GitHub issues via gh — each slice cuts every layer and is demoable alone, published in dependency order so Blocked by refs resolve, labeled for the agent loop. Works from a PRD issue, a .md spec, or the current discussion. Use for "/to-issues", "break the PRD into issues", "slice this".
+description: Slice a feature into tracer-bullet vertical-slice GitHub issues via gh — each slice cuts every layer and is demoable alone, published in dependency order so Blocked by refs resolve, labeled for the agent loop and tagged with its complexity tier (tier:trivial|standard|complex — what routes /orchestrate's models later). Works from a PRD issue, a .md spec, or the current discussion. Use for "/to-issues", "break the PRD into issues", "slice this".
 argument-hint: "[PRD issue number/URL, or .md file path; empty = current discussion]"
 model: inherit
 effort: xhigh
@@ -44,8 +44,25 @@ trusts the PRD and starts at step 3.
    - **Mark the gate slice.** The final slice that exercises the *whole* central mechanism
      end-to-end is the **e2e-gate** — usually also HITL. It must not ship until all deferred
      mock-debt is paid (the orchestrator enforces this).
+   - **Give each slice a complexity tier** — `trivial` / `standard` / `complex` — by
+     **`classify-task`'s rubric**, ground it in the exploration you have **already** done (steps
+     1–2, or in PRD mode the PRD plus the repo reading that shaped the cut), and spend **no extra
+     Explore agents** on it:
+     - **Size is not the signal.** A one-line change that **moves a seam** or changes a data
+       contract is **complex**; a hundred lines of mechanical, no-decision edits is **trivial**.
+     - **trivial** — mechanical, no design decisions; the implementer just executes.
+     - **standard** — real judgment **within existing seams**; consequences stay local.
+     - **complex** — **new infrastructure**, **seams move**, or **downstream consequences** for
+       other components.
+
+     The tier is a **model-routing hint for `/orchestrate`**, not a slicing decision — it never
+     changes where you cut. It ships as a **label** (step 5) so it is visible, editable and
+     durable: `/orchestrate` reads it at launch instead of guessing, and under-tiering is the
+     expensive mistake (real work routed to a model too cheap for it).
 4. **Quiz me until approved** (`AskUserQuestion`): granularity, slice boundaries, dependency
-   edges, HITL marks. Iterate until I approve. **Create no issue before approval.**
+   edges, HITL marks. Show the proposed slices as a **quiz table** — slice → central mechanism →
+   dependencies → HITL? → **tier** — so a wrong tier is as correctable as a wrong boundary.
+   Iterate until I approve. **Create no issue before approval.**
 5. **Publish in dependency order** — blocker slices **first**, so their real `#N` exist when you
    write a dependent's `## Blocked by`. Each body uses this template **verbatim**:
    ```
@@ -61,18 +78,24 @@ trusts the PRD and starts at step 3.
    Ensure labels exist (ignore "already exists"):
    `gh label create ready-for-agent 2>/dev/null || true`,
    `gh label create hitl 2>/dev/null || true`,
-   `gh label create e2e-gate --description "final slice; ships only when mock-debt is zero" 2>/dev/null || true`, and
-   `gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`.
-   Label **every** slice `ready-for-agent`; **also** add `hitl` to slices that need a human
+   `gh label create e2e-gate --description "final slice; ships only when mock-debt is zero" 2>/dev/null || true`,
+   `gh label create mock-debt --description "central mechanism mocked; wire it real" 2>/dev/null || true`,
+   and the three **tier** labels the agent loop routes on:
+   `gh label create tier:trivial --description "complexity tier: trivial" 2>/dev/null || true`,
+   `gh label create tier:standard --description "complexity tier: standard" 2>/dev/null || true`,
+   `gh label create tier:complex --description "complexity tier: complex" 2>/dev/null || true`.
+   Label **every** slice `ready-for-agent` **and its step-3 tier** (`tier:<trivial|standard|complex>`
+   — exactly one per slice); **also** add `hitl` to slices that need a human
    (`/orchestrate` skips `hitl`), and **`e2e-gate`** to the final whole-feature end-to-end slice
    (the orchestrator holds it not-ready until every open `mock-debt` issue is closed). Create with
    a temp body file:
-   `gh issue create --title "<title>" --label ready-for-agent [--label hitl] [--label e2e-gate] --body-file <tmp>`.
+   `gh issue create --title "<title>" --label ready-for-agent --label tier:<t> [--label hitl] [--label e2e-gate] --body-file <tmp>`.
    **PRD mode only:** also put `Part of #<prd>` in each slice body, without touching the PRD.
    No-PRD modes have no parent — omit it.
 6. **(no-PRD) File the testing-seam issue last** — a minimal issue stating the step-2 seam (what
    to test, at what level) for me to set up myself. It's the **e2e-gate**: labels `ready-for-agent`,
    `hitl`, **and** `e2e-gate`; its `## Blocked by` lists **every** functional slice, so it surfaces
    only after the feature is built — and the orchestrator additionally holds it until mock-debt is zero.
-7. **Report a table:** slice `#` → title → `Blocked by` → labels. Then confirm every `#N` in a
-   `Blocked by` resolves to a real issue you created — no dangling refs.
+7. **Report a table:** slice `#` → title → `Blocked by` → tier → labels. Then confirm every `#N` in
+   a `Blocked by` resolves to a real issue you created — no dangling refs, and every slice carries
+   exactly one `tier:*` label.
