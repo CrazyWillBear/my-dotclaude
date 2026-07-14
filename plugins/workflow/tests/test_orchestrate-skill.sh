@@ -163,6 +163,12 @@ assert_contains "names the orchestration worktree" "$content" "orchestration wor
 assert_contains "result is left on the orchestration branch" "$content" "orchestration branch"
 assert_contains "merger is handed the orchestration-worktree path" "$content" "orchestration-worktree"
 assert_contains "primary checkout is never touched" "$content" "primary checkout is never touched"
+# worktreeOf() nests every per-issue worktree at <baseRepo>/.worktrees/issue-<N> — INSIDE the
+# orchestration worktree's own working tree — and the setup agent now really creates them. Left
+# untracked, they show up in `git status` during the merger's conflict resolution and its final
+# done-check. Exclude them locally (never a tracked .gitignore edit in the user's repo).
+assert_contains "the per-issue worktrees are excluded in the base repo" "$content" "info/exclude"
+assert_contains "the excluded path is .worktrees/" "$content" "'.worktrees/'"
 
 # --- Workflow-backed run (issue #63) ---------------------------------------
 echo "test: frontmatter allows the Workflow tool"
@@ -315,12 +321,20 @@ assert_contains "plan replaces the implementer self-plan" "$content" "replaces t
 echo "test: the run stays autonomous — no plan comment, no plan-approval gate"
 assert_contains "no plan comment posted to the issue" "$content" "no plan comment is posted to the issue"
 assert_contains "no plan-approval gate fires" "$content" "no plan-approval gate fires"
-# NARROW: ban the plan-posting FORM, not the `gh issue comment` token. The old repo-wide
-# substring ban enforced "no plan comment" by forbidding the string anywhere in the
-# skill — which silently vetoed every OTHER legitimate comment the main thread makes
-# (it already runs `gh issue close --comment`). A test must not decide product scope.
-assert_not_matches "the PLAN is never posted as an issue comment" \
-    "$content" 'gh issue comment.*plan|plan.*gh issue comment'
+# ALLOWLIST the one legitimate comment, rather than banning a phrase. A repo-wide substring ban
+# on `gh issue comment` was too broad (it vetoed every OTHER comment the main thread makes — it
+# already runs `gh issue close --comment`), but a `gh issue comment.*plan` regex is too narrow:
+# it is line-scoped AND order-scoped, so an instruction split over two lines, or phrased "post
+# the work order as a comment", sails straight through — the same prose-phrase grep this suite
+# elsewhere condemns for passing with the feature deleted. So: every `gh issue comment` line in
+# the skill must BE the conflict-stop write. Anything else — a plan comment included — fails.
+non_conflict_comments="$(printf '%s\n' "$content" | grep -F -- 'gh issue comment' \
+    | grep -Ev 'conflictStops|could not merge' || true)"
+if [ -z "$non_conflict_comments" ]; then
+    ok "the only gh issue comment in the skill is the conflict-stop write"
+else
+    no "a non-conflict-stop gh issue comment appears in the skill: $non_conflict_comments"
+fi
 
 # --- comments ride the work order ------------------------------------------
 # A human (or a prior review) may leave the definitive answer as an issue comment.
@@ -610,6 +624,26 @@ assert_not_contains "a rejecting filing must not discard the return" "$js_block"
 assert_contains "a rejected filing is caught where it is created" "$js_block" ".catch(e =>"
 assert_contains "bookkeeping failures ride home in the report" "$js_block" "bookkeepingFailures"
 assert_contains "Step 2 prints the bookkeeping failures" "$content" "\`bookkeepingFailures\`"
+# A .catch() only fires on a REJECTION — but a dead agent RETURNS NULL. `r?.filed || []` swallows
+# that null into an empty filing: no bookkeepingFailures entry, followUps [], the cap-remainder
+# never filed and the dependents never re-blocked, so the NEXT run builds them on unpaid debt.
+# The likelier failure path must reach the same .catch.
+assert_contains "a bookkeeper that returns NOTHING fails loudly (null != empty filing)" \
+    "$js_block" "bookkeeper returned nothing"
+
+# A model forced to satisfy `required` on a FAILURE path fabricates the fields. `worktree` /
+# `branch` / `head` are only ever read after `failed` is checked — but a fabricated `head` would
+# become the fix loop's delta base the moment `failed` is mis-set. Require only what a failure
+# report genuinely has: the issue number and the flag.
+echo "test: the failure-path schemas require only what a failed agent really knows"
+assert_contains "SETUP_SCHEMA/BUILT_SCHEMA require only n + failed" "$js_block" 'required: ["n", "failed"]'
+assert_not_contains "SETUP_SCHEMA no longer forces a worktree on a failure" \
+    "$js_block" 'required: ["n", "worktree", "branch", "failed"]'
+assert_not_contains "BUILT_SCHEMA no longer forces a head on a failure" \
+    "$js_block" 'required: ["n", "branch", "worktree", "head", "failed"]'
+# ...and with `head` optional, the delta base must degrade to the base branch, never to the
+# string "undefined" in a `${preFix}..HEAD` range.
+assert_contains "a missing head degrades the re-review to the full branch" "$js_block" "built.head || baseBranch"
 
 echo "test: a dead merger drains the run — it never rejects the chain"
 assert_contains "the merger's result is guarded before it is read" "$js_block" "if (!merged"
@@ -629,10 +663,42 @@ echo "test: a failed FIX implementer drains too — a red branch must never merg
 assert_contains "the build implementer's failure drains" "$js_block" "!built || built.failed"
 assert_contains "the fix implementer's failure drains" "$js_block" "!fixed || fixed.failed"
 
+# EVERY spawn can die, and the schematic says so twice ("null = agent died", "A DEAD merger
+# returns null"). A guard sweep that covers only the implementers leaves the two REVIEW spawns
+# and the PLANNER unguarded — and those are the worst two to miss:
+#   * a null review makes mediumOrWorse(null) → [], so mediumOrWorseOpen is false, the fix loop
+#     is SKIPPED, capRemainder is [] and the slice merges as CLEAN — a dead reviewer merges an
+#     UNREVIEWED slice and lets its dependents build on it;
+#   * a null plan is indistinguishable from "trivial tier", so a dead planner on a COMPLEX issue
+#     hands the implementer a prompt that says "Trivial tier — no planner ran: SELF-PLAN it".
+echo "test: EVERY agent() spawn is guarded — a dead agent drains, never degrades silently"
+assert_contains "a dead planner drains (null plan != trivial tier)" "$js_block" 'issue.tier !== "trivial" && !issue.plan'
+assert_contains "a dead reviewer drains (initial review)" "$js_block" "!issue.review"
+assert_contains "a dead re-reviewer drains (fix loop)" "$js_block" "review failed on #"
+assert_contains "the guard sweep is audited in the block" "$js_block" "GUARD AUDIT"
+
 echo "test: the merger's returned issue numbers are re-checked against the allowlist"
 # A hallucinated number would otherwise become an irreversible `gh issue close` on an
 # unrelated issue in Step 2.
 assert_contains "out-of-allowlist merge results are dropped" "$js_block" "outside the run's allowlist"
+
+# The conflict-stop path is the SAME trust boundary: Step 2 posts an outward-facing
+# `gh issue comment` to every number the merger returns there, so a hallucinated number is an
+# outward write on an unrelated issue. mergedIssues is allowlist-checked; conflictStops must be.
+echo "test: conflict-stop issue numbers are allowlist-checked too (they drive an outward write)"
+assert_contains "a conflict-stop outside the allowlist is dropped" "$js_block" "dropping conflict-stop"
+assert_contains "the conflict-stop guard uses the same byNumber allowlist" "$js_block" "byNumber(cs?.n)"
+
+# The worktree path and the branch are MODEL-SUPPLIED (a haiku setup agent, then an implementer
+# echoing them back) and they drive `git -C <path>` for the reviewer, the fix implementer and the
+# MERGER — which writes the base branch. worktree-guard.sh is a PreToolUse hook on Edit|Write only,
+# so it does not fence an agent's Bash. The scheduler ASKED for an exact path, so it can check it.
+echo "test: the reported worktree + branch are verified against the ones we asked for"
+assert_contains "a verifier exists" "$js_block" "verifyTree"
+assert_contains "it pins the path to worktreeOf(n)" "$js_block" "tree !== worktreeOf(issue.n)"
+assert_contains "it pins the branch to issue-<N>" "$js_block" 'branch !== `issue-${issue.n}`'
+assert_contains "setup's report is verified" "$js_block" 'verifyTree(issue, setup.worktree, setup.branch'
+assert_contains "the build's report is verified too" "$js_block" "verifyTree(issue, built.worktree"
 
 echo "test: no lost merge — a chain re-pumps until its issue leaves the queue"
 # mergeWorker is cleared in a .finally() microtask AFTER runMerges exits its while
@@ -656,6 +722,24 @@ assert_not_contains "the too-loose openness-only guard is gone" \
 assert_contains "an untiered open issue refuses the run" "$js_block" "!ROSTER[i.tier]"
 assert_contains "the empty/partial-scope refusal is loud" "$content" "fail loud before any spawn"
 
+# ...but an empty ready set is not always a BROKEN scope, and a guard that cannot tell
+# "nothing to do" from "the scope is broken" turns two LEGITIMATE states into a hard error:
+#   * every scoped issue already closed — re-running `--prd N` after the last slice landed
+#     (`unbuilt`'s own state filter exists precisely because `--issues` does no state filter);
+#   * the only issues left are e2e-gate issues held by OPEN mock-debt — a DESIGNED state, the
+#     exact one the mock-debt gate exists to produce.
+# Both are clean empties with a stated reason. Throw only when the emptiness is UNEXPLAINED.
+echo "test: a legitimately-complete or gate-held scope returns a clean empty, never a throw"
+assert_contains "the empty ready set is CLASSIFIED before throwing" "$js_block" "Classify the emptiness"
+assert_contains "an all-closed scope is a clean empty" "$js_block" "every scoped issue is already closed"
+assert_contains "a mock-debt-held e2e-gate scope is a clean empty" "$js_block" "e2e-gate-held by open mock-debt"
+# Anchored on the RETURN STATEMENT, not on the prose `{ mergedIssues: [], stopReason: null }` the
+# comments above already quote — that string would pass with the early return deleted.
+assert_contains "the clean empty returns the report's full shape" \
+    "$js_block" "return { mergedIssues: [], stopReason: null, conflictStops: []"
+assert_contains "the clean empty states its reason" "$js_block" "log(\`nothing to do:"
+assert_contains "an UNEXPLAINED empty still throws" "$js_block" "refusing a silent empty success"
+
 # Fail-loud is the right DEFAULT for an unfetchable issue, but with no escape hatch one
 # deleted or renamed child makes a 20-slice PRD permanently unrunnable until its body is
 # hand-edited.
@@ -664,6 +748,16 @@ assert_contains "--skip-unknown in the argument-hint" "$content" "[--skip-unknow
 assert_contains "the guard honours the opt-in" "$js_block" "skipUnknown"
 assert_contains "a skipped issue is still named in the log, never silently dropped" \
     "$js_block" "--skip-unknown"
+
+# ...and the flag is INERT unless Step 1 actually hands it to the Workflow tool. Step 1 is the
+# only place that says what the main thread passes in; the script reads `input.skipUnknown`, so a
+# key missing from that list arrives `undefined` → skipUnknown = false → the throw always fires.
+# Asserting the flag in the argument-hint and in the js block certifies a BROKEN chain unless the
+# carrying link is asserted too. Every value the script reads off `input` must appear in Step 1.
+echo 'test: every input the script reads off `input` is passed by Step 1'
+for k in baseRepo baseBranch maxParallel maxCycles doneCheck graph skipUnknown; do
+    assert_contains "Step 1 passes $k= to the Workflow tool" "$content" "\`$k="
+done
 
 echo "test: the spawn prompts interpolate real values, never placeholders"
 assert_not_contains "no literal <base> placeholder in a prompt" "$js_block" "<base>.."
@@ -739,6 +833,54 @@ assert_contains "the conflict-stops are surfaced in the final report" "$content"
 assert_contains "the main thread is named as an actor that CAN comment" "$content" "the main thread **can**"
 assert_contains "the main thread comments the stop on its issue" "$content" "gh issue comment <N>"
 assert_contains "the comment names the worktree left intact" "$content" "left intact at <worktree>"
+
+# --- the js block must actually PARSE (the only test of the ARTIFACT, not a string) ---------
+# Everything above greps for strings INSIDE the block. A 519-line script transcribed verbatim
+# into a real Workflow is one hand-edit away from a syntax error that no grep can catch, so
+# parse it for real.
+#
+# The parse MODE is the subtle part, and the naive form is a NO-OP:
+#   * the block opens with `export const meta`, so `node --check <file>.js` takes node's
+#     module-detection path and exits 0 unconditionally — it passes a file containing
+#     `const x = ;` (verified on node v22). A green "node --check" there proves nothing;
+#   * the block is valid in NEITHER standard mode anyway: `export` is a syntax error in CJS,
+#     and the block's top-level `return` is a syntax error in ESM. It has BOTH, plus top-level
+#     `await` — a combination only an ASYNC FUNCTION BODY accepts, which is what the Workflow
+#     runtime evidently runs it as.
+# So reproduce the runtime's shape: drop the `export ` keyword, wrap the rest in an async
+# function (top-level `return` and `await` are then both legal, and `args` gets bound), and use
+# a .cjs extension so no detection path can silently swallow a broken file. A NEGATIVE CONTROL
+# then proves the check is live: the same file with a syntax error appended MUST fail.
+echo "test: the js scheduler block parses (real syntax check, not a grep)"
+if ! command -v node >/dev/null 2>&1; then
+    ok "SKIPPED: node not installed (the rest of the suite is pure bash — CI must not need node)"
+elif [ -z "$js_block" ]; then
+    no "js scheduler block not found — nothing to parse"
+else
+    tmpdir="$(mktemp -d)"
+    # shellcheck disable=SC2064  # expand tmpdir now, not at trap time
+    trap "rm -rf '$tmpdir'" EXIT
+    {
+        printf 'async function __workflow(args) {\n'
+        printf '%s\n' "$js_block" | sed 's/^export const meta/const meta/'
+        printf '}\n'
+    } > "$tmpdir/block.cjs"
+
+    if node --check "$tmpdir/block.cjs" 2>"$tmpdir/err"; then
+        ok "the js block parses as a Workflow async body"
+    else
+        no "the js block is not valid JavaScript: $(cat "$tmpdir/err")"
+    fi
+
+    # Negative control — if THIS passes, the syntax check above is vacuous and proves nothing.
+    cp "$tmpdir/block.cjs" "$tmpdir/broken.cjs"
+    printf 'const __deliberate_syntax_error = ;\n' >> "$tmpdir/broken.cjs"
+    if node --check "$tmpdir/broken.cjs" >/dev/null 2>&1; then
+        no "node --check is a NO-OP here (it passed a file with a syntax error) — the check above proves nothing"
+    else
+        ok "negative control: node --check really does reject a broken block"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

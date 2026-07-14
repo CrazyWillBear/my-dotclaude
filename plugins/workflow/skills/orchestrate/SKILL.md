@@ -164,6 +164,17 @@ are now — canonicalize both with `realpath` first, since git may print a relat
   isolated and *is* the orchestration worktree. (`EnterWorktree(name:…)` refuses to nest a new
   worktree while you're in a worktree session anyway.)
 
+**Then exclude the per-issue worktrees.** The run nests every issue's worktree at
+`<baseRepo>/.worktrees/issue-<N>` — **inside** the orchestration worktree's own working tree — so
+without this they show up as untracked files in `git status` while the **merger** resolves conflicts
+and runs its final done-check. Append the path to the repo's **local** exclude file (untracked, not
+a tracked `.gitignore` edit in the user's repo), idempotently:
+
+```bash
+excl="$(git rev-parse --git-common-dir)/info/exclude"
+grep -qxF '.worktrees/' "$excl" 2>/dev/null || printf '.worktrees/\n' >> "$excl"
+```
+
 ## Step 1 — invoke the Workflow (the single launch gate)
 The scheduler runs as a **Workflow**, not on the main thread. From the orchestration worktree,
 record the run's base for the workflow:
@@ -180,12 +191,26 @@ script you pass to the Workflow tool — **never hand-write those values**. If a
 `WARN` (missing or invalid config), surface it to the user and continue on the fallback (standard)
 roster it returned. The `ROSTER` is then frozen for the whole run.
 
-Then **invoke the Workflow tool** with the orchestrate scheduler workflow, passing
-`maxParallel=<--max N, default 5>`, `maxCycles=<--max-cycles K, default 2>`, the project's
-`doneCheck` command, the **`graph`** resolved in Step 0a (the frozen JSON — the only issues the run
-may ever build), and that base repo path + branch as the run's base. The skill
-**passes the orchestration worktree** path and branch into the workflow as its base, so every
-per-issue worktree and the merger operate **under** the orchestration worktree and the
+Then **invoke the Workflow tool** with the orchestrate scheduler workflow. **This list is the only
+thing that carries a value into the script**, and the script reads each one off `input` — a key
+missing here arrives as `undefined`, so pass **every** one of them:
+
+| input | value |
+|---|---|
+| `baseRepo=` | the base repo path above (the **orchestration worktree**) |
+| `baseBranch=` | the base branch above (the **orchestration branch**) |
+| `maxParallel=` | `--max N`, default **5** |
+| `maxCycles=` | `--max-cycles K`, default **2** |
+| `doneCheck=` | the project's done-check command |
+| `graph=` | the frozen JSON resolved in Step 0a — the **only** issues the run may ever build |
+| `skipUnknown=` | **true** when `--skip-unknown` was passed, else **false** |
+
+(A flag that is parsed, documented and guarded but never *passed* is inert: the script would read
+`input.skipUnknown` as `undefined`, `--skip-unknown` would do nothing, and the unfetchable-issue
+throw would fire anyway.)
+
+The skill **passes the orchestration worktree** path and branch into the workflow as its base, so
+every per-issue worktree and the merger operate **under** the orchestration worktree and the
 **primary checkout is never touched**. Approving the **Workflow permission dialog is the single
 launch gate** — after you approve it the run is autonomous; no prompt fires until the end-of-run PRD
 offer.
@@ -201,8 +226,16 @@ tier routing degrades to session defaults; the opts key is **`agentType`**, not 
 is the `Agent` tool's spelling and is ignored here); and a bare `agent()` returns the subagent's text
 **as a string**, so any result you destructure must pass a `schema:`.
 
+**Every spawn can die, and a dead agent returns `null` — it does not throw.** So **every**
+`agent()` call site guards its result before reading it, and the js block below carries a
+**`GUARD AUDIT`** comment naming all eight and the guard each one has. An unguarded spawn does not
+crash the run; it *degrades* it into a wrong answer — a null **review** reads as a clean review (no
+findings → no fix loop → the slice merges **unreviewed**), and a null **plan** is indistinguishable
+from the trivial tier's deliberate null (a complex issue's implementer is then told to self-plan).
+
 **Normalize `args` before destructuring.** The Workflow tool hands the script its inputs — the
-base repo path and branch, `maxParallel`, `maxCycles`, `doneCheck`, and the `graph` — as a
+base repo path and branch, `maxParallel`, `maxCycles`, `doneCheck`, `skipUnknown`, and the `graph`
+(Step 1's table lists them all) — as a
 single value that **may arrive as a JSON string rather than an object**. Read it blindly and every
 field yields `undefined`; the scheduler's slot loop then falls straight through, spawns nothing, and
 reports a **silent empty success** (the #53 / #70 / #73 class). The script must **parse-or-throw**:
@@ -219,13 +252,21 @@ runnable one, and the same silent-empty failure walks in through the side door:
   downgrades this one throw to a **logged skip**: fail-loud is the right default, but with no escape
   hatch a single deleted or renamed child makes a 20-slice PRD **permanently unrunnable** until its
   body is hand-edited. A skipped issue is named in the log, never silently dropped;
-- **nothing in the scope is *ready*** (`!graph.issues.some(isReady)`) → **throw**. Note this is
-  **readiness**, not openness: an all-open scope in which every issue is blocked by an **unclosed
-  out-of-scope** issue, or by a `## Blocked by` ref aimed at a **PR number** (which `gh issue view`
-  cannot resolve, so it lands `unknown` and never `closed`), or in which every issue carries `hitl`,
-  passes an openness check, **admits nothing**, breaks on the first pass and returns
+- **nothing in the scope is *ready*** (`!graph.issues.some(isReady)`) → **classify, then throw**.
+  Note this is **readiness**, not openness: an all-open scope in which every issue is blocked by an
+  **unclosed out-of-scope** issue, or by a `## Blocked by` ref aimed at a **PR number** (which
+  `gh issue view` cannot resolve, so it lands `unknown` and never `closed`), or in which every issue
+  carries `hitl`, passes an openness check, **admits nothing**, breaks on the first pass and returns
   `{ mergedIssues: [], stopReason: null }` — reading as a clean drain. Same silent-empty class,
-  front door this time;
+  front door this time.
+
+  But **not every empty ready set is a broken scope**, and a guard that cannot tell *"nothing to do"*
+  from *"the scope is broken"* converts two **designed, expected** states into a hard error. So
+  **classify the emptiness first** and return a **clean empty that says why** for these two:
+  **every scoped issue is already closed** (re-running `--prd N` after the last slice landed —
+  and `--issues` does no state filter at all), or **the only issues left are `e2e-gate` issues held
+  by open `mock-debt`** (the gate doing precisely its job — throwing there would make the gate's
+  success look like a crash). **Throw only when the emptiness is unexplained**;
 - **any open issue with no tier** (`!ROSTER[i.tier]`) → **throw**. Tier resolution above backfills
   every one, so a null tier here means `classify-task` or the label write failed — and
   `ROSTER[null].planner` is a `TypeError` that would kill the chain *after* the run already paid for
@@ -262,15 +303,24 @@ const skipUnknown = input.skipUnknown === true;
 // run — the exact crash class the mergeManifest / ghWriteManifest definitions below exist to kill.
 // Never leave a schema for the transcriber to guess: without one, agent() hands back a STRING and
 // every property access is undefined.
+// REQUIRED ONLY WHAT A FAILURE REALLY KNOWS. A schema that marks `worktree` / `branch` / `head`
+// required forces a model on the FAILURE path — where the worktree was never created and the
+// build never landed a commit — to FABRICATE them to satisfy the contract. Harmless while they
+// are read only after `failed` is checked, but a plausible-looking invented `head` becomes the
+// fix loop's delta base the moment `failed` is mis-set. So: `n` + `failed` are required on both
+// failure-carrying schemas; everything a failed agent cannot honestly know is OPTIONAL, and the
+// code below treats it as such. (Audited across all five: REVIEW / MERGE / FILED have no failure
+// path — a dead one returns null, which the call sites now guard — and every field they require
+// is one a SUCCESSFUL result genuinely has, so they stay as they are.)
 const SETUP_SCHEMA = {                          // the per-issue worktree the setup agent created
   type: "object",
   properties: {
     n:        { type: "number" },
-    worktree: { type: "string" },               // ABSOLUTE path — the chain uses THIS, not a guess
+    worktree: { type: "string" },               // ABSOLUTE path — verified against worktreeOf(n)
     branch:   { type: "string" },               // issue-<N>
     failed:   { type: "boolean" },
   },
-  required: ["n", "worktree", "branch", "failed"],
+  required: ["n", "failed"],
 };
 const BUILT_SCHEMA = {
   type: "object",
@@ -280,11 +330,12 @@ const BUILT_SCHEMA = {
     worktree: { type: "string" },
     // head: the branch's HEAD sha AFTER this build. A Workflow cannot shell out, so it cannot
     // rev-parse — the sha must RIDE BACK here or the fix loop has no <pre-fix HEAD> to scope its
-    // re-review to.
+    // re-review to. Optional, not required: a FAILED build has no head to report, and the delta
+    // base degrades to baseBranch (a full-branch re-review) rather than to "undefined..HEAD".
     head:     { type: "string" },
     failed:   { type: "boolean" },              // red done-check / gave up — the chain drains on it
   },
-  required: ["n", "branch", "worktree", "head", "failed"],
+  required: ["n", "failed"],
 };
 const REVIEW_SCHEMA = {
   type: "object",
@@ -398,6 +449,23 @@ const drain = reason => {                 // drain-then-stop: never kill in-flig
   if (!stopReason) { stopReason = reason; log(`draining: ${reason}`); }
 };
 
+// The worktree path and the branch are MODEL-SUPPLIED — a haiku setup agent reports them and an
+// implementer echoes them back — and they then drive `git -C <path>` for the reviewer, the fix
+// implementer and, through mergeManifest, the MERGER, which writes the base branch. The
+// worktree-guard hook is a PreToolUse matcher on Edit|Write|NotebookEdit ONLY, so it does not
+// fence an agent's Bash. We ASKED the setup agent for one exact path and one exact branch, so we
+// can check we got them: anything else drains the chain rather than pointing git somewhere we
+// never chose. (This is also why the `isolation` opt was rejected — it cannot name the branch.
+// Accepting an unchecked branch name back from a model gives up what that rejection bought.)
+const verifyTree = (issue, tree, branch, who) => {
+  if (tree !== worktreeOf(issue.n) || branch !== `issue-${issue.n}`) {
+    drain(`${who} on #${issue.n} reported worktree ${tree} · branch ${branch} — `
+        + `expected ${worktreeOf(issue.n)} · issue-${issue.n}`);
+    return false;
+  }
+  return true;
+};
+
 // Readiness is a topological check over the frozen graph — PLAIN JS, no model call. (It used to be a
 // haiku "picker" agent only because a Workflow can't run gh; a model doing DAG arithmetic can, and
 // did, hallucinate.) The graph IS the allowlist, so the scope guard is structural: an issue that
@@ -429,8 +497,37 @@ if (unfetched.length)   // --skip-unknown: LOGGED, never silently dropped. One d
 // `hitl`-labelled, all pass an openness check while admitting NOTHING: the loop breaks on its first
 // pass and returns { mergedIssues: [], stopReason: null }, which READS AS A CLEAN DRAIN. Guard on
 // the thing the loop actually asks (isReady), not on a proxy for it.
-if (!graph.issues.some(isReady))
-  throw new Error(`no scoped issue is READY (open, unblocked, not hitl/prd): nothing to build — refusing a silent empty success`);
+//
+// But an empty ready set is not always a BROKEN scope, and a guard that cannot tell "nothing to do"
+// from "the scope is broken" turns two LEGITIMATE, DESIGNED states into a hard error.
+// Classify the emptiness first; throw only when it is UNEXPLAINED:
+//   * every scoped issue already closed/merged → the scope is DONE. Re-running `--prd N` after the
+//     last slice landed hits this (and `--issues` does no state filter at all — which is why the
+//     `unbuilt` filter below exists). The old openness guard returned a clean empty here, correctly;
+//   * the only issues left are e2e-gate issues held by OPEN mock-debt → the mock-debt gate did
+//     exactly what it exists to do. Throwing on it would make the gate's success look like a crash.
+// Both return a clean empty that SAYS WHY. Everything else — all-hitl, blocked on an unclosed
+// out-of-scope issue, a `## Blocked by` ref aimed at a PR — is the silent-empty class: throw.
+if (!graph.issues.some(isReady)) {
+  const openScoped = graph.issues.filter(i => i.state === "open");
+  const gateHeld   = openScoped.filter(i =>                     // ready but for the mock-debt gate
+    i.labels.includes("e2e-gate") && openMockDebt.size > 0
+    && !i.labels.includes("hitl") && !i.labels.includes("prd")
+    && i.blockedBy.every(b => closed.has(b)));
+  const nothingToDo =
+    openScoped.length === 0
+      ? `every scoped issue is already closed — the scope is complete`
+      : gateHeld.length === openScoped.length
+        ? `every remaining scoped issue (${gateHeld.map(i => `#${i.n}`).join(", ")}) is `
+          + `e2e-gate-held by open mock-debt (${[...openMockDebt].map(n => `#${n}`).join(", ")})`
+        : null;
+  if (!nothingToDo)
+    throw new Error(`no scoped issue is READY (open, unblocked, not hitl/prd): nothing to build — refusing a silent empty success`);
+  log(`nothing to do: ${nothingToDo}`);
+  // The report's FULL shape, not a bare {}: Step 2 destructures every field below.
+  return { mergedIssues: [], stopReason: null, conflictStops: [], held: [], bookkeepingFailures: [],
+           perIssue: [], unbuilt: openScoped.map(i => i.n), log: runLog };
+}
 // Step 0a backfills every missing tier, so a null tier HERE means classify-task or the
 // `gh issue edit --add-label` write failed for that issue. ROSTER[null] is undefined, and
 // ROSTER[issue.tier].planner.model would then TypeError mid-chain — after the run already paid for
@@ -539,6 +636,27 @@ return {
 // ---- one slot's chain: plan → build → review → fix loop → merge ----
 // Every prompt below interpolates REAL values (the worktree path, the branch, the base branch, the
 // done-check). A literal transcription of a placeholder hands the agent the placeholder.
+//
+// GUARD AUDIT — every agent() call site in this script, and the guard it carries. A DEAD AGENT
+// RETURNS NULL (it does not throw), so an unguarded spawn does not crash: it degrades, silently,
+// into a WRONG ANSWER. All eight are listed so the next reader can see the sweep is complete:
+//   1. setup        → `if (!setup || setup.failed)` + verifyTree — drains
+//   2. planner      → `if (issue.tier !== "trivial" && !issue.plan)` — drains. NOT optional: a null
+//                     plan is INDISTINGUISHABLE from the trivial tier's deliberate null, so a dead
+//                     planner would hand a COMPLEX issue's implementer "Trivial tier — no planner
+//                     ran: SELF-PLAN it".
+//   3. implementer  → `if (!built || built.failed)` + verifyTree — drains
+//   4. review       → `if (!issue.review)` — drains. THE WORST ONE TO MISS: mediumOrWorse(null) is
+//                     [], so mediumOrWorseOpen is false, the fix loop is SKIPPED, capRemainder is
+//                     [] — and the slice merges as CLEAN. A dead reviewer would merge an UNREVIEWED
+//                     slice, leave `verdict: null`, and let its dependents build on it (they are
+//                     not even `held`, because an empty capRemainder means "clean").
+//   5. fix impl.    → `if (!fixed || fixed.failed)` — drains
+//   6. re-review    → `if (!issue.review)` — drains, same reasoning as 4 (a null re-review would
+//                     end the loop as though the fixes had come back clean)
+//   7. merger       → `if (!merged || !Array.isArray(merged.mergedIssues))` — drains
+//   8. bookkeeper   → `.then(r => { if (!r) throw … })` into its `.catch` — recorded in
+//                     bookkeepingFailures (it is fire-and-forget, so it must never drain the run)
 async function runIssue(issue) {
   issue.attempted = true;                  // → the report's `perIssue` / `unbuilt` split
   issue.lows      = [];                    // accumulated across every review of this issue
@@ -557,9 +675,11 @@ async function runIssue(issue) {
        (e.g. the branch or path already exists), report failed: true with the error — do NOT
        improvise a different path, branch or base.`,
       { model: "haiku", effort: "low", schema: SETUP_SCHEMA });
-    if (!setup || setup.failed) { drain(`worktree setup failed on #${issue.n}`); return; }
-    // The RETURNED path/branch — not worktreeOf(n) — is what every later stage is handed. The guess
-    // is what we asked for; this is what exists.
+    if (!setup || setup.failed) { drain(`worktree setup failed on #${issue.n}`); return; }   // null = agent died
+    // The RETURNED path/branch — not worktreeOf(n) — is what every later stage is handed: the guess
+    // is what we asked for, this is what the agent says EXISTS. But "returned" is not "trusted":
+    // verify it is the path and branch we asked for before any git command is pointed at it.
+    if (!verifyTree(issue, setup.worktree, setup.branch, "setup")) return;
     issue.worktree = setup.worktree;
     issue.branch   = setup.branch;
 
@@ -575,6 +695,12 @@ async function runIssue(issue) {
       { agentType: "workflow:planner",
         model:     ROSTER[issue.tier].planner.model,
         effort:    ROSTER[issue.tier].planner.effort });
+    // GUARD 2. A dead planner returns null — and for a standard/complex issue that null is
+    // INDISTINGUISHABLE from the trivial tier's deliberate null. Unguarded, the build below would
+    // hand a COMPLEX issue's implementer a prompt that reads "Trivial tier — no planner ran:
+    // SELF-PLAN it", silently downgrading the issue's whole plan stage. (Note this is a truthiness
+    // check on the PLAN TEXT, not on a schema'd object: the planner returns bare text by design.)
+    if (issue.tier !== "trivial" && !issue.plan) { drain(`planner failed on #${issue.n}`); return; }
 
     // 2. Build — one worktree, one implementer. Work order = the plan text when there is one; for a
     //    trivial issue (issue.plan === null) the ISSUE BODY is the work order. The worktree is the
@@ -596,7 +722,10 @@ async function runIssue(issue) {
         // agent (step 0) owns creation; the implementer is forbidden to create one.
         schema:    BUILT_SCHEMA });
     if (!built || built.failed) { drain(`implementer failure on #${issue.n}`); return; }   // null = agent died
-    // Trust what the build REPORTS over what setup reported, if it differs — same reason as above.
+    // The build's own report of where it worked, verified the SAME way (it is the same untrusted
+    // model output, and it feeds the merger's `git -C`). `head` is optional in BUILT_SCHEMA — a
+    // build that omits it is not a failure, so it degrades below, it does not drain.
+    if (!verifyTree(issue, built.worktree || issue.worktree, built.branch || issue.branch, "build")) return;
     issue.worktree = built.worktree || issue.worktree;
     issue.branch   = built.branch   || issue.branch;
 
@@ -612,10 +741,18 @@ async function runIssue(issue) {
         model:     ROSTER[issue.tier].reviewer.model,
         effort:    ROSTER[issue.tier].reviewer.effort,
         schema:    REVIEW_SCHEMA });
+    // GUARD 4 — THE REVIEW GATE ITSELF. A dead reviewer returns null, and null does not crash
+    // anything downstream: mediumOrWorse(null) is [], mediumOrWorseOpen is false, the fix loop is
+    // SKIPPED, capRemainder is [] — so the slice merges as CLEAN, its dependents are not held, and
+    // perIssue.verdict rides home as null. An unreviewed slice would merge and be built upon.
+    // The review is a GATE: no review, no merge.
+    if (!issue.review) { drain(`review failed on #${issue.n}`); return; }
     absorbReview(issue, issue.review);
     // The delta base for the re-review. A Workflow cannot shell out, so it cannot rev-parse — the
-    // sha rides back on BUILT_SCHEMA.head instead.
-    let preFix = built.head;
+    // sha rides back on BUILT_SCHEMA.head instead. `head` is OPTIONAL there (a failed build has
+    // none to give), so fall back to the base branch: a re-review of the whole branch is a superset
+    // of the delta — safe — whereas `undefined` would render the literal range "undefined..HEAD".
+    let preFix = built.head || baseBranch;
     let cycles = 0;
     while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
       const fixOrder = orderFindings(issue.review);                 // plain code: critical → high →
@@ -644,6 +781,10 @@ async function runIssue(issue) {
           model:     ROSTER[issue.tier].reviewer.model,
           effort:    ROSTER[issue.tier].reviewer.effort,
           schema:    REVIEW_SCHEMA });
+      // GUARD 6 — same gate as guard 4, and the same silent degradation: a null re-review would
+      // end the loop as though the fixes had come back CLEAN, and the known-defective slice would
+      // merge with an empty capRemainder — so its dependents would not even be held.
+      if (!issue.review) { drain(`re-review failed on #${issue.n}`); return; }
       absorbReview(issue, issue.review);
       preFix = fixed.head || preFix;                                // next cycle's delta base
       cycles++;
@@ -718,12 +859,22 @@ async function runMerges() {
     // batch), and a later batch's stop must not OVERWRITE an earlier one — that would leave
     // stopReason naming the first stop while the report named only the last. Each stop carries the
     // worktree it left intact, so the report can say where to look.
+    let stopsAccepted = 0;
     for (const cs of merged.conflictStops || []) {
+      // SCOPE GUARD — the SAME trust boundary as mergedIssues above, because this list also drives
+      // an OUTWARD-FACING GitHub write: Step 2 posts a comment on every conflict-stop it is handed.
+      // Same untrusted model output, same allowlist check; a hallucinated number would post that
+      // comment on an unrelated issue.
+      const issue = byNumber(cs?.n);
+      if (!issue) { log(`dropping conflict-stop #${cs?.n} — outside the run's allowlist`); continue; }
       conflictStops.push(cs);
+      stopsAccepted++;
       log(`conflict-stop on #${cs.n} (worktree ${cs.worktree}): ${cs.reason}`);
       drain(`conflict-stop on #${cs.n}: ${cs.reason}`);             // first stop wins the stopReason
     }
-    if (!merged.conflictStops?.length && merged.doneCheckRed) {
+    // Keyed off the stops we ACCEPTED, not off the raw list: a batch whose every stop was dropped
+    // as out-of-allowlist has drained nothing, so a red done-check must still drain the run.
+    if (!stopsAccepted && merged.doneCheckRed) {
       drain("red done-check after merge");
     }
   }
@@ -738,7 +889,15 @@ function fileFollowUps(issue) {
     `Bookkeeping for issue #${issue.n} via gh; see step 8. File its follow-ups, then re-block dependents.
      Do NOT close any issue — the main thread owns that.\n\n${ghWriteManifest(issue)}`,   // lows + capRemainder
     { model: "haiku", effort: "low", schema: FILED_SCHEMA })   // mechanical additive writes — never the session model
-    .then(r => { issue.followUps = r?.filed || []; })           // → the report names what was filed
+    // GUARD 8. A dead agent RETURNS NULL — it does not reject — so `r?.filed || []` would swallow
+    // the likelier failure whole: followUps [], no bookkeepingFailures entry, and the exact
+    // consequence the .catch below exists to surface (lows/cap-remainder never filed, dependents
+    // never re-blocked, the next run building them on unpaid debt) left silent. THROW on a null so
+    // the one honest error path below owns both failure modes.
+    .then(r => {
+      if (!r) throw new Error("bookkeeper returned nothing (agent died) — nothing was filed");
+      issue.followUps = r.filed || [];                         // → the report names what was filed
+    })
     // CATCH AT CREATION. Promise.allSettled at the end keeps a rejection from discarding the
     // return, but nothing reads the settled array — so a rejected bookkeeper would be INVISIBLE:
     // the cap-remainder never filed, the dependents never re-blocked, followUps reporting [], and
@@ -818,6 +977,15 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    merger needs. And the **path the setup agent returns** — never a path the scheduler computed — is
    what feeds the implementer, the review, the fix loop and the merge manifest.
 
+   **Returned is not trusted.** That path and branch are **model-supplied**, and they become the
+   `git -C <path>` of three later agents — including the **merger**, which writes the base branch
+   (the worktree-guard hook is a `PreToolUse` matcher on `Edit|Write|NotebookEdit` **only**, so it
+   does not fence an agent's `Bash`). We asked for **one exact path and one exact branch**, so the
+   scheduler **verifies** what came back — `<baseRepo>/.worktrees/issue-<N>` and `issue-<N>` — and
+   **drains** the chain on any other value, for the setup agent's report and for the implementer's
+   echo of it alike. Accepting an unchecked branch name back from a model would give up exactly what
+   rejecting `isolation:` bought.
+
    **Then build.** Spawn one **`workflow:implementer`** handed its **work order** — the **plan text**
    from step 3 (ordered steps + `## Acceptance criteria` + done-check) — plus the issue's
    **comments**, the **absolute** worktree path and the branch **as the setup agent returned them**,
@@ -840,6 +1008,12 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    **does not re-file mock-debt** (step 8) — and it **reports the numbers it filed** as
    `mockDebtFiled`, which the scheduler unions into `openMockDebt` (step 1's gate). This **initial
    review is free** — it does not count against `--max-cycles`.
+
+   **The review is a gate: no review, no merge.** A dead reviewer returns **null**, and null is not
+   an error downstream — it is an *empty findings list*. Unguarded, it would skip the fix loop, empty
+   the cap-remainder, merge the slice as **clean**, leave its dependents **unheld** and report a
+   `null` verdict: an **unreviewed slice merged and built upon**. So a null review (initial **or**
+   re-review) **drains the run**, exactly like a failed build.
 6. **Planner-free fix loop (capped by `--max-cycles`, autonomous).** Parse the slice's `findings`
    block and act on it — re-implementing and re-reviewing **for real** until the slice is
    **clean-or-capped**, **before it merges**. `--max-cycles K` (**default 2**, matching `/pipeline`)

@@ -41,14 +41,23 @@ plugins/workflow/
 
 ## Inside the dev loop (`/orchestrate`)
 
-`/orchestrate [--max N] [--max-cycles K] [--prd N] [--issues N,N,...]` keeps **N** issues **in
-flight** (default 5) until the scope drains, with a per-issue fix-loop cap of `--max-cycles`
+`/orchestrate [--max N] [--max-cycles K] [--prd N] [--issues N,N,...] [--skip-unknown]` keeps **N**
+issues **in flight** (default 5) until the scope drains, with a per-issue fix-loop cap of
+`--max-cycles`
 (default 2). There are **no rounds**: each slot runs one issue's whole chain — plan → build →
 review/fix → merge — and the moment an issue merges, its dependents unblock and the freed slot takes
 the next ready issue. The loop runs inside a **Workflow**, not on the main thread: the main thread
 resolves the run's scope, tiers and graph, enters the orchestration worktree, launches the Workflow,
 and on return **closes the merged issues** and reports — so per-issue chatter stays out of the
-conversation and only compact results come back.
+conversation and only compact results come back. **`--skip-unknown`** downgrades the
+unfetchable-issue throw (a deleted or renamed child) to a logged skip — off by default, so one dead
+ref fails the run loudly rather than silently narrowing its scope.
+
+**A dead agent returns `null`, so every spawn is guarded.** An unguarded one does not crash the run,
+it *degrades* it: a null **review** looks exactly like a clean review (no findings → no fix loop →
+the slice merges **unreviewed** and its dependents build on it), and a null **plan** looks exactly
+like the trivial tier's deliberate no-plan. Any dead agent **drains** the run instead — except the
+fire-and-forget bookkeeper, whose failure is reported without stopping the run.
 
 **The run only ever builds an explicit allowlist.** Before anything else the main thread resolves the
 run's **scope**: `--issues N,N,...` is a literal list, `--prd N` walks PRD #N's child slices

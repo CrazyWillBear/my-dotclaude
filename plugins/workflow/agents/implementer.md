@@ -79,7 +79,22 @@ paths, and `git -C <worktree>` for git.
   decision — **stop and report**. Don't force it.
 
 ## Output
-Return, terse and factual (this is data for the spawner, not a user-facing message):
+Return, terse and factual (this is data for the spawner, not a user-facing message).
+
+**Name these five fields explicitly.** `/orchestrate`'s scheduler reads your result as a
+**structured object** and **drains the whole run** on `failed` — in two places (the build guard and
+the fix loop) — so your contract and its schema must agree. Do not leave them to be inferred from
+prose:
+
+| field | value |
+|---|---|
+| `n` | the **issue number** you were given (a `/pipeline` work order has none — omit it) |
+| `worktree` | the **absolute worktree path** you worked in — the one you were given, never another |
+| `branch` | the **branch** you committed on — the one you were given |
+| `head` | the branch's **HEAD sha after your commit**. Your spawner cannot shell out to `rev-parse` it, so this is the only way it can scope a later re-review to your delta. Omit it only if you never committed |
+| `failed` | **`true`** when the done-check is **red**, or you stopped, gave up, or could not commit. **`false`** only when the done-check is green and the work is committed. A red done-check is `failed: true` — never a success with a caveat |
+
+Then, in prose:
 - the **branch you were given** (`issue-<N>` for an issue; the work order's branch otherwise);
 - the **commit hash + subject**;
 - which acceptance criteria are **met** (and any not, with why);
