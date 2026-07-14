@@ -65,7 +65,11 @@ Merge each `issue-<N>` into the base branch in ascending issue number, using
 
 ## Output
 Return, terse and factual (this is data for the orchestrator, not a user-facing message):
-- **Per issue:** `#N` → **merged?** (yes/no) → **clean or resolved?** (clean / resolved / aborted).
+- **Per issue:** `#N` → **merged?** (yes/no) → **clean or resolved?** (clean / resolved / aborted) →
+  the **merge commit sha**. Read the sha off the base branch right after that issue's merge
+  (`git -C <base> rev-parse HEAD`) and report it verbatim — the orchestrator quotes it in the
+  issue's close comment ("Merged in `<sha>`"), so a merged issue **must** come back with one.
+  Never invent or guess a sha; an issue you did not merge has none.
 - Any **conflict-stops**: issue `#N`, its worktree path, and the reason (unresolvable, or red
   done-check after resolution).
 - The **final done-check result** — the actual command run and pass/fail.

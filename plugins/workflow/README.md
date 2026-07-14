@@ -117,8 +117,9 @@ The scheduler:
    is free; the cap counts re-reviews. **All-lows (or clean) passes**; a cap exhausted with medium+
    open files those as follow-ups and **merges anyway** — no interactive cap gate.
 7. **Merge — serial, one worker.** Cleared-or-capped branches join a **merge queue**; whenever it is
-   non-empty and no merge is running, **one merger** takes everything queued in **ascending issue
-   number** and merges it into the base branch, resolving conflicts **gated by the done-check**. A
+   non-empty and no merge is running, **one merger** takes everything queued (a **batch**) in
+   **ascending issue number** and merges it into the base branch, resolving conflicts **gated by the
+   done-check** — so a slot frees when the batch carrying its issue lands. A
    slice that merged **capped** (medium+ still open) is known-defective, so its direct dependents are
    **held for the rest of the run** rather than building on top of it. An unresolvable conflict or a
    red check **drains** the run rather than keeping an unverified resolution.
@@ -126,10 +127,13 @@ The scheduler:
    **single cheap `haiku` agent** files its lows as **one grouped, parked** follow-up (`review-fix`
    **only** — no `ready-for-agent`, so a nit never costs a full plan→build→review) and its
    cap-remainder as a `review-fix` + `ready-for-agent` follow-up, then appends them into any open
-   dependent's `## Blocked by` (`gh issue edit`). It **never closes and never deletes** — that is what
+   dependent's `## Blocked by` (`gh issue edit`) — as a **bare `#N` on its own line**, the only form
+   the graph parser reads back. It **never closes and never deletes** — that is what
    makes it safe to hand a cheap, low-context subagent. Per issue rather than batched at the end: a
-   killed run keeps every filing it already made.
-9. **Close — on the main thread, then verify.** The workflow **returns** the merged-issue list; the
+   killed run keeps every filing it already made. An issue with nothing to file spawns nothing.
+9. **Close — on the main thread, then verify.** The workflow **returns** the merged-issue list (plus
+   everything the report prints: per-issue tier + verdict + filings, the **held** dependents, the
+   **unbuilt** issues, the stop reason and its conflict-stop, and the scheduler's log); the
    **main thread** closes each (`gh issue close <N> --comment "<merge commit>"`) and then **re-reads
    each issue's state**, stopping loudly if one is still open. A close is an **irreversible
    outward-facing** write and belongs where the conversational context can account for it — run from

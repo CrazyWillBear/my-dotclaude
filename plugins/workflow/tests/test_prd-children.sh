@@ -6,9 +6,9 @@
 # PRD #N".  Two callers share it:
 #
 #   * prd-reap.sh    — to decide whether every child is closed (PRD ready).
-#   * /orchestrate   — to scope the round's ready set to the PRD being built,
-#                      instead of a repo-wide `--label ready-for-agent` sweep
-#                      that can pick up work the user never asked for (#77
+#   * /orchestrate   — to resolve the run's issue allowlist to the PRD being
+#                      built, instead of a repo-wide `--label ready-for-agent`
+#                      sweep that can pick up work the user never asked for (#77
 #                      defect A: an unrelated issue got built into a PRD branch).
 #
 # Contract:

@@ -56,8 +56,13 @@ fi
 
 # Read the file once for all content checks.
 content=""
+js_block=""
 if [ -f "$SKILL_FILE" ]; then
     content="$(cat "$SKILL_FILE")"
+    # The ```js scheduler block ALONE. Absence checks run against it rather than the
+    # whole file: the surrounding prose deliberately names the wrong forms in order to
+    # warn about them, and must stay free to do so.
+    js_block="$(awk '/^```js$/{inblock=1; next} /^```$/{inblock=0} inblock' "$SKILL_FILE")"
 fi
 
 # ---------------------------------------------------------------------------
@@ -192,7 +197,7 @@ echo "test: a missing tier label is backfilled via classify-task and persisted"
 assert_contains "backfill runs the classify-task skill" "$content" "classify-task"
 assert_contains "backfill runs classify in batch mode" "$content" "--no-confirm"
 assert_contains "the backfilled tier is written back as a label" "$content" "gh issue edit <N> --add-label tier:"
-assert_contains "the tier is auto-accepted, never confirmed" "$content" "never prompt"
+assert_contains "the tier is auto-accepted, never confirmed" "$content" "Never prompt** to confirm or override a tier"
 assert_contains "conflicting tier labels resolve to the highest" "$content" "highest tier wins"
 
 echo "test: --complexity is GONE — the label is the only way to set a tier"
@@ -205,7 +210,7 @@ assert_not_contains "no pinned-complexity workflow input" "$content" "complexity
 # a Workflow can't run gh. The main thread now fetches the whole graph at launch.
 echo "test: the launch graph is fetched by scope-graph.sh (no picker agent)"
 assert_contains "scope-graph helper invoked" "$content" 'scripts/scope-graph.sh'
-assert_contains "graph is the workflow's world" "$content" "graph"
+assert_contains "graph is the workflow's world" "$content" "that JSON **is the workflow's world**"
 assert_contains "graph carries each issue's blockedBy refs" "$content" "blockedBy"
 assert_contains "graph carries the blocker states" "$content" "blockerStates"
 assert_contains "the graph is frozen at launch" "$content" "frozen at launch"
@@ -250,10 +255,14 @@ assert_contains "merger handed the queue in ascending issue number" "$content" "
 # round loop re-read GitHub each round, which gave this for free; the in-memory
 # scheduler must hold them explicitly.
 echo "test: dependents of a CAPPED merge are held for the rest of the run"
-assert_contains "held set named" "$content" "held"
-assert_contains "capped merge holds its direct dependents" "$content" "capped"
-assert_contains "the hold lasts the rest of the run" "$content" "rest of the run"
+assert_contains "held set named" "$content" "added to **\`held\`**"
+assert_contains "capped merge holds its direct dependents" "$content" "merged CAPPED holds its dependents"
+assert_contains "the hold lasts the rest of the run" "$content" "stays held **for the rest of the run**"
 assert_contains "the reason is a known-defective slice" "$content" "known-defective"
+# `capRemainder` is an ARRAY of findings (step 8 must FILE them) — and `[]` is truthy.
+# Testing it for truthiness would hold every clean merge's dependents for the whole run:
+# the scope never drains and the run silently builds only the root issues.
+assert_contains "the cap-remainder hold tests .length, not truthiness" "$js_block" "capRemainder?.length"
 
 # --- per-issue in-workflow tier routing + launch-resolved ROSTER (#64, #53) ---
 # orchestrate does not embed the tier table: the main thread resolves each tier via
@@ -443,13 +452,9 @@ assert_contains "ledger summary still printed" "$content" "mock-debt: N open"
 # nothing here; the opts key is `agentType`. Bare agent() returns a string, so any
 # spawn whose result is destructured needs `schema:`.
 #
-# The absence checks run against the ```js block ALONE, not the whole file: the
-# surrounding prose deliberately names both wrong forms in order to warn about
-# them, and must stay free to do so.
-js_block=""
-if [ -f "$SKILL_FILE" ]; then
-    js_block="$(awk '/^```js$/{inblock=1; next} /^```$/{inblock=0} inblock' "$SKILL_FILE")"
-fi
+# The absence checks run against the ```js block ALONE (extracted at the top of this
+# file), not the whole file: the surrounding prose deliberately names both wrong forms
+# in order to warn about them, and must stay free to do so.
 
 echo "test: schematic uses the real two-arg agent(prompt, opts) form"
 if [ -n "$js_block" ]; then
@@ -494,6 +499,116 @@ assert_not_contains "no bare const { maxParallel } = args in the js block" "$js_
 
 echo "test: implementer spawns don't set isolation (the worktree is created per issue)"
 assert_not_contains "isolation opt is gone from implementer spawns" "$js_block" "isolation:"
+
+# --- the schematic must be genuinely RUNNABLE (prose bugs are real bugs) -----
+# The js block is transcribed VERBATIM into the script handed to the Workflow tool, so
+# a temporal-dead-zone reference, an undefined helper, or an unguarded await is a real
+# crash on a real run — not a documentation nit.
+
+# First line in the js block containing <needle>, or empty.
+js_line() { printf '%s\n' "$js_block" | grep -n -m1 -F -- "$1" | cut -d: -f1; }
+# <def> must be EVALUATED before <use> is reached. A `const` arrow does not hoist: it
+# sits in the temporal dead zone until its declaration runs, so a call above it throws
+# ReferenceError. (A `function` declaration does hoist — those are fine anywhere.)
+assert_before() {
+    local dl ul
+    dl="$(js_line "$2")"; ul="$(js_line "$3")"
+    if [ -n "$dl" ] && [ -n "$ul" ] && [ "$dl" -lt "$ul" ]; then
+        ok "$1"
+    else
+        no "$1 (def at line '${dl:-MISSING}', first use at line '${ul:-MISSING}')"
+    fi
+}
+
+echo "test: every const helper is declared before the scheduler loop reaches it (no TDZ)"
+assert_before "absorbReview declared above the scheduler loop" "const absorbReview" "while (true)"
+assert_before "mediumOrWorse declared above the scheduler loop" "const mediumOrWorse " "while (true)"
+assert_before "orderFindings declared above the scheduler loop" "const orderFindings" "while (true)"
+assert_before "mergeManifest declared above the scheduler loop" "const mergeManifest" "while (true)"
+assert_before "ghWriteManifest declared above the scheduler loop" "const ghWriteManifest" "while (true)"
+assert_before "log declared above the scheduler loop" "const log " "while (true)"
+
+echo "test: the schematic defines every helper it calls — no guess-the-return-type"
+assert_contains "mediumOrWorse defined (returns an ARRAY of findings)" "$js_block" "const mediumOrWorse"
+assert_contains "mediumOrWorseOpen defined (returns a BOOLEAN)" "$js_block" "const mediumOrWorseOpen"
+assert_contains "orderFindings defined (criticals, then highs, then mediums)" "$js_block" "const orderFindings"
+assert_contains "mergeManifest defined (the merger's input contract)" "$js_block" "const mergeManifest"
+assert_contains "ghWriteManifest defined (the bookkeeper's input contract)" "$js_block" "const ghWriteManifest"
+# A Workflow script cannot shell out, so it cannot rev-parse. The pre-fix HEAD rides
+# back on BUILT_SCHEMA instead of being read from git.
+assert_not_contains "no revParse — a Workflow cannot run git" "$js_block" "revParse"
+assert_contains "the pre-fix HEAD comes back on BUILT_SCHEMA" "$js_block" "let preFix = built.head"
+
+echo "test: a bookkeeping failure never costs a close (allSettled, not all)"
+assert_contains "bookkeeping is awaited with allSettled" "$js_block" "Promise.allSettled(bookkeeping)"
+assert_not_contains "a rejecting filing must not discard the return" "$js_block" "Promise.all(bookkeeping)"
+
+echo "test: a dead merger drains the run — it never rejects the chain"
+assert_contains "the merger's result is guarded before it is read" "$js_block" "if (!merged"
+assert_contains "runIssue catches instead of rejecting its chain" "$js_block" "} catch ("
+assert_contains "a caught chain failure drains rather than kills" "$content" "drain-then-stop, not kill"
+
+echo "test: the merger's returned issue numbers are re-checked against the allowlist"
+# A hallucinated number would otherwise become an irreversible `gh issue close` on an
+# unrelated issue in Step 2.
+assert_contains "out-of-allowlist merge results are dropped" "$js_block" "outside the run's allowlist"
+
+echo "test: no lost merge — a chain re-pumps until its issue leaves the queue"
+# mergeWorker is cleared in a .finally() microtask AFTER runMerges exits its while
+# check: a chain that pushes in that window rides an already-settled promise and frees
+# its slot while its issue sits in the queue forever.
+assert_contains "the chain re-pumps until its issue is out of the queue" "$js_block" "mergeQueue.includes(issue)"
+assert_contains "the main loop drains the queue before breaking" "$js_block" "mergeWorker || mergeQueue.length"
+
+echo "test: launch guards fail loud BEFORE any spawn is paid for"
+assert_contains "an unfetchable scoped issue refuses the run" "$js_block" 'i.state === "unknown"'
+assert_contains "no OPEN scoped issue refuses the run (silent-empty class)" \
+    "$js_block" '!graph.issues.some(i => i.state === "open")'
+assert_contains "an untiered open issue refuses the run" "$js_block" "!ROSTER[i.tier]"
+assert_contains "the empty/partial-scope refusal is loud" "$content" "fail loud before any spawn"
+
+echo "test: the spawn prompts interpolate real values, never placeholders"
+assert_not_contains "no literal <base> placeholder in a prompt" "$js_block" "<base>.."
+assert_contains "the review diff names the real base branch" "$js_block" '${baseBranch}..issue-'
+assert_contains "the fix implementer is handed its worktree path" "$js_block" "worktreeOf(issue.n)"
+assert_contains "the fix implementer is handed its branch" "$js_block" 'branch: issue-${issue.n}'
+assert_contains "the fix implementer is handed the done-check" "$js_block" 'done-check: ${doneCheck}'
+
+echo "test: bookkeeping only spawns when there is something to file"
+assert_contains "fileFollowUps is guarded on lows/cap-remainder" "$js_block" "issue.lows?.length"
+
+# --- the return value SERVES the report (Step 2's contract) ------------------
+# Step 2's report demands each issue's tier, verdict, the HELD dependents, the lows /
+# cap-remainder filed and the stop reason. A return of just { mergedIssues, stopReason }
+# makes that report unimplementable — every other field dies inside the Workflow.
+echo "test: the workflow return carries everything Step 2's report prints"
+assert_contains "merged issues + their merge commits" "$js_block" "mergedIssues:"
+assert_contains "the stop reason" "$js_block" "stopReason,"
+assert_contains "the held dependents" "$js_block" "held: [...held]"
+assert_contains "a per-issue record (tier, verdict, filings)" "$js_block" "perIssue:"
+assert_contains "the issues never built" "$js_block" "unbuilt:"
+assert_contains "the run log" "$js_block" "log: runLog"
+
+echo "test: Step 2's report spec consumes exactly the returned fields"
+assert_contains "report reads perIssue" "$content" "\`perIssue\`"
+assert_contains "report reads held" "$content" "\`held\`"
+assert_contains "report reads unbuilt" "$content" "\`unbuilt\`"
+assert_contains "report reads the run log" "$content" "\`log\`"
+
+# --- the re-block ref must PARSE (scope-graph's BARE_REF) --------------------
+# The graph parser takes a blocker ref only as a whole line (`#N` or `- #N`). A haiku
+# bookkeeper writing `- #99 — fix the parser nit` is then invisible to the next run's
+# scheduler, which builds the dependent on unpaid debt — the dangerous direction.
+echo "test: step 8 states the EXACT ## Blocked by ref format the graph parser reads"
+assert_contains "bare ref, one per line" "$content" "bare \`#N\` on its own line"
+assert_contains "no trailing prose on the ref line" "$content" "no trailing prose"
+
+# --- the conflict-stop instruction must be implementable --------------------
+# The Workflow cannot run gh, the merger is forbidden from commenting, and the
+# bookkeeper only files follow-ups — so "comment that issue" had no owner.
+echo "test: a conflict-stop is reported, not commented by a component that cannot"
+assert_not_contains "the unimplementable comment instruction is gone" "$content" "comment that issue"
+assert_contains "the conflict-stop is surfaced in the final report" "$content" "conflictStop"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

@@ -72,14 +72,15 @@ assert_contains "every slice is ready-for-agent" "$content" "--label ready-for-a
 
 # --- tier at slice time ----------------------------------------------------
 echo "test: each slice is assigned a complexity tier at slice time"
-assert_contains "tier step named"            "$content" "tier"
+assert_contains "tier step named"            "$content" "Give each slice a complexity tier"
 assert_contains "classify-task rubric cited" "$content" "classify-task"
 # Size is not the signal: a seam move or new infrastructure is complex, mechanical
 # no-decision edits are trivial. Slice size correlates with neither.
 assert_contains "the rubric's load-bearing rule is quoted" "$content" "Size is not the signal"
-assert_contains "seam moves / new infrastructure are complex" "$content" "complex"
-assert_contains "mechanical no-decision edits are trivial"    "$content" "trivial"
-assert_contains "the tier is grounded in the exploration already done" "$content" "already"
+assert_contains "seam moves / new infrastructure are complex" "$content" "**new infrastructure**, **seams move**"
+assert_contains "mechanical no-decision edits are trivial"    "$content" "mechanical, no design decisions"
+assert_contains "the tier is grounded in the exploration already done" \
+    "$content" "ground it in the exploration you have **already** done"
 
 echo "test: the three tier labels are ensured before the slices are filed"
 assert_contains "tier:trivial label created"  "$content" "gh label create tier:trivial"

@@ -26,6 +26,10 @@
 #   * the tier is a PERSISTED LABEL (`tier:trivial|standard|complex`), null when
 #     absent (→ /orchestrate backfills it); conflicting double-labels resolve to
 #     the HIGHEST tier, so a mislabel can never route real work to a cheap model.
+#   * a FAILED mock-debt ledger query is NOT "no open mock-debt".  Collapsing it to
+#     `[]` would silently DISARM the e2e-gate — the single enforcement point of the
+#     whole anti-mock-drift design — so it takes the documented loud path instead:
+#     silence + exit 0, which fires the workflow's empty-graph throw.
 #
 # Run: bash plugins/workflow/tests/test_scope-graph.sh   (non-zero if any fail)
 
@@ -59,6 +63,7 @@ print($1)" 2>/dev/null; }
 #   $WORK/issue/<N>        — JSON for `gh issue view <N> --json ...`
 #   $WORK/issue_error/<N>  — sentinel: make that fetch exit non-zero
 #   $WORK/mock_debt        — JSON array for `gh issue list --label mock-debt ...`
+#   $WORK/list_error       — sentinel: make `gh issue list` exit non-zero (auth blip)
 GH_BIN="$WORK/bin/gh"
 mkdir -p "$WORK/bin" "$WORK/issue" "$WORK/issue_error"
 
@@ -82,6 +87,10 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
 fi
 
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+    if [ -f "$WORK_DIR/list_error" ]; then
+        printf 'gh: could not authenticate\n' >&2
+        exit 1
+    fi
     if [ -f "$WORK_DIR/mock_debt" ]; then
         cat "$WORK_DIR/mock_debt"
         exit 0
@@ -180,6 +189,25 @@ assert_equals "open mock-debt numbers collected" "$(jget 'd["mockDebtOpen"]' "$o
 rm -f "$WORK/mock_debt"
 out="$(run_graph 30)"
 assert_equals "no open mock-debt -> empty list" "$(jget 'd["mockDebtOpen"]' "$out")" "[]"
+
+# ---------------------------------------------------------------------------
+echo "test: a FAILED ledger query is not 'no debt' — it prints nothing and exits 0"
+# An auth blip or a transient API error must never be indistinguishable from an empty
+# ledger: collapsing the failure to [] would silently DISARM the e2e-gate, the single
+# enforcement point of the whole anti-mock-drift design. The loud path instead: no
+# output, exit 0 — which fires the workflow's empty-graph throw.
+: >"$WORK/list_error"
+out="$(run_graph 30 2>/dev/null)"; rc=$?
+assert_empty  "no graph is printed when the ledger query fails" "$out"
+assert_equals "exit 0 (fail-open, like every other failure path)" "$rc" "0"
+rm -f "$WORK/list_error"
+
+# ---------------------------------------------------------------------------
+echo "test: the parsing rules warn that a blocker ref must be an ISSUE, not a PR"
+# `gh issue view <PR#>` fails, so a PR ref lands as state "unknown" — never "closed" —
+# and its dependent is never ready. Fail-closed is right; being undocumented is not.
+header="$(cat "$GRAPH")"
+assert_contains "PR-number blocker ref documented" "$header" "PR number"
 
 # ---------------------------------------------------------------------------
 echo "test: a failed issue fetch is kept as state 'unknown', never silently dropped"

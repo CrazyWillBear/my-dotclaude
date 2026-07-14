@@ -2,14 +2,20 @@
 #
 # Tests for agents/merger.md — the /orchestrate merger agent prose.
 #
-# The agent is prose — not executable code — so we validate its frontmatter pins:
+# The agent is prose — not executable code — so we validate its frontmatter pins
+# and the output contract orchestrate's MERGE_SCHEMA reads:
 #
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter pins name: merger, model: opus, and effort: xhigh.
 #      orchestrate's merger spawn passes no explicit model or effort, so this
-#      pin governs outright. The merger is never tier-routed: it runs once per
-#      round, after the slices, and a bad conflict resolution corrupts the base
-#      branch for every issue in the round — so it never gets a cheap model.
+#      pin governs outright. The merger is never tier-routed: it is the single
+#      serial worker draining orchestrate's merge queue, and a bad conflict
+#      resolution corrupts the base branch for every issue in the run — so it
+#      never gets a cheap model.
+#   3. The per-issue output line carries the MERGE COMMIT SHA. MERGE_SCHEMA
+#      requires it and the main thread quotes it in the close comment ("Merged in
+#      <mergeCommit>"); an output contract that never asks for it leaves schema
+#      coercion to invent one.
 #
 # Run: bash plugins/workflow/tests/test_merger-agent.sh  (non-zero if any fail)
 
@@ -47,6 +53,12 @@ assert_contains "model pinned to opus" "$content" "model: opus"
 assert_not_contains "cheap merger model is gone" "$content" "model: sonnet"
 assert_not_contains "model: inherit is gone" "$content" "model: inherit"
 assert_contains "effort pinned to xhigh" "$content" "effort: xhigh"
+
+# ---------------------------------------------------------------------------
+echo "test: the output contract asks for the merge commit sha (MERGE_SCHEMA needs it)"
+assert_contains "merge commit sha requested per issue" "$content" "merge commit sha"
+assert_contains "the sha is read off the base branch" "$content" "rev-parse HEAD"
+assert_contains "a conflict-stop names its issue and reason" "$content" "conflict-stop"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

@@ -18,8 +18,10 @@ context can account for it — see Step 0a's note on #77.
 
 `$ARGUMENTS` = `[--max N] [--max-cycles K] [--prd N] [--issues N,N,...]` —
 **`--max N`** = the number of **concurrent issues in flight** (default **5**), *not* a batch size:
-each slot runs its own plan → build → review/fix → merge chain, and the moment one issue merges its
-dependents unblock and the freed slot **takes the** next ready issue. **`--max-cycles K`** = the
+each slot runs its own plan → build → review/fix → merge chain, and when an issue's **merge lands**
+its dependents unblock and the freed slot **takes the** next ready issue. (Merging is serial and
+batched — one merger spawn drains the whole queue — so a slot frees when the **batch carrying its
+issue** lands, not the instant that one branch merges.) **`--max-cycles K`** = the
 per-issue fix-loop cap (default **2**) — the **initial review is free** and the cap **counts
 re-reviews**, each re-review decrementing the budget. **`--prd N`** scopes the run to PRD #N's child
 slices, and **`--issues N,N,...`** scopes it to a literal issue list (Step 0a).
@@ -206,6 +208,18 @@ normalize with `typeof args === 'string' ? JSON.parse(args) : args`, then **thro
 is missing or not a number, or if the `graph` has no issues, and only then destructure. A workflow
 that throws is loud; a workflow that reads `undefined` exits clean having done nothing.
 
+**Then guard the graph's *contents* — fail loud before any spawn.** A non-empty graph is not a
+runnable one, and the same silent-empty failure walks in through the side door:
+- **any scoped issue whose fetch failed** (`state: "unknown"` — an unauthenticated `gh`, a deleted
+  issue) → **throw**. `scope-graph.sh` deliberately keeps it rather than dropping it, but nothing
+  downstream reacts: `isReady` wants `open`, so the run would admit nothing, break on its first pass
+  and return a clean empty success on a scope that was never really fetched;
+- **no scoped issue is `open`** → **throw**, for the same reason;
+- **any open issue with no tier** (`!ROSTER[i.tier]`) → **throw**. Tier resolution above backfills
+  every one, so a null tier here means `classify-task` or the label write failed — and
+  `ROSTER[null].planner` is a `TypeError` that would kill the chain *after* the run already paid for
+  its first build.
+
 ```js
 export const meta = {
   name: "orchestrate-scheduler",
@@ -229,15 +243,22 @@ if (!input.graph || !Array.isArray(input.graph.issues) || input.graph.issues.len
   throw new Error(`empty graph: refusing to pick work repo-wide — see Step 0a`);
 const { baseRepo, baseBranch, maxParallel, maxCycles, doneCheck, graph } = input;
 
-// JSON Schemas for the spawns whose results are read as objects. Without these,
-// agent() hands back a string and every property access below is undefined.
-//   BUILT_SCHEMA  → { n, branch, failed }
-//   REVIEW_SCHEMA → { findings: [{ severity, path, summary }], mockDebtFiled: [numbers] }
+// JSON Schemas for the spawns whose results are read as objects — transcribe each as a real JSON
+// Schema object. Without these, agent() hands back a string and every property access below is
+// undefined.
+//   BUILT_SCHEMA  → { n, branch, head, failed }
+//                    // head: the branch's HEAD sha AFTER this build. A Workflow cannot shell out,
+//                    // so it cannot rev-parse — the sha must RIDE BACK on the result or the fix
+//                    // loop has no <pre-fix HEAD> to scope its re-review to.
+//   REVIEW_SCHEMA → { verdict, findings: [{ severity, path, summary }], mockDebtFiled: [numbers] }
+//                    // verdict: my-review's one-line verdict — Step 2's report prints it per issue
 //                    // mockDebtFiled: the mock-debt issues THIS review filed — they union into
 //                    // openMockDebt, so the e2e-gate is held by debt the run itself created
-//   MERGE_SCHEMA  → { mergedIssues: [{ n, mergeCommit }], conflictStop, doneCheckRed }
+//   MERGE_SCHEMA  → { mergedIssues: [{ n, mergeCommit }], conflictStop: { n, reason } | null,
+//                     doneCheckRed }
 //                    // mergeCommit rides along: the main thread quotes it in the close comment
 //                    // (Step 2), so the merger must return it, not just the issue number
+//   FILED_SCHEMA  → { filed: [numbers] }   // the follow-up issues the bookkeeper actually created
 
 // Tier → { planner, implementer, reviewer } × { model, effort }. The main thread resolves each
 // tier through resolve-tier.sh at launch (Step 1) and inlines the values below — resolved at
@@ -254,13 +275,44 @@ const ROSTER = {
               reviewer:    { model: "<complex_reviewer_model>",    effort: "<complex_reviewer_effort>"    } },
 };
 
+// ---- launch guards: FAIL LOUD BEFORE ANY SPAWN, never after paying for the first build ----
+// scope-graph.sh KEEPS an unfetchable issue as state "unknown" rather than dropping it (a drop
+// would narrow your scope behind your back). But nothing downstream reacted to "unknown": isReady
+// wants "open", so an unauthenticated `gh` would yield a non-empty graph in which NOTHING is
+// admissible — the loop breaks on its first pass and returns a CLEAN EMPTY SUCCESS. That is the
+// #53/#70/#73 silent-empty class the parse-or-throw above exists to kill, walking in through the
+// side door. React to it here.
+const unfetched = graph.issues.filter(i => i.state === "unknown");
+if (unfetched.length)
+  throw new Error(`graph fetch failed for ${unfetched.map(i => `#${i.n}`).join(", ")}: refusing to run on a partial scope`);
+if (!graph.issues.some(i => i.state === "open"))
+  throw new Error(`no scoped issue is open: nothing to build — refusing a silent empty success`);
+// Step 0a backfills every missing tier, so a null tier HERE means classify-task or the
+// `gh issue edit --add-label` write failed for that issue. ROSTER[null] is undefined, and
+// ROSTER[issue.tier].planner.model would then TypeError mid-chain — after the run already paid for
+// its first build. Refuse at launch instead.
+const untiered = graph.issues.filter(i => i.state === "open" && !ROSTER[i.tier]);
+if (untiered.length)
+  throw new Error(`untiered issue(s) ${untiered.map(i => `#${i.n}`).join(", ")}: Step 0a's tier backfill did not land`);
+
 // ---- state (all plain data — the scheduler never asks a model anything) ----
+const runLog     = [];                    // the run's own log — RETURNED, so the report can print it
+const log        = m => runLog.push(m);   // a Workflow has no console; the log rides home in the result
 const byNumber   = n => graph.issues.find(i => i.n === n);
 const dependents = n => graph.issues.filter(i => i.blockedBy.includes(n));   // direct dependents, in scope
+const worktreeOf = n => `${baseRepo}/.worktrees/issue-${n}`;                 // step 4's per-issue worktree
 const closed = new Set([                                    // launch-frozen: states, not queries
   ...Object.entries(graph.blockerStates).filter(([, s]) => s === "closed").map(([n]) => Number(n)),
   ...graph.issues.filter(i => i.state === "closed").map(i => i.n),
 ]);
+// A blocker whose state could not be read — e.g. a `## Blocked by` ref aimed at a PR, which
+// `gh issue view` cannot resolve — is never "closed", so its dependent can never be ready. Failing
+// CLOSED is right; vanishing from the report is not. Say it once, at launch.
+const unknownBlockers = Object.entries(graph.blockerStates)
+  .filter(([, s]) => s === "unknown").map(([n]) => `#${n}`);
+if (unknownBlockers.length)
+  log(`blockers with unknown state (their dependents can never become ready): ${unknownBlockers.join(", ")}`);
+
 // The RE-ADMIT GUARD (#77 fix 3). The workflow no longer closes the issues it merges — the main
 // thread does, on return (Step 2). So a merged issue is STILL OPEN in the frozen graph. Track what
 // this run merged and never re-admit it: that makes the run convergent WHETHER OR NOT the close ever
@@ -272,12 +324,56 @@ const openMockDebt  = new Set(graph.mockDebtOpen);   // seeded at launch, unione
 const inFlight      = new Map();          // issue number → its chain promise (one per slot)
 const mergeQueue    = [];                 // built+reviewed issues waiting to merge (SERIAL)
 const bookkeeping   = [];                 // fire-and-forget filing promises, awaited before the return
-let mergeWorker = null;                   // the ONE merge worker's promise, or null
-let stopReason  = null;                   // set → DRAIN MODE: admit nothing new, let in-flight finish
+let mergeWorker  = null;                  // the ONE merge worker's promise, or null
+let stopReason   = null;                  // set → DRAIN MODE: admit nothing new, let in-flight finish
+let conflictStop = null;                  // { n, reason } from the merger — Step 2's report names it
 
 const drain = reason => {                 // drain-then-stop: never kill in-flight work mid-chain
   if (!stopReason) { stopReason = reason; log(`draining: ${reason}`); }
 };
+
+// ---- findings: ONE definition of "medium or worse", so nothing has to guess its return type ----
+const SEVERITY_RANK = { critical: 0, high: 1, medium: 2 };
+// Returns an ARRAY of findings (possibly empty), ordered criticals → highs → mediums, each group
+// ascending by path. It must be an array because step 8 has to FILE the cap-remainder, not merely
+// count it — and an empty array is TRUTHY, so every caller tests `.length`, never the value itself.
+const mediumOrWorse = review => (review?.findings || [])
+  .filter(f => f && f.severity in SEVERITY_RANK)
+  .sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]
+                  || String(a.path).localeCompare(String(b.path)));
+const mediumOrWorseOpen = review => mediumOrWorse(review).length > 0;   // the fix loop's condition
+// The fix work order: those ordered findings rendered as text. Plain code — NO planner spawn.
+const orderFindings = review => mediumOrWorse(review)
+  .map(f => `- [${f.severity}] ${f.path} — ${f.summary}`).join("\n");
+// Absorb a review: union its mock-debt filings into the gate's hold set, and ACCUMULATE its lows.
+// Lows accumulate because a delta-scoped re-review will not re-list a low the first review found,
+// and lows are never fixed in-run — reading them off the final review alone would lose most of them.
+const findingKey   = f => `${f.severity}|${f.path}|${f.summary}`;
+const absorbReview = (issue, review) => {
+  (review?.mockDebtFiled || []).forEach(n => openMockDebt.add(n));
+  for (const f of review?.findings || [])
+    if (f?.severity === "low" && !issue.lows.some(l => findingKey(l) === findingKey(f))) issue.lows.push(f);
+};
+
+// ---- the two agent input manifests (plain templating — DEFINED, never left to the transcriber) ----
+const mergeManifest = batch => [
+  `base repo (a linked worktree — the guard allows writes here): ${baseRepo}`,
+  `base branch: ${baseBranch}`,
+  `done-check: ${doneCheck}`,
+  `merge these serially, in ascending issue number:`,
+  ...batch.map(i => `- #${i.n} · branch issue-${i.n} · worktree ${worktreeOf(i.n)}`),
+].join("\n");
+
+const ghWriteManifest = issue => [
+  `issue #${issue.n} — merged in ${mergedThisRun.get(issue.n)}`,
+  `lows → ONE grouped follow-up, label review-fix ONLY (parked; never ready-for-agent):`,
+  ...issue.lows.map(f => `- ${f.path} — ${f.summary}`),
+  `cap-remainder → review-fix + ready-for-agent (real work, genuinely ready for a future run):`,
+  ...(issue.capRemainder || []).map(f => `- [${f.severity}] ${f.path} — ${f.summary}`),
+  `re-block these dependents onto whatever you file: ${dependents(issue.n).map(d => `#${d.n}`).join(", ") || "none"}`,
+  `a blocker ref MUST be a bare "#N" alone on its own line under "## Blocked by" — no trailing prose,`,
+  `or the next run's graph parser will not see it and will build the dependent on unpaid debt.`,
+].join("\n");
 
 // Readiness is a topological check over the frozen graph — PLAIN JS, no model call. (It used to be a
 // haiku "picker" agent only because a Workflow can't run gh; a model doing DAG arithmetic can, and
@@ -300,16 +396,44 @@ while (true) {
     inFlight.set(next.n, runIssue(next));
   }
   if (inFlight.size === 0) {
-    if (mergeWorker) { await mergeWorker; continue; }           // let the last merges land, re-scan
+    // Drain the merge QUEUE too, not just a running worker: a chain can free its slot in the window
+    // between runMerges exiting its `while (mergeQueue.length)` check and the `.finally()` that
+    // clears mergeWorker — leaving its issue queued with nobody left to merge it.
+    if (mergeWorker || mergeQueue.length) { await pumpMerge(); continue; }  // let the last merges land
     break;                                                      // scope drained (or fully drained by a stop)
   }
   await Promise.race([...inFlight.values()]);                   // a chain finished → re-scan, refill
 }
-await Promise.all(bookkeeping);                                 // never lose a filing to an early return
-return { mergedIssues: [...mergedThisRun].map(([n, mergeCommit]) => ({ n, mergeCommit })), stopReason };
+// allSettled, NOT all: bookkeeping is fire-and-forget, and one rejected filing must never discard
+// the return below. A bookkeeping failure cannot be allowed to cost a CLOSE — an unclosed merged
+// issue is what the next run rebuilds from scratch (the 1.84M-token failure mode).
+await Promise.allSettled(bookkeeping);
+// The return SERVES Step 2's report: every column the report prints comes from here (or from the
+// main thread's own Step-0a record). A bare { mergedIssues, stopReason } would make the report
+// unimplementable — the verdicts, the held dependents and the filings would die inside the Workflow.
+return {
+  mergedIssues: [...mergedThisRun].map(([n, mergeCommit]) => ({ n, mergeCommit })),
+  stopReason,
+  conflictStop,                                    // { n, reason } | null — the report names it
+  held: [...held],                                 // dependents of a capped merge, held all run
+  perIssue: graph.issues.filter(i => i.attempted).map(i => ({
+    n:            i.n,
+    tier:         i.tier,
+    verdict:      i.review?.verdict ?? null,       // my-review's final verdict
+    lowsFiled:    i.lows.length,
+    capRemainder: (i.capRemainder || []).length,   // medium+ still open at the cap, filed anyway
+    followUps:    i.followUps || [],               // the review-fix issues bookkeeping actually filed
+  })),
+  unbuilt: graph.issues.filter(i => !i.attempted).map(i => i.n),   // admitted by nobody — blocked, held, or drained past
+  log: runLog,
+};
 
 // ---- one slot's chain: plan → build → review → fix loop → merge ----
+// Every prompt below interpolates REAL values (the worktree path, the branch, the base branch, the
+// done-check). A literal transcription of a placeholder hands the agent the placeholder.
 async function runIssue(issue) {
+  issue.attempted = true;                  // → the report's `perIssue` / `unbuilt` split
+  issue.lows      = [];                    // accumulated across every review of this issue
   try {
     // 1. Plan — STANDARD/COMPLEX only. No plan comment, no gate — autonomous.
     //    trivial: NO plan stage at all — issue.plan stays null and the implementer self-plans (it
@@ -317,26 +441,29 @@ async function runIssue(issue) {
     //    No schema — the plan text IS the return value, and it is the work order.
     //    The planner gets the issue's COMMENTS as well as its body — a comment may hold the answer.
     issue.plan = issue.tier === "trivial" ? null : await agent(
-      `mode=plan · issue #${issue.n} body + comments in → plan text out; see step 3
+      `mode=plan · issue #${issue.n} body + comments in → plan text out; see step 3.
+       done-check: ${doneCheck}
        \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
       { agentType: "workflow:planner",
         model:     ROSTER[issue.tier].planner.model,
         effort:    ROSTER[issue.tier].planner.effort });
 
     // 2. Build — one worktree, one implementer. Work order = the plan text when there is one; for a
-    //    trivial issue (issue.plan === null) the ISSUE BODY is the work order.
+    //    trivial issue (issue.plan === null) the ISSUE BODY is the work order. The worktree is the
+    //    per-issue one from step 4, and its ABSOLUTE path + branch ride in the prompt.
     const built = await agent(
-      issue.plan
-        ? `Work order = the plan below (steps + ## Acceptance criteria + done-check), plus the issue's
-           comments, the worktree path, the branch, and a commit-scope hint from the repo log.
-           \n\n${issue.plan}\n\n## Issue comments\n${issue.comments}`
-        : `Work order = issue #${issue.n} below — SELF-PLAN it (trivial tier, no planner ran), then
-           build it TDD-first. Plus the worktree path, the branch, and a commit-scope hint.
-           \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
+      `${issue.plan
+          ? `Work order = the plan below — ordered steps + ## Acceptance criteria + the done-check.\n\n${issue.plan}`
+          : `Work order = issue #${issue.n} below. Trivial tier — no planner ran: SELF-PLAN it, then build it TDD-first.\n\n${issue.body}`}
+       \n\n## Issue comments\n${issue.comments}
+       \n\n## Where to work
+       worktree: ${worktreeOf(issue.n)} · branch: issue-${issue.n} · cut from ${baseBranch} in ${baseRepo}
+       done-check: ${doneCheck}
+       commit scope: match the repo's git log convention.`,
       { agentType: "workflow:implementer",
         model:     ROSTER[issue.tier].implementer.model,
         effort:    ROSTER[issue.tier].implementer.effort,
-        // worktree created per issue (step 4 prose), owned by the implementer — no isolation opt here
+        // the per-issue worktree is created from the base branch per step 4 — no isolation opt here
         schema:    BUILT_SCHEMA });
     if (!built || built.failed) { drain(`implementer failure on #${issue.n}`); return; }   // null = agent died
 
@@ -345,54 +472,73 @@ async function runIssue(issue) {
     //    reports what it filed as mockDebtFiled, which unions into openMockDebt so the e2e-gate is
     //    held by debt THIS RUN created, not just debt that predated it.
     issue.review = await agent(
-      `Review the branch diff <base>..issue-${issue.n}. Plan for conformance context:\n\n${issue.plan}
+      `Review issue #${issue.n}'s branch diff ${baseBranch}..issue-${issue.n} in ${worktreeOf(issue.n)}.
+       Conformance context (its plan — or, for a trivial issue, its body):\n\n${issue.plan || issue.body}
        \n\nIssue #${issue.n}'s comments — ground truth for the review:\n${issue.comments}`,
       { agentType: "personal-tools:my-review",
         model:     ROSTER[issue.tier].reviewer.model,
         effort:    ROSTER[issue.tier].reviewer.effort,
         schema:    REVIEW_SCHEMA });
-    absorbMockDebt(issue.review);
+    absorbReview(issue, issue.review);
+    // The delta base for the re-review. A Workflow cannot shell out, so it cannot rev-parse — the
+    // sha rides back on BUILT_SCHEMA.head instead.
+    let preFix = built.head;
     let cycles = 0;
     while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
-      const preFix = revParse(`issue-${issue.n}`);                  // <pre-fix HEAD> for the delta
       const fixOrder = orderFindings(issue.review);                 // plain code: critical → high →
                                                                     // medium, ascending path. NO
                                                                     // planner spawn.
-      await agent(
+      const fixed = await agent(
         `Work order = these review findings — fix each, TDD-first, then run the done-check.
-         Do NOT re-plan the issue; fix exactly what is listed.\n\n${fixOrder}`,
+         Do NOT re-plan the issue; fix exactly what is listed.
+         worktree: ${worktreeOf(issue.n)} · branch: issue-${issue.n} · done-check: ${doneCheck}
+         \n\n${fixOrder}`,
         { agentType: "workflow:implementer",
           model:     ROSTER[issue.tier].implementer.model,
           effort:    ROSTER[issue.tier].implementer.effort,
           schema:    BUILT_SCHEMA });
       issue.review = await agent(
-        `(a) Verify the prior findings are addressed, (b) review ONLY the delta ${preFix}..HEAD`,
+        `Issue #${issue.n} in ${worktreeOf(issue.n)} (branch issue-${issue.n}):
+         (a) verify each prior finding below is addressed, (b) review ONLY the delta ${preFix}..HEAD.
+         \n\n${fixOrder}`,
         { agentType: "personal-tools:my-review",
           model:     ROSTER[issue.tier].reviewer.model,
           effort:    ROSTER[issue.tier].reviewer.effort,
           schema:    REVIEW_SCHEMA });
-      absorbMockDebt(issue.review);
+      absorbReview(issue, issue.review);
+      preFix = fixed?.head || preFix;                               // next cycle's delta base
       cycles++;
     }
-    issue.capRemainder = mediumOrWorse(issue.review);   // open at the cap → filed in step 8, merges anyway
+    issue.capRemainder = mediumOrWorse(issue.review);   // ARRAY, open at the cap → filed in step 8, merges anyway
 
-    // 4. Hand off to the SERIAL merge queue and wait for it: merging is the one stage that is never
-    //    concurrent. Awaiting the worker is also what makes an issue's dependents unblock only after
-    //    it really merged (mergedThisRun is written by the worker, below).
+    // 4. Hand off to the SERIAL merge queue and wait until this issue actually LEAVES it: merging is
+    //    the one stage that is never concurrent. Re-pump rather than awaiting once — mergeWorker is
+    //    cleared in a `.finally()` microtask AFTER runMerges exits its `while (mergeQueue.length)`
+    //    check, so a single `await pumpMerge()` landing in that window rides an already-settled
+    //    promise, resolves instantly and frees the slot while this issue sits in the queue FOREVER:
+    //    built, reviewed, never merged, never closed, never reported.
     mergeQueue.push(issue);
-    await pumpMerge();
+    do { await pumpMerge(); } while (mergeQueue.includes(issue));
+  } catch (e) {
+    // The contract is DRAIN-then-stop, NOT kill. Without this catch a dead agent rejects the chain
+    // promise, Promise.race re-throws it, and the whole workflow dies — discarding the return, so
+    // every issue that really did merge is never closed and the next run rebuilds it.
+    drain(`chain failed on #${issue.n}: ${e?.message || e}`);
   } finally {
     inFlight.delete(issue.n);                                       // free the slot, whatever happened
   }
 }
 
-const absorbMockDebt = review => (review?.mockDebtFiled || []).forEach(n => openMockDebt.add(n));
-
 // ---- the merge worker: SERIAL, one merger spawn at a time ----
 function pumpMerge() {
   // Start a worker only when no merge is running; otherwise ride the running one — it drains the
-  // whole queue, including whatever was pushed after it started.
-  if (!mergeWorker && mergeQueue.length) mergeWorker = runMerges().finally(() => { mergeWorker = null; });
+  // whole queue, including whatever was pushed after it started. The worker promise NEVER rejects:
+  // a rejection here would propagate into every chain awaiting it, and into the main loop's
+  // `await pumpMerge()`, throwing the run away along with its merged-issue list.
+  if (!mergeWorker && mergeQueue.length)
+    mergeWorker = runMerges()
+      .catch(e => drain(`merge worker failed: ${e?.message || e}`))
+      .finally(() => { mergeWorker = null; });
   return mergeWorker;
 }
 
@@ -401,22 +547,40 @@ async function runMerges() {
     const batch = mergeQueue.splice(0).sort((a, b) => a.n - b.n);   // everything queued, ascending
     const merged = await agent(                  // no model/effort → the merger's frontmatter pins govern
       `Merge these branches serially, in ascending issue number, into the orchestration worktree's base
-       branch; resolve conflicts under the done-check.\n\n${mergeManifest(batch, baseRepo, baseBranch, doneCheck)}`,
+       branch; resolve conflicts under the done-check.\n\n${mergeManifest(batch)}`,
       { agentType: "workflow:merger", schema: MERGE_SCHEMA });
+    // A DEAD merger returns null. Reading merged.mergedIssues would TypeError → the worker rejects →
+    // every chain awaiting pumpMerge() rejects → the workflow throws. The BUILD path guards its agent
+    // (`if (!built || built.failed)`); the MERGE path must too.
+    if (!merged || !Array.isArray(merged.mergedIssues)) {
+      drain(`merger returned nothing for ${batch.map(i => `#${i.n}`).join(", ")}`);
+      return;                                                       // that batch stays unmerged; the run drains
+    }
     for (const m of merged.mergedIssues) {
+      // SCOPE GUARD. The merger's numbers are not trusted verbatim: Step 2 runs `gh issue close` on
+      // every entry, so a hallucinated number is an IRREVERSIBLE close on an unrelated issue.
+      const issue = byNumber(m?.n);
+      if (!issue) { log(`dropping #${m?.n} — outside the run's allowlist`); continue; }
       // NO CLOSE HERE (#77 fix 1) — the workflow records what it merged and hands the list back; the
       // MAIN THREAD closes and verifies (Step 2).
-      mergedThisRun.set(m.n, m.mergeCommit);
-      const issue = byNumber(m.n);
+      mergedThisRun.set(issue.n, m.mergeCommit);
       // A CAPPED merge (medium+ findings still open at maxCycles) landed a KNOWN-DEFECTIVE slice.
       // Its direct dependents would otherwise unblock in-memory and build straight on top of it —
       // so hold them for the rest of the run. (The old round loop re-read GitHub each round and got
       // this for free; an in-memory scheduler must do it explicitly.)
-      if (issue?.capRemainder)
-        for (const d of dependents(m.n)) { held.add(d.n); log(`held #${d.n}: #${m.n} merged capped`); }
-      bookkeeping.push(fileFollowUps(issue));    // fire-and-forget: never blocks the slot
+      // `.length`, NOT truthiness: capRemainder is an ARRAY, and `[]` is truthy — testing the array
+      // itself would hold every CLEAN merge's dependents too, and the scope would never drain.
+      if (issue.capRemainder?.length)
+        for (const d of dependents(issue.n)) { held.add(d.n); log(`held #${d.n}: #${issue.n} merged capped`); }
+      if (issue.lows?.length || issue.capRemainder?.length)         // nothing to file → don't spawn
+        bookkeeping.push(fileFollowUps(issue));                     // fire-and-forget: never blocks the slot
     }
-    if (merged.conflictStop || merged.doneCheckRed) drain("conflict-stop / red done-check");
+    if (merged.conflictStop) {
+      conflictStop = merged.conflictStop;                           // { n, reason } — the report names it
+      drain(`conflict-stop on #${merged.conflictStop.n}: ${merged.conflictStop.reason}`);
+    } else if (merged.doneCheckRed) {
+      drain("red done-check after merge");
+    }
   }
 }
 
@@ -428,7 +592,8 @@ function fileFollowUps(issue) {
   return agent(
     `Bookkeeping for issue #${issue.n} via gh; see step 8. File its follow-ups, then re-block dependents.
      Do NOT close any issue — the main thread owns that.\n\n${ghWriteManifest(issue)}`,   // lows + capRemainder
-    { model: "haiku", effort: "low" });      // mechanical additive writes — never the session model
+    { model: "haiku", effort: "low", schema: FILED_SCHEMA })   // mechanical additive writes — never the session model
+    .then(r => { issue.followUps = r?.filed || []; });          // → the report names what was filed
 }
 ```
 
@@ -537,9 +702,11 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    and hand it **everything queued, in ascending issue number**, the **absolute
    orchestration-worktree** path as this run's base repo (a linked worktree → the guard allows the
    merger's writes) and its base branch, each issue's branch `issue-<N>` and **absolute worktree
-   path**, and the project's **done-check command**. Ascending issue number is the **deterministic**
-   merge order; blockers were already closed, but file-level overlap can still collide — **conflicts
-   are expected and the merger resolves them under the done-check**. Act on its result:
+   path**, and the project's **done-check command**. **Within a batch**, ascending issue number is the
+   **deterministic** merge order; batches themselves follow **completion order** — an issue merges in
+   the first batch that is running when it joins the queue. Blockers were already closed, but
+   file-level overlap can still collide — **conflicts are expected and the merger resolves them under
+   the done-check**. Act on its result:
    - issues it merged green → recorded into **`mergedThisRun`** (issue number → merge commit) and
      **returned to the main thread**, which closes them in Step 2. **The workflow never closes an
      issue.** The close is an **irreversible outward-facing** GitHub write, and inside a low-context
@@ -550,14 +717,19 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
      (step 1's guard), so convergence never depends on a GitHub write succeeding;
    - **a slice that merged CAPPED holds its dependents.** If the merged issue had a **cap-remainder**
      (medium-or-worse findings still open at `--max-cycles`), it landed a **known-defective** slice —
-     so every direct dependent still in scope is added to **`held`** and stays held **for the rest of
-     the run**, logged in the report. Otherwise it would unblock in-memory and build straight on top
+     so every direct dependent still in scope is added to **`held`** and
+     stays held **for the rest of the run**, logged in the report.
+     Otherwise it would unblock in-memory and build straight on top
      of a slice the reviewer just condemned;
    - a **conflict-stop** (unresolvable conflict or a **red done-check** after resolution) → **drain
-     mode** (step 2): comment that issue, leave its worktree, admit nothing new, let the in-flight
-     chains finish, and report. **Never keep an unverified resolution** — that discipline lives in the
-     merger. (A drain still **returns** whatever `mergedThisRun` holds — those issues really did merge
-     and must still be closed.)
+     mode** (step 2): leave that issue's worktree intact, admit nothing new, let the in-flight chains
+     finish, and **carry the stop home** — the merger returns it as `conflictStop: { n, reason }`,
+     which the workflow returns to the main thread and **Step 2's report names**. **Never keep an
+     unverified resolution** — that discipline lives in the merger. (A drain still **returns**
+     whatever `mergedThisRun` holds — those issues really did merge and must still be closed.)
+     Nothing here writes to the issue: the Workflow cannot run `gh`, the merger is forbidden to
+     comment, and the bookkeeper only ever *files* — so a conflict-stop is **reported**, not
+     commented.
 8. **Per-issue bookkeeping — ONE cheap haiku call, fire-and-forget.** As each issue clears its merge,
    a **single `agent()` call pinned to `haiku` at `low` effort** files that issue's follow-ups and
    re-blocks its dependents. It is **fire-and-forget**: the slot does not wait on it, and it runs
@@ -596,6 +768,13 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    `gh issue edit <dependent> --body-file <patched>`. Touch **no other part** of the dependent's body.
    (my-review explicitly disclaims this dependent re-wiring — the workflow owns it.)
 
+   **The ref's format is load-bearing — state it in the prompt.** `scope-graph.sh` reads a blocker
+   only when it is a **bare `#N` on its own line** inside the section (`#99`, or a list item `- #99`)
+   — **one ref per line, no trailing prose**. A reasonable-looking `- #99 — fix the parser nit` is
+   **prose**, so the next run's scheduler cannot see it and **builds the dependent on unpaid debt** —
+   the dangerous direction of the parse. If the section holds `None - can start immediately`, replace
+   that line with the ref rather than appending under it.
+
 The run ends when the **scope drains** (nothing in flight, nothing admissible) or a **drain-then-stop**
 condition — an **implementer failure**, a **conflict-stop**, or a **red done-check** — empties the
 in-flight set. Either way the result is **left on the orchestration branch** for you to merge into
@@ -607,8 +786,24 @@ When the Workflow returns, back on the main thread. **Close first** — before t
 before the report — so a failed close is loud and stops the run rather than being buried under a
 success table:
 
+**What the workflow returns.** The report below is the user-facing contract, so the return value
+**serves it** — every column comes from one of these fields, or from the main thread's own Step-0a
+record. Nothing the report needs is allowed to die inside the Workflow:
+
+```
+{ mergedIssues: [{ n, mergeCommit }],          // → close these (below), print the sha
+  stopReason,                                  // null = the scope drained cleanly
+  conflictStop: { n, reason } | null,          // the merge that stopped the run
+  held: [n, …],                                // dependents held by a capped merge
+  perIssue: [{ n, tier, verdict,               // my-review's final verdict
+               lowsFiled, capRemainder,        // counts filed as review-fix follow-ups
+               followUps: [n, …] }],           // the issue numbers bookkeeping actually filed
+  unbuilt: [n, …],                             // scoped but never admitted (blocked / held / drained past)
+  log: [line, …] }                             // the scheduler's own log (holds, drops, unknown blockers)
+```
+
 - **Close from the main thread (#77 fix 1).** The workflow **returns the merged-issue list**
-  (`{ mergedIssues: [{ n, mergeCommit }], stopReason }`) instead of closing anything itself. Close
+  (`mergedIssues`) instead of closing anything itself. Close
   each one here: `gh issue close <N> --comment "Merged in <mergeCommit> by /orchestrate."` This is the
   **only** place the run closes an issue. An **irreversible outward-facing** write belongs on the main
   thread, where the conversational context can account for it: the same call, made from inside a
@@ -625,14 +820,29 @@ success table:
   worktree intact (or the session-exit prompt offers keep/remove). Everything the run merged lands on
   the orchestration branch inside the orchestration worktree — never on the launch branch and never in
   the primary checkout.
-- Print a **status table**: issue `#` → title → tier (and whether it was **backfilled**) → merged? /
-  closed? → done-check → review verdict → notes (conflicts, failures, **held** dependents, the
-  `stopReason` if the run drained). If any `mock-debt` is open, add a one-line **ledger summary**
+- Print a **status table**, one row per scoped issue, each cell sourced from the return or from your
+  own Step-0a record — nothing invented:
+
+  | column | where it comes from |
+  |---|---|
+  | issue `#` → title | the Step-0a `graph` |
+  | tier (and whether it was **backfilled**) | `perIssue[].tier`; **backfilled?** is *your own* Step-0a record — the workflow never saw the backfill |
+  | merged? / closed? | `mergedIssues` (+ the close verification above) |
+  | merge commit | `mergedIssues[].mergeCommit` |
+  | review verdict | `perIssue[].verdict` |
+  | notes | `perIssue[].lowsFiled` / `.capRemainder` / `.followUps`, plus `held`, `unbuilt`, `conflictStop` and `stopReason` |
+
+  Then, below the table: the `stopReason` if the run drained (naming `conflictStop`'s issue and reason
+  when that is what stopped it), the **`held`** dependents and why (each was a dependent of a slice
+  that merged **capped**), the **`unbuilt`** issues (scoped but never admitted), and any line the
+  scheduler wrote to `log` (holds, out-of-allowlist merge results it dropped, blockers whose state it
+  could not read). If any `mock-debt` is open, add a one-line **ledger summary**
   (`mock-debt: N open — #A, #B …`) and note any `e2e-gate` held by it.
-- **Report the review + fix-loop outcome (steps 5–8).** For each built slice, include `my-review`'s
-  final verdict and how the **planner-free fix loop** resolved its findings — what it fixed in-run,
-  and any **lows / cap-remainder** filed as `review-fix` follow-ups (with the dependents re-blocked
-  onto them). Name any `mock-debt` follow-up the audit filed (it feeds the ledger summary above).
+- **Report the review + fix-loop outcome (steps 5–8).** For each built slice, print `perIssue[].verdict`
+  — `my-review`'s final verdict — and how the **planner-free fix loop** resolved its findings: the
+  **lows** and **cap-remainder** it filed as `review-fix` follow-ups (`lowsFiled` / `capRemainder`
+  counts, `followUps` for the issue numbers actually created, with the dependents re-blocked onto
+  them). Name any `mock-debt` follow-up the audit filed (it feeds the ledger summary above).
 - **Mirror the ledger (C7).** If this was a PRD run (slices carry `Part of #<prd>`), reflect the
   open `mock-debt` set into the PRD body for human visibility: rewrite **only** a delimited
   `## Mock-debt ledger` section (a checklist — `- [ ] #N — <what>` for open, `- [x]` for closed)

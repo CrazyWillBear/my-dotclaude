@@ -31,18 +31,29 @@
 #   * `## Blocked by` carries BARE `#N` refs, one per line, or the literal
 #     `None - can start immediately`.  A `#N` in PROSE is NOT a blocker — matching
 #     one would deadlock the scheduler on an issue that was never a dependency.
+#     A ref must be an ENTIRE line — `#12` or `- #12`, with no trailing prose.
+#   * a blocker ref must name an ISSUE.  A PR number resolves through `gh issue
+#     view` (this file does no PR operations), which fails for a PR — so the ref
+#     lands as state "unknown", never "closed", and its dependent is never ready.
+#     That is fail-CLOSED and deliberate; the workflow logs every unknown blocker
+#     at launch so a mis-aimed ref shows up in the report instead of vanishing.
 #   * the tier is a PERSISTED LABEL (`tier:trivial|standard|complex`), null when
 #     absent (the caller backfills it via classify-task).  Conflicting double-labels
 #     resolve to the HIGHEST tier: a mislabel must never route real work to a model
 #     too cheap for it.  The full label list rides along so the caller can warn.
 #   * an issue whose fetch fails is KEPT with state "unknown" — never silently
 #     dropped, which would narrow the run's scope behind your back.  "unknown" is
-#     not "open", so the scheduler won't build it, and the report can still see it.
+#     not "open", so the scheduler won't build it; the workflow REFUSES to run on a
+#     partially-fetched scope rather than quietly building a subset of what you asked
+#     for.
 #
 # Backend: GitHub Issues via `gh` only — no `gh api`, no PR operations.
 # Fail open: a missing dependency, a missing/junk argument, or a failed `gh issue
-# list` exits 0 with NO output.  Empty output makes the workflow's empty-graph
-# throw fire (loud) rather than degrading into a repo-wide query (#77 defect A).
+# list` (the mock-debt ledger) exits 0 with NO output.  Empty output makes the
+# workflow's empty-graph throw fire (loud) rather than degrading into a repo-wide
+# query (#77 defect A).  A failed ledger query is NEVER reported as an empty ledger:
+# that would silently disarm the e2e-gate, the single enforcement point of the whole
+# anti-mock-drift design.
 
 command -v python3 >/dev/null 2>&1 || exit 0
 command -v gh      >/dev/null 2>&1 || exit 0
@@ -220,15 +231,23 @@ for issue in issues:
         data = gh_json("issue", "view", key, "--json", "number,state")
         blocker_states[key] = ((data or {}).get("state") or "").lower() or "unknown"
 
-# The open mock-debt set IS the ledger (source of truth for the e2e-gate hold).
+# The open mock-debt set IS the ledger (source of truth for the e2e-gate hold).  A
+# FAILED query is not "no open mock-debt": `debt or []` would collapse an auth blip or
+# a transient API error into an empty ledger and SILENTLY DISARM the e2e-gate — the
+# single enforcement point of the whole anti-mock-drift design.  So distinguish None
+# from []: on a failed ledger query take the documented loud path (exit 0, NO output),
+# which fires the workflow's empty-graph throw.  Never print a graph whose ledger we
+# could not read.
 debt = gh_json(
     "issue", "list",
     "--label", "mock-debt", "--state", "open",
     "--json", "number", "--limit", "200",
 )
+if not isinstance(debt, list):     # None (failed/unparseable) or a shape we don't understand
+    sys.exit(0)
 mock_debt_open = sorted({
     item.get("number")
-    for item in (debt or [])
+    for item in debt
     if isinstance(item, dict) and isinstance(item.get("number"), int)
 })
 
