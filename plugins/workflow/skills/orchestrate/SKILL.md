@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Run the autonomous issue-solving loop inside a Workflow — the main thread resolves the run's scope to an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), reads each scoped issue's persisted complexity tier from its `tier:trivial|standard|complex` label (backfilling a missing one with the classify-task skill and writing the label back), and fetches the whole issue graph once with scope-graph.sh; the Workflow then runs a continuous scheduler over that frozen graph — readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed in plain JS, not by a model — keeping --max N issues in flight, each slot running plan (workflow:planner at the tier's planner model; a trivial issue self-plans) → build (workflow:implementer in an isolated git worktree at the tier's implementer model) → review (personal-tools:my-review at the tier's reviewer model, running the central-mechanism / mock-drift audit) → a planner-free fix loop capped by --max-cycles → a serial merge queue (one workflow:merger, opus, merges in dependency order under the done-check). A merged issue unblocks its dependents and the freed slot admits the next ready issue; a failure drains the run instead of killing it mid-flight. Per-issue haiku bookkeeping files the lows (grouped, parked) + cap-remainder as review-fix follow-ups and re-blocks dependents; the workflow hands the merged-issue list back to the main thread, which closes those issues itself and verifies every close, and open mock-debt mirrors into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
+description: Run the autonomous issue-solving loop inside a Workflow — the main thread resolves the run's scope to an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), reads each scoped issue's persisted complexity tier from its `tier:trivial|standard|complex` label (backfilling a missing one with the classify-task skill and writing the label back), and fetches the whole issue graph once with scope-graph.sh; the Workflow then runs a continuous scheduler over that frozen graph — readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed in plain JS, not by a model — keeping --max N issues in flight, each slot running plan (workflow:planner, complex tier only — trivial and standard issues self-plan) → build (workflow:implementer in an isolated git worktree at the tier's implementer model) → review (personal-tools:my-review at the tier's reviewer model, running the central-mechanism / mock-drift audit) → a planner-free fix loop capped by --max-cycles → a serial merge queue (one workflow:merger, opus, merges in dependency order under the done-check). A merged issue unblocks its dependents and the freed slot admits the next ready issue; a failure drains the run instead of killing it mid-flight. Per-issue haiku bookkeeping files the lows (grouped, parked) + cap-remainder as review-fix follow-ups and re-blocks dependents; the workflow hands the merged-issue list back to the main thread, which closes those issues itself and verifies every close, and open mock-debt mirrors into the PRD ledger. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[--max N=5] [--max-cycles K=2] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, Workflow
@@ -35,8 +35,8 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PR merges. Never touch
 `hitl` (needs a human) or `prd` (a PRD tracking doc — slice it with `/to-issues` first). Never
 push. Each admitted issue **tier-routes its implementer** (and its planner and reviewer) model via
 the launch-resolved `ROSTER`. A per-issue **plan stage** (tier-routed by `ROSTER[issue.tier].planner`)
-writes each **standard/complex** issue's **work order** with the **`workflow:planner`** subagent — a
-**trivial** issue **skips the plan stage entirely** and its implementer self-plans. One
+writes a **complex** issue's **work order** with the **`workflow:planner`** subagent — **trivial and
+standard** issues **skip the plan stage entirely** and their implementers self-plan. One
 **implementer** then builds the issue; then **`personal-tools:my-review`** reviews the built slice at
 the tier's **reviewer** model, and a per-issue **planner-free fix loop** (capped by `--max-cycles`,
 default 2) acts on the findings — the review's own findings block **is** the fix work order, handed
@@ -231,7 +231,8 @@ is the `Agent` tool's spelling and is ignored here); and a bare `agent()` return
 **`GUARD AUDIT`** comment naming all eight and the guard each one has. An unguarded spawn does not
 crash the run; it *degrades* it into a wrong answer — a null **review** reads as a clean review (no
 findings → no fix loop → the slice merges **unreviewed**), and a null **plan** is indistinguishable
-from the trivial tier's deliberate null (a complex issue's implementer is then told to self-plan).
+from the self-planning tiers' deliberate null (a complex issue's implementer is then told to
+self-plan).
 
 **Normalize `args` before destructuring.** The Workflow tool hands the script its inputs — the
 base repo path and branch, `maxParallel`, `maxCycles`, `doneCheck`, `skipUnknown`, and the `graph`
@@ -671,10 +672,10 @@ return {
 // RETURNS NULL (it does not throw), so an unguarded spawn does not crash: it degrades, silently,
 // into a WRONG ANSWER. All eight are listed so the next reader can see the sweep is complete:
 //   1. setup        → `if (!setup || setup.failed)` + verifyTree — drains
-//   2. planner      → `if (issue.tier !== "trivial" && !issue.plan)` — drains. NOT optional: a null
-//                     plan is INDISTINGUISHABLE from the trivial tier's deliberate null, so a dead
-//                     planner would hand a COMPLEX issue's implementer "Trivial tier — no planner
-//                     ran: SELF-PLAN it".
+//   2. planner      → `if (issue.tier === "complex" && !issue.plan)` — drains. NOT optional: a null
+//                     plan is INDISTINGUISHABLE from the self-planning tiers' deliberate null, so a
+//                     dead planner would hand a COMPLEX issue's implementer "no planner ran:
+//                     SELF-PLAN it".
 //   3. implementer  → `if (!built || built.failed)` + verifyTree — drains
 //   4. review       → `if (!issue.review)` — drains. THE WORST ONE TO MISS: mediumOrWorse(null) is
 //                     [], so mediumOrWorseOpen is false, the fix loop is SKIPPED, capRemainder is
@@ -717,32 +718,36 @@ async function runIssue(issue) {
     issue.worktree = worktreeOf(issue.n);
     issue.branch   = `issue-${issue.n}`;
 
-    // 1. Plan — STANDARD/COMPLEX only. No plan comment, no gate — autonomous.
-    //    trivial: NO plan stage at all — issue.plan stays null and the implementer self-plans (it
-    //    already plans TDD-first by its own contract; a separate planner spawn was duplicated work).
+    // 1. Plan — COMPLEX ONLY. No plan comment, no gate — autonomous.
+    //    trivial AND standard: NO plan stage at all — issue.plan stays null and the implementer
+    //    self-plans (it already plans TDD-first by its own contract, and it re-explores the repo
+    //    regardless, so a planner spawn ahead of it was a SECOND full exploration billed to buy a
+    //    document the implementer would have derived anyway — measured at 26% of a real run's
+    //    agent-minutes). A complex issue keeps its planner: there, the cross-cutting design call is
+    //    worth a dedicated pass BEFORE any code is written.
     //    No schema — the plan text IS the return value, and it is the work order.
     //    The planner gets the issue's COMMENTS as well as its body — a comment may hold the answer.
-    issue.plan = issue.tier === "trivial" ? null : await agent(
+    issue.plan = issue.tier !== "complex" ? null : await agent(
       `mode=plan · issue #${issue.n} body + comments in → plan text out; see step 3.
        done-check: ${doneCheck}
        \n\n${issue.body}\n\n## Issue comments\n${issue.comments}`,
       { agentType: "workflow:planner",
         model:     ROSTER[issue.tier].planner.model,
         effort:    ROSTER[issue.tier].planner.effort });
-    // GUARD 2. A dead planner returns null — and for a standard/complex issue that null is
-    // INDISTINGUISHABLE from the trivial tier's deliberate null. Unguarded, the build below would
-    // hand a COMPLEX issue's implementer a prompt that reads "Trivial tier — no planner ran:
-    // SELF-PLAN it", silently downgrading the issue's whole plan stage. (Note this is a truthiness
-    // check on the PLAN TEXT, not on a schema'd object: the planner returns bare text by design.)
-    if (issue.tier !== "trivial" && !issue.plan) { drain(`planner failed on #${issue.n}`); return; }
+    // GUARD 2. A dead planner returns null — and for a COMPLEX issue that null is INDISTINGUISHABLE
+    // from the self-planning tiers' deliberate null. Unguarded, the build below would hand a COMPLEX
+    // issue's implementer a prompt that reads "no planner ran: SELF-PLAN it", silently downgrading
+    // the one tier whose whole point is that it gets a plan first. (Note this is a truthiness check
+    // on the PLAN TEXT, not on a schema'd object: the planner returns bare text by design.)
+    if (issue.tier === "complex" && !issue.plan) { drain(`planner failed on #${issue.n}`); return; }
 
     // 2. Build — one worktree, one implementer. Work order = the plan text when there is one; for a
-    //    trivial issue (issue.plan === null) the ISSUE BODY is the work order. The worktree is the
-    //    one the setup agent just created, and its ABSOLUTE path + branch ride in the prompt.
+    //    self-planning issue (issue.plan === null) the ISSUE BODY is the work order. The worktree is
+    //    the one the setup agent just created, and its ABSOLUTE path + branch ride in the prompt.
     const built = await agent(
       `${issue.plan
           ? `Work order = the plan below — ordered steps + ## Acceptance criteria + the done-check.\n\n${issue.plan}`
-          : `Work order = issue #${issue.n} below. Trivial tier — no planner ran: SELF-PLAN it, then build it TDD-first.\n\n${issue.body}`}
+          : `Work order = issue #${issue.n} below. No planner ran (${issue.tier} tier self-plans): SELF-PLAN it, then build it TDD-first.\n\n${issue.body}`}
        \n\n## Issue comments\n${issue.comments}
        \n\n## Where to work
        worktree: ${issue.worktree} · branch: ${issue.branch} · cut from ${baseBranch} in ${baseRepo}
@@ -769,7 +774,7 @@ async function runIssue(issue) {
     //    held by debt THIS RUN created, not just debt that predated it.
     issue.review = await agent(
       `Review issue #${issue.n}'s branch diff ${baseBranch}..${issue.branch} in ${issue.worktree}.
-       Conformance context (its plan — or, for a trivial issue, its body):\n\n${issue.plan || issue.body}
+       Conformance context (its plan — or, for a self-planning issue, its body):\n\n${issue.plan || issue.body}
        \n\nIssue #${issue.n}'s comments — ground truth for the review:\n${issue.comments}`,
       { agentType: "personal-tools:my-review",
         model:     ROSTER[issue.tier].reviewer.model,
@@ -978,20 +983,25 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    **red done-check** puts the run into **drain mode**: **admit nothing new**, let the in-flight
    chains **finish through merge**, then return with the stop reason. Killing the loop mid-chain
    would strand built, reviewed branches that had already earned their merge.
-3. **Plan the standard/complex issues → their work order (autonomous — no plan comment, no gate).**
-   A **plan stage** runs **only for standard and complex** issues: the **`workflow:planner`** subagent
+3. **Plan the complex issues → their work order (autonomous — no plan comment, no gate).**
+   A **plan stage** runs **only for complex** issues: the **`workflow:planner`** subagent
    (`agentType: workflow:planner`, `mode: plan`, `model: ROSTER[issue.tier].planner.model`,
    `effort: ROSTER[issue.tier].planner.effort`) handed the issue body **and its comments** (the graph
    carried both — a comment may carry the settled answer), which returns the plan as its **final
    text** (ordered steps with file paths + `## Acceptance criteria` + the done-check + risks). Capture
    that plan text as the issue's **work order**.
 
-   A **trivial** issue gets **no plan stage at all** — `issue.plan` stays null, the **issue body is
-   the work order**, and the **implementer self-plans** (planning TDD-first is already in the
-   implementer's own contract, so a separate planner spawn just restated the issue). This is the one
-   place orchestrate **diverges from `/pipeline`**'s Step-2 authorship ladder, which still authors a
-   minimal plan inline for trivial: inside a Workflow that ladder costs a whole extra agent, and it
-   bought nothing the implementer wasn't already doing.
+   A **trivial or standard** issue gets **no plan stage at all** — `issue.plan` stays null, the
+   **issue body is the work order**, and the **implementer self-plans** (planning TDD-first is already
+   in the implementer's own contract). The planner was **a second full repo exploration in front of an
+   implementer that explores anyway**, and it was **measured**: on a 56-agent run it burned 83 of 317
+   agent-minutes — **26% of all work** — to hand over a document the implementer would have derived
+   itself, with plans routinely costing as much as the build they preceded. Only **complex** keeps it,
+   where a cross-cutting design call is worth settling before any code is written.
+
+   This is where orchestrate **diverges from `/pipeline`**, which still authors a plan for every tier:
+   pipeline runs ONE task and the plan is a human-legible artifact of that run, while inside a
+   Workflow every plan is a whole extra agent on the critical path of a slot that could be building.
 
    The run stays autonomous: **no plan comment is posted to the issue** and
    **no plan-approval gate fires** (the Workflow launch gate was the only stop).
@@ -1043,8 +1053,8 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
    waiting on sibling builds), spawn **`personal-tools:my-review`** (`model:
    ROSTER[issue.tier].reviewer.model`, `effort: ROSTER[issue.tier].reviewer.effort`) on that issue's
    **branch diff** — the commit range `<base>..issue-<N>` — with the issue's **plan** (captured in
-   step 3; **null for a trivial issue**, which had no plan stage — then the **issue body** is the
-   conformance context), the issue's **comments** (they are the ground truth the review checks the
+   step 3; **null for a trivial or standard issue**, which had no plan stage — then the **issue body**
+   is the conformance context), the issue's **comments** (they are the ground truth the review checks the
    slice against — a **comment-blind** loop rediscovers a settled question and guesses at it), plus
    the **issue number** so the audit can read its `## Central mechanism` line. my-review returns a
    verdict plus a machine-readable `findings` block, and runs the **central-mechanism / mock-drift

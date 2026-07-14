@@ -305,14 +305,19 @@ assert_contains "merger not tier-routed" "$content" "not** tier-routed"
 
 # --- tier-routed plan stage, standard/complex ONLY (issue #65, #53) --------
 echo "test: a plan stage runs before the implementer/build stage"
-assert_contains "plan step named in the prose" "$content" "Plan the standard/complex issues"
+assert_contains "plan step named in the prose" "$content" "Plan the complex issues"
 assert_contains "ROSTER routes the planner by tier" "$content" "ROSTER[issue.tier].planner"
 
-echo "test: standard/complex are planned by workflow:planner; trivial skips the plan stage"
-assert_contains "standard/complex use workflow:planner in plan mode" "$content" "mode: plan"
-assert_contains "trivial gets no plan stage at all" "$content" "no plan stage"
-assert_contains "trivial implementer self-plans instead" "$content" "self-plans"
+echo "test: ONLY complex is planned by workflow:planner; trivial + standard skip the plan stage"
+assert_contains "complex uses workflow:planner in plan mode" "$content" "mode: plan"
+assert_contains "trivial/standard get no plan stage at all" "$content" "no plan stage"
+assert_contains "their implementers self-plan instead" "$content" "self-plan"
 assert_not_contains "the trivial minimal-plan leaf agent is gone" "$content" "minimal-plan"
+# The 26%-of-work saving. A planner in front of a STANDARD implementer is a second full repo
+# exploration buying a document the implementer derives anyway — if it comes back, fail here.
+assert_contains "standard is named as self-planning" "$content" "trivial and
+standard"
+assert_contains "the plan stage is gated on complex ONLY" "$content" 'issue.tier !== "complex" ? null'
 
 echo "test: the plan is handed to the implementer as a work order"
 assert_contains "implementer gets a work order" "$content" "work order"
@@ -676,10 +681,10 @@ assert_contains "the fix implementer's failure drains" "$js_block" "!fixed || fi
 #   * a null review makes mediumOrWorse(null) → [], so mediumOrWorseOpen is false, the fix loop
 #     is SKIPPED, capRemainder is [] and the slice merges as CLEAN — a dead reviewer merges an
 #     UNREVIEWED slice and lets its dependents build on it;
-#   * a null plan is indistinguishable from "trivial tier", so a dead planner on a COMPLEX issue
-#     hands the implementer a prompt that says "Trivial tier — no planner ran: SELF-PLAN it".
+#   * a null plan is indistinguishable from a self-planning tier's deliberate null, so a dead
+#     planner on a COMPLEX issue hands the implementer "no planner ran: SELF-PLAN it".
 echo "test: EVERY agent() spawn is guarded — a dead agent drains, never degrades silently"
-assert_contains "a dead planner drains (null plan != trivial tier)" "$js_block" 'issue.tier !== "trivial" && !issue.plan'
+assert_contains "a dead planner drains (null plan != self-planning tier)" "$js_block" 'issue.tier === "complex" && !issue.plan'
 assert_contains "a dead reviewer drains (initial review)" "$js_block" "!issue.review"
 assert_contains "a dead re-reviewer drains (fix loop)" "$js_block" "review failed on #"
 assert_contains "the guard sweep is audited in the block" "$js_block" "GUARD AUDIT"

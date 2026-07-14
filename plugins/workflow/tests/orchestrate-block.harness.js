@@ -136,19 +136,21 @@ const check = (name, cond, detail = "") => {
   }
 
   // 1-7. each spawn dies in turn → the run must DRAIN and merge nothing
+  //      The planner case must ride a COMPLEX issue — it is the only tier that still has a plan
+  //      stage, so it is the only tier on which a dead planner is even reachable.
   const cases = [
-    ["setup",    [],  /worktree setup failed/],
-    ["planner",  [],  /planner failed/],
-    ["build",    [],  /implementer failure/],
-    ["review",   [],  /review failed/],
-    ["fix",      MED, /fix implementer failure/],
-    ["rereview", MED, /re-review failed/],
-    ["merger",   [],  /merger returned nothing/],
+    ["setup",    [],  /worktree setup failed/,   {}],
+    ["planner",  [],  /planner failed/,          { tier: "complex" }],
+    ["build",    [],  /implementer failure/,     {}],
+    ["review",   [],  /review failed/,           {}],
+    ["fix",      MED, /fix implementer failure/, {}],
+    ["rereview", MED, /re-review failed/,        {}],
+    ["merger",   [],  /merger returned nothing/, {}],
   ];
-  for (const [kill, findings, wantStop] of cases) {
+  for (const [kill, findings, wantStop, over] of cases) {
     const [calls, agent] = makeAgent(kill, findings);
     let r, threw = null;
-    try { r = await run(mkArgs([mkIssue(1)]), agent); } catch (e) { threw = e; }
+    try { r = await run(mkArgs([mkIssue(1, over)]), agent); } catch (e) { threw = e; }
     if (threw) { check(`${kill} dies → drains`, false, `THREW: ${threw.message}`); continue; }
     check(`${kill} dies → run drains with a reason`, wantStop.test(r.stopReason || ""),
       `stopReason=${JSON.stringify(r.stopReason)} calls=${calls}`);
@@ -179,7 +181,7 @@ const check = (name, cond, detail = "") => {
       !r.perIssue.some(p => p.n === 2), JSON.stringify(r.perIssue));
   }
 
-  // 10. a dead planner on a COMPLEX issue must not degrade into "trivial → self-plan"
+  // 10. a dead planner on a COMPLEX issue must not degrade into "self-planning tier → self-plan"
   {
     const [calls, agent] = makeAgent("planner");
     const r = await run(mkArgs([mkIssue(1, { tier: "complex" })]), agent);
@@ -187,12 +189,20 @@ const check = (name, cond, detail = "") => {
     check("dead planner: drains", /planner failed/.test(r.stopReason || ""), r.stopReason);
   }
 
-  // 11. a trivial issue still legitimately skips the planner (the guard must not over-fire)
+  // 11. trivial AND standard skip the plan stage entirely (the guard must not over-fire), and
+  //     complex is the ONLY tier that still spawns a planner. The standard case is the 26%-of-work
+  //     saving — if a planner ever reappears there, this test is the thing that catches it.
+  for (const tier of ["trivial", "standard"]) {
+    const [calls, agent] = makeAgent(null);
+    const r = await run(mkArgs([mkIssue(1, { tier })]), agent);
+    check(`${tier}: no planner spawn, and it still merges`,
+      !calls.includes("planner") && r.mergedIssues.length === 1, `calls=${calls}`);
+  }
   {
     const [calls, agent] = makeAgent(null);
-    const r = await run(mkArgs([mkIssue(1, { tier: "trivial" })]), agent);
-    check("trivial: no planner spawn, and it still merges",
-      !calls.includes("planner") && r.mergedIssues.length === 1, `calls=${calls}`);
+    const r = await run(mkArgs([mkIssue(1, { tier: "complex" })]), agent);
+    check("complex: DOES spawn a planner, and it still merges",
+      calls.includes("planner") && r.mergedIssues.length === 1, `calls=${calls}`);
   }
 
   // 12. setup reports a worktree we never asked for → drain. verifyTree is an IMPROVISATION
