@@ -273,6 +273,11 @@ runnable one, and the same silent-empty failure walks in through the side door:
   its first build.
 
 ```js
+// THIS BLOCK IS EXECUTED BY A TEST. `plugins/workflow/tests/orchestrate-block.harness.js` extracts
+// it, compiles it as the async function body the Workflow runtime runs it as, and drives it against
+// a stubbed agent() — killing each spawn in turn to assert the run DRAINS instead of degrading. So
+// an edit here can break a test that is about BEHAVIOR, not about a string; run that harness (or
+// `bash plugins/workflow/tests/test_orchestrate-block-behavior.sh`) after touching this block.
 export const meta = {
   name: "orchestrate-scheduler",
   // inputs: baseRepo (orchestration-worktree path), baseBranch,
@@ -449,14 +454,19 @@ const drain = reason => {                 // drain-then-stop: never kill in-flig
   if (!stopReason) { stopReason = reason; log(`draining: ${reason}`); }
 };
 
-// The worktree path and the branch are MODEL-SUPPLIED — a haiku setup agent reports them and an
-// implementer echoes them back — and they then drive `git -C <path>` for the reviewer, the fix
-// implementer and, through mergeManifest, the MERGER, which writes the base branch. The
-// worktree-guard hook is a PreToolUse matcher on Edit|Write|NotebookEdit ONLY, so it does not
-// fence an agent's Bash. We ASKED the setup agent for one exact path and one exact branch, so we
-// can check we got them: anything else drains the chain rather than pointing git somewhere we
-// never chose. (This is also why the `isolation` opt was rejected — it cannot name the branch.
-// Accepting an unchecked branch name back from a model gives up what that rejection bought.)
+// An IMPROVISATION DETECTOR — not a source of truth. The worktree path and the branch are
+// MODEL-SUPPLIED (a haiku setup agent reports them; an implementer echoes them back) and they would
+// drive `git -C <path>` for the reviewer, the fix implementer and, through mergeManifest, the
+// MERGER, which writes the base branch — and the worktree-guard hook is a PreToolUse matcher on
+// Edit|Write|NotebookEdit ONLY, so it does not fence an agent's Bash. We asked for ONE exact path
+// and ONE exact branch. So the echoed value is checked against exactly that, and any other value
+// DRAINS the chain — the agent that improvised a path never gets a git command pointed at it.
+// Note what that makes the echo: information-free. A value that must equal `worktreeOf(n)` to
+// survive the check tells us only "the agent obeyed" — so what the later stages are actually handed
+// is the constant the SCHEDULER computed (see runIssue), never the model's string. Both together:
+// the check catches the improviser, and the constant means a passing echo cannot smuggle anything
+// in. (This is also why the `isolation` opt was rejected — it cannot name the branch. Accepting an
+// unchecked branch name back from a model gives up what that rejection bought.)
 const verifyTree = (issue, tree, branch, who) => {
   if (tree !== worktreeOf(issue.n) || branch !== `issue-${issue.n}`) {
     drain(`${who} on #${issue.n} reported worktree ${tree} · branch ${branch} — `
@@ -514,15 +524,35 @@ if (!graph.issues.some(isReady)) {
     i.labels.includes("e2e-gate") && openMockDebt.size > 0
     && !i.labels.includes("hitl") && !i.labels.includes("prd")
     && i.blockedBy.every(b => closed.has(b)));
+  // TEST CLOSEDNESS DIRECTLY. `openScoped.length === 0` reads like "everything is closed" and is
+  // NOT: an issue whose state could not be read is "unknown" — neither open NOR closed — so a scope
+  // of nothing but unknowns satisfies it. And --skip-unknown downgrades the `unfetched` throw above
+  // to a log, so control REACHES here with exactly that scope: the run would exit clean while
+  // stating, falsely, that the scope is complete. That is the #53/#70/#73 silent-empty class walking
+  // back in through the guard written to kill it. `.every(closed)` lets any unknown remnant fall
+  // through to the throw, where it belongs.
+  const allClosed = graph.issues.every(i => i.state === "closed");
   const nothingToDo =
-    openScoped.length === 0
+    allClosed
       ? `every scoped issue is already closed — the scope is complete`
-      : gateHeld.length === openScoped.length
+      // `openScoped.length > 0`, or an EMPTY open set makes the gate branch fire on `0 === 0` and
+      // reports a mock-debt hold that is holding nothing.
+      : gateHeld.length === openScoped.length && openScoped.length > 0
         ? `every remaining scoped issue (${gateHeld.map(i => `#${i.n}`).join(", ")}) is `
           + `e2e-gate-held by open mock-debt (${[...openMockDebt].map(n => `#${n}`).join(", ")})`
         : null;
   if (!nothingToDo)
-    throw new Error(`no scoped issue is READY (open, unblocked, not hitl/prd): nothing to build — refusing a silent empty success`);
+    // NAME THE PARTS THAT ARE EXPLAINED. A gate hold is a DESIGNED state: when it explains only
+    // SOME of the scope (an e2e-gate held by mock-debt + one unrelated hitl issue) the throw is
+    // still right — loud over silent — but a bare "nothing is READY" misattributes the gate's
+    // correct behavior as a broken scope. Same for issues --skip-unknown dropped.
+    throw new Error(`no scoped issue is READY (open, unblocked, not hitl/prd): nothing to build — refusing a silent empty success`
+      + (gateHeld.length
+          ? ` · e2e-gate-held by open mock-debt (BY DESIGN): ${gateHeld.map(i => `#${i.n}`).join(", ")}`
+          : ``)
+      + (unfetched.length
+          ? ` · unfetchable, skipped by --skip-unknown: ${unfetched.map(i => `#${i.n}`).join(", ")}`
+          : ``));
   log(`nothing to do: ${nothingToDo}`);
   // The report's FULL shape, not a bare {}: Step 2 destructures every field below.
   return { mergedIssues: [], stopReason: null, conflictStops: [], held: [], bookkeepingFailures: [],
@@ -560,8 +590,8 @@ const absorbReview = (issue, review) => {
 };
 
 // ---- the two agent input manifests (plain templating — DEFINED, never left to the transcriber) ----
-// The branch and worktree come off the ISSUE (what the setup agent actually created and reported),
-// never off worktreeOf(n) — a computed guess the merger would then fail to find.
+// The branch and worktree come off the ISSUE — the scheduler's own computed constants, which the
+// setup agent's echo was verified against (verifyTree) before any git command was pointed at them.
 const mergeManifest = batch => [
   `base repo (a linked worktree — the guard allows writes here): ${baseRepo}`,
   `base branch: ${baseBranch}`,
@@ -676,12 +706,16 @@ async function runIssue(issue) {
        improvise a different path, branch or base.`,
       { model: "haiku", effort: "low", schema: SETUP_SCHEMA });
     if (!setup || setup.failed) { drain(`worktree setup failed on #${issue.n}`); return; }   // null = agent died
-    // The RETURNED path/branch — not worktreeOf(n) — is what every later stage is handed: the guess
-    // is what we asked for, this is what the agent says EXISTS. But "returned" is not "trusted":
-    // verify it is the path and branch we asked for before any git command is pointed at it.
+    // VERIFY, then use the value WE computed. verifyTree drains unless the agent echoed back exactly
+    // `worktreeOf(n)` / `issue-<N>`, which is what makes the echo an improvisation detector — and
+    // also what makes it information-free: past the check it can only BE the constant. So assign the
+    // constant. Assigning the model's string instead would be identical on every path that survives
+    // the check and strictly worse on the paths that do not (a trailing slash, a symlinked baseRepo,
+    // an optional field simply omitted), and it is what left the docs claiming a model-supplied path
+    // feeds the merger while the guard was quietly ensuring it never could.
     if (!verifyTree(issue, setup.worktree, setup.branch, "setup")) return;
-    issue.worktree = setup.worktree;
-    issue.branch   = setup.branch;
+    issue.worktree = worktreeOf(issue.n);
+    issue.branch   = `issue-${issue.n}`;
 
     // 1. Plan — STANDARD/COMPLEX only. No plan comment, no gate — autonomous.
     //    trivial: NO plan stage at all — issue.plan stays null and the implementer self-plans (it
@@ -722,12 +756,12 @@ async function runIssue(issue) {
         // agent (step 0) owns creation; the implementer is forbidden to create one.
         schema:    BUILT_SCHEMA });
     if (!built || built.failed) { drain(`implementer failure on #${issue.n}`); return; }   // null = agent died
-    // The build's own report of where it worked, verified the SAME way (it is the same untrusted
-    // model output, and it feeds the merger's `git -C`). `head` is optional in BUILT_SCHEMA — a
-    // build that omits it is not a failure, so it degrades below, it does not drain.
+    // The build's own report of where it worked, run through the SAME improvisation detector (same
+    // untrusted model output; the merger's `git -C` is downstream of it). No assignment: issue.worktree
+    // is already the verified constant, and an implementer that omits the optional echo entirely has
+    // improvised nothing — it is checked against that constant, not required to restate it. `head` is
+    // optional in BUILT_SCHEMA too — a build that omits it degrades the re-review below, it does not drain.
     if (!verifyTree(issue, built.worktree || issue.worktree, built.branch || issue.branch, "build")) return;
-    issue.worktree = built.worktree || issue.worktree;
-    issue.branch   = built.branch   || issue.branch;
 
     // 3. Initial review (FREE — does not count against maxCycles), then the PLANNER-FREE fix loop.
     //    my-review runs the central-mechanism / mock-drift audit and OWNS the mock-debt filing; it
@@ -752,6 +786,13 @@ async function runIssue(issue) {
     // sha rides back on BUILT_SCHEMA.head instead. `head` is OPTIONAL there (a failed build has
     // none to give), so fall back to the base branch: a re-review of the whole branch is a superset
     // of the delta — safe — whereas `undefined` would render the literal range "undefined..HEAD".
+    // But SAFE IS NOT SILENT. A SUCCESSFUL build always knows its head, so an omission here is the
+    // schema's optionality being taken up on the one path where it should not be — and the whole
+    // cost of it (every re-review of this issue widened from the delta to the entire branch: slower,
+    // noisier, re-litigating code this run never touched) would otherwise land with no log line and
+    // nothing in the report. Say it once, and let the report carry it.
+    if (!built.head)
+      log(`#${issue.n}: build reported no head — re-review widened to the full branch (${baseBranch}..HEAD)`);
     let preFix = built.head || baseBranch;
     let cycles = 0;
     while (mediumOrWorseOpen(issue.review) && cycles < maxCycles) {
@@ -974,22 +1015,26 @@ scheduler keeps up to **`--max N`** issues in flight and refills a slot the mome
 
    It is **not** `isolation:` on the implementer spawn: that opt yields a **fresh, unnamed** worktree,
    so it cannot cut a branch named `issue-<N>` from a chosen base — which is precisely what the
-   merger needs. And the **path the setup agent returns** — never a path the scheduler computed — is
-   what feeds the implementer, the review, the fix loop and the merge manifest.
+   merger needs.
 
-   **Returned is not trusted.** That path and branch are **model-supplied**, and they become the
-   `git -C <path>` of three later agents — including the **merger**, which writes the base branch
-   (the worktree-guard hook is a `PreToolUse` matcher on `Edit|Write|NotebookEdit` **only**, so it
-   does not fence an agent's `Bash`). We asked for **one exact path and one exact branch**, so the
-   scheduler **verifies** what came back — `<baseRepo>/.worktrees/issue-<N>` and `issue-<N>` — and
-   **drains** the chain on any other value, for the setup agent's report and for the implementer's
-   echo of it alike. Accepting an unchecked branch name back from a model would give up exactly what
+   **The echo is an improvisation detector, not a source of truth.** The path and branch the setup
+   agent reports are **model-supplied**, and they would become the `git -C <path>` of three later
+   agents — including the **merger**, which writes the base branch (the worktree-guard hook is a
+   `PreToolUse` matcher on `Edit|Write|NotebookEdit` **only**, so it does not fence an agent's
+   `Bash`). We asked for **one exact path and one exact branch**, so the scheduler **verifies** what
+   came back — `<baseRepo>/.worktrees/issue-<N>` and `issue-<N>` — and **drains** the chain on any
+   other value, for the setup agent's report and for the implementer's echo of it alike. That check
+   is what catches an agent that improvised its own path; it is also what makes the echoed value
+   **information-free**, since past the check it can only *be* the constant. So what actually feeds
+   the implementer, the review, the fix loop and the merge manifest is the path the **scheduler
+   computed** — `worktreeOf(N)` — and the echo's only job is to fail the run when an agent went
+   somewhere else. Accepting an unchecked branch name back from a model would give up exactly what
    rejecting `isolation:` bought.
 
    **Then build.** Spawn one **`workflow:implementer`** handed its **work order** — the **plan text**
    from step 3 (ordered steps + `## Acceptance criteria` + done-check) — plus the issue's
-   **comments**, the **absolute** worktree path and the branch **as the setup agent returned them**,
-   and a **commit-scope hint** (the issue's `<scope>`). The plan
+   **comments**, the **absolute** worktree path and the branch (the verified `worktreeOf(N)` /
+   `issue-<N>`), and a **commit-scope hint** (the issue's `<scope>`). The plan
    **replaces the implementer's self-plan** for these issues (it builds against the work order, not a
    plan of its own). It runs on the model its tier routed (`ROSTER[issue.tier].implementer`).
    Chains run **concurrently with no cross-issue barrier** — issue A is in its fix loop while issue B
@@ -1211,9 +1256,15 @@ record. Nothing the report needs is allowed to die inside the Workflow:
   reason and worktree when that is what stopped it), the **`held`** dependents and why (each was a
   dependent of a slice that merged **capped**), the **`unbuilt`** issues (scoped and admissible but
   never admitted), and any line the scheduler wrote to `log` (holds, out-of-allowlist merge results it
-  dropped, blockers whose state it could not read, issues skipped by `--skip-unknown`). If any
+  dropped, blockers whose state it could not read, issues skipped by `--skip-unknown`, and any build
+  that **reported no head** — its re-reviews were widened from the delta to the whole branch). If any
   `mock-debt` is open, add a one-line **ledger summary** (`mock-debt: N open — #A, #B …`) and note any
   `e2e-gate` held by it.
+- **Say what the run changed outside the worktrees.** Step 0b appended `.worktrees/` to the repo's
+  **`.git/info/exclude`** — a persistent, untracked mutation of the user's real repo that outlives
+  the run (it is idempotent, and it is what keeps the per-issue worktrees out of `git status` while
+  the merger works). It is small, but it is theirs: name it in one line rather than leaving them to
+  find it.
 - **Surface `bookkeepingFailures` loudly.** Each entry means that issue's **lows / cap-remainder were
   never filed** and its **dependents were never re-blocked** — so a future run would build those
   dependents on **unpaid debt**. Name the issue and the reason, and say plainly that the follow-ups

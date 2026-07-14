@@ -543,8 +543,15 @@ assert_contains "it cuts the issue-<N> branch from the base branch" "$js_block" 
 assert_contains "the setup agent is pinned cheap and schema'd" \
     "$js_block" '{ model: "haiku", effort: "low", schema: SETUP_SCHEMA }'
 assert_contains "a failed setup drains the run, like a failed build" "$js_block" "!setup || setup.failed"
-assert_contains "the RETURNED worktree path is what feeds the chain" "$js_block" "issue.worktree = setup.worktree"
-assert_contains "the RETURNED branch is what feeds the chain" "$js_block" "issue.branch   = setup.branch"
+# What feeds the chain is the path the SCHEDULER computed, not the model's echo of it. The echo is
+# verified against that constant (verifyTree, below) and drains the chain on any other value — which
+# is what makes it an improvisation detector, and equally what makes it information-free: past the
+# check it can only BE the constant. Assigning the constant is therefore identical on every path
+# that survives the check and strictly safer on the ones that do not (a trailing slash, a symlinked
+# baseRepo, an omitted optional field would each drain a healthy run).
+assert_contains "the chain is fed the path the SCHEDULER computed, not the model's echo" \
+    "$js_block" "issue.worktree = worktreeOf(issue.n)"
+assert_contains "...and the branch likewise" "$js_block" 'issue.branch   = `issue-${issue.n}`'
 assert_contains "step 4 hands worktree creation to the setup agent" "$content" "setup agent"
 assert_not_contains "step 4 no longer tells the SCHEDULER to create the worktree" \
     "$content" "Create the issue's worktree from the base branch"
@@ -873,8 +880,15 @@ else
     fi
 
     # Negative control — if THIS passes, the syntax check above is vacuous and proves nothing.
-    cp "$tmpdir/block.cjs" "$tmpdir/broken.cjs"
-    printf 'const __deliberate_syntax_error = ;\n' >> "$tmpdir/broken.cjs"
+    # Inject the error INSIDE the wrapper's body, not after its closing brace: appending it outside
+    # would only prove the FILE is parsed strictly, when the claim under test is that an error in
+    # the BLOCK is caught. (Either placement fails the parse — but only this one tests the claim.)
+    {
+        printf 'async function __workflow(args) {\n'
+        printf 'const __deliberate_syntax_error = ;\n'
+        printf '%s\n' "$js_block" | sed 's/^export const meta/const meta/'
+        printf '}\n'
+    } > "$tmpdir/broken.cjs"
     if node --check "$tmpdir/broken.cjs" >/dev/null 2>&1; then
         no "node --check is a NO-OP here (it passed a file with a syntax error) — the check above proves nothing"
     else

@@ -73,6 +73,17 @@ true pass/fail exit code. CI (`.github/workflows/ci.yml`) also runs shellcheck, 
 Add or update a test alongside any change to `setup/lib/`, `scripts/`, or plugin
 scripts.
 
+**`node` is a soft dependency.** Nearly everything here is prose, so nearly every test is
+a grep — and a grep can only prove a *string describing* the behavior is present. The one
+executable artifact in the kit is the `js` scheduler block in
+`plugins/workflow/skills/orchestrate/SKILL.md`, so it gets the one behavior test:
+`plugins/workflow/tests/orchestrate-block.harness.js` extracts that block, compiles it as
+the async function body the Workflow runtime runs it as, and drives it against a stubbed
+`agent()` — killing each spawn in turn to assert the run **drains** instead of silently
+degrading. `test_orchestrate-block-behavior.sh` wraps it (and `test_orchestrate-skill.sh`
+syntax-checks the same block). Both **skip green when `node` is absent** — CI must not
+need node. If you edit that block, run the harness: it tests behavior, not strings.
+
 ## Gotchas
 
 - **Plugin reload.** Plugins load from this directory source. After editing a plugin
