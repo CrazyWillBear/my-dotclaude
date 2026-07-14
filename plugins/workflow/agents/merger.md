@@ -70,6 +70,10 @@ Return, terse and factual (this is data for the orchestrator, not a user-facing 
   (`git -C <base> rev-parse HEAD`) and report it verbatim — the orchestrator quotes it in the
   issue's close comment ("Merged in `<sha>`"), so a merged issue **must** come back with one.
   Never invent or guess a sha; an issue you did not merge has none.
-- Any **conflict-stops**: issue `#N`, its worktree path, and the reason (unresolvable, or red
-  done-check after resolution).
+- Any **conflict-stops** — **one entry per stopped issue**: issue `#N`, its worktree path, and
+  the reason (unresolvable, or red done-check after resolution). You **merge on through the batch**
+  after a stop, so a batch can stop on **more than one** issue: **report **all** of them**, never
+  just the first. The orchestrator reads these as a **list** (`conflictStops`), reports every one,
+  and needs **its worktree path** to tell the user where to go look — an issue you drop here is one
+  that is never merged, never closed and never explained.
 - The **final done-check result** — the actual command run and pass/fail.

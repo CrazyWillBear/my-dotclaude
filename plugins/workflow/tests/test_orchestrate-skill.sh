@@ -45,6 +45,13 @@ no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 
 assert_contains()     { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; esac; }
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
+# Line-scoped absence check. A bare substring ban is a REPO-WIDE ban on a token, which
+# is how "no plan comment" grew into "the skill may never mention `gh issue comment`
+# anywhere" — a test dictating a product decision. A regex over each line bans the
+# FORM, not the token.
+assert_not_matches() {
+    if printf '%s\n' "$2" | grep -Eq -- "$3"; then no "$1 (unexpected match: $3)"; else ok "$1"; fi
+}
 
 # ---------------------------------------------------------------------------
 echo "test: skill file exists at the expected discovery path"
@@ -308,7 +315,12 @@ assert_contains "plan replaces the implementer self-plan" "$content" "replaces t
 echo "test: the run stays autonomous — no plan comment, no plan-approval gate"
 assert_contains "no plan comment posted to the issue" "$content" "no plan comment is posted to the issue"
 assert_contains "no plan-approval gate fires" "$content" "no plan-approval gate fires"
-assert_not_contains "plan is never posted as an issue comment" "$content" "gh issue comment"
+# NARROW: ban the plan-posting FORM, not the `gh issue comment` token. The old repo-wide
+# substring ban enforced "no plan comment" by forbidding the string anywhere in the
+# skill — which silently vetoed every OTHER legitimate comment the main thread makes
+# (it already runs `gh issue close --comment`). A test must not decide product scope.
+assert_not_matches "the PLAN is never posted as an issue comment" \
+    "$content" 'gh issue comment.*plan|plan.*gh issue comment'
 
 # --- comments ride the work order ------------------------------------------
 # A human (or a prior review) may leave the definitive answer as an issue comment.
@@ -497,8 +509,47 @@ assert_contains "empty-graph throw present" "$js_block" "graph.issues"
 echo "test: the schematic never blind-destructures args"
 assert_not_contains "no bare const { maxParallel } = args in the js block" "$js_block" "const { maxParallel } = args"
 
-echo "test: implementer spawns don't set isolation (the worktree is created per issue)"
-assert_not_contains "isolation opt is gone from implementer spawns" "$js_block" "isolation:"
+# --- SOMEBODY must create the per-issue worktree -----------------------------
+# The hole this pins: the scheduler was told to run `git worktree add` itself, but a
+# Workflow script CANNOT shell out, and both implementer.md and merger.md forbid
+# creating a worktree. So the implementer was handed a path that did not exist and was
+# forbidden to create it — every build would die on its first `git -C <nonexistent>` or
+# improvise into the orchestration worktree, where N concurrent implementers interleave
+# commits on ONE branch and no `issue-<N>` branch ever exists for the merger to merge.
+#
+# The owner is a cheap per-issue SETUP AGENT (agents can shell out; Workflow scripts
+# cannot), spawned at ADMISSION as runIssue's first stage — not at launch, because a
+# dependent must branch from a base that already holds its merged blocker.
+echo "test: a per-issue setup agent creates the worktree — the scheduler cannot shell out"
+assert_contains "the setup agent runs git worktree add, at the requested path" \
+    "$js_block" 'worktree add ${worktreeOf(issue.n)}'
+assert_contains "it cuts the issue-<N> branch from the base branch" "$js_block" '-b issue-${issue.n} ${baseBranch}'
+# One mechanical git command — the same cheap class as the bookkeeper, and schema'd so
+# the path comes back as an OBJECT rather than as prose the scheduler must re-parse.
+assert_contains "the setup agent is pinned cheap and schema'd" \
+    "$js_block" '{ model: "haiku", effort: "low", schema: SETUP_SCHEMA }'
+assert_contains "a failed setup drains the run, like a failed build" "$js_block" "!setup || setup.failed"
+assert_contains "the RETURNED worktree path is what feeds the chain" "$js_block" "issue.worktree = setup.worktree"
+assert_contains "the RETURNED branch is what feeds the chain" "$js_block" "issue.branch   = setup.branch"
+assert_contains "step 4 hands worktree creation to the setup agent" "$content" "setup agent"
+assert_not_contains "step 4 no longer tells the SCHEDULER to create the worktree" \
+    "$content" "Create the issue's worktree from the base branch"
+# NOT `isolation:` — it yields a FRESH, UNNAMED worktree, so it cannot cut a branch
+# named issue-<N> from a chosen base, which is exactly what the merger needs.
+assert_not_contains "isolation opt is not the mechanism (it cannot name the branch)" "$js_block" "isolation:"
+
+# --- every schema the schematic REFERENCES must be DEFINED in it ---------------
+# The js block is transcribed VERBATIM. A spawn that passes `schema: BUILT_SCHEMA` with
+# no definition in scope throws ReferenceError on the real run — the same crash class
+# the mergeManifest / ghWriteManifest definitions exist to prevent. Leaving a schema to
+# the transcriber to guess is leaving the contract to the transcriber to guess.
+echo "test: every *_SCHEMA the schematic passes is defined in the block (no ReferenceError)"
+assert_contains "SETUP_SCHEMA defined"  "$js_block" "const SETUP_SCHEMA"
+assert_contains "BUILT_SCHEMA defined"  "$js_block" "const BUILT_SCHEMA"
+assert_contains "REVIEW_SCHEMA defined" "$js_block" "const REVIEW_SCHEMA"
+assert_contains "MERGE_SCHEMA defined"  "$js_block" "const MERGE_SCHEMA"
+assert_contains "FILED_SCHEMA defined"  "$js_block" "const FILED_SCHEMA"
+assert_contains "the schemas are real JSON Schema objects, not prose" "$js_block" 'type: "object"'
 
 # --- the schematic must be genuinely RUNNABLE (prose bugs are real bugs) -----
 # The js block is transcribed VERBATIM into the script handed to the Workflow tool, so
@@ -527,6 +578,15 @@ assert_before "orderFindings declared above the scheduler loop" "const orderFind
 assert_before "mergeManifest declared above the scheduler loop" "const mergeManifest" "while (true)"
 assert_before "ghWriteManifest declared above the scheduler loop" "const ghWriteManifest" "while (true)"
 assert_before "log declared above the scheduler loop" "const log " "while (true)"
+assert_before "SETUP_SCHEMA declared above the scheduler loop"  "const SETUP_SCHEMA"  "while (true)"
+assert_before "BUILT_SCHEMA declared above the scheduler loop"  "const BUILT_SCHEMA"  "while (true)"
+assert_before "REVIEW_SCHEMA declared above the scheduler loop" "const REVIEW_SCHEMA" "while (true)"
+assert_before "MERGE_SCHEMA declared above the scheduler loop"  "const MERGE_SCHEMA"  "while (true)"
+assert_before "FILED_SCHEMA declared above the scheduler loop"  "const FILED_SCHEMA"  "while (true)"
+# isReady now BACKS a launch guard, so it must be declared above that guard too — not
+# merely above the loop.
+assert_before "isReady declared above the launch guard that calls it" \
+    "const isReady" "!graph.issues.some(isReady)"
 
 echo "test: the schematic defines every helper it calls — no guess-the-return-type"
 assert_contains "mediumOrWorse defined (returns an ARRAY of findings)" "$js_block" "const mediumOrWorse"
@@ -542,11 +602,32 @@ assert_contains "the pre-fix HEAD comes back on BUILT_SCHEMA" "$js_block" "let p
 echo "test: a bookkeeping failure never costs a close (allSettled, not all)"
 assert_contains "bookkeeping is awaited with allSettled" "$js_block" "Promise.allSettled(bookkeeping)"
 assert_not_contains "a rejecting filing must not discard the return" "$js_block" "Promise.all(bookkeeping)"
+# allSettled alone makes a rejected filing INVISIBLE: nothing reads the settled array, so
+# the cap-remainder is never filed, the dependents are never re-blocked, `followUps`
+# reports [], and the NEXT run builds those dependents on unpaid debt — the dangerous
+# direction. Catch at creation (which also closes the unhandled-rejection window) and
+# carry the failure home.
+assert_contains "a rejected filing is caught where it is created" "$js_block" ".catch(e =>"
+assert_contains "bookkeeping failures ride home in the report" "$js_block" "bookkeepingFailures"
+assert_contains "Step 2 prints the bookkeeping failures" "$content" "\`bookkeepingFailures\`"
 
 echo "test: a dead merger drains the run — it never rejects the chain"
 assert_contains "the merger's result is guarded before it is read" "$js_block" "if (!merged"
 assert_contains "runIssue catches instead of rejecting its chain" "$js_block" "} catch ("
-assert_contains "a caught chain failure drains rather than kills" "$content" "drain-then-stop, not kill"
+# Anchored on the DRAIN CALL inside the catch, not on the prose phrase "drain-then-stop,
+# not kill" — that phrase predates the catch and would keep passing with the catch
+# deleted, so it pinned the CLAIM, not the behaviour.
+assert_contains "a caught chain failure drains rather than kills" "$js_block" "drain(\`chain failed on #"
+
+# The BUILD path drains on `!built || built.failed`; the FIX path used to read only
+# `fixed?.head`. A fix implementer reporting failed:true (red done-check) was a no-op:
+# the loop re-reviewed, exhausted the cap, and the slice MERGED ANYWAY with a
+# cap-remainder — a clean merge is not done-check gated (merger.md gates only the
+# conflict resolutions and the final post-batch check), so a broken branch lands, its
+# issue is CLOSED by the main thread, and the run drains on a red base.
+echo "test: a failed FIX implementer drains too — a red branch must never merge"
+assert_contains "the build implementer's failure drains" "$js_block" "!built || built.failed"
+assert_contains "the fix implementer's failure drains" "$js_block" "!fixed || fixed.failed"
 
 echo "test: the merger's returned issue numbers are re-checked against the allowlist"
 # A hallucinated number would otherwise become an irreversible `gh issue close` on an
@@ -562,17 +643,37 @@ assert_contains "the main loop drains the queue before breaking" "$js_block" "me
 
 echo "test: launch guards fail loud BEFORE any spawn is paid for"
 assert_contains "an unfetchable scoped issue refuses the run" "$js_block" 'i.state === "unknown"'
-assert_contains "no OPEN scoped issue refuses the run (silent-empty class)" \
+# The guard must test READINESS, not openness. An all-open scope in which every issue is
+# blocked by an unclosed OUT-OF-SCOPE issue (or by a `## Blocked by` ref aimed at a PR
+# number, which scope-graph.sh resolves to "unknown" — never "closed"), or in which every
+# issue is `hitl`-labelled, passes an openness guard, admits NOTHING, breaks on the first
+# pass, and returns a clean `{ mergedIssues: [], stopReason: null }`. That reads as a
+# clean drain: the silent-empty class, straight back through the front door.
+assert_contains "NOTHING READY refuses the run (silent-empty class)" \
+    "$js_block" "!graph.issues.some(isReady)"
+assert_not_contains "the too-loose openness-only guard is gone" \
     "$js_block" '!graph.issues.some(i => i.state === "open")'
 assert_contains "an untiered open issue refuses the run" "$js_block" "!ROSTER[i.tier]"
 assert_contains "the empty/partial-scope refusal is loud" "$content" "fail loud before any spawn"
 
+# Fail-loud is the right DEFAULT for an unfetchable issue, but with no escape hatch one
+# deleted or renamed child makes a 20-slice PRD permanently unrunnable until its body is
+# hand-edited.
+echo "test: --skip-unknown lets one dead ref not hard-block a whole PRD"
+assert_contains "--skip-unknown in the argument-hint" "$content" "[--skip-unknown]"
+assert_contains "the guard honours the opt-in" "$js_block" "skipUnknown"
+assert_contains "a skipped issue is still named in the log, never silently dropped" \
+    "$js_block" "--skip-unknown"
+
 echo "test: the spawn prompts interpolate real values, never placeholders"
 assert_not_contains "no literal <base> placeholder in a prompt" "$js_block" "<base>.."
-assert_contains "the review diff names the real base branch" "$js_block" '${baseBranch}..issue-'
-assert_contains "the fix implementer is handed its worktree path" "$js_block" "worktreeOf(issue.n)"
-assert_contains "the fix implementer is handed its branch" "$js_block" 'branch: issue-${issue.n}'
+assert_contains "the review diff names the real base branch" "$js_block" '${baseBranch}..${issue.branch}'
+# The setup agent's RETURNED path — not a computed guess — is what every later stage is
+# handed, so a worktree created somewhere else than the scheduler assumed still works.
+assert_contains "the fix implementer is handed the returned worktree path" "$js_block" 'worktree: ${issue.worktree}'
+assert_contains "the fix implementer is handed the returned branch" "$js_block" 'branch: ${issue.branch}'
 assert_contains "the fix implementer is handed the done-check" "$js_block" 'done-check: ${doneCheck}'
+assert_contains "the merge manifest carries the returned worktree, not a guess" "$js_block" "i.worktree"
 
 echo "test: bookkeeping only spawns when there is something to file"
 assert_contains "fileFollowUps is guarded on lows/cap-remainder" "$js_block" "issue.lows?.length"
@@ -589,11 +690,33 @@ assert_contains "a per-issue record (tier, verdict, filings)" "$js_block" "perIs
 assert_contains "the issues never built" "$js_block" "unbuilt:"
 assert_contains "the run log" "$js_block" "log: runLog"
 
+# `unbuilt` reads as "scoped but never admitted — something went wrong". Sweeping in the
+# issues that were ALREADY CLOSED at launch (reachable via --issues, which does no state
+# filter) or that carry `hitl` / `prd` reports a non-problem as a problem.
+echo "test: unbuilt names only issues that COULD have been built"
+assert_contains "unbuilt excludes the closed and the label-excluded" "$js_block" "!i.attempted && i.state === \"open\""
+
+# merger.md says "Any conflict-stopS" and continues through the batch, so ONE batch can
+# stop on SEVERAL issues. A singular field keeps one and vanishes the rest — they land in
+# perIssue as attempted, not in mergedIssues, not in unbuilt, with no reason given — and a
+# later batch's stop OVERWRITES an earlier one while stopReason still names the first, so
+# the report contradicts itself.
+echo "test: conflict-stops are a LIST and are PUSHED, never overwritten"
+assert_contains "the return carries a list of conflict-stops" "$js_block" "conflictStops,"
+assert_contains "each stop is pushed, not assigned" "$js_block" "conflictStops.push"
+assert_not_contains "the singular assignment is gone" "$js_block" "conflictStop = merged.conflictStop"
+assert_contains "a stop carries the worktree to look in" "$js_block" "worktree"
+
 echo "test: Step 2's report spec consumes exactly the returned fields"
 assert_contains "report reads perIssue" "$content" "\`perIssue\`"
 assert_contains "report reads held" "$content" "\`held\`"
 assert_contains "report reads unbuilt" "$content" "\`unbuilt\`"
 assert_contains "report reads the run log" "$content" "\`log\`"
+# The table promises one row per SCOPED issue, but perIssue[] only holds the ATTEMPTED
+# ones — a blocked or held issue has no row there. Tier must come from the main thread's
+# own Step-0a scope record, which covers every scoped issue.
+assert_contains "tier is sourced from the Step-0a scope, not perIssue" "$content" "Step-0a scope record"
+assert_contains "an unattempted issue's verdict cell is explicitly empty" "$content" "no \`perIssue\` row"
 
 # --- the re-block ref must PARSE (scope-graph's BARE_REF) --------------------
 # The graph parser takes a blocker ref only as a whole line (`#N` or `- #N`). A haiku
@@ -604,11 +727,18 @@ assert_contains "bare ref, one per line" "$content" "bare \`#N\` on its own line
 assert_contains "no trailing prose on the ref line" "$content" "no trailing prose"
 
 # --- the conflict-stop instruction must be implementable --------------------
-# The Workflow cannot run gh, the merger is forbidden from commenting, and the
-# bookkeeper only files follow-ups — so "comment that issue" had no owner.
-echo "test: a conflict-stop is reported, not commented by a component that cannot"
-assert_not_contains "the unimplementable comment instruction is gone" "$content" "comment that issue"
-assert_contains "the conflict-stop is surfaced in the final report" "$content" "conflictStop"
+# The old instruction ("comment that issue") named no owner: the Workflow cannot run gh,
+# the merger is forbidden to comment, the bookkeeper only files. But the enumeration that
+# concluded "so it is reported, not commented" OMITTED THE MAIN THREAD — which can, and
+# already does (`gh issue close --comment`). Reasoning over an incomplete actor set until
+# an action looks ownerless is precisely how the worktree hole above got built. Every
+# actor is now named, and the owner is the main thread.
+echo "test: a conflict-stop has a NAMED owner — the main thread comments it on return"
+assert_not_contains "the ownerless comment instruction is gone" "$content" "comment that issue"
+assert_contains "the conflict-stops are surfaced in the final report" "$content" "conflictStops"
+assert_contains "the main thread is named as an actor that CAN comment" "$content" "the main thread **can**"
+assert_contains "the main thread comments the stop on its issue" "$content" "gh issue comment <N>"
+assert_contains "the comment names the worktree left intact" "$content" "left intact at <worktree>"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

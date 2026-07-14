@@ -58,7 +58,21 @@ assert_contains "effort pinned to xhigh" "$content" "effort: xhigh"
 echo "test: the output contract asks for the merge commit sha (MERGE_SCHEMA needs it)"
 assert_contains "merge commit sha requested per issue" "$content" "merge commit sha"
 assert_contains "the sha is read off the base branch" "$content" "rev-parse HEAD"
-assert_contains "a conflict-stop names its issue and reason" "$content" "conflict-stop"
+
+# ---------------------------------------------------------------------------
+# The merger continues through the batch after a stop ("After all merges" runs
+# regardless), so ONE batch can stop on SEVERAL issues. MERGE_SCHEMA therefore reads
+# `conflictStops` as a LIST — and each entry must carry the WORKTREE PATH, or the report
+# cannot tell the user where to go look.
+#
+# The previous assertion here just grepped the word "conflict-stop", which this file
+# already contained before the feature existed: it passed with the feature deleted. These
+# are anchored on the behaviour they name.
+echo "test: the merger reports ALL conflict-stops in a batch, each with its worktree"
+assert_contains "every stop is reported, not just the first" "$content" "report **all** of them"
+assert_contains "a stop carries the worktree path to look in" "$content" "its worktree path"
+assert_contains "a stop carries its reason" "$content" "the reason (unresolvable, or red"
+assert_contains "an unverified resolution is never kept" "$content" "Never keep an unverified resolution"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
