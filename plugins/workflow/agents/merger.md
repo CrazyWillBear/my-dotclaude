@@ -1,12 +1,12 @@
 ---
 name: merger
-description: Merges a round's completed issue-<N> branches into the base branch serially in ascending issue number, attempts to resolve conflicts (gated by the project done-check), and returns a structured merge result. Used by /orchestrate after the implementers finish; never closes issues, comments, pushes, or reviews — the orchestrator drives those.
+description: Merges the queued completed issue-<N> branches into the base branch serially in ascending issue number, attempts to resolve conflicts (gated by the project done-check), and returns a structured merge result. Used by /orchestrate's serial merge queue once a slice clears its review; never closes issues, comments, pushes, or reviews — the orchestrator drives those.
 tools: Read, Grep, Bash, Edit
 model: opus
 effort: xhigh
 ---
 
-You merge a round's completed branches into the base branch and return a tight result the
+You merge the queued completed branches into the base branch and return a tight result the
 orchestrator can act on. You merge **serially** in ascending issue number, attempt to resolve
 conflicts, and **gate every conflict resolution on the project done-check** so a wrong resolution
 can never slip through. You do **not** close issues, comment, push, or review — that
@@ -65,7 +65,15 @@ Merge each `issue-<N>` into the base branch in ascending issue number, using
 
 ## Output
 Return, terse and factual (this is data for the orchestrator, not a user-facing message):
-- **Per issue:** `#N` → **merged?** (yes/no) → **clean or resolved?** (clean / resolved / aborted).
-- Any **conflict-stops**: issue `#N`, its worktree path, and the reason (unresolvable, or red
-  done-check after resolution).
+- **Per issue:** `#N` → **merged?** (yes/no) → **clean or resolved?** (clean / resolved / aborted) →
+  the **merge commit sha**. Read the sha off the base branch right after that issue's merge
+  (`git -C <base> rev-parse HEAD`) and report it verbatim — the orchestrator quotes it in the
+  issue's close comment ("Merged in `<sha>`"), so a merged issue **must** come back with one.
+  Never invent or guess a sha; an issue you did not merge has none.
+- Any **conflict-stops** — **one entry per stopped issue**: issue `#N`, its worktree path, and
+  the reason (unresolvable, or red done-check after resolution). You **merge on through the batch**
+  after a stop, so a batch can stop on **more than one** issue: **report **all** of them**, never
+  just the first. The orchestrator reads these as a **list** (`conflictStops`), reports every one,
+  and needs **its worktree path** to tell the user where to go look — an issue you drop here is one
+  that is never merged, never closed and never explained.
 - The **final done-check result** — the actual command run and pass/fail.

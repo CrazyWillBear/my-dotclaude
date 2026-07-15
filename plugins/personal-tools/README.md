@@ -52,9 +52,12 @@ plugins/personal-tools/
   `/to-issues` then slices it into the `ready-for-agent` issues the `workflow` plugin's
   `/orchestrate` loop builds.
 - **`/to-issues <#>`** — break a PRD issue into **tracer-bullet vertical slices** (each cuts all
-  layers, demoable alone): quiz me on granularity/dependencies/HITL, then file them in dependency
-  order so each issue's `## Blocked by` carries real `#N` refs. Labels slices `ready-for-agent`
-  (and `hitl` where a human is needed); never edits the parent PRD.
+  layers, demoable alone): quiz me on granularity/dependencies/HITL/tier, then file them in
+  dependency order so each issue's `## Blocked by` carries real `#N` refs. Labels slices
+  `ready-for-agent` **and their complexity tier** (`tier:trivial|standard|complex`, by
+  `classify-task`'s rubric — the tier is what routes `/orchestrate`'s planner/implementer/reviewer
+  models, and it's set here because the slicing exploration already grounds it), plus `hitl` where
+  a human is needed; never edits the parent PRD.
 - **`/handoff [note]`** — capture a rich handoff before `/clear`: write the handoff doc and the
   resume pointer the `workflow` plugin reads, both under a per-repo keyed dir
   `~/.claude/handoffs/<sha1(--git-common-dir)[:16]>/` (`<branch-slug>.md` + `.pending.json`).

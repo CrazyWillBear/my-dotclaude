@@ -106,5 +106,21 @@ assert_contains "run the project's done-check" "$content" "done-check"
 assert_contains "honest failure reporting" "$content" "report the failure honestly"
 
 # ---------------------------------------------------------------------------
+# /orchestrate's scheduler reads this agent's result through BUILT_SCHEMA
+# { n, branch, worktree, head, failed } and DRAINS THE RUN on `failed` — in two
+# places (the build guard and the fix loop). `head` is the fix loop's delta base,
+# and a Workflow cannot shell out to rev-parse it, so the sha must ride back here.
+# None of that is in the Output contract below unless it is NAMED: the signal
+# survives only by the structured-output layer inferring `failed` from
+# "done-check: fail" prose. Name the fields so the contract and the schema agree.
+echo "test: the Output contract names the fields the orchestrate schema reads"
+assert_contains "issue number returned" "$content" "\`n\`"
+assert_contains "worktree returned" "$content" "\`worktree\`"
+assert_contains "branch returned" "$content" "\`branch\`"
+assert_contains "post-build HEAD sha returned (the fix loop's delta base)" "$content" "\`head\`"
+assert_contains "failed flag returned (it drains the run)" "$content" "\`failed\`"
+assert_contains "a red done-check means failed: true" "$content" "failed"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -182,14 +182,22 @@ tcr_install_personal_tools() {
 
 # --- system tools ------------------------------------------------------------
 
-# Installs universal-ctags when ctags is not already on PATH. Idempotent: when
-# ctags is found it reports "already installed" and returns 0. Detects the
-# package manager (brew / pacman / apt / dnf) and runs the right command.
-# Warns rather than aborting on failure, matching the other optional-install
-# helpers above.
+# True when the ctags on PATH is universal-ctags. macOS always ships a BSD
+# ctags at /usr/bin/ctags, so a bare `command -v ctags` is not enough; BSD
+# ctags has no --version and exits non-zero on it.
+tcr_is_universal_ctags() {
+  command -v ctags >/dev/null 2>&1 \
+    && ctags --version 2>/dev/null | grep -q '^Universal Ctags'
+}
+
+# Installs universal-ctags unless it is already on PATH. Idempotent: when
+# universal-ctags is found it reports "already installed" and returns 0. A BSD
+# ctags does not count. Detects the package manager (brew / pacman / apt / dnf)
+# and runs the right command. Warns rather than aborting on failure, matching
+# the other optional-install helpers above.
 tcr_install_ctags() {
   tcr_step "Installing universal-ctags"
-  if command -v ctags >/dev/null 2>&1; then
+  if tcr_is_universal_ctags; then
     tcr_ok "ctags already installed ($(command -v ctags))"
     return 0
   fi
@@ -228,6 +236,13 @@ tcr_install_ctags() {
   fi
   if $cmd >/dev/null 2>&1; then
     tcr_ok "installed ctags via $pkg_mgr"
+    # An installed universal-ctags can still lose to a system ctags earlier on
+    # PATH (macOS: /usr/bin/ctags). Say so — the install "worked" but the wrong
+    # binary answers to the name.
+    if ! tcr_is_universal_ctags; then
+      TCR_INSTALL_FAILED=1
+      tcr_warn "installed, but '$(command -v ctags)' still shadows universal-ctags on PATH — put the package manager's bin dir ahead of it (macOS: eval \"\$(brew shellenv)\" in ~/.zprofile)."
+    fi
   else
     TCR_INSTALL_FAILED=1
     tcr_warn "could not install ctags automatically — run: $cmd"

@@ -97,11 +97,13 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    publishes it as one GitHub issue labelled `prd`.
 3. **`/to-issues`** breaks the PRD into **tracer-bullet vertical slices** (each cuts all
    layers and is demoable alone), publishing them in dependency order so each issue's
-   `## Blocked by` section carries real `#N` refs.
-4. **`/orchestrate [N] [--max K]`** then runs N rounds AFK: it picks the ready issues,
-   builds each in parallel, merges the finished branches back in order, closes them, then
-   reviews each built slice with `my-review` — surfacing findings in the round report and
-   filing `mock-debt` follow-ups from its central-mechanism audit.
+   `## Blocked by` section carries real `#N` refs — each labelled with its complexity
+   **tier** (`tier:trivial|standard|complex`), which is what routes the agent models later.
+4. **`/orchestrate [--max N]`** then runs AFK until the scope drains: it keeps N issues in
+   flight (readiness computed from a launch-frozen issue graph, no guessing), builds each in
+   its own worktree, reviews the slice with `my-review` — surfacing findings in the run report
+   and filing `mock-debt` follow-ups from its central-mechanism audit — then merges the branch,
+   which unblocks its dependents and frees the slot for the next ready issue.
 
 For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>
 [--self-plan]`** runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the

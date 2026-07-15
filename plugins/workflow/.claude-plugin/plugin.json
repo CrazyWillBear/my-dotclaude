@@ -1,7 +1,7 @@
 {
   "name": "workflow",
-  "version": "0.11.0",
-  "description": "An autonomous dev loop plus context management: /orchestrate runs N rounds of parallel issue-solving (implementers in isolated git worktrees, a merger that merges in dependency order and resolves conflicts under the done-check, then per-issue my-review reviews each built slice at the tier's reviewer model — surfacing findings and filing mock-debt follow-ups from its central-mechanism audit), /pipeline runs one task through a plan-build-review chain (models routed by complexity tier) with severity-routed fixes, and a threshold-driven watchdog drives deliberate, early /clear and /handoff as the window fills, auto-resuming the in-flight plan.",
+  "version": "0.12.0",
+  "description": "An autonomous dev loop plus context management: /orchestrate keeps N issues in flight over a launch-frozen issue graph (readiness computed in plain code, never guessed by a model; each issue's planner/implementer/reviewer routed by its persisted tier label), building each in an isolated git worktree, reviewing every built slice with my-review at the tier's reviewer model — surfacing findings and filing mock-debt follow-ups from its central-mechanism audit — and merging serially in dependency order under the done-check, so a merged issue unblocks its dependents and frees the slot; /pipeline runs one task through a plan-build-review chain (models routed by complexity tier) with severity-routed fixes, and a threshold-driven watchdog drives deliberate, early /clear and /handoff as the window fills, auto-resuming the in-flight plan.",
   "author": {
     "name": "William Chastain",
     "url": "https://github.com/CrazyWillBear"

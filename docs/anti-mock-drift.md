@@ -61,7 +61,7 @@ mechanism is real.
 
 ## The two guards
 
-### 1. Per-slice — my-review audit (catch it the round it happens)
+### 1. Per-slice — my-review audit (catch it the moment it happens)
 
 Every slice carries a `## Central mechanism` line (derived from the PRD). The implementer is
 expected to build it **real** (thin is fine — a tracer bullet, not a full implementation). If it
@@ -111,7 +111,7 @@ that builds it, just deferred. Either way it's schedulable, never a phantom.
 | `/to-issues` | Derives a `## Central mechanism` line per slice; default = build it thin-real; allows a `## Mock-debt` escape hatch. Labels the final e2e/staging slice `e2e-gate`. Ensures the `mock-debt` + `e2e-gate` labels exist. |
 | `implementer` | Builds its slice's central mechanism real. If it must mock it, writes a `## Mock-debt` declaration (`Mocked: <X>. Real wiring blocked by: #N \| deferred`) — declare-only; it's sandboxed and never edits the cross-issue graph. |
 | `my-review` | Reviews each built slice on its branch diff and audits its central mechanism vs its test. Declared mock → confirm + file `mock-debt` follow-up. Undeclared central mock → auto-convert + file. Gains a narrow, audit-scoped `gh issue create` for mock-debt (its general review stays report-only). |
-| `orchestrator` | Maintains the ledger mirror in the PRD body; enforces the ready-rule (`e2e-gate` blocked while any open `mock-debt`); reports debt each round. |
+| `orchestrator` | Maintains the ledger mirror in the PRD body; enforces the ready-rule (`e2e-gate` blocked while any open `mock-debt` — seeded from the launch ledger and unioned with every mock-debt the run's own reviews file); reports the open debt in the run report. |
 
 ## The mock-debt issue lifecycle
 
@@ -121,7 +121,7 @@ that builds it, just deferred. Either way it's schedulable, never a phantom.
    #N"), `## Blocked by` the declared blocker (or "None - integration" if deferred to the end).
 3. **Block** — the `e2e-gate` slice is held not-ready while this issue is open (ready-rule, via
    the label query — no per-ref wiring needed).
-4. **Burn down** — a later round builds the follow-up once its blocker closes; closing it removes
+4. **Burn down** — a later run builds the follow-up once its blocker closes; closing it removes
    it from the ledger. When the ledger empties, the `e2e-gate` can finally be ready.
 
 ## Labels
