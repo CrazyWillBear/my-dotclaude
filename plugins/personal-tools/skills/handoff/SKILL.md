@@ -64,6 +64,6 @@ a handoff over uncommitted work would lose it on `/clear`.
    `git_toplevel` records the working tree this handoff was written in — if that's a linked
    worktree, `resume.sh` tells the fresh session to `EnterWorktree(path=…)` it before resuming.
 4. **Tell me what to do**, in plain English (this is a multi-step instruction — write it normally
-   even in caveman mode): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject an
+   even if a terse output mode is active): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject an
    order making **reading the handoff doc the fresh session's mandatory first action**, then
    "implement the handoff @`<handoff doc>`", so nothing is lost. Show the handoff doc path.

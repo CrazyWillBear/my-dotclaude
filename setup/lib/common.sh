@@ -13,8 +13,8 @@ RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
 PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
 WORKFLOW_PLUGIN="workflow@${OUR_MARKETPLACE}"
-CAVEMAN_REPO="JuliusBrussee/caveman"
-CAVEMAN_PLUGIN="caveman@caveman"
+PONYTAIL_REPO="DietrichGebert/ponytail"
+PONYTAIL_PLUGIN="ponytail@ponytail"
 # Anthropic's official marketplace ships with Claude Code (usually already registered);
 # agent-sdk-dev scaffolds new Claude Agent SDK apps.
 OFFICIAL_MARKETPLACE_REPO="anthropics/claude-plugins-official"
@@ -100,9 +100,9 @@ tcr_install_workflow() {
   tcr_install_plugin "$WORKFLOW_PLUGIN"
 }
 
-tcr_install_caveman() {
-  tcr_add_marketplace "$CAVEMAN_REPO"
-  tcr_install_plugin "$CAVEMAN_PLUGIN"
+tcr_install_ponytail() {
+  tcr_add_marketplace "$PONYTAIL_REPO"
+  tcr_install_plugin "$PONYTAIL_PLUGIN"
 }
 
 # Installs agent-sdk-dev from Anthropic's official marketplace (Claude Agent SDK scaffolder).
@@ -249,20 +249,20 @@ tcr_install_ctags() {
   fi
 }
 
-# --- caveman level -----------------------------------------------------------
+# --- ponytail level ----------------------------------------------------------
 
-tcr_caveman_config_path() {
+tcr_ponytail_config_path() {
   if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-    printf '%s/caveman/config.json' "$XDG_CONFIG_HOME"
+    printf '%s/ponytail/config.json' "$XDG_CONFIG_HOME"
   else
-    printf '%s/.config/caveman/config.json' "$HOME"
+    printf '%s/.config/ponytail/config.json' "$HOME"
   fi
 }
 
-# tcr_set_caveman_level <lite|full|ultra|...>
-# Sets caveman's machine-wide default mode by merging into its config.json.
-tcr_set_caveman_level() {
-  tcr_merge_json_string "$(tcr_caveman_config_path)" defaultMode "$1"
+# tcr_set_ponytail_level <lite|full|ultra|...>
+# Sets ponytail's machine-wide default mode by merging into its config.json.
+tcr_set_ponytail_level() {
+  tcr_merge_json_string "$(tcr_ponytail_config_path)" defaultMode "$1"
 }
 
 # --- global (~/.claude) install ----------------------------------------------
@@ -319,7 +319,7 @@ tcr_install_global_claudemd() {
 # Merge one string key into a JSON object file, preserving every other key.
 # Creates the file when absent. Never overwrites a non-empty file it cannot
 # parse — it warns and leaves that file untouched, so it can't silently eat an
-# existing config (settings.json hooks/permissions, caveman settings, …). Backs
+# existing config (settings.json hooks/permissions, ponytail settings, …). Backs
 # up before a successful overwrite.
 tcr_merge_json_string() {
   local cfg="$1" key="$2" value="$3"
@@ -519,7 +519,7 @@ PY
 # tcr_install_statusline — install the default statusline renderer to
 # ~/.claude/statusline.py and point settings.json's statusLine at it. Always
 # overwrites any existing statusLine (a timestamped settings.json backup is
-# kept); the renderer folds the caveman mode badge in, so nothing is lost.
+# kept); the renderer folds the ponytail mode badge in, so nothing is lost.
 # Dev install only — setup-simple.sh leaves the status line plain.
 tcr_install_statusline() {
   local src="global/statusline.py"

@@ -70,7 +70,7 @@ want them) — then proceed anyway. The baseline is the current `HEAD` regardles
    resuming. This is the same `.pending.json` `/handoff` uses, so writing it here overwrites
    any pending handoff for this branch — the newest one wins.
 5. **Tell me what to do**, in plain English (this is a multi-step instruction — write it
-   normally even in caveman mode): run **`/clear`**, then send **`go`**. `resume.sh` will
+   normally even if a terse output mode is active): run **`/clear`**, then send **`go`**. `resume.sh` will
    re-inject an order making **reading the plan file the fresh session's mandatory first
    action**, then implementing it from the committed baseline, so nothing is lost. Show
    the plan file path.

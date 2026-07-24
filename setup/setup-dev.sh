@@ -2,7 +2,7 @@
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
 # the global CLAUDE.md (technical), model=opus, a default context status line,
-# the personal-tools + workflow + caveman + agent-sdk-dev + perf +
+# the personal-tools + workflow + ponytail + agent-sdk-dev + perf +
 # security-guidance + security-sweep plugins, the Playwright MCP server, and a
 # gh (GitHub CLI) allowlist (read-only reads + issue-write for the dev loop).
 # User scope — not tied to any one project.
@@ -68,12 +68,12 @@ tcr_step "Developer setup into: $HOME/.claude"
 tcr_install_global_claudemd
 tcr_set_setting model opus
 tcr_set_nested_setting worktree.baseRef head   # per-session worktrees branch off current HEAD
-tcr_install_statusline         # default context status line (folds in caveman badge)
+tcr_install_statusline         # default context status line (folds in ponytail badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
 tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
-tcr_install_caveman
+tcr_install_ponytail
 tcr_install_agent_sdk_dev
 tcr_install_composio_plugins    # third-party: perf + security-guidance
 tcr_install_security_sweep      # third-party: read-only security-scan skill
@@ -86,5 +86,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm personal-tools, workflow, caveman, agent-sdk-dev, perf, security-guidance, and security-sweep are enabled.\n'
+printf '  2. Run /plugin to confirm personal-tools, workflow, ponytail, agent-sdk-dev, perf, security-guidance, and security-sweep are enabled.\n'
 printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

@@ -67,7 +67,7 @@ paths, and `git -C <worktree>` for git.
 - Trailer on every commit: `Co-Authored-By: Claude <noreply@anthropic.com>`.
 - Commit with a quoted heredoc so punctuation can't break quoting:
   `git -C <worktree> commit -F - <<"EOF" … EOF`.
-- Write the commit message in **normal English** even in a caveman session.
+- Write the commit message in **normal English** even if a terse output mode is active.
 - Do **not** push, merge, rebase, or switch branches — merging is the orchestrator's job.
 
 ## Boundaries

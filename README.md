@@ -66,8 +66,8 @@ Then **restart Claude Code** so it loads the plugins.
   task's complexity tier), and a context watchdog that drives deliberate, early `/clear` and
   `/handoff` as the window fills.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
-- **[caveman](https://github.com/JuliusBrussee/caveman)** — third-party plugin for
-  terse output; installed alongside the above.
+- **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
+  minimal, YAGNI-first code; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
   official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed
   alongside the above.
@@ -169,8 +169,8 @@ differ only in audience:
 |---|---|---|
 | global `CLAUDE.md` | technical conventions (`global/CLAUDE.md`) | plain-English, no-jargon contract |
 | `model` | `opus` | Claude Code's default |
-| status line | context line (dir · branch · model · tokens · cost · churn · update flag; folds in the caveman badge) | not set |
-| caveman level | `full` (terse) | `lite` (a little more readable) |
+| status line | context line (dir · branch · model · tokens · cost · churn · update flag; folds in the ponytail badge) | not set |
+| ponytail level | `full` (default) | `lite` (a little gentler) |
 | universal-ctags | installed (for code navigation) | not installed |
 
 The installers back up any existing `~/.claude/CLAUDE.md` and `~/.claude/settings.json` before
@@ -226,12 +226,12 @@ Each plugin's own `README.md` carries its full file tree and per-piece reference
 
 `bash` and `python3` (the watchdog uses python3 to parse the transcript; if it's missing
 the hook fails open — it does nothing rather than blocking). The setup scripts also need
-the `claude` CLI and use `curl`. Caveman and the Playwright MCP both need
+the `claude` CLI and use `curl`. Ponytail and the Playwright MCP both need
 Node ≥ 18 (Playwright runs via `npx`). The issue loop (`/to-prd`, `/to-issues`,
 `/orchestrate`) needs the [`gh` CLI](https://cli.github.com) installed and
 `gh auth login`'d; the setup just warns if it's absent.
 
-> **Note:** caveman's verbosity level is set per *machine*, not per project (it has no
+> **Note:** ponytail's intensity level is set per *machine*, not per project (it has no
 > per-project setting). The non-developer setup sets the machine default to `lite`.
 
 ### Notes & limits

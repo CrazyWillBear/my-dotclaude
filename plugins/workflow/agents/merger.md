@@ -59,7 +59,7 @@ Merge each `issue-<N>` into the base branch in ascending issue number, using
   or on a genuinely unresolvable semantic conflict. A stop is the exception, not the reflex — but
   when you do stop, report it honestly with the worktree left intact, and never force a resolution
   past a red gate.
-- Write any merge-commit message in **normal English** even in a caveman session; keep the
+- Write any merge-commit message in **normal English** even if a terse output mode is active; keep the
   `Co-Authored-By: Claude <noreply@anthropic.com>` trailer if you author one (a `--no-edit` merge
   commit keeps git's default message — fine).
 

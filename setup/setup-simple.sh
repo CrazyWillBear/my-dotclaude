@@ -2,9 +2,9 @@
 #
 # Non-developer setup — installs the full Claude Code kit into ~/.claude, tuned
 # for someone who does not write code: the global CLAUDE.md (plain-English), the
-# personal-tools + workflow + caveman + agent-sdk-dev + perf + security-guidance +
+# personal-tools + workflow + ponytail + agent-sdk-dev + perf + security-guidance +
 # security-sweep plugins, the Playwright MCP
-# server, a gh (GitHub CLI) allowlist, and caveman set to its gentler "lite"
+# server, a gh (GitHub CLI) allowlist, and ponytail set to its gentler "lite"
 # level. User scope — not tied to any one project. (Model is left at Claude
 # Code's default.)
 #
@@ -51,7 +51,7 @@ for arg in "$@"; do
     --no-color) : ;;  # already handled before sourcing (see top)
     -h|--help)
       printf 'setup-simple.sh — non-developer setup: the full Claude Code kit at ~/.claude with plain-English output.\n'
-      printf 'Writes ~/.claude/CLAUDE.md (plain), installs the plugins + Playwright MCP + gh allowlist, caveman lite.\n'
+      printf 'Writes ~/.claude/CLAUDE.md (plain), installs the plugins + Playwright MCP + gh allowlist, ponytail lite.\n'
       printf 'Options: --force (overwrite an existing ~/.claude/CLAUDE.md), --no-color\n'
       exit 0 ;;
     *) tcr_warn "ignoring unknown option: $arg" ;;
@@ -71,13 +71,13 @@ tcr_set_nested_setting worktree.baseRef head   # worktree sandboxes branch off c
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
 tcr_install_personal_tools      # from our marketplace
 tcr_install_workflow            # from our marketplace
-tcr_install_caveman
+tcr_install_ponytail
 tcr_install_agent_sdk_dev
 tcr_install_composio_plugins    # third-party: perf + security-guidance
 tcr_install_security_sweep      # third-party: read-only security-scan skill
 tcr_install_playwright_mcp
 tcr_setup_gh
-tcr_set_caveman_level lite
+tcr_set_ponytail_level lite
 
 if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
   tcr_warn "a helper did not install automatically — run the 'claude plugin install' command(s) shown above, then restart Claude Code."

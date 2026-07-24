@@ -111,7 +111,7 @@ holds the e2e-gate not-ready while any open `mock-debt` issue exists, so the lab
 
 ## Voice
 
-Reason internally in normal English. **Narrate progress caveman-terse** to save output tokens
+Reason internally in normal English. **Narrate progress ultra-terse** to save output tokens
 (e.g. "pass 1 done, 2 sec findings. now general."). Write the **final report in normal English**.
 
 ## Output

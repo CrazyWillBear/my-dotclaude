@@ -4,7 +4,7 @@
 Claude Code runs this on every status refresh, piping a JSON blob on stdin
 (model, workspace, cost, context_window, ...). We print ONE line:
 
-    <model> · <effort> · <tokens>/<cost> · <dir> · ⎇ <branch> · <caveman> · <update>
+    <model> · <effort> · <tokens>/<cost> · <dir> · ⎇ <branch> · <ponytail> · <update>
 
 Design notes:
   * No network, no transcript parsing. Token usage comes straight from the
@@ -24,7 +24,7 @@ Design notes:
     including ones outside our control: the working directory (a dir name can
     legally contain a raw ESC byte), the git branch name, and the model /
     output-style names that arrive on stdin.
-  * The two user-space files (caveman flag, update cache) get extra defenses
+  * The two user-space files (ponytail flag, update cache) get extra defenses
     on top: refuse symlinks, cap bytes, and only ever emit derived/whitelisted
     text (mode whitelist, a static update badge) — never the raw file bytes.
   * Fail open: any unexpected error prints nothing rather than spamming the
@@ -38,11 +38,7 @@ import subprocess
 import sys
 
 SEP = " \033[2m·\033[0m "  # dim middle dot between segments
-CAVEMAN_MODES = {
-    "off", "lite", "full", "ultra",
-    "wenyan-lite", "wenyan", "wenyan-full", "wenyan-ultra",
-    "commit", "review", "compress",
-}
+PONYTAIL_MODES = {"off", "lite", "full", "ultra", "review"}
 # C0 + C1 control chars and DEL — stripped from every rendered segment so no
 # field (cwd, branch, model, ...) can smuggle a terminal-escape sequence.
 _CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -218,13 +214,13 @@ def seg_meters(data):
     return seg_tokens(data) + " / " + seg_cost(data)
 
 
-def seg_caveman():
-    flag = os.path.join(_config_dir(), ".caveman-active")
+def seg_ponytail():
+    flag = os.path.join(_config_dir(), ".ponytail-active")
     raw = _read_safe(flag, 64)
     mode = re.sub(r"[^a-z0-9-]", "", raw.strip().lower())
-    if not mode or mode == "off" or mode not in CAVEMAN_MODES:
+    if not mode or mode == "off" or mode not in PONYTAIL_MODES:
         return ""
-    return "caveman" if mode == "full" else "caveman:" + mode
+    return "ponytail" if mode == "full" else "ponytail:" + mode
 
 
 def seg_update():
@@ -250,7 +246,7 @@ def main():
         seg_meters(data),   # tokens / cost
         seg_dir(data),
         seg_branch(data),
-        seg_caveman(),
+        seg_ponytail(),
         seg_update(),
     ]
     line = SEP.join(_clean(s) for s in segments if s)

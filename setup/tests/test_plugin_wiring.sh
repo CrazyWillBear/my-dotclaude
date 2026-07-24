@@ -90,7 +90,7 @@ assert_contains "SECURITY_SWEEP_PLUGIN"     "$consts" "SWEEP=security-sweep@secu
 echo "test: installer functions (new + existing) are defined"
 defs=$(bash -c ". '$COMMON'
   for f in tcr_install_plugin tcr_install_composio_plugins tcr_install_security_sweep \
-           tcr_install_personal_tools tcr_install_workflow tcr_install_caveman \
+           tcr_install_personal_tools tcr_install_workflow tcr_install_ponytail \
            tcr_install_agent_sdk_dev; do
     declare -F \"\$f\" >/dev/null && echo \"def \$f\" || echo \"missing \$f\"
   done" 2>&1)
