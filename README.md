@@ -126,10 +126,7 @@ command to type. In short:
 1. **Starting `/orchestrate` in a full window (≥ 60k tokens)** → an *advisory* nudge to run
    `/clear` first, then re-run `/orchestrate`, so the loop starts in fresh context. It never
    blocks — `/orchestrate` still runs if you proceed.
-2. **Crossing ~250k mid-work** → a nudge to wrap up at a natural breaking point, commit, and
-   run `/handoff`. It re-fires on context **climb** — every ~50k past the last fire — so a
-   dropped first nudge self-recovers.
-3. **`/handoff`** writes a rich handoff doc + the resume pointer (both keyed per-repo) and
+2. **`/handoff`** writes a rich handoff doc + the resume pointer (both keyed per-repo) and
    walks you through `/clear` into fresh context, where the plan auto-resumes.
 
 The full hook wiring (`watchdog.sh`, `resume.sh`, `save-handoff.sh`, `suggest-docs.sh`),
@@ -238,8 +235,8 @@ Node ≥ 18 (Playwright runs via `npx`). The issue loop (`/to-prd`, `/to-issues`
 
 - The orchestrate gate (the `/clear`-first nudge before `/orchestrate`) is **advisory** —
   it injects a hint but never `decision: block`s, so `/orchestrate` still runs if you
-  proceed. The wrap nudge at 250k is likewise a model-directed instruction, not a hard
-  runtime gate.
+  proceed. There is deliberately no periodic wrap-up nudge — it interrupted long autonomous
+  runs; `save-handoff.sh` still writes a handoff on real compaction.
 - `/orchestrate` runs subagents via the Agent tool on the main thread (subagents can't spawn
   subagents); the opus merger attempts to resolve merge conflicts gated by the done-check,
   but an **unresolvable conflict or a failed done-check stops and reports** rather than

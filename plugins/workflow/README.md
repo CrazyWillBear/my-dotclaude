@@ -10,8 +10,8 @@ Three features in one plugin, versioned here with the rest of my setup:
    reviewer models are **routed to the task's complexity tier** (a Step-0.5 `classify-task`
    call), which then builds it in an isolated worktree, reviews the diff with the `my-review`
    agent, and routes findings by severity through a capped fix loop.
-3. **A context watchdog** — hooks that drive deliberate, *early* `/clear` and `/handoff`
-   as the window fills, instead of waiting for Claude Code's near-the-limit auto-compact.
+3. **An orchestrate context gate** — a `UserPromptSubmit` hook that advises `/clear` when you
+   type `/orchestrate` with a window that is already full, so the loop starts with room to run.
 
 ```
 plugins/workflow/
@@ -27,7 +27,7 @@ plugins/workflow/
 │   └── planner.md                    # opus, high effort — plans/replans/triages for /pipeline, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
-│   ├── watchdog.sh                   # orchestrate gate + climb-refiring wrap nudge
+│   ├── watchdog.sh                   # UserPromptSubmit: advise /clear before /orchestrate in a full window
 │   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
@@ -232,25 +232,24 @@ stop / take over). State persists at every phase boundary into the handoff dir (
 `hooks.json` wires five scripts to Claude Code hook events. All of them **fail open**: a
 missing `python3`/`git` or any error exits 0, so they never wedge a session.
 
-- **`watchdog.sh`** (UserPromptSubmit + PostToolUse + Stop) reads live context occupancy
+- **`watchdog.sh`** (UserPromptSubmit) reads live context occupancy
   from the transcript — the last assistant entry's `input_tokens + cache_read +
-  cache_creation` — and fires two signals. No hook can type a slash command, so it injects
-  instructions and tells you the one command to run.
+  cache_creation` — and fires one advisory signal. No hook can type a slash command, so it
+  injects instructions and tells you the one command to run.
   - **Orchestrate gate** (advisory, UserPromptSubmit only): when you type the `/orchestrate`
     slash command (bare or with args) and context is already ≥ `WORKFLOW_PLANGATE_TOKENS`
     (default **60k**), it injects a hint to run `/clear` first so the loop starts in a fresh
     window. It is **purely advisory** — never a `decision: block` — so `/orchestrate` still
     runs if you proceed. Natural-language phrasing ("please orchestrate") does *not* match;
     it requires the leading slash.
-  - **Wrap nudge** (any active work): when occupancy crosses `WORKFLOW_NUDGE_TOKENS`
-    (default **250k**), it nudges you to wrap up at the next natural breaking point, commit,
-    and run `/handoff`. It **re-fires on context climb** — every 50k past the last fire
-    (250k → 300k → 350k …) — so a dropped or unseen first nudge self-recovers instead of
-    staying silent for the session. Subagent-return turns (`Task`/`Agent` PostToolUse) are
-    skipped entirely.
+
+  There is deliberately **no periodic wrap-up nudge**. An earlier version fired at a fixed
+  occupancy on any work and told the agent to stop, commit and `/handoff` — which interrupted
+  long autonomous runs at their worst moment, and is actively wrong now that `/orchestrate`
+  runs its loop on the main thread. A session that genuinely needs a handoff still gets one
+  from `save-handoff.sh` on `PreCompact`, which fires on real compaction rather than a guess.
 - **`resume.sh`** (SessionStart) re-injects the in-flight per-repo handoff after each
-  `/clear` or `/compact`, and deletes the wrap-nudge sentinel — re-arming the nudge from the
-  250k floor. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
+  `/clear` or `/compact`. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
   written inside a linked worktree resumes from anywhere in the repo; when it was written in a
   worktree, the re-injected order tells the fresh session to `EnterWorktree(path=…)` that
   worktree first. Resolution is **3-tier**: the common-dir key, then the old `--show-toplevel`
@@ -271,9 +270,7 @@ auto-compact:
 
 1. **Starting `/orchestrate` in a full window** → advisory hint to `/clear` first, then
    re-run `/orchestrate`, so the loop runs in fresh context.
-2. **Crossing ~250k mid-work** → nudge to wrap at a natural breaking point, commit, and run
-   `/handoff` (re-firing every ~50k as context climbs).
-3. **`/handoff`** (from the `personal-tools` plugin) writes a rich handoff doc + a per-repo
+2. **`/handoff`** (from the `personal-tools` plugin) writes a rich handoff doc + a per-repo
    resume pointer and walks you through `/clear`; `resume.sh` then re-injects the plan into
    the fresh window, where it auto-resumes.
 
@@ -282,10 +279,7 @@ auto-compact:
 | Var | Default | Effect |
 |---|---|---|
 | `WORKFLOW_PLANGATE_TOKENS` | `60000` | orchestrate-gate floor (advisory `/clear` hint) |
-| `WORKFLOW_NUDGE_TOKENS` | `250000` | wrap-nudge floor |
 | `DOCS_FILE_THRESHOLD` / `DOCS_LINE_THRESHOLD` | off | optional sensitivity for the docs nudge |
-
-The 50k climb-refire step is hardcoded (a fixed design choice), not env-overridable.
 
 ## Conventions
 

@@ -3,11 +3,10 @@
 # Tests for scripts/resume.sh — the SessionStart auto-resume hook.
 #
 # Black-box: we plant a resume pointer, run the actual hook in a real git repo,
-# and assert on the resume instruction it injects, the pointer it removes, and
-# (on a /compact resume) the nudge sentinel it resets. The hook is source-aware:
-# /clear -> "implement the handoff" wording (fresh context), /compact -> "continue
-# the handoff" wording + sentinel reset (so a later climb can re-nudge), and any
-# other source falls back to "continue".
+# and assert on the resume instruction it injects and the pointer it removes.
+# The hook is source-aware: /clear -> "implement the handoff" wording (fresh
+# context), /compact -> "continue the handoff" wording, and any other source
+# falls back to "continue".
 #
 # Pointer resolution is 3-tier, in priority order: the new per-repo COMMON-DIR key
 # (~/.claude/handoffs/<sha1(realpath(--git-common-dir))[:16]>/.pending.json), then
@@ -21,8 +20,7 @@
 # (handoff written in a worktree, resumed from the primary tree -> EnterWorktree
 # injection); old toplevel-keyed pointer migration; legacy global fallback;
 # cross-repo isolation; the legacy wrong-repo guard; no-handoff silence; the
-# no-handoff-path variant; the /compact sentinel reset proven by a re-nudge; and
-# save-handoff's keyed pointer/doc writing.
+# no-handoff-path variant; and save-handoff's keyed pointer/doc writing.
 #
 # Run: bash plugins/workflow/tests/test_resume.sh   (non-zero if any fail)
 
@@ -31,7 +29,6 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RESUME="$PLUGIN_ROOT/scripts/resume.sh"
-WATCHDOG="$PLUGIN_ROOT/scripts/watchdog.sh"
 SAVE="$PLUGIN_ROOT/scripts/save-handoff.sh"
 
 WORK="$(mktemp -d)"
@@ -160,37 +157,6 @@ run_save_handoff() {
         bash "$SAVE"
 }
 
-# make_transcript <file> <total> — last assistant entry sums to <total> tokens.
-make_transcript() {
-    python3 - "$1" "$2" <<'PY'
-import sys, json
-path, total = sys.argv[1], int(sys.argv[2])
-rows = [
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
-]
-with open(path, "w") as fh:
-    for r in rows:
-        fh.write(json.dumps(r) + "\n")
-PY
-}
-
-run_watchdog() {
-    printf '{"hook_event_name":"%s","session_id":"%s","transcript_path":"%s","stop_hook_active":false}' "$1" "$2" "$3" \
-        | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$PROJECT_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
-            bash "$WATCHDOG"
-}
-
-sentinel_path() {
-    python3 - "$1" "$2" <<'PY'
-import sys, hashlib, tempfile, os
-prefix, sid = sys.argv[1], sys.argv[2]
-key = hashlib.sha1(sid.encode()).hexdigest()[:16]
-print(os.path.join(tempfile.gettempdir(), prefix + key + ".json"))
-PY
-}
-nudged_path() { sentinel_path "workflow-nudged-" "$1"; }
-
 read_field() {
     python3 - "$1" "$2" <<'PY'
 import sys, json
@@ -219,36 +185,14 @@ assert_contains "tells the agent not to redo work" "$out" "do not redo"
 assert_nofile "consumes the keyed pointer (resume once)" "$PEND"
 
 # ---------------------------------------------------------------------------
-echo "test: source=compact injects the 'continue' wording and resets the nudge sentinel"
+echo "test: source=compact injects the 'continue' wording"
 init_repo
 top="$(g rev-parse --show-toplevel)"
 base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2)"            # pretend the 250k signal already fired this session
 make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
 out=$(run_resume compact sid-r2)
 assert_contains "uses the continue wording" "$out" "continue the handoff"
-assert_nofile "resets the nudge sentinel" "$(nudged_path sid-r2)"
 assert_nofile "consumes the keyed pointer" "$(cur_pending)"
-# Proof the reset re-arms the cycle: a fresh >=NUDGE transcript re-nudges.
-make_transcript "$WORK/renudge.jsonl" 260000
-rout=$(run_watchdog UserPromptSubmit sid-r2 "$WORK/renudge.jsonl")
-assert_contains "a later climb re-nudges after the reset" "$rout" "Context over budget"
-
-# ---------------------------------------------------------------------------
-echo "test: source=clear also resets the nudge sentinel (re-arms the wrap cycle)"
-init_repo
-top="$(g rev-parse --show-toplevel)"
-base="$(g rev-parse HEAD)"
-: >"$(nudged_path sid-r2c)"            # pretend the 250k signal already fired this session
-make_handoff "$top" "$base" "main" "$HANDOFF_DOC"
-out=$(run_resume clear sid-r2c)
-assert_contains "uses the implement wording" "$out" "implement the handoff"
-assert_nofile "clear resets the nudge sentinel" "$(nudged_path sid-r2c)"
-assert_nofile "consumes the keyed pointer" "$(cur_pending)"
-# Proof the reset re-arms the cycle: a fresh transcript re-nudges.
-make_transcript "$WORK/renudge-clear.jsonl" 260000
-rout=$(run_watchdog UserPromptSubmit sid-r2c "$WORK/renudge-clear.jsonl")
-assert_contains "a later climb re-nudges after the clear reset" "$rout" "Context over budget"
 
 # ---------------------------------------------------------------------------
 echo "test: an unknown source falls back to the 'continue' wording"
@@ -368,7 +312,6 @@ kd="$(cur_keyed)"
 mkdir -p "$kd"
 # Pre-create the handoff doc in the KEYED dir so resolve_handoff() finds it.
 printf '# Handoff\n## Done\n- base commit\n' >"$kd/${pc_safe}.md"
-: >"$(nudged_path sid-pc)"             # 250k signal already fired this session
 run_save_handoff "$PROJECT_DIR"        # simulate the PreCompact hook (no args)
 PEND="$kd/.pending.json"
 assert_file "PreCompact writes a keyed pointer" "$PEND"
@@ -378,19 +321,12 @@ assert_contains "pointer records the keyed handoff doc" "$(read_field "$PEND" ha
 out=$(run_resume compact sid-pc)
 assert_contains "manual compact re-injects the handoff" "$out" "continue the handoff"
 assert_nofile "manual compact consumes the keyed pointer" "$PEND"
-assert_nofile "manual compact resets the nudge sentinel" "$(nudged_path sid-pc)"
 
 # ---------------------------------------------------------------------------
-echo "test: a manual /compact with NO handoff still re-arms the 250k signal (silent reset)"
+echo "test: a manual /compact with NO handoff stays silent"
 init_repo
-: >"$(nudged_path sid-nh)"             # 250k signal already fired this session
 out=$(run_resume compact sid-nh)       # no handoff present
 assert_empty "no handoff: silent" "$out"
-assert_nofile "no-handoff compact resets the nudge sentinel" "$(nudged_path sid-nh)"
-# Proof the reset re-armed the cycle: a fresh >=NUDGE transcript re-nudges.
-make_transcript "$WORK/renudge-nh.jsonl" 260000
-rout=$(run_watchdog UserPromptSubmit sid-nh "$WORK/renudge-nh.jsonl")
-assert_contains "a later climb re-nudges after the no-handoff reset" "$rout" "Context over budget"
 
 # ---------------------------------------------------------------------------
 echo "test: save-handoff in a non-git dir writes no pointer (PreCompact junk guard)"

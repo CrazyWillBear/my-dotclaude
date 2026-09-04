@@ -2,8 +2,7 @@
 #
 # SessionStart auto-resume for the workflow plugin.
 #
-# The other half of the handoff loop. When the watchdog fires the 250k wrap
-# signal it tells the agent to commit and run /handoff, which writes a per-repo
+# The other half of the handoff loop. /handoff writes a per-repo
 # keyed resume pointer (~/.claude/handoffs/<sha1(git_common_dir)[:16]>/.pending.json)
 # and clears context. A PreCompact hook also writes a handoff before EVERY
 # compaction (a manual /compact or a harness auto-compact), so a user-initiated or
@@ -19,16 +18,6 @@
 #     Fresh context, so the agent starts the plan from the committed baseline.
 #   * source=compact (manual/auto /compact) -> read the handoff, then "continue".
 #   * anything else  (startup/resume) -> treated as "continue" (graceful fallback).
-#
-# On ANY clear or compact we reset this session's wrap sentinel FIRST — before the
-# handoff lookup and repo guard below — so a later climb back over the nudge
-# threshold can drive another wrap -> /handoff cycle. This runs even when no
-# workflow handoff exists (a manual /compact or a harness auto-compact writes
-# none), which is exactly the case where the old handoff-gated reset was
-# unreachable. (On /clear with a new session_id this is a harmless no-op against a
-# fresh namespace; on a same-id resume it re-arms the cycle.) The plangate
-# sentinel is left alone — keyed by the last-gated plan id, it re-fires on a new
-# plan without a reset.
 #
 # Fail open: any error exits 0. If we are NOT in the handoff's repo, leave the
 # handoff untouched and stay silent, so a launch in another project never steals
@@ -58,7 +47,7 @@ command -v python3 >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
 
 python3 <<"PY" || exit 0
-import os, json, sys, hashlib, tempfile, subprocess
+import os, json, sys, hashlib, subprocess
 
 raw = os.environ.get("HOOK_INPUT", "")
 try:
@@ -67,21 +56,6 @@ except Exception:
     sys.exit(0)
 
 source = data.get("source") or ""
-
-# Reset this session's wrap sentinel on ANY compact/clear, independent of whether
-# a workflow handoff exists. A manual /compact or a harness auto-compact writes no
-# handoff, so the old reset (which lived after the handoff early-return) never ran
-# for them and the nudge stayed silent for the rest of the session. Keyed by
-# session_id; writes no stdout, so the no-handoff / wrong-repo silence contracts
-# below are preserved. The plangate sentinel is intentionally left alone — it
-# re-fires on a genuinely new plan id on its own.
-if source in ("compact", "clear"):
-    session_id = str(data.get("session_id") or "default")
-    skey = hashlib.sha1(session_id.encode()).hexdigest()[:16]
-    try:
-        os.remove(os.path.join(tempfile.gettempdir(), "workflow-nudged-" + skey + ".json"))
-    except Exception:
-        pass
 
 project_dir = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
