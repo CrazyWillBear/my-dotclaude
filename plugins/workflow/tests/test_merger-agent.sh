@@ -60,6 +60,18 @@ assert_contains "merge commit sha requested per issue" "$content" "merge commit 
 assert_contains "the sha is read off the base branch" "$content" "rev-parse HEAD"
 
 # ---------------------------------------------------------------------------
+# The fold is what keeps the opus merger OFF the clean path: merge-fold.sh lands
+# every conflict-free branch with plain git, and the agent only resolves the
+# remainder. If this wiring rots, the expensive model silently goes back to doing
+# merges that never needed it — and nothing else would catch that.
+echo "test: the merger runs merge-fold.sh first and only resolves the remainder"
+assert_contains "invokes the fold helper" "$content" "scripts/merge-fold.sh"
+assert_contains "the fold runs before any hand merge" "$content" "run the fold first"
+assert_contains "merged lines are not re-merged" "$content" "Do not re-merge it"
+assert_contains "the agent's job is the remainder" "$content" "resolve the remainder"
+assert_contains "explains the fold is order-dependent by design" "$content" "order-dependent by design"
+
+# ---------------------------------------------------------------------------
 # The merger continues through the batch after a stop ("After all merges" runs
 # regardless), so ONE batch can stop on SEVERAL issues. MERGE_SCHEMA therefore reads
 # `conflictStops` as a LIST — and each entry must carry the WORKTREE PATH, or the report

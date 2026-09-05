@@ -22,10 +22,38 @@ normal even when the issues' blockers were independent (two slices that touch th
 registry, or test file will collide). Resolving the conflict is the job, not an anomaly.
 
 ## How to merge
-Merge each `issue-<N>` into the base branch in ascending issue number, using
-`git -C <base> merge issue-<N>`:
 
-1. **Clean merge** → continue to the next branch.
+### Step 1 — run the fold first. Always. Before you merge anything by hand.
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" <base-branch> issue-<N1> issue-<N2> ...
+```
+Run it from the **base repo path**, in ascending issue number. It folds every branch that merges
+**without a conflict** straight onto the base — deterministically, with no model and no test run —
+and prints one line per branch:
+
+```
+merged   issue-7  <sha>              already landed; nothing for you to do
+conflict issue-9  src/a.py,src/b.py  yours to resolve
+unknown  issue-4                     no such branch — report it, don't guess
+summary  merged=5 conflicted=1
+```
+
+**Everything on a `merged` line is done.** Do not re-merge it, do not re-read it. Your job is the
+`conflict` remainder and nothing else. That is the whole point: the clean merges never needed a
+model, and paying an opus agent to perform them was the expensive mistake this step removes.
+
+The fold is **order-dependent by design** — each branch is tested against the accumulating base, not
+the original one, so a branch that was clean against the base can still land in the remainder once
+an earlier branch has merged. That is correct, not a bug: merging it anyway would corrupt the tree.
+
+Then run the **done-check once** on the base branch. If it is **red after a fold with an empty
+remainder**, no conflict resolution is involved — report a `doneCheckRed` stop; do not start
+editing.
+
+### Step 2 — resolve the remainder, serially, in ascending issue number
+For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
+
+1. **It merges clean now** (an earlier resolution changed the base) → continue to the next branch.
 2. **Conflict** → **resolve it. This is your default path, not an exception.** The done-check
    gate (below) catches a wrong resolution, so resolve first and let the gate judge — do **not**
    bail just because conflict markers appeared.
