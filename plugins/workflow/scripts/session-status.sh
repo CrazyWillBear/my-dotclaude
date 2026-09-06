@@ -20,13 +20,17 @@
 #           reported `gone` — a spawn that never came up, or a session that exited,
 #           must not read as "nothing to check".
 #
-# Output: one line per session, `<name> <id> <kind> <state>`:
+# Output: one line per session, `<name> <id> <kind> <state>`. THE ID IS THE SECOND
+# COLUMN AND YOU NEED IT: `claude stop` and `claude attach` take an id, not a name
+# (`Usage: claude stop <id>`), and reject a name outright.
+#
+# States:
 #   busy     working
 #   idle     waiting — for a background worker that is the DONE signal (it finished
 #            its turn); pair it with the issue's comments to see what it did
 #   blocked  a permission wedge — it is asking for something and nobody is there
 #   done     the session reported itself finished/completed
-#   gone     expected (a positional N) but not listed at all
+#   gone     expected (a positional N) but not listed at all — it never came up
 #
 # NEVER parse `claude logs`: it is a raw ANSI screen dump, cursor moves and spinner
 # frames, not a transcript.
@@ -64,13 +68,17 @@ self_mode = runid == "--self"
 expect = [int(t) for t in os.environ.get("STATUS_EXPECT", "").split()]
 
 try:
-    result = subprocess.run(["claude", "agents", "--json"],
+    # --all is REQUIRED, not optional: without it the list holds only ACTIVE
+    # sessions, so a worker that finished and exited is indistinguishable from one
+    # that never spawned — both absent, both `gone`. The recovery rules key off
+    # `gone`, so a completed worker would draw a respawn of work already done.
+    result = subprocess.run(["claude", "agents", "--json", "--all"],
                             capture_output=True, text=True, timeout=60)
 except Exception as exc:
-    print("error: `claude agents --json` failed: %s" % exc, file=sys.stderr)
+    print("error: `claude agents --json --all` failed: %s" % exc, file=sys.stderr)
     sys.exit(1)
 if result.returncode != 0:
-    print("error: `claude agents --json` exited %d: %s"
+    print("error: `claude agents --json --all` exited %d: %s"
           % (result.returncode, (result.stderr or "").strip()[:200]), file=sys.stderr)
     sys.exit(1)
 try:

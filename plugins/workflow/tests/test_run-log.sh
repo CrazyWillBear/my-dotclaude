@@ -109,6 +109,14 @@ assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | deci
 assert_not_contains "and did not write it" "$(r replay run1)" '"event": "spawned"' 
 r append run1 >/dev/null; assert_equals "no event exits 1" "$?" "1"
 
+echo "test: a payload cannot overwrite the fields the file guarantees"
+r append run4 held '{"event":"spawned","ts":0,"n":9}'
+line=$(r replay run4)
+assert_contains "the event stays held" "$line" '"event": "held"'
+assert_not_contains "the payload event is discarded" "$line" '"event": "spawned"'
+assert_not_contains "the payload ts is discarded" "$line" '"ts": 0'
+assert_contains "and it still folds as held" "$(r state run4)" "held=9"
+
 echo "test: bad input fails loud"
 r append run1 held 'not json' >/dev/null; assert_equals "junk payload exits 1" "$?" "1"
 assert_contains "says it was not JSON" "$(err)" "not JSON"

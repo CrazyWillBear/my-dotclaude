@@ -134,6 +134,31 @@ assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
 assert_matches "blocked means a permission wedge" "$BODY" "permission wedge"
 assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
 
+echo "test: control is by session ID, not by name — stop/attach reject a name"
+assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"
+assert_matches "captures the id at spawn" "$BODY" "Keep the id it prints"
+assert_matches "attach is shown with an id" "$BODY" "claude attach [0-9a-f]{8}"
+assert_not_matches "never shows attach with a session name" "$BODY" "claude attach orch-"
+assert_not_matches "never shows stop with a session name" "$BODY" "claude stop orch-"
+
+echo "test: my-review posts nothing — the session owns the review comment"
+assert_matches "my-review is report-only" "$BODY" "my-review.{0,4} is .{0,2}report-only"
+assert_matches "the session posts the comment" "$BODY" "the SESSION posts|session takes my-review"
+
+echo "test: the fix-round report shape is handled"
+assert_contains "fixed round= is documented" "$BODY" "fixed round="
+
+echo "test: the session lane keeps the mock-debt declaration contract"
+assert_matches "points the session at the implementer contract" "$BODY" "agents/implementer.md"
+assert_matches "names the declaration" "$BODY" "Real wiring blocked by"
+
+echo "test: trivial issues are excluded from the expected-session list"
+assert_matches "says trivial issues have no session" "$BODY" "Expect only the issues that actually have a session"
+
+echo "test: the orchestrator address is resolved once and passed"
+assert_contains "resolved with --self at setup" "$BODY" 'ORCH="$(bash'
+assert_matches "explains why not per-spawn" "$BODY" "rename mid-run"
+
 echo "test: recovery"
 assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "recovery mechanism.{0,2}, not hygiene"
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"

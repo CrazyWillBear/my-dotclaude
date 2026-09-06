@@ -171,5 +171,22 @@ run "$WORK/nope.json" >/dev/null; assert_equals "missing file exits 1" "$?" "1"
 printf '%s' "$g" | run --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
 
 # ---------------------------------------------------------------------------
+# The caller is a model assembling argv by hand, so a malformed flag must fail fast.
+# `shift 2` on a trailing flag fails WITHOUT shifting under `set -u`, which used to
+# spin the loop forever — a hung dispatcher, the silent stall this design fears most.
+echo "test: malformed arguments fail fast, never hang"
+timeout 5 bash "$READY" "$WORK/g.json" --merged >/dev/null 2>"$WORK/err"; rc=$?
+assert_equals "a trailing flag exits 1 (not 124 — a hang)" "$rc" "1"
+assert_contains "says which flag" "$(err)" "--merged requires a value"
+timeout 5 bash "$READY" "$WORK/g.json" --held >/dev/null 2>&1; assert_equals "--held too" "$?" "1"
+timeout 5 bash "$READY" "$WORK/g.json" --in-flight >/dev/null 2>&1; assert_equals "--in-flight too" "$?" "1"
+timeout 5 bash "$READY" "$WORK/g.json" --merged abc >/dev/null 2>"$WORK/err"; rc=$?
+assert_equals "a non-numeric value exits 1 rather than silently doing nothing" "$rc" "1"
+assert_contains "says what it wanted" "$(err)" "wants issue numbers"
+timeout 5 bash "$READY" "$WORK/g.json" extra.json >/dev/null 2>"$WORK/err"; rc=$?
+assert_equals "a second positional exits 1" "$rc" "1"
+assert_contains "names both paths" "$(err)" "two graph paths given"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

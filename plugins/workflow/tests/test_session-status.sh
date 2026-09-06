@@ -38,10 +38,11 @@ assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in: $2)" ;; esac; }
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 
-# stub_claude <exit-code> <stdout>
+# stub_claude <exit-code> <stdout> — also records its argv for inspection
 stub_claude() {
     cat >"$BIN/claude" <<EOF
 #!/usr/bin/env bash
+printf '%s\n' "\$@" >"$WORK/argv"
 cat <<'JSON'
 $2
 JSON
@@ -77,6 +78,9 @@ assert_contains "issue-13 idle" "$out" "orch-20260906-101500-issue-13 bb22 backg
 assert_not_contains "another run's session is invisible" "$out" "19990101"
 assert_not_contains "an unrelated session is invisible" "$out" "some-unrelated-session"
 
+echo "test: --all is passed — without it a FINISHED session is indistinguishable from one that never spawned"
+assert_contains "argv carries --all" "$(cat "$WORK/argv")" "--all"
+
 echo "test: a permission wedge stays visible as blocked"
 assert_contains "issue-14 blocked" "$out" "orch-20260906-101500-issue-14 cc33 background blocked"
 
@@ -103,6 +107,26 @@ out=$(run r1); rc=$?
 assert_equals "no stdout" "$out" ""
 assert_equals "exit 0" "$rc" "0"
 assert_contains "loud about the empty" "$(err)" "no sessions matching orch-r1-"
+
+# ---------------------------------------------------------------------------
+# --self resolves the ORCHESTRATOR'S ADDRESS. spawn.sh hard-depends on it: a worker
+# that cannot name its orchestrator reports into the void.
+echo "test: --self prints this session's own name"
+stub_claude 0 '[{ "id": "aa11", "kind": "background", "sessionId": "sess-abc", "name": "my-orchestrator" },
+                { "pid": 1, "kind": "interactive", "sessionId": "other", "name": "someone-else" }]'
+out=$(CLAUDE_CODE_SESSION_ID=sess-abc bash "$STATUS" --self 2>"$WORK/err")
+assert_equals "prints only the matching session's name" "$out" "my-orchestrator"
+
+echo "test: --self fails loud rather than guessing"
+CLAUDE_CODE_SESSION_ID= bash "$STATUS" --self >/dev/null 2>"$WORK/err"
+assert_equals "unset session id exits 1" "$?" "1"
+assert_contains "names the missing variable" "$(err)" "CLAUDE_CODE_SESSION_ID"
+CLAUDE_CODE_SESSION_ID=not-listed bash "$STATUS" --self >/dev/null 2>"$WORK/err"
+assert_equals "an unlisted session exits 1" "$?" "1"
+assert_contains "tells you to pass the name" "$(err)" "pass the orchestrator name explicitly"
+stub_claude 0 '[{ "id": "aa11", "kind": "background", "sessionId": "sess-abc" }]'
+CLAUDE_CODE_SESSION_ID=sess-abc bash "$STATUS" --self >/dev/null 2>"$WORK/err"
+assert_equals "a session with no name exits 1" "$?" "1"
 
 # ---------------------------------------------------------------------------
 echo "test: every failure path is loud, never a silent empty"

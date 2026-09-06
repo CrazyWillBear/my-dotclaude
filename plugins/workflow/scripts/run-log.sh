@@ -81,8 +81,10 @@ if payload:
 else:
     data = {}
 
-record = {"ts": int(time.time()), "event": os.environ["RUNLOG_EVENT"]}
-record.update(data)
+# The payload goes in FIRST so it can never overwrite the two fields this file
+# guarantees. The other order let `append run1 held '{"event":"spawned"}'` write a
+# record outside the closed vocabulary — which `state` then silently stops folding.
+record = {**data, "ts": int(time.time()), "event": os.environ["RUNLOG_EVENT"]}
 with open(os.environ["RUNLOG_FILE"], "a") as fh:
     fh.write(json.dumps(record, sort_keys=True) + "\n")
 PY

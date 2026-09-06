@@ -226,6 +226,18 @@ grep -qxF '.worktrees/' "$excl" 2>/dev/null || printf '.worktrees/\n' >> "$excl"
 Say this in the final report: it is a persistent mutation of the user's real repo that outlives the
 run.
 
+**Then resolve the run's own address, once:**
+
+```bash
+ORCH="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" --self)"
+```
+
+That is the name every worker will `SendMessage`. Resolve it **here and pass it to every spawn**
+rather than letting each spawn re-resolve: the name is this session's *display title*, which is
+model-generated and can change, and a rename mid-run would leave already-spawned workers
+addressing a name that no longer exists. If you want it stable and unambiguous, launch the
+orchestrator itself as `claude -n orch-<runid>`.
+
 ## Step 5 — the admission loop
 
 This is the whole scheduler. It is a loop **you** run, on the main thread, and it is deliberately
@@ -260,14 +272,35 @@ model can, and historically did, hallucinate.
    `standard`/`complex` → a **session**:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" "$RUNID" <N> <tier> \
-        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch"
+        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH"
    ```
+   **Keep the id it prints.** `spawn.sh` execs `claude --bg`, whose stdout is the new
+   session's **id** — and `claude stop` / `claude attach` take **that id, not the name**
+   (`Usage: claude stop <id>`; a name is rejected outright). The name addresses
+   `SendMessage`; the id controls the process. A run that keeps only names has no recovery
+   path and nothing to hand you for an attach. (`session-status.sh` also prints the id as its
+   second column, so a lost id is recoverable.)
 4. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
    `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
 
+**The session is the implementer.** `spawn.sh`'s prompt points it at
+`plugins/workflow/agents/implementer.md` and names the obligation that cannot be lost: build the
+slice's **central mechanism for real**, and where real wiring genuinely must be deferred,
+**declare** it (`Mocked: <what>. Real wiring blocked by: #N`). An undeclared central mock is the
+drift the whole `/to-prd`→`/to-issues`→`/orchestrate` chain exists to catch, and a session that
+never reads the implementer contract would never declare one.
+
 **Then wait.** Do not poll. The next thing that happens is a message.
 
-**When a worker reports** `issue <N> built head=<sha> review=<H high, M medium, L low>`:
+**`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
+edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
+session takes my-review's report and posts the `**Review round N**` comment itself. If you ever
+change that, change it in `spawn.sh`'s prompt too: the comment is the cycle counter, and a stage
+that nobody owns is a stage that silently does not happen.
+
+**When a worker reports** `issue <N> built head=<sha> review=<H high, M medium, L low>` (or
+`issue <N> fixed round=<K> head=<sha> review=…` from a fix round — same handling, and `round=K`
+is how you confirm which round just landed):
 
 - **`H > 0` or `M > 0`, and rounds remain** → spawn a **fix round**:
   `spawn.sh ... --role fix --round <K>`. A **fresh** session every round: nothing compounds, and
@@ -408,6 +441,10 @@ or send "are you done?" messages — a polled worker pays for every poll out of 
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <expected issue numbers>
 ```
 
+**Expect only the issues that actually have a session.** `tier:trivial` issues are built by an
+orchestrator-spawned subagent, so naming one here reports it `gone` — which the recovery rules
+read as "it never came up" and answer with a respawn of work that is already running.
+
 One line per session — `<name> <id> <kind> <state>`:
 
 | state | means |
@@ -431,7 +468,9 @@ call. You do not have to be right; you have to be cheap to be wrong.
 **`stop` → verify stopped → respawn.**
 
 ```bash
-claude stop orch-<runid>-issue-<N>
+# the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
+id=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <N> | awk '{print $2}')
+claude stop "$id"
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <N>   # must NOT be busy
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" ...                     # same worktree, same branch
@@ -462,14 +501,17 @@ A worker that hits something only a human can answer `SendMessage`s the orchestr
 **Offer both routes. Recommend one.**
 
 > #14's session is asking whether the retry budget is per-request or per-session. I can relay the
-> answer, or you can `claude attach orch-20260906-141500-issue-14` and talk to it directly.
-> Recommend attaching — this is about the code.
+> answer, or you can `claude attach 7f3a1c04` and talk to it directly. Recommend attaching — this
+> is about the code.
+
+Give the **id**, not the name — `claude attach` takes an id (`Usage: claude attach <id>`), and you
+kept it at spawn.
 
 - **Mediate** for short calls: a scope question, a yes/no, a name.
 - **Attach** for real back-and-forth about code. Relaying that would drag the code itself into the
   orchestrator's context, which is the one thing the orchestrator must not accumulate.
 
-`claude attach <name>` detaches with `←` or `Ctrl+Z` and **the session keeps running** — background
+`claude attach <id>` detaches with `←` or `Ctrl+Z` and **the session keeps running** — background
 sessions are owned by the background service, not the terminal (they carry no `pid` in
 `agents --json`).
 

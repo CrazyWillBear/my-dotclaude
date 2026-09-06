@@ -9,6 +9,12 @@
 # forgets to say "report with SendMessage" — after which the orchestrator waits
 # forever for output that was never addressed to it.
 #
+# The dry-run assertions below can only prove a string is SOMEWHERE in the argv list.
+# That is not enough, and it once wasn't: `--disallowedTools` is a VARIADIC option, so
+# a prompt placed after it is parsed as more deny rules and the session comes up with
+# no task at all — while every string assertion still passed. So the first test here
+# runs the real exec path against a STUB `claude` and checks where the prompt LANDS.
+#
 # Run: bash plugins/workflow/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
@@ -31,6 +37,37 @@ assert_arg() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then ok "$1"; else no 
 
 dry() { bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"; }
 err() { cat "$WORK/err"; }
+
+# A stub `claude` that dumps its argv, one per line, so the real exec path is testable.
+BIN="$WORK/bin"
+mkdir -p "$BIN"
+cat >"$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+STUB
+chmod +x "$BIN/claude"
+
+# ---------------------------------------------------------------------------
+echo "test: the prompt actually LANDS as the prompt, not as a deny rule"
+mkdir -p "$WORK/wt"
+argv=$(PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main)
+# `--` must separate the variadic deny list from the prompt, and the prompt must be
+# the LAST argument, after it. Without that the session starts with no task, goes
+# idle, and `idle` is this design's DONE signal for a background worker.
+assert_contains "argv carries a -- terminator" "$argv" "--"
+# The prompt is one multi-line argument, so compare LINE POSITIONS: its first line
+# must be the line immediately after the `--`, and nothing may sit between them.
+sep=$(printf '%s\n' "$argv" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
+prompt_line=$(printf '%s\n' "$argv" | grep -n "BUILD session for issue #12" | head -1 | cut -d: -f1)
+if [ -n "$sep" ] && [ -n "$prompt_line" ] && [ "$prompt_line" -eq "$((sep + 1))" ]; then
+    ok "the prompt is the argument immediately after --"
+else
+    no "the prompt is not fenced off from the variadic deny list (-- at line $sep, prompt at $prompt_line)"
+fi
+assert_contains "and the prompt survives whole" "$argv" "MUST use the SendMessage tool"
+assert_contains "and it is the LAST argument" "$(printf '%s\n' "$argv" | sed -n "$((sep + 1)),\$p")" "Never merge, never open a PR"
+denies=$(printf '%s\n' "$argv" | grep -cxF "Bash(git merge:*)")
+assert_equals "the deny rules still land" "$denies" "1"
 
 # ---------------------------------------------------------------------------
 echo "test: the command carries the run-prefixed name and the tier's roster"

@@ -151,12 +151,12 @@ as "every session finished". **Never parse `claude logs`**: it is a raw ANSI scr
 Workers **commit after every green sub-step**. That is the *recovery mechanism*, not hygiene: it caps
 the loss from a kill at one sub-step, which is what makes killing on **suspicion** affordable and
 resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
-respawn** onto the same worktree — never `rm` (it deletes the worktree being recovered), and never
+respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
 onto a worktree whose previous session is still alive. **Respawn once, escalate on the second**; the
 count comes from `run-log.sh`, because nothing in git or GitHub records that a session was killed.
 
 An escalating worker messages the orchestrator, which **offers both** mediation and
-`claude attach orch-<runid>-issue-<N>` — attach for anything about code, so the code never enters the
+`claude attach <id>` (the id `spawn.sh` printed, or column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the
 orchestrator's context. An escalated session is **exempt from the deadline** while you are engaged,
 and must **report the resolution** back before continuing.
 

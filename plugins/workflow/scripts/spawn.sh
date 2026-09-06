@@ -11,6 +11,12 @@
 #                           when omitted (session-status.sh --self)
 #   --dry-run               print the command instead of running it
 #
+# On a real spawn this EXECS claude, so its stdout is claude's: the background
+# session's **id**. CAPTURE IT. `claude stop` and `claude attach` take that id —
+# `Usage: claude stop <id>` — and reject a session NAME outright, so a run that
+# only keeps names has no recovery path and no way to hand you an attach command.
+# The name is for addressing SendMessage; the id is for controlling the process.
+#
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
 #   -n orch-<runid>-issue-<N>   the run prefix. `claude agents --json` is global and
@@ -52,11 +58,16 @@ ROLE=build
 ROUND=1
 ORCH=""
 DRY=""
+# `shift 2` with one argument left FAILS WITHOUT SHIFTING under `set -u` (no `-e`),
+# and the loop then re-matches the same arm forever. The caller here is a model
+# assembling argv by hand, so a dropped value is a live risk — and a hung dispatcher
+# is exactly the silent stall this design is organized against. Demand the value.
+need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 while [ $# -gt 0 ]; do
     case "$1" in
-        --role)         ROLE="${2:-}"; shift 2 ;;
-        --round)        ROUND="${2:-}"; shift 2 ;;
-        --orchestrator) ORCH="${2:-}"; shift 2 ;;
+        --role)         need $# --role;         ROLE="$2"; shift 2 ;;
+        --round)        need $# --round;        ROUND="$2"; shift 2 ;;
+        --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
     esac
@@ -116,9 +127,25 @@ ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --c
 4. Build it TDD-first, and COMMIT AFTER EVERY GREEN SUB-STEP. That is the recovery
    mechanism, not hygiene: if this session is killed, its replacement resumes from
    your last commit instead of restarting the issue.
+   You are the implementer: follow the contract in
+   plugins/workflow/agents/implementer.md — dedup-search before writing new code,
+   build the slice's central mechanism FOR REAL, and if you genuinely must defer real
+   wiring, DECLARE it: "Mocked: <what>. Real wiring blocked by: #N | deferred to
+   integration", in the commit body and in your review comment. An undeclared central
+   mock is the drift this whole loop exists to catch.
 5. Run the project's done-check. It must be green.
 6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
-   It posts its own review-round comment on the issue. Do NOT fix what it finds:
+   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
+   in exactly this shape (the "Review round N" heading is the run's cycle counter;
+   nothing else records how many rounds this issue has had):
+
+      **Review round 1** — 1 high, 2 medium, 3 low
+
+      - **high** \`path/file.py:42\` — one line, what is wrong and why it matters.
+      - **medium** \`path/test_file.py\` — one line.
+
+   Lows are listed, not fixed. Keep every line short: this comment is read by every
+   future run that touches this issue. Do NOT fix what the review finds:
    a fresh session does that, so nobody is defending their own code.
 7. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
    MUST use the SendMessage tool, addressed to "$ORCH", with exactly:
@@ -138,11 +165,14 @@ You are FIX ROUND $ROUND for issue #$ISSUE, run $RUNID. You did not write this c
 Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
-   Those findings are your work order; the review already names file and line.
+   Those findings are your work order; the review already names file and line. Fix the
+   highs and mediums; lows are listed, not fixed.
 2. Fix them, TDD-first, committing after every green sub-step.
 3. Run the project's done-check. It must be green.
 4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
-   review. It posts the next review-round comment.
+   review, then POST its findings YOURSELF as the next "**Review round**" comment, in
+   the same shape as the previous one, incrementing the round number. my-review is
+   REPORT-ONLY; it posts nothing, and that comment is the run's cycle counter.
 5. REPORT, THEN STOP — plain output is invisible. SendMessage to "$ORCH":
       issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
    or "issue $ISSUE failed <one short line why>".
@@ -152,13 +182,21 @@ PROMPT
 )"
 fi
 
+# `--` BEFORE THE PROMPT IS LOAD-BEARING. `--disallowedTools` is a VARIADIC option:
+# it consumes every following non-option token, so a prompt placed after it is
+# parsed as more deny rules, word by word. An unknown deny rule is only a WARNING,
+# so with --bg there is no error at all — the session starts with NO TASK, does
+# nothing, and goes idle. `idle` is this design's DONE signal for a background
+# worker, so the orchestrator would read every never-started worker as finished and
+# merge a run that built nothing. That is the silent-empty catastrophe, delivered by
+# an argv ordering. Verified against the installed CLI, both the break and the fix.
 CMD=(claude --bg -n "$NAME"
      --model "$MODEL" --effort "$EFFORT"
      --permission-mode bypassPermissions
      --add-dir "$WORKTREE"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
-     "$TASK")
+     -- "$TASK")
 
 # --dry-run prints ONE ARGUMENT PER LINE, unquoted — that is what makes the flag set
 # assertable (`grep -Fx 'Bash(git merge:*)'`) instead of a shell-quoting exercise. The

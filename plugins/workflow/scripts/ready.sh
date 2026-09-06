@@ -36,25 +36,44 @@
 
 set -uo pipefail
 
-command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
-
 GRAPH=""
 MERGED=""; HELD=""; INFLIGHT=""; SKIP_UNKNOWN=""
 
-num() {   # accept `12`, `#12`, `12,13`
-    printf '%s' "${1//,/ }" | tr -d '#'
+command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# Accept `12`, `#12`, `12,13` — and REJECT anything else loudly. Silently dropping a
+# junk token would turn `--merged abc` into a no-op, and an issue that was merged but
+# not recorded as merged gets re-admitted and rebuilt.
+num() {
+    local out="" tok
+    for tok in ${1//,/ }; do
+        tok="${tok#\#}"
+        case "$tok" in
+            ''|*[!0-9]*) die "$2 wants issue numbers, got '$tok'" ;;
+        esac
+        out="$out $tok"
+    done
+    [ -n "$out" ] || die "$2 requires a value"
+    printf '%s' "$out"
 }
 
+# `shift 2` with one argument left FAILS WITHOUT SHIFTING under `set -u` (no `-e`),
+# and the loop then re-matches the same arm forever. The caller is a model assembling
+# argv by hand, so demand the value rather than spinning.
+need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 while [ $# -gt 0 ]; do
     case "$1" in
-        --merged)      MERGED="$MERGED $(num "${2:-}")"; shift 2 ;;
-        --held)        HELD="$HELD $(num "${2:-}")"; shift 2 ;;
-        --in-flight)   INFLIGHT="$INFLIGHT $(num "${2:-}")"; shift 2 ;;
+        --merged)      need $# --merged;    MERGED="$MERGED $(num "$2" --merged)"    || exit 1; shift 2 ;;
+        --held)        need $# --held;      HELD="$HELD $(num "$2" --held)"          || exit 1; shift 2 ;;
+        --in-flight)   need $# --in-flight; INFLIGHT="$INFLIGHT $(num "$2" --in-flight)" || exit 1; shift 2 ;;
         --skip-unknown) SKIP_UNKNOWN=1; shift ;;
         -h|--help)     sed -n '3,40p' "$0"; exit 0 ;;
         -)             GRAPH=""; shift ;;
-        -*)            echo "error: unknown flag $1" >&2; exit 1 ;;
-        *)             GRAPH="$1"; shift ;;
+        -*)            die "unknown flag $1" ;;
+        *)             [ -z "$GRAPH" ] || die "two graph paths given ('$GRAPH' and '$1')"
+                       GRAPH="$1"; shift ;;
     esac
 done
 
