@@ -11,6 +11,9 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `global/CLAUDE.md` — developer machine-wide rules; `setup-dev.sh` installs to `~/.claude/CLAUDE.md`.
 - `global/CLAUDE.simple.md` — plain-English variant of the above; `setup-simple.sh` installs it instead, for non-coders.
 - `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
+- `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, session
+  state, spawn, run log, merge fold). Logic belongs here, not in skill prose: a script gets a
+  real test, prose gets a grep.
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
