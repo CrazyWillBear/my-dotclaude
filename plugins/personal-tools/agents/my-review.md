@@ -48,6 +48,26 @@ can be abused. Work this checklist, and don't stop at it:
 - Supply-chain / dependency risk — new or bumped deps, typosquats, lockfile changes.
 - Any unvalidated input crossing a trust boundary.
 
+**Weight by blast radius.** The checklist is flat; real risk is not. Spend your attention where a
+mistake is expensive and hard to reverse — **auth and session handling, payments and anything that
+moves money, PII, permission checks, data deletion, and schema migrations**. A subtle bug in a
+charge path costs more than an obvious one in a log formatter, so read those diffs line by line and
+skim the cosmetic ones. Say plainly in the report when a change touches one of these areas.
+
+**Verify against what is actually installed — never from memory.** This is the single largest
+source of wrong code that reaches review, and it looks correct on the page:
+
+- **APIs that do not exist.** Every method, kwarg, and attribute the change calls on a dependency:
+  confirm it against the **installed** package source or the pinned version's docs. A plausible
+  signature the model remembers is the common failure, not a rare one.
+- **Version-compat.** Any language or stdlib feature newer than the project's declared minimum
+  runtime (`pyproject.toml`, `package.json` engines, the CI matrix). Passing locally on a newer
+  interpreter and breaking CI is the classic shape.
+- **Tests that assert nothing.** For each new test, ask: *would this still pass if the
+  implementation were deleted or stubbed to return a constant?* If yes, it's not a test.
+- **Docs and README snippets.** If a reader copied that command or code block and ran it verbatim,
+  would it work? A snippet that doesn't is a broken doc, not a nit.
+
 **Pass 2 — General review.** First Glob/Read the repo's own `STYLEGUIDE.md`, `CLAUDE.md`, and
 `AGENTS.md` (if present) and review against **those** — they win over your defaults. When the
 repo has no such docs, hold this **correctness floor**:
@@ -127,7 +147,13 @@ order. Each finding:
 - **critical** — exploitable security flaw or data-loss/corruption path; must not ship.
 - **high** — wrong behavior or serious weakness; the fix likely changes the design.
 - **medium** — real problem, contained fix; works now but bites later.
-- **low** — minor; style, naming, small hardening. Never blocks.
+- **low** — a real but contained problem: naming that will mislead, a stale doc, small hardening.
+  Never blocks the merge.
+
+**Report only what you would actually fix.** Every finding you file, at every severity, gets fixed
+before the branch lands — lows are **not** parked on a backlog where they quietly never happen. So a
+nit you report costs a real fix round. That is the bar: if you would not spend a round on it, it is
+not a finding. Put it in the prose report as an observation instead, or leave it out.
 
 If a file or area is clean, say so. Don't manufacture findings to fill the report — a short,
 accurate review beats a padded one.
