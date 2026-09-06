@@ -72,6 +72,14 @@ assert_contains "does not fix its own findings" "$out" "a fresh session does tha
 assert_contains "context map is a hint" "$out" "CONTEXT-MAP.md"
 assert_contains "escalation path" "$out" "escalate"
 
+echo "test: only a complex issue is told to plan first"
+out_p=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
+assert_contains "complex spawns the planner itself" "$out_p" "spawn the workflow:planner agent FIRST"
+assert_contains "and keeps the plan out of the orchestrator" "$out_p" "never send it to the orchestrator"
+out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
+assert_not_contains "standard self-plans" "$out_s" "workflow:planner"
+assert_not_contains "trivial self-plans" "$(dry r1 12 trivial /w base)" "workflow:planner"
+
 echo "test: --role fix is a fresh session working from the review comment"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
 assert_contains "says which round" "$out" "FIX ROUND 2"

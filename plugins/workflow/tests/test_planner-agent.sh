@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 #
-# Tests for agents/planner.md — the /pipeline planner agent prose.
+# Tests for agents/planner.md — the planner agent prose.
 #
 # The agent is prose — not executable code — so we validate its frontmatter and
-# the content obligations the /pipeline chain depends on:
+# the content obligations the complex lane depends on:
 #
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter pins model: opus and effort: high, read-only tools. The Agent
-#      tool has no effort parameter, so this pin GOVERNS every Agent-tool spawn
-#      — including /pipeline's tier-routed one, which overrides model per call
-#      but cannot touch effort. (Workflow agent() does take opts.effort, so
-#      /orchestrate routes it per call.)
-#   3. The three invocation modes (plan / replan / triage) are described,
-#      including collective-high replan and per-critical replan scoping.
+#      tool has no effort parameter, so this pin GOVERNS every Agent-tool spawn:
+#      a caller can override the model per call but cannot touch effort.
+#   3. Its SCOPE is written down, because scope is the whole decision here: only
+#      complex work plans, the measurement that settled it is quoted, there is no
+#      fix-round mode, and the spawner is the agent that will build — never the
+#      orchestrator, whose context must stay free of plan prose.
 #   4. The output contract: ordered steps with file paths, a verbatim
 #      '## Acceptance criteria' heading, the project done-check, risks.
 #   5. The planner returns the plan as final text (spawner writes the file).
@@ -62,20 +62,23 @@ assert_contains "read-only tool set" "$content" "tools: Read, Grep, Glob, Bash(g
 assert_not_contains "no Edit tool" "$content" "tools: Read, Edit"
 
 # ---------------------------------------------------------------------------
-echo "test: three invocation modes described"
-assert_contains "plan mode present" "$content" "**plan**"
-assert_contains "replan mode present" "$content" "**replan**"
-assert_contains "triage mode present" "$content" "**triage**"
+echo "test: the scope decision is written down"
+assert_contains "complex-only scope" "$content" "tier:complex"
+assert_contains "trivial and standard self-plan" "$content" "self-plan"
+assert_contains "the measurement that settled it is quoted" "$content" "26% of all work"
+assert_contains "reads the issue comments, not just the body" "$content" "comments"
 
 # ---------------------------------------------------------------------------
-echo "test: replan shapes — collective highs, per-critical scoping"
-assert_contains "collective high replan" "$content" "all high findings together"
-assert_contains "per-critical scoped replan" "$content" "a single critical finding alone"
+echo "test: no fix-round mode — review findings are their own work order"
+assert_contains "says so explicitly" "$content" "no fix-round mode"
+assert_not_contains "no replan mode" "$content" "**replan**"
+assert_not_contains "no triage mode" "$content" "**triage**"
+assert_not_contains "no fix-list" "$content" "ordered fix-list"
 
 # ---------------------------------------------------------------------------
-echo "test: triage produces an ordered fix-list, may flag needs-real-plan"
-assert_contains "ordered fix-list" "$content" "ordered fix-list"
-assert_contains "needs-real-plan escape hatch" "$content" "needs-real-plan"
+echo "test: the spawner is the builder, never the orchestrator"
+assert_contains "spawned by the agent that will build" "$content" "the agent that will build"
+assert_contains "explains the context cost" "$content" "orchestrator reads is prose in the orchestrator"
 
 # ---------------------------------------------------------------------------
 echo "test: output contract"

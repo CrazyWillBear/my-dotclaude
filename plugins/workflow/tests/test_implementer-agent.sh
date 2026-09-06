@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
-# Tests for agents/implementer.md — the shared /orchestrate + /pipeline implementer.
+# Tests for agents/implementer.md — /orchestrate's implementer, both lanes.
 #
 # The agent is prose — not executable code — so we validate the two input shapes
-# and, above all, that generalizing it for /pipeline did NOT drop any of the
-# obligations /orchestrate depends on (this test is the structural regression
-# lock for the issue contract):
+# and, above all, that the obligations the run depends on are all still stated
+# (this test is the structural regression lock for the issue contract):
 #
 #   1. File exists at the expected discovery path; model pins to sonnet and
 #      effort stays xhigh.
@@ -60,7 +59,7 @@ assert_contains "issue branch naming" "$content" "issue-<N>"
 assert_contains "absolute worktree path input" "$content" "absolute worktree path"
 
 # ---------------------------------------------------------------------------
-echo "test: work order input shape present (pipeline contract)"
+echo "test: work order input shape present"
 assert_contains "work order shape named" "$content" "Work order"
 assert_contains "plan text input" "$content" "plan text"
 assert_contains "commit-scope hint input" "$content" "commit-scope hint"
@@ -97,8 +96,36 @@ assert_contains "heredoc commit" "$content" 'commit -F -'
 # ---------------------------------------------------------------------------
 echo "test: orchestrate obligations intact — worktree boundaries"
 assert_contains "never create worktrees" "$content" "Never run \`git worktree add\`"
-assert_contains "no push/merge/rebase" "$content" "not** push, merge, rebase"
+assert_contains "no merge/rebase/branch switching" "$content" "not** merge, rebase"
+assert_contains "never merge, PR, close or edit" "$content" "Never merge, never open a PR, never close or edit"
+# push is DELIBERATELY allowed now — the worker pushes its own branch. Only the
+# irreversible, outward-facing writes are the main thread's.
+assert_not_contains "push is not forbidden" "$content" "Do **not** push"
 assert_contains "stop and report on blockers" "$content" "stop and report"
+
+echo "test: the issue thread is read BEFORE anything is planned"
+assert_contains "reads the comments first" "$content" "gh issue view <N> --comments"
+assert_contains "says why: rulings live in comments" "$content" "not** in the body"
+assert_contains "posts the tackled line" "$content" "Tackled #<N> on branch issue-<N>"
+assert_contains "brevity framed as correctness" "$content" "correctness property"
+
+echo "test: the context map is a hint the implementer may ignore"
+assert_contains "reads CONTEXT-MAP.md if present" "$content" "CONTEXT-MAP.md"
+assert_contains "hint, not a contract" "$content" "hint, not a contract"
+assert_contains "does not maintain it" "$content" "Do not try to repair or update it"
+
+echo "test: commit-per-green-sub-step is framed as RECOVERY, not hygiene"
+assert_contains "commits after every green sub-step" "$content" "Commit after every green sub-step"
+assert_contains "names it the recovery mechanism" "$content" "recovery mechanism"
+assert_contains "explains the resume-from-last-commit property" "$content" "resumes from your **last commit**"
+
+echo "test: a session implementer is told its plain output is invisible"
+assert_contains "says output is invisible" "$content" "invisible to the orchestrator"
+assert_contains "reports with SendMessage" "$content" "SendMessage"
+assert_contains "fixed-shape built line" "$content" "issue <N> built head="
+assert_contains "fixed-shape failure line" "$content" "issue <N> failed"
+assert_contains "escalation line" "$content" "issue <N> escalate"
+assert_contains "and a subagent reports in its final text instead" "$content" "running as a subagent"
 
 # ---------------------------------------------------------------------------
 echo "test: done-check obligation intact"

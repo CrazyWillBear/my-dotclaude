@@ -87,6 +87,18 @@ fi
 NAME="orch-$RUNID-issue-$ISSUE"
 BRANCH="issue-$ISSUE"
 
+# Only COMPLEX work plans. Trivial and standard self-plan — planning TDD-first is
+# already in the implementer's contract, and a plan stage in front of an implementer
+# that explores anyway was measured at 26% of all agent-minutes on a 56-agent run.
+# The SESSION spawns the planner, never the orchestrator: a plan is prose, and prose
+# the orchestrator reads is prose in its context for the rest of the run.
+PLAN_STEP=""
+if [ "$TIER" = complex ]; then
+    PLAN_STEP="0. This is a COMPLEX issue: spawn the workflow:planner agent FIRST and build to the
+   plan it returns. Keep the plan in YOUR context — never send it to the orchestrator.
+"
+fi
+
 if [ "$ROLE" = build ]; then
     TASK="$(cat <<PROMPT
 You are the BUILD session for issue #$ISSUE, run $RUNID.
@@ -94,7 +106,7 @@ You are the BUILD session for issue #$ISSUE, run $RUNID.
 Worktree: $WORKTREE — branch $BRANCH, cut from $BASE. Work ONLY here; never touch
 another worktree or $BASE.
 
-1. Read the issue AND its comments first: \`gh issue view $ISSUE --comments\`. The
+${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --comments\`. The
    thread is the coordination medium — a ruling settled there is not in the body.
 2. Comment on the issue: "Tackled #$ISSUE on branch $BRANCH", plus anything a later
    reader genuinely needs. Keep it short; verbose comments poison every later run.
