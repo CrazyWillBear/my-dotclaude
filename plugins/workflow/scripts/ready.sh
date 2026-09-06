@@ -188,8 +188,26 @@ if inflight:
 # issue whose state could not be read is "unknown" — neither open nor closed — and
 # --skip-unknown lets exactly that scope reach here. `.every(closed)` sends any
 # unknown remnant to the error branch, where it belongs.
-if all(i.get("state") == "closed" or i["n"] in merged for i in issues):
+# An issue labelled hitl or prd can NEVER be built by this run — that is the label's
+# whole job. So it must not make a finished run look broken: without this, EVERY run
+# whose scope contains one ends by reporting a broken scope, which is the designed-
+# state-misread-as-failure bug in its second costume.
+skipped = [i["n"] for i in issues
+           if ("hitl" in labels(i) or "prd" in labels(i))
+           and i.get("state") == "open" and i["n"] not in merged]
+done_or_skipped = all(
+    i.get("state") == "closed" or i["n"] in merged or i["n"] in skipped
+    for i in issues)
+
+# ...but a scope of NOTHING BUT skipped issues is still an error: you asked for work
+# that can never be built, and nothing was. The clean branch needs at least one issue
+# that actually reached a terminal state.
+progressed = any(i.get("state") == "closed" or i["n"] in merged for i in issues)
+
+if done_or_skipped and progressed:
     why = "every scoped issue is closed or merged this run — the scope is complete"
+    if skipped:
+        why += " (skipped, by label: %s)" % ", ".join("#%d" % n for n in sorted(skipped))
 elif remaining and len(gate_held) == len(remaining):
     why = ("every remaining scoped issue (%s) is e2e-gate-held by open mock-debt (%s)"
            % (", ".join("#%d" % i["n"] for i in gate_held),

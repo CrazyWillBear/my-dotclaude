@@ -142,9 +142,11 @@ g=$(graph "" "1=open" -- "$(issue 1 open '' '')" "$(issue 2 open '' '')" \
 printf '%s' "$g" | run --in-flight 1 --in-flight 2 >/dev/null; rc=$?
 assert_equals "exit 0 — the run is progressing" "$rc" "0"
 assert_contains "names what is in flight" "$(err)" "#1, #2 in flight"
-# ...and the SAME graph with nothing in flight is still the error it should be.
-printf '%s' "$g" | run --merged 1 --merged 2 --merged 3 >/dev/null; rc=$?
-assert_equals "with nothing in flight it is an error again" "$rc" "1"
+# ...and a genuinely STUCK scope with nothing in flight is still the error it should
+# be: #3 waits on out-of-scope #99, which nothing in this run will ever close.
+g2=$(graph "" "99=open" -- "$(issue 3 open '' 99)" "$(issue 4 open hitl '')")
+printf '%s' "$g2" | run >/dev/null; rc=$?
+assert_equals "a stuck scope with nothing in flight is still an error" "$rc" "1"
 
 echo "test: everything in flight is a CLEAN empty"
 g=$(graph "" "" -- "$(issue 10 open '' '')")
@@ -157,6 +159,28 @@ g=$(graph "" "" -- "$(issue 10 closed '' '')" "$(issue 11 open '' '')")
 printf '%s' "$g" | run --merged 11 >/dev/null; rc=$?
 assert_equals "exit 0" "$rc" "0"
 assert_contains "says the scope is complete" "$(err)" "scope is complete"
+
+# The END of a normal run: everything buildable merged, and the only thing left is an
+# issue the run may never touch. Before this was handled, EVERY run whose scope
+# contained a hitl issue ended by declaring the scope broken.
+echo "test: a run that merged everything but a hitl issue ends CLEANLY"
+g=$(graph "" "" -- "$(issue 1 open '' '')" "$(issue 2 open '' '')" "$(issue 4 open hitl '')")
+printf '%s' "$g" | run --merged 1 --merged 2 >/dev/null; rc=$?
+assert_equals "exit 0 — this is a finished run, not a broken scope" "$rc" "0"
+assert_contains "says the scope is complete" "$(err)" "scope is complete"
+assert_contains "names what it skipped and why" "$(err)" "skipped, by label: #4"
+g=$(graph "" "" -- "$(issue 1 open '' '')" "$(issue 5 open prd '')")
+printf '%s' "$g" | run --merged 1 >/dev/null
+assert_equals "a prd issue is skipped the same way" "$?" "0"
+
+echo "test: the skip is only clean once something actually progressed"
+# one already-closed issue + one hitl -> the run has a terminal result: clean.
+g=$(graph "" "" -- "$(issue 1 closed '' '')" "$(issue 4 open hitl '')")
+printf '%s' "$g" | run >/dev/null; assert_equals "closed + skipped is clean" "$?" "0"
+assert_contains "and says so" "$(err)" "scope is complete"
+# nothing but skipped issues -> nothing was ever buildable: error.
+g=$(graph "" "" -- "$(issue 4 open hitl '')" "$(issue 5 open prd '')")
+printf '%s' "$g" | run >/dev/null; assert_equals "skipped-only is an error" "$?" "1"
 
 echo "test: an all-hitl scope is an ERROR, not a clean empty"
 g=$(graph "" "" -- "$(issue 10 open hitl '')")
