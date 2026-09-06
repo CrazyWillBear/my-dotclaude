@@ -9,6 +9,12 @@
 #
 # Usage:
 #   bash session-status.sh <runid> [N ...]
+#   bash session-status.sh --self          # this session's own name
+#
+# `--self` matches $CLAUDE_CODE_SESSION_ID against the agent list and prints the
+# session's display name. That name is the orchestrator's ADDRESS: a worker replies
+# with SendMessage, which takes a name, and a worker that cannot address its
+# orchestrator reports into the void (decision 9). spawn.sh resolves it this way.
 #
 #   N ...   issue numbers this run EXPECTS to be alive. Each one with no session is
 #           reported `gone` — a spawn that never came up, or a session that exited,
@@ -34,7 +40,7 @@
 set -uo pipefail
 
 RUNID="${1:-}"
-[ -n "$RUNID" ] || { echo "error: usage: session-status.sh <runid> [issue numbers]" >&2; exit 1; }
+[ -n "$RUNID" ] || { echo "error: usage: session-status.sh <runid> [issue numbers] | --self" >&2; exit 1; }
 shift
 
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
@@ -54,6 +60,7 @@ import json, os, subprocess, sys
 
 runid  = os.environ["STATUS_RUNID"]
 prefix = "orch-%s-" % runid
+self_mode = runid == "--self"
 expect = [int(t) for t in os.environ.get("STATUS_EXPECT", "").split()]
 
 try:
@@ -85,6 +92,23 @@ def state_of(agent):
     if raw in ("done", "completed", "finished", "exited"):
         return "done"
     return raw or "unknown"
+
+if self_mode:
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not me:
+        print("error: CLAUDE_CODE_SESSION_ID is unset — cannot identify this session",
+              file=sys.stderr)
+        sys.exit(1)
+    for agent in agents:
+        if isinstance(agent, dict) and agent.get("sessionId") == me:
+            name = agent.get("name") or ""
+            if not name:
+                break
+            print(name)
+            sys.exit(0)
+    print("error: this session (%s) is not in `claude agents --json`, or has no name — "
+          "pass the orchestrator name explicitly" % me[:8], file=sys.stderr)
+    sys.exit(1)
 
 seen = set()
 lines = []
