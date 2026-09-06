@@ -68,6 +68,12 @@ assert_matches "absorbs pipeline" "$BODY" "absorbs .?/?pipeline"
 assert_not_matches "does not tell anyone to run /pipeline" "$BODY" "run .?/pipeline|use .?/pipeline"
 
 # ---------------------------------------------------------------------------
+echo "test: the cross-session message gate is called out before a run"
+assert_contains "names the setting" "$BODY" "crossSessionInbound"
+assert_matches "explains the permission-class mismatch" "$BODY" "permission-mode class"
+assert_matches "says it must be user-level" "$BODY" "may only .{0,2}tighten"
+assert_matches "states the cost honestly" "$BODY" "any. local Claude session without review|machine-wide relaxation"
+
 echo "test: Step 0 dispatch routes by shape"
 assert_matches "routes by SHAPE not size" "$BODY" "by SHAPE, not size|shape, not size"
 assert_contains "ad-hoc lane for one unit with the user present" "$BODY" "ad-hoc"
@@ -238,7 +244,7 @@ assert_matches "the label query stays authoritative" "$BODY" "authoritative"
 # ---------------------------------------------------------------------------
 echo "test: the deleted machinery stays deleted"
 assert_not_matches "no Workflow tool invocation" "$BODY" "invoke the Workflow|Workflow tool"
-assert_not_contains "no js scheduler block" "$BODY" '```js'
+assert_not_matches "no js scheduler block" "$BODY" '^```js$'
 assert_not_contains "no export const meta" "$BODY" "export const meta"
 assert_not_matches "no ROSTER const inlined into a script" "$BODY" "ROSTER\["
 assert_matches "the wrap-and-handoff nudge stays deleted" "$BODY" "periodic wrap-and-handoff nudge.*deliberately deleted|wrap-and-handoff nudge"

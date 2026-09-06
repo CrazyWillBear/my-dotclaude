@@ -43,10 +43,33 @@ available — if `personal-tools:my-review` is **not** in your available agents,
 the missing piece ("personal-tools plugin not installed: my-review agent unavailable") and **stop**.
 Do not substitute another reviewer.
 
-The **PRD lane** additionally needs the `claude` CLI on `PATH` (it spawns real sessions).
+The **session lane** additionally needs the `claude` CLI on `PATH` (it spawns real sessions).
 `session-status.sh` fails loud if it is missing; do not paper over that by falling back to
 subagents — the lanes are not interchangeable, and silently building a 20-slice PRD in one
 session's context is the failure the lane split exists to prevent.
+
+### `crossSessionInbound` — check this before a session-lane run
+
+**A worker's report is HELD for the user's approval when the sender's permission-mode class
+differs from this session's.** Workers run `bypassPermissions` (they must — see the spawn
+protocol), so unless the orchestrator does too, **every** `issue <N> built …` report and every
+idle notice stops for a click. On a 20-slice PRD that is dozens of interruptions in a loop whose
+entire promise is that it runs unattended. Observed on a real run, not inferred.
+
+The fix is one setting in `~/.claude/settings.json`:
+
+```json
+{ "crossSessionInbound": "accept" }
+```
+
+It must be set at the **user** level: a repo's settings may only *tighten* this, so a project
+`.claude/settings.json` cannot loosen a user-level `hold`, and managed org policy overrides both.
+
+**Say what it costs before anyone sets it.** `accept` delivers messages from *any* local Claude
+session without review — not just this run's workers. It is a machine-wide relaxation in exchange
+for an unattended loop. If the user does not want that, the session lane still works; it just
+stops for an approval on every report, so **tell them that up front** instead of letting them
+discover it mid-run. The ad-hoc lane is unaffected — subagents are not cross-session.
 
 ---
 

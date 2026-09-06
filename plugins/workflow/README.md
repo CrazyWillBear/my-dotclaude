@@ -171,6 +171,13 @@ code right?".
 Deterministic logic lives in **scripts**, not in prose: prose can only be grep-tested, and every
 script here is driven against real fixtures by its own test.
 
+**Before a session-lane run, check `crossSessionInbound`.** Workers run `bypassPermissions`, and a
+peer message whose permission-mode class differs from the receiving session's is **held for the
+user's approval** — so without `{"crossSessionInbound": "accept"}` in `~/.claude/settings.json`,
+every worker report interrupts the loop it was supposed to run without. It has to be user-level (a
+repo may only tighten it), and it is a real relaxation: `accept` delivers messages from *any* local
+session, not only this run's workers. Observed on a live run.
+
 `/orchestrate` **hard-depends** on the `personal-tools` `my-review` agent and fails loud at launch if
 it is missing. my-review **owns** the `mock-debt` filing from its central-mechanism audit. PR merges
 stay a human decision; the loop never merges PRs.
