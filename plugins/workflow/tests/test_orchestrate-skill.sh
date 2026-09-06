@@ -73,6 +73,10 @@ assert_contains "names the setting" "$BODY" "crossSessionInbound"
 assert_matches "explains the permission-class mismatch" "$BODY" "permission-mode class"
 assert_matches "says it must be user-level" "$BODY" "may only .{0,2}tighten"
 assert_matches "states the cost honestly" "$BODY" "any. local Claude session without review|machine-wide relaxation"
+# The check must be RUN, not just described — prose protects nobody on a fresh install.
+assert_contains "runs the check script" "$BODY" "check-inbound.sh"
+assert_matches "handles all three exit codes" "$BODY" "exit 2|\\*\\*2\\*\\*"
+assert_matches "never refuses to start over a mere hold" "$BODY" "Never refuse to start over this"
 
 echo "test: Step 0 dispatch routes by shape"
 assert_matches "routes by SHAPE not size" "$BODY" "by SHAPE, not size|shape, not size"

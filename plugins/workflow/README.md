@@ -30,6 +30,7 @@ plugins/workflow/
 │   ├── session-status.sh             # worker session state from `claude agents --json`; --self resolves this session's name
 │   ├── spawn.sh                      # build (or print) the `claude --bg` command + worker prompt for one issue
 │   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
+│   ├── check-inbound.sh              # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
@@ -171,7 +172,8 @@ code right?".
 Deterministic logic lives in **scripts**, not in prose: prose can only be grep-tested, and every
 script here is driven against real fixtures by its own test.
 
-**Before a session-lane run, check `crossSessionInbound`.** Workers run `bypassPermissions`, and a
+**Before a session-lane run, `check-inbound.sh` asks whether worker reports can reach the
+orchestrator at all.** Workers run `bypassPermissions`, and a
 peer message whose permission-mode class differs from the receiving session's is **held for the
 user's approval** — so without `{"crossSessionInbound": "accept"}` in `~/.claude/settings.json`,
 every worker report interrupts the loop it was supposed to run without. It has to be user-level (a

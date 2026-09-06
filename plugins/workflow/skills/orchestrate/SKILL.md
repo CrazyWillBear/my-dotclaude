@@ -56,7 +56,19 @@ protocol), so unless the orchestrator does too, **every** `issue <N> built …` 
 idle notice stops for a click. On a 20-slice PRD that is dozens of interruptions in a loop whose
 entire promise is that it runs unattended. Observed on a real run, not inferred.
 
-The fix is one setting in `~/.claude/settings.json`:
+**Run the check — do not eyeball it:**
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbound.sh"
+```
+
+| exit | meaning | what to do |
+|---|---|---|
+| **0** | `accept` — reports will be delivered | proceed |
+| **1** | held for approval | **say so in the launch line and let the user decide.** A run that stops on every report still works; it just is not unattended. Never refuse to start over this — some users want to review every message |
+| **2** | `refuse` — reports will **never** arrive | **stop.** The session lane cannot work. Offer the ad-hoc lane instead |
+
+The fix, when they want one, is one setting in `~/.claude/settings.json`:
 
 ```json
 { "crossSessionInbound": "accept" }
@@ -637,6 +649,7 @@ with real tests:
 | `session-status.sh` | worker state, and `--self` |
 | `spawn.sh` | the session command and the worker prompt contract |
 | `run-log.sh` | scope · held · respawned · decision |
+| `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
