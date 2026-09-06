@@ -529,6 +529,18 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
 - **Never `rm`.** It deletes the worktree "when safe" — which is exactly the state being recovered.
 - **Never spawn onto a worktree whose previous session is still listed alive.** Two processes on one
   worktree corrupts it. Verify first, every time.
+- **A stop can be acknowledged and not take.** Observed: `claude stop <id>` printed
+  `stopped <id>` while the session stayed `working` across repeated attempts. So **wait
+  bounded, then escalate — never spin**:
+
+  ```bash
+  timeout 60 bash -c 'until [ -z "$("$S" "$RUNID" <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
+  ```
+
+  If that times out, **do not respawn**. The safety rule is unchanged — two processes on one
+  worktree corrupts it — so tell the user instead, naming the id and the worktree, and let them
+  kill it by hand. An unbounded wait here turns a recoverable wedge into a silent hang of the
+  recovery path itself.
 - The respawned session picks up from the **last commit**, not from the top of the issue.
 
 **Respawn once. Escalate on the second failure.** A task that wedges two sessions gets a human, not

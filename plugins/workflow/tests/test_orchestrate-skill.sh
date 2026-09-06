@@ -175,6 +175,11 @@ assert_contains "stop, verify, respawn" "$BODY" "claude stop"
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
 assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
 assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
+# A stop that is acknowledged but does not take would hang the "verify stopped" gate
+# forever — observed live, so the wait is bounded and ends in an escalation.
+assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
+assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
+assert_matches "and it escalates rather than respawning blindly" "$BODY" "do not respawn"
 assert_contains "the count comes from the run log" "$BODY" "run-log.sh"
 
 echo "test: a respawned issue has several rows — match on state, not the name"
