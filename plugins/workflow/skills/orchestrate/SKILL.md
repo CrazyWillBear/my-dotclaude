@@ -69,7 +69,8 @@ gets held. An explicit value always wins.
 
 It must be set at the **user** level: a repo's settings may only *tighten* this, so a project
 `.claude/settings.json` cannot loosen a user-level `hold`, and managed org policy overrides both.
-Settings are read at session start, so **set it before launching the orchestrator**, not mid-run.
+Setting it mid-run was observed to take effect on the very next worker report, but set it
+**before** launching a run rather than relying on that.
 
 **Say what it costs before anyone sets it.** `accept` delivers messages from *any* local Claude
 session without review — not just this run's workers. It is a machine-wide relaxation in exchange
