@@ -481,6 +481,7 @@ One line per session — `<name> <id> <kind> <state>`:
 | `idle` | finished its turn — pair with the issue's comments to see what it did |
 | `blocked` | a **permission wedge**: it is asking for something and nobody is there |
 | `done` | reported itself finished |
+| `stopped` | killed by `claude stop` — what a respawn waits for, and not the same as `gone` |
 | `gone` | expected but not listed — it never came up, or it exited |
 
 **Never parse `claude logs`.** It is a raw ANSI screen dump — cursor moves and spinner frames, not
@@ -496,13 +497,21 @@ call. You do not have to be right; you have to be cheap to be wrong.
 **`stop` → verify stopped → respawn.**
 
 ```bash
+S="${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh"
 # the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
-id=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <N> | awk '{print $2}')
+id=$("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2}')
 claude stop "$id"
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <N>   # must NOT be busy
+# verify: NO row for this issue may still be busy
+[ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" ...                     # same worktree, same branch
 ```
+
+**One issue can have several rows.** Every session a run ever started keeps its row (the list
+includes completed ones on purpose — see `gone` above), so after a respawn you will see the old
+`stopped` row *and* the new `busy` one under the same name. **Match on state, never on the name
+alone**, and read the newest live row as the current session. A rule like "is issue-14 busy?" is
+ambiguous the moment a respawn happens — which is exactly when you are asking.
 
 - **Never `rm`.** It deletes the worktree "when safe" — which is exactly the state being recovered.
 - **Never spawn onto a worktree whose previous session is still listed alive.** Two processes on one

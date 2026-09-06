@@ -173,6 +173,10 @@ assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
 assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
 assert_contains "the count comes from the run log" "$BODY" "run-log.sh"
 
+echo "test: a respawned issue has several rows — match on state, not the name"
+assert_matches "warns about multiple rows per issue" "$BODY" "several rows|One issue can have"
+assert_matches "says to match on state" "$BODY" "Match on state, never on the name"
+
 echo "test: escalation"
 assert_matches "offers both mediate and attach" "$BODY" "claude attach"
 assert_matches "recommends attach for code back-and-forth" "$BODY" "[Aa]ttach.*code|code.*attach"

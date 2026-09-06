@@ -30,6 +30,8 @@
 #            its turn); pair it with the issue's comments to see what it did
 #   blocked  a permission wedge — it is asking for something and nobody is there
 #   done     the session reported itself finished/completed
+#   stopped  killed by `claude stop` — the state a respawn waits for. NOT `gone`: the
+#            session and its transcript still exist, and the worktree is untouched
 #   gone     expected (a positional N) but not listed at all — it never came up
 #
 # NEVER parse `claude logs`: it is a raw ANSI screen dump, cursor moves and spinner
