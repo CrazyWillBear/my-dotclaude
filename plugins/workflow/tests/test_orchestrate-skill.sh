@@ -136,7 +136,7 @@ assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
 
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"
-assert_matches "captures the id at spawn" "$BODY" "Keep the id it prints"
+assert_matches "reads the id from session-status, not from spawn output" "$BODY" "column 2"
 assert_matches "attach is shown with an id" "$BODY" "claude attach [0-9a-f]{8}"
 assert_not_matches "never shows attach with a session name" "$BODY" "claude attach orch-"
 assert_not_matches "never shows stop with a session name" "$BODY" "claude stop orch-"

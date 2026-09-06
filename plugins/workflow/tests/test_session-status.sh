@@ -97,6 +97,13 @@ assert_contains "issue-77 gone" "$out" "orch-20260906-101500-issue-77 - - gone"
 assert_contains "expected-and-alive still reports its real state" "$out" "issue-12 aa11 background busy"
 assert_contains "flags accept #N" "$(run 20260906-101500 '#77')" "issue-77 - - gone"
 
+echo "test: both spellings of the same state normalize to one vocabulary"
+stub_claude 0 '[{ "id": "ff66", "kind": "background", "name": "orch-r1-issue-6", "state": "working" },
+                { "pid": 9, "kind": "interactive", "name": "orch-r1-issue-7", "status": "busy" }]'
+out=$(run r1)
+assert_contains "background 'working' -> busy" "$out" "orch-r1-issue-6 ff66 background busy"
+assert_contains "interactive 'busy' stays busy" "$out" "orch-r1-issue-7 - interactive busy"
+
 echo "test: a finished session normalizes to done"
 stub_claude 0 '[{ "id": "ee55", "kind": "background", "name": "orch-r1-issue-5", "state": "completed" }]'
 assert_contains "completed -> done" "$(run r1)" "orch-r1-issue-5 ee55 background done"

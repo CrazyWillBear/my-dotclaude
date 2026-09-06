@@ -274,12 +274,11 @@ model can, and historically did, hallucinate.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH"
    ```
-   **Keep the id it prints.** `spawn.sh` execs `claude --bg`, whose stdout is the new
-   session's **id** — and `claude stop` / `claude attach` take **that id, not the name**
-   (`Usage: claude stop <id>`; a name is rejected outright). The name addresses
-   `SendMessage`; the id controls the process. A run that keeps only names has no recovery
-   path and nothing to hand you for an attach. (`session-status.sh` also prints the id as its
-   second column, so a lost id is recoverable.)
+   **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
+   (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
+   `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
+   the id rather than a bare id, so don't parse spawn's output: read it from
+   **`session-status.sh <runid>`, column 2**, when you need it.
 4. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
    `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
 

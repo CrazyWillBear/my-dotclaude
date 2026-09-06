@@ -156,7 +156,7 @@ onto a worktree whose previous session is still alive. **Respawn once, escalate 
 count comes from `run-log.sh`, because nothing in git or GitHub records that a session was killed.
 
 An escalating worker messages the orchestrator, which **offers both** mediation and
-`claude attach <id>` (the id `spawn.sh` printed, or column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the
+`claude attach <id>` (column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the
 orchestrator's context. An escalated session is **exempt from the deadline** while you are engaged,
 and must **report the resolution** back before continuing.
 

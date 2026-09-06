@@ -11,11 +11,13 @@
 #                           when omitted (session-status.sh --self)
 #   --dry-run               print the command instead of running it
 #
-# On a real spawn this EXECS claude, so its stdout is claude's: the background
-# session's **id**. CAPTURE IT. `claude stop` and `claude attach` take that id —
-# `Usage: claude stop <id>` — and reject a session NAME outright, so a run that
-# only keeps names has no recovery path and no way to hand you an attach command.
-# The name is for addressing SendMessage; the id is for controlling the process.
+# On a real spawn this EXECS claude, whose stdout is a short banner CONTAINING the
+# new session's id (`claude stop <id>   stop this session`) — not a bare id, so do
+# not parse it. Read the id from `session-status.sh <runid>`, column 2.
+#
+# You need it: `claude stop` and `claude attach` take that id — `Usage: claude stop
+# <id>` — and reject a session NAME outright. The name addresses SendMessage; the id
+# controls the process.
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #

@@ -95,10 +95,16 @@ if not isinstance(agents, list):
 # Background entries carry `state` and no `pid`; interactive ones carry `status` and a
 # `pid`. Read both — a run's workers are background, but a session someone attached to
 # and restarted by hand must not vanish from the report.
+# One vocabulary across both kinds. A background session reports `working` where an
+# interactive one reports `busy`; leaving both spellings through would mean the
+# documented states above are a lie for half the sessions, and a caller matching on
+# `busy` would read a working session as something it has no rule for.
 def state_of(agent):
     raw = (agent.get("state") or agent.get("status") or "").lower()
     if raw in ("done", "completed", "finished", "exited"):
         return "done"
+    if raw in ("working", "running", "busy"):
+        return "busy"
     return raw or "unknown"
 
 if self_mode:
