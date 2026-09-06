@@ -62,8 +62,14 @@ The fix is one setting in `~/.claude/settings.json`:
 { "crossSessionInbound": "accept" }
 ```
 
+Values are `accept` (deliver), `hold` (park for review), `refuse` (opt out). **Unset means
+mode parity** — a message auto-delivers only when the sender's permission-mode class matches
+yours, which is exactly why a `bypassPermissions` worker reporting to a prompting orchestrator
+gets held. An explicit value always wins.
+
 It must be set at the **user** level: a repo's settings may only *tighten* this, so a project
 `.claude/settings.json` cannot loosen a user-level `hold`, and managed org policy overrides both.
+Settings are read at session start, so **set it before launching the orchestrator**, not mid-run.
 
 **Say what it costs before anyone sets it.** `accept` delivers messages from *any* local Claude
 session without review — not just this run's workers. It is a machine-wide relaxation in exchange
