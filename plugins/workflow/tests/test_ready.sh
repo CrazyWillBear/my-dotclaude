@@ -132,11 +132,25 @@ g=$(graph "" "" -- "$(issue 10 open '' '')" "$(issue 11 open '' '')" "$(issue 12
 assert_equals "held and in-flight dropped" "$(printf '%s' "$g" | run --held 10 --in-flight 11)" "12"
 assert_equals "flags accept #N and comma lists" "$(printf '%s' "$g" | run --held '#10,11')" "12"
 
+# The ORDINARY MID-RUN CASE, and the one a fixture-only suite missed: slots full,
+# and what is left is blocked by what is building plus a permanent hitl. Calling that
+# an error aborts a healthy run on its first scheduling pass. Work in flight settles
+# it: the unexplained-empty error is a LAUNCH guard, not a per-pass one.
+echo "test: with work in flight, an otherwise-unexplained empty is CLEAN"
+g=$(graph "" "1=open" -- "$(issue 1 open '' '')" "$(issue 2 open '' '')" \
+                        "$(issue 3 open '' 1)" "$(issue 4 open hitl '')")
+printf '%s' "$g" | run --in-flight 1 --in-flight 2 >/dev/null; rc=$?
+assert_equals "exit 0 — the run is progressing" "$rc" "0"
+assert_contains "names what is in flight" "$(err)" "#1, #2 in flight"
+# ...and the SAME graph with nothing in flight is still the error it should be.
+printf '%s' "$g" | run --merged 1 --merged 2 --merged 3 >/dev/null; rc=$?
+assert_equals "with nothing in flight it is an error again" "$rc" "1"
+
 echo "test: everything in flight is a CLEAN empty"
 g=$(graph "" "" -- "$(issue 10 open '' '')")
 printf '%s' "$g" | run --in-flight 10 >/dev/null; rc=$?
 assert_equals "exit 0" "$rc" "0"
-assert_contains "says in flight" "$(err)" "in flight or held"
+assert_contains "says in flight" "$(err)" "in flight"
 
 echo "test: a fully merged/closed scope is a CLEAN empty"
 g=$(graph "" "" -- "$(issue 10 closed '' '')" "$(issue 11 open '' '')")

@@ -173,6 +173,17 @@ gate_held = [i for i in remaining
 
 busy = [i["n"] for i in remaining if i["n"] in inflight or i["n"] in held]
 
+# WORK IN FLIGHT SETTLES IT. The unexplained-empty error is a LAUNCH guard: it exists
+# to catch a scope that can never start. Once anything is in flight the run is
+# demonstrably progressing, and an empty ready set just means the slots are full or
+# the rest is waiting on what is building — the ordinary mid-run case. Classifying
+# that as an error aborts a healthy run on its first scheduling pass, which is how
+# this reads on a real graph: #1 and #2 building, #3 blocked by #1, #4 hitl.
+if inflight:
+    print("nothing-to-do: nothing new to admit — %s in flight"
+          % ", ".join("#%d" % n for n in sorted(inflight)), file=sys.stderr)
+    sys.exit(0)
+
 # Test closedness DIRECTLY. "no open issues left" is not "everything is closed": an
 # issue whose state could not be read is "unknown" — neither open nor closed — and
 # --skip-unknown lets exactly that scope reach here. `.every(closed)` sends any
