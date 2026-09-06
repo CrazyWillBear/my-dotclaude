@@ -73,16 +73,14 @@ true pass/fail exit code. CI (`.github/workflows/ci.yml`) also runs shellcheck, 
 Add or update a test alongside any change to `setup/lib/`, `scripts/`, or plugin
 scripts.
 
-**`node` is a soft dependency.** Nearly everything here is prose, so nearly every test is
-a grep — and a grep can only prove a *string describing* the behavior is present. The one
-executable artifact in the kit is the `js` scheduler block in
-`plugins/workflow/skills/orchestrate/SKILL.md`, so it gets the one behavior test:
-`plugins/workflow/tests/orchestrate-block.harness.js` extracts that block, compiles it as
-the async function body the Workflow runtime runs it as, and drives it against a stubbed
-`agent()` — killing each spawn in turn to assert the run **drains** instead of silently
-degrading. `test_orchestrate-block-behavior.sh` wraps it (and `test_orchestrate-skill.sh`
-syntax-checks the same block). Both **skip green when `node` is absent** — CI must not
-need node. If you edit that block, run the harness: it tests behavior, not strings.
+**Prose is grep-tested; behavior lives in scripts.** Nearly everything here is prose, and
+a grep can only prove a *string describing* the behavior is present. So the deterministic
+half of `/orchestrate` deliberately lives in `plugins/workflow/scripts/` — `ready.sh`,
+`session-status.sh`, `spawn.sh`, `run-log.sh`, `merge-fold.sh` — where each one is driven
+against real fixtures by its own `test_*.sh`. When you find yourself writing a rule into a
+skill that a script could enforce, that is a signal to move it. (The old `js`-block-in-
+markdown scheduler and its bespoke node harness are gone; `node` is no longer needed by
+any test.)
 
 ## Gotchas
 
