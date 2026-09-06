@@ -13,7 +13,7 @@ run on the **main thread** because only the main thread can spawn the Explore su
 ground the call. You are **read-only** apart from `gh issue view`: you inspect, classify, and emit
 a contract — you never edit.
 
-`/pipeline` invokes this at its Step 0.5 to pick the tier for the run; you can also be invoked
+`/orchestrate` invokes this to pick or backfill an issue's tier; you can also be invoked
 directly (`/classify-task <issue#|brief>`). The **output contract** at the bottom is
 load-bearing — callers parse it — so emit it verbatim.
 
@@ -28,7 +28,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>
 
 It prints that tier's planner / implementer / reviewer `{model, effort}` pairs (or the standard
 roster plus a single warning if the config is missing or invalid). Never mix cells across rows — a
-tier is one whole row. The previous hardwired `/pipeline` roster ≈ the **complex** tier; the two
+tier is one whole row. The old hardwired single roster ≈ the **complex** tier; the two
 cheaper tiers sit below it.
 
 ## Step 1 — resolve the brief

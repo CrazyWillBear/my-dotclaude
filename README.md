@@ -60,11 +60,11 @@ Then **restart Claude Code** so it loads the plugins.
   of a repo's primary checkout and into a per-task worktree (`EnterWorktree`), so parallel
   sessions never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
   **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
-- **`workflow`** plugin (`plugins/workflow/`) — three things in one plugin: an autonomous
-  dev loop (`/orchestrate`) that solves GitHub issues in parallel worktrees, a single-task
-  plan→build→review chain (`/pipeline` — planner/implementer/reviewer models routed to the
-  task's complexity tier), and a context watchdog that drives deliberate, early `/clear` and
-  `/handoff` as the window fills.
+- **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: `/orchestrate`, a
+  standing dispatcher that routes work by shape (one explicit unit runs as a subagent chain; an
+  issue graph or PRD gets one real background Claude Code session per issue, each in its own
+  worktree, coordinating over the issue thread), and a context watchdog that drives deliberate,
+  early `/clear` and `/handoff` as the window fills.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
@@ -100,17 +100,16 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    `## Blocked by` section carries real `#N` refs — each labelled with its complexity
    **tier** (`tier:trivial|standard|complex`), which is what routes the agent models later.
 4. **`/orchestrate [--max N]`** then runs AFK until the scope drains: it keeps N issues in
-   flight (readiness computed from a launch-frozen issue graph, no guessing), builds each in
-   its own worktree, reviews the slice with `my-review` — surfacing findings in the run report
-   and filing `mock-debt` follow-ups from its central-mechanism audit — then merges the branch,
-   which unblocks its dependents and frees the slot for the next ready issue.
+   flight (readiness computed by a script over a launch-frozen issue graph, never guessed),
+   spawns **one background Claude Code session per issue** into its own worktree, and each
+   session reviews its own slice with `my-review` and posts the findings **onto the issue** —
+   so the findings never pass through the orchestrator's context. Conflict-free branches are
+   merged by a deterministic fold; only the conflicted remainder reaches an agent.
 
-For a **single task** not worth slicing into an issue graph, **`/pipeline <issue#|task>
-[--self-plan]`** runs the same discipline in one pass: a Step-0.5 `classify-task` call routes the
-planner/implementer/reviewer models to the task's complexity tier, the plan is written by the
-planner subagent — or, with `--self-plan` or on a trivial task, by the main agent inline — the
-implementer builds it in an isolated worktree, and the `my-review` agent reviews the diff
-with severity-routed fixes.
+For a **single task** not worth slicing into an issue graph, `/orchestrate` runs the same
+discipline in one pass without spawning anything: it announces the ad-hoc lane and chains
+plan (complex only) → build → `my-review` → capped fix rounds → an **offered** merge. There is
+no separate command — two front doors to the same room rot apart.
 
 The machinery behind each step — worktrees, the merger, the per-issue `my-review` stage, label
 conventions — is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command
@@ -209,7 +208,7 @@ my-dotclaude/
 ├── .claude-plugin/marketplace.json  # lists personal-tools + workflow
 ├── plugins/
 │   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
-│   └── workflow/         # dev loop + /pipeline + context watchdog — see plugins/workflow/README.md
+│   └── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)

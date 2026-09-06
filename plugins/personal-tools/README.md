@@ -104,7 +104,7 @@ plugins/personal-tools/
   crypto misuse, …), then a general correctness/quality pass driven by the repo's own
   `STYLEGUIDE.md` / `CLAUDE.md`. **Read-only, report-only** — emits a verdict plus findings graded
   **critical / high / medium / low**, ending in a machine-readable ` ```findings ` block that
-  spawners (e.g. `/pipeline`) route on; never edits, posts, or comments. For a PR it checks the tree
+  spawners (e.g. `/orchestrate`) route on; never edits, posts, or comments. For a PR it checks the tree
   is clean, checks out, reviews, then restores your original branch. The skill stays
   **dependency-free of the `workflow` plugin** — the tier judgment is its own, never a
   `classify-task` / `resolve-tier.sh` call. (The `/my-review` command is always report-only; the

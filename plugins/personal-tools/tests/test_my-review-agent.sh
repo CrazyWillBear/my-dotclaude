@@ -3,18 +3,18 @@
 # Tests for agents/my-review.md — the my-review agent prose.
 #
 # The agent is prose — not executable code — so we validate its frontmatter and
-# the content obligations the /pipeline severity-routing contract depends on:
+# the content obligations the severity-routing contract depends on:
 #
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter pins model: opus and effort: xhigh. The Agent tool has no
 #      effort parameter, so this pin GOVERNS every Agent-tool spawn — including
-#      /pipeline's tier-routed one, which overrides model per call but cannot
+#      a caller's tier-routed one, which overrides model per call but cannot
 #      touch effort. (Workflow agent() does take opts.effort, so /orchestrate
 #      routes it per call.)
 #   3. The 4-tier severity taxonomy (critical/high/medium/low) is present and
 #      the old blocker/warning/nit vocabulary is gone.
 #   4. The verdict line re-anchors APPROVE WITH NITS to only-low findings.
-#   5. The machine-readable ```findings block spec is present (the pipeline
+#   5. The machine-readable ```findings block spec is present (the caller
 #      routes off this block), including the replan flag and empty-when-clean.
 #   6. The ❓ unverified tag survives the migration.
 #   7. (issue #66) my-review now folds in the central-mechanism / mock-drift

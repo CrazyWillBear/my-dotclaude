@@ -10,8 +10,8 @@ You are the main-thread launcher for the `my-review` agent. Pick the reviewer mo
 
 1. **Get a tier (forward-or-judge).** In priority order:
    - **`--complexity <tier>` in `$ARGUMENTS`** wins — take that tier verbatim.
-   - else a **tier already confirmed this session** (an earlier `/classify-task` or `/pipeline`
-     run in this conversation) — reuse it.
+   - else a **tier already confirmed this session** (an earlier `/classify-task` or
+     `/orchestrate` run in this conversation) — reuse it.
    - else **judge the tier yourself from a cheap diff peek**: `git diff HEAD --stat` for the local
      working diff, or `gh pr diff <N> --stat` for a PR — the size and spread of the change decide
      trivial / standard / complex. This skill stays **dependency-free of the workflow plugin**: do
@@ -24,6 +24,7 @@ You are the main-thread launcher for the `my-review` agent. Pick the reviewer mo
    `model: "<pick>"`. Hand it the target — a PR number/URL if `$ARGUMENTS` names one, else the
    local working diff (`git diff HEAD`). Relay its report **verbatim**.
 
-`/pipeline` does **not** invoke this skill — there the complexity tier decides the reviewer model
-directly. The `agents/my-review.md` frontmatter now pins `model: opus` as the fallback for any
-direct spawn that omits an override.
+`/orchestrate` does **not** invoke this skill — there the issue's complexity tier decides the
+reviewer model directly, and the review is spawned by the agent that built the slice. The
+`agents/my-review.md` frontmatter pins `model: opus` as the fallback for any direct spawn that
+omits an override.

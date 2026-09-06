@@ -12,7 +12,7 @@
 #   planner_model=<m>      planner_effort=<e>
 #   implementer_model=<m>  implementer_effort=<e>
 #   reviewer_model=<m>     reviewer_effort=<e>
-# Callers (classify-task, /pipeline, /orchestrate) route the planner/implementer/
+# Callers (classify-task, /orchestrate) route the planner/implementer/
 # reviewer models AND efforts off these lines, so a roster must always come back.
 #
 # This script ships in the plugin and runs in-session on user machines, so it

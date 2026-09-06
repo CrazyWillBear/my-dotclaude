@@ -23,8 +23,6 @@ SAVE="$PLUGIN_ROOT/scripts/save-handoff.sh"
 SKILL="$PLUGIN_ROOT/../personal-tools/skills/handoff/SKILL.md"
 # /handoff-plan writes the same keyed pointer inline, so it carries the same drift risk.
 SKILL_PLAN="$PLUGIN_ROOT/../personal-tools/skills/handoff-plan/SKILL.md"
-# /pipeline writes the same keyed pointer inline for its resume state, so it too.
-SKILL_PIPE="$PLUGIN_ROOT/skills/pipeline/SKILL.md"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -178,27 +176,24 @@ assert_file "pointer written without a doc present" "$dir/.pending.json"
 assert_equals "handoff_path is null with no doc" "$(read_field "$dir/.pending.json" handoff_path)" ""
 
 # ---------------------------------------------------------------------------
-echo "test: no-args falls back to the /pipeline state doc when no plain doc exists"
+# The old `-pipeline.md` fallback went with /pipeline itself. Nothing writes that
+# doc any more, so a resolver that still looked for it could only point a resume
+# order at a stale file.
+echo "test: only the plain /handoff doc resolves — no second doc shape"
 init_repo
 branch="$(g rev-parse --abbrev-ref HEAD)"
 safe="${branch//\//-}"
 dir="$(print_dir "$PROJECT_DIR")"
 mkdir -p "$dir"
 rm -f "$dir"/*.md 2>/dev/null || true
-printf '# Pipeline state\nphase: built\n' >"$dir/${safe}-pipeline.md"
+printf '# Stale\nphase: built\n' >"$dir/${safe}-pipeline.md"
 run_save_handoff "$PROJECT_DIR"
-assert_contains "handoff_path resolves the pipeline state doc" \
-    "$(read_field "$dir/.pending.json" handoff_path)" "${safe}-pipeline.md"
-
-echo "test: the plain /handoff doc wins over the pipeline state doc when both exist"
+assert_equals "a -pipeline.md doc is NOT resolved" \
+    "$(read_field "$dir/.pending.json" handoff_path)" ""
 printf '# Handoff\n## Done\n- work\n' >"$dir/${safe}.md"
 run_save_handoff "$PROJECT_DIR"
-hp="$(read_field "$dir/.pending.json" handoff_path)"
-case "$hp" in
-    *"${safe}-pipeline.md") no "plain doc should win over pipeline doc ($hp)" ;;
-    *"${safe}.md")          ok "plain doc wins over pipeline doc" ;;
-    *)                      no "handoff_path resolved neither doc ($hp)" ;;
-esac
+assert_contains "the plain doc resolves" \
+    "$(read_field "$dir/.pending.json" handoff_path)" "${safe}.md"
 rm -f "$dir"/*.md 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -227,16 +222,10 @@ assert_contains "plan skill keys by the common dir" "$plan_txt" "--git-common-di
 assert_contains "plan skill names the .pending.json pointer" "$plan_txt" ".pending.json"
 assert_contains "plan skill names the keyed handoffs dir" "$plan_txt" "~/.claude/handoffs/"
 
-# /pipeline's step-9 resume state writes the same keyed pointer inline, so the same
-# recipe must be documented there too or its inline writer could silently diverge.
-assert_file "pipeline SKILL.md exists" "$SKILL_PIPE"
-pipe_txt="$(cat "$SKILL_PIPE")"
-assert_contains "pipeline skill documents sha1 keying" "$pipe_txt" "sha1"
-assert_contains "pipeline skill documents the cut -c1-16 key length" "$pipe_txt" "cut -c1-16"
-assert_contains "pipeline skill keys by the common dir" "$pipe_txt" "--git-common-dir"
-assert_contains "pipeline skill names the .pending.json pointer" "$pipe_txt" ".pending.json"
-assert_contains "pipeline skill names the keyed handoffs dir" "$pipe_txt" "~/.claude/handoffs/"
-assert_contains "pipeline skill names its -pipeline.md state doc" "$pipe_txt" "-pipeline.md"
+# run-log.sh writes the run log into the SAME keyed dir, by asking this script for
+# it rather than recomputing the sha — one keying scheme per repo, not two.
+assert_contains "run-log.sh reuses --print-dir instead of its own sha" \
+    "$(cat "$PLUGIN_ROOT/scripts/run-log.sh")" "save-handoff.sh --print-dir"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

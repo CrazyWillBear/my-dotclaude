@@ -14,7 +14,7 @@
     {
       "name": "workflow",
       "source": "./plugins/workflow",
-      "description": "An autonomous dev loop (/orchestrate fans out parallel issue-solving in isolated git worktrees, then per-issue my-review reviews each built slice and surfaces its findings), a single-task plan-build-review chain (/pipeline: models routed by complexity tier), plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
+      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread. Plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
     }
   ]
 }
