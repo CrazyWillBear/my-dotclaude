@@ -28,6 +28,7 @@ plugins/personal-tools/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
 │   ├── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
 │   ├── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /verify-plan (fail-open)
+│   ├── distill-transcript.sh      # strips a transcript to its spoken turns (~12x) so /verify-plan reads dialogue, not tool output
 │   ├── worktree-guard.sh          # PreToolUse hook — denies Edit/Write/NotebookEdit into the primary tree; forces a worktree (fail-open)
 │   └── worktree-gc.sh             # SessionStart hook — sweeps crash-orphaned .claude/worktrees/* (clean + no-commits + old, fail-open)
 ├── templates/                     # language-neutral CLAUDE.md + STYLEGUIDE.md, filled by the init-* skills
@@ -44,8 +45,11 @@ plugins/personal-tools/
   whether the plan/PRD/issue-slices under discussion still match what was decided (later
   decisions win). Reports drift — contradictions and omissions — read-only. A `UserPromptSubmit`
   hook (`stash-session.sh`) stashes the transcript path on every prompt; the skill reads it back
-  since skill bodies never receive the session path directly. Pairs with `/grill-me` → `/to-prd`
-  → `/to-issues`.
+  since skill bodies never receive the session path directly. The log is **distilled to its
+  spoken turns first** (`scripts/distill-transcript.sh`) — a transcript is mostly thinking, tool
+  results and tool-call parameters, so measuring the raw file tripped the size cap on exactly the
+  long, reversal-heavy sessions this check is worth running on. Pairs with `/grill-me` →
+  `/to-prd` → `/to-issues`.
 - **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
   a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
   template verbatim, and publish it labeled `prd` (a tracking doc — *not* built directly).

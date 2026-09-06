@@ -38,14 +38,33 @@ stop. Tell the user:
 
 Do nothing else until the user addresses this.
 
-## Step 2 — Oversize guard
+## Step 2 — Distil, then measure the distilled file
 
-Using the `$log` path resolved in Step 1, measure its size:
+**Never measure the raw transcript.** It is mostly not conversation: on a real design
+session, 1.71 MB of JSONL held ~336 KB of thinking, ~265 KB of tool results, ~137 KB of
+tool-call parameters and ~190 KB of harness bookkeeping around just ~138 KB of dialogue.
+Guarding on the raw size trips the cap on exactly the long, reversal-heavy sessions where
+this check is most worth running — and it makes the subagent read 12x the tokens it needs.
+
+So distil first, and use the distilled file everywhere below (including as the log path
+handed to the subagent in Step 4):
 
 ```bash
+out="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/distill-transcript.sh" "$log" \
+        | sed -n 's/.* out=//p')"
+[ -s "$out" ] || { echo "distil failed"; exit 1; }
+log="$out"
 bytes="$(wc -c < "$log")"
 marker="${TMPDIR:-/tmp}/verify-plan-oversize-$key"
 ```
+
+The distiller keeps **every** non-blank user/assistant text block, in order, labelled by
+role, and drops everything else. `thinking` is dropped deliberately even though it is the
+largest single category — it is reasoning the user never saw, containing positions worked
+through and discarded before speaking, so feeding it to a decisions-verifier invites
+mismatches against things that were never decided.
+
+The size guard still applies, on the distilled size:
 
 - `bytes` ≤ **600000** (≈ 150k tokens): remove any stale marker (`rm -f "$marker"`),
   proceed to Step 3.
