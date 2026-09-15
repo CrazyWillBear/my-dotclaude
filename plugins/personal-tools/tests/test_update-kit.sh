@@ -269,5 +269,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The skill's prose must describe the derived plugin list, not the old
+# hardcoded personal-tools/workflow pair.
+# ---------------------------------------------------------------------------
+echo "test: the update-kit skill doc no longer hardcodes personal-tools/workflow"
+SKILL_FILE="$PLUGIN_ROOT/skills/update-kit/SKILL.md"
+if [ -f "$SKILL_FILE" ]; then
+    skill="$(cat "$SKILL_FILE")"
+    assert_not_contains "no hardcoded 'three claude CLI calls'" "$skill" "three \`claude\` CLI calls"
+    assert_not_contains "no hardcoded 'both plugins' in the description" "$skill" "both plugins"
+    assert_contains "documents the manifest-derived plugin list" "$skill" "marketplace.json"
+else
+    no "SKILL.md missing at $SKILL_FILE"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
