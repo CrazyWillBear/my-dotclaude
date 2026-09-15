@@ -74,8 +74,15 @@ assert_contains "reads from the plugin's templates dir" "$BODY" "CLAUDE_PLUGIN_R
 assert_contains "roster.json is only the CHOSEN roles" "$BODY" "chosen role"
 
 echo "test: it validates through the real roster.sh before reporting done"
-assert_contains "runs roster.sh validate" "$BODY" "roster.sh validate"
+assert_contains "runs roster.sh validate with a literal, runnable invocation" "$BODY" \
+    '${CLAUDE_PLUGIN_ROOT}/scripts/roster.sh" validate'
 assert_not_contains "never claims success on an unvalidated roster" "$BODY" "without validating"
+
+echo "test: it does not clobber an existing roster/charter/briefs on a re-run"
+assert_contains "checks for existing state before writing" "$BODY" "existing"
+assert_contains "shows a diff before overwriting" "$BODY" "diff"
+assert_contains "asks before overwriting, same precedent as init-python-project" "$BODY" "ask before overwriting"
+assert_contains "never clobbers silently" "$BODY" "never clobber silently"
 
 echo "test: it sets honest expectations about what ships later"
 assert_contains "notes swarm.sh is a later issue" "$BODY" "swarm.sh"

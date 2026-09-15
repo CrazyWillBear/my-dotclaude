@@ -31,22 +31,29 @@ later issue; this command only writes the roster, the charter, and the briefs.
    - `${CLAUDE_PLUGIN_ROOT}/templates/charter.md`
    - `${CLAUDE_PLUGIN_ROOT}/templates/briefs/<role>.md` — one per role.
 
-4. **Write `.claude/swarm/roster.json`**: only the rows for the chosen roles, pulled
+4. **Check for existing state before writing anything.** If any of
+   `.claude/swarm/roster.json`, `.claude/swarm/charter.md`, or a chosen role's
+   `.claude/swarm/inbox/<role>/brief.md` already exists, show me the diff between it
+   and what Steps 5–7 would write, and ask before overwriting — never clobber silently,
+   same precedent as init-python-project's SKILL.md. A file with no conflict (doesn't
+   exist yet) is written straight through.
+
+5. **Write `.claude/swarm/roster.json`**: only the rows for the chosen roles, pulled
    verbatim from `templates/roster.json` — never all three unless all three were
    chosen, and never a row invented rather than copied.
 
-5. **Write `.claude/swarm/charter.md`**: the template, verbatim, unconditionally — it
+6. **Write `.claude/swarm/charter.md`**: the template, verbatim, unconditionally — it
    is shared by every role, so it is written even if only one role was chosen.
 
-6. **Write one brief per chosen role**, and only for chosen roles, to
+7. **Write one brief per chosen role**, and only for chosen roles, to
    `.claude/swarm/inbox/<role>/brief.md` (create the `inbox/<role>/` directory) —
    the matching `templates/briefs/<role>.md`, verbatim. An unchosen role gets no
    brief and no inbox directory.
 
-7. **Validate before reporting done.** Run the plugin's own
-   `scripts/roster.sh validate` against the project directory you just wrote to. If
-   it fails, fix the roster and re-run it — never report success on a roster you
-   have not validated through the real script.
+8. **Validate before reporting done.** Run the plugin's own roster validator —
+   literally `bash "${CLAUDE_PLUGIN_ROOT}/scripts/roster.sh" validate` — against the
+   project directory you just wrote to. If it fails, fix the roster and re-run it —
+   never report success on a roster you have not validated through the real script.
 
-8. **Report** the files written and which roles were installed. Note that
+9. **Report** the files written and which roles were installed. Note that
    `swarm.sh up`/`down`/`attach` (spawning these roles) ships in a later issue.
