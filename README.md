@@ -60,6 +60,10 @@ Then **restart Claude Code** so it loads the plugins.
   of a repo's primary checkout and into a per-task worktree (`EnterWorktree`), so parallel
   sessions never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
   **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
+- **`infra`** plugin (`plugins/infra/`) — scripts-only shared layer (session state, inbound
+  check, tier resolution). A `SessionStart` hook links `~/.claude/kit/infra` so other plugins
+  call its scripts by one fixed path. `workflow` needs it.
+  **Full reference:** [`plugins/infra/README.md`](plugins/infra/README.md).
 - **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: `/orchestrate`, a
   standing dispatcher that routes work by shape (one explicit unit runs as a subagent chain; an
   issue graph or PRD gets one real background Claude Code session per issue, each in its own
@@ -178,10 +182,12 @@ If you only want, say, the `workflow` plugin and will write your own `CLAUDE.md`
 
 ```
 /plugin marketplace add CrazyWillBear/my-dotclaude
+/plugin install infra@my-dotclaude
 /plugin install workflow@my-dotclaude
 ```
 
-(Swap `workflow` for `personal-tools` for the slash-command kit.)
+(`workflow` calls `infra`'s scripts, so install both. Swap them for `personal-tools` for the
+slash-command kit.)
 
 ### What gets installed
 
@@ -205,9 +211,10 @@ isn't installed or logged in. Playwright stays an MCP because it has no CLI equi
 
 ```
 my-dotclaude/
-├── .claude-plugin/marketplace.json  # lists personal-tools + workflow
+├── .claude-plugin/marketplace.json  # lists personal-tools + infra + workflow
 ├── plugins/
 │   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
+│   ├── infra/            # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
 │   └── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)

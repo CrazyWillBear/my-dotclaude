@@ -25,6 +25,13 @@ SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# spawn.sh reaches infra's scripts only through ~/.claude/kit/infra; link a fake HOME
+# with the real hook, so the stable path is exercised and the real ~/.claude untouched.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+export HOME="$WORK/home"
+mkdir -p "$HOME"
+bash "$REPO_ROOT/plugins/infra/scripts/link-kit.sh" || { echo "FAIL: could not link infra"; exit 1; }
+
 pass=0
 fail=0
 ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
@@ -150,6 +157,11 @@ echo "test: a real spawn refuses a worktree that does not exist"
 bash "$SPAWN" r1 12 standard "$WORK/nope" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "says which path" "$(err)" "worktree does not exist"
+
+echo "test: without the infra link, spawn fails loud instead of guessing a roster"
+HOME="$WORK/nolink" bash "$SPAWN" r1 12 standard /w base --dry-run --orchestrator orch-main >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "names the missing link" "$(err)" "infra plugin not linked"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

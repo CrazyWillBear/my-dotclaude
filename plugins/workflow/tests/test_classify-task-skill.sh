@@ -115,5 +115,10 @@ assert_not_contains "implementer= line gone" "$content" "implementer="
 assert_not_contains "reviewer= line gone" "$content" "reviewer="
 
 # ---------------------------------------------------------------------------
+echo "test: resolve-tier.sh and its table are reached by infra's stable path"
+assert_contains "helper called via ~/.claude/kit/infra" "$content" 'bash ~/.claude/kit/infra/scripts/resolve-tier.sh'
+assert_contains "table named at ~/.claude/kit/infra" "$content" '~/.claude/kit/infra/model-tiers.json'
+assert_not_contains "no plugin-root path" "$content" '${CLAUDE_PLUGIN_ROOT}'
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

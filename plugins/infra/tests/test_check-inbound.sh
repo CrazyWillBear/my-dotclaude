@@ -14,7 +14,7 @@
 #   * every message names the setting and how to fix it
 #   * unreadable or malformed settings never crash and never claim "ok"
 #
-# Run: bash plugins/workflow/tests/test_check-inbound.sh   (non-zero if any fail)
+# Run: bash plugins/infra/tests/test_check-inbound.sh   (non-zero if any fail)
 
 set -u
 

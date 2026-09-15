@@ -47,7 +47,8 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# infra's scripts, by the one fixed address its SessionStart hook links (docs/swarm-design.md § Plugin split).
+INFRA="$HOME/.claude/kit/infra/scripts"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -84,7 +85,8 @@ case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;;
 # The tier's roster. resolve-tier.sh always exits 0 and always prints a roster
 # (falling back to standard), so a broken model-tiers.json degrades to a working
 # spawn rather than no spawn at all.
-ROSTER="$(bash "$SCRIPT_DIR/resolve-tier.sh" "$TIER" 2>/dev/null)"
+[ -f "$INFRA/resolve-tier.sh" ] || die "infra plugin not linked at $INFRA — install infra@my-dotclaude and start a new session"
+ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
 MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1)"
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
@@ -92,7 +94,7 @@ EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1
 # The worker's report address. A worker that cannot name its orchestrator reports
 # into the void, so this fails LOUD rather than spawning a session nobody hears.
 if [ -z "$ORCH" ]; then
-    ORCH="$(bash "$SCRIPT_DIR/session-status.sh" --self 2>/dev/null)" \
+    ORCH="$(bash "$INFRA/session-status.sh" --self 2>/dev/null)" \
         || die "could not resolve this session's name — pass --orchestrator NAME"
     [ -n "$ORCH" ] || die "could not resolve this session's name — pass --orchestrator NAME"
 fi

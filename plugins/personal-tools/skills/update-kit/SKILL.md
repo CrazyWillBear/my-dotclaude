@@ -20,7 +20,10 @@ Apply the latest kit release on this machine. No arguments needed.
    The script issues `claude plugin marketplace update my-dotclaude`, then one
    `claude plugin update <name>` call per plugin listed in
    `.claude-plugin/marketplace.json` (derived, not hardcoded, so a plugin added
-   to the manifest later gets updated here too).
+   to the manifest later gets updated here too). A listed plugin that isn't
+   installed yet is installed with `claude plugin install <name>@my-dotclaude`
+   instead. If that install fails too, the script still finishes the other
+   plugins and the status line, then exits non-zero.
 
    It then refreshes the status line, which is not plugin payload: the
    marketplace update above also refreshes Claude Code's local copy of the repo
@@ -32,6 +35,7 @@ Apply the latest kit release on this machine. No arguments needed.
    plugin update still succeeded.
 
 3. **Report the result.** If the script exits non-zero, surface the error and
-   tell the user to check their `claude` CLI installation. If it exits 0, confirm
+   tell the user to check their `claude` CLI installation — or, when it names
+   a `claude plugin install` command, to run that command. If it exits 0, confirm
    that the kit was updated and remind them to **restart Claude Code** so the new
    versions take effect.

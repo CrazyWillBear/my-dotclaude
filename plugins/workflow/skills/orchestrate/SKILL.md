@@ -43,6 +43,11 @@ available — if `personal-tools:my-review` is **not** in your available agents,
 the missing piece ("personal-tools plugin not installed: my-review agent unavailable") and **stop**.
 Do not substitute another reviewer.
 
+Both lanes also need the **`infra`** plugin: `session-status.sh`, `check-inbound.sh` and
+`resolve-tier.sh` live there and are called at `~/.claude/kit/infra/scripts/` (a symlink its
+SessionStart hook writes). If `~/.claude/kit/infra` is missing, **fail loud**
+("infra plugin not installed: ~/.claude/kit/infra missing") and **stop**.
+
 The **session lane** additionally needs the `claude` CLI on `PATH` (it spawns real sessions).
 `session-status.sh` fails loud if it is missing; do not paper over that by falling back to
 subagents — the lanes are not interchangeable, and silently building a 20-slice PRD in one
@@ -59,7 +64,7 @@ entire promise is that it runs unattended. Observed on a real run, not inferred.
 **Run the check — do not eyeball it:**
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbound.sh"
+bash ~/.claude/kit/infra/scripts/check-inbound.sh
 ```
 
 | exit | meaning | what to do |
@@ -130,7 +135,7 @@ on a confirmation you already gave; the announcement *is* the veto window:
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
-   resolve its roster with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>`. **Never
+   resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
    prompt to confirm or override a tier.** Auto-accept and say what you got.
 2. **Worktree** — `EnterWorktree(name: "adhoc-<slug>")` unless you are already in a linked worktree.
 3. **Plan (complex only)** — spawn `workflow:planner` at the tier's planner roster. Trivial and
@@ -271,7 +276,7 @@ run.
 **Then resolve the run's own address, once:**
 
 ```bash
-ORCH="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" --self)"
+ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"
 ```
 
 That is the name every worker will `SendMessage`. Resolve it **here and pass it to every spawn**
@@ -479,7 +484,7 @@ or send "are you done?" messages — a polled worker pays for every poll out of 
 **For state, use the script:**
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <expected issue numbers>
+bash ~/.claude/kit/infra/scripts/session-status.sh "$RUNID" <expected issue numbers>
 ```
 
 **Expect only the issues that actually have a session.** `tier:trivial` issues are built by an
@@ -510,7 +515,7 @@ call. You do not have to be right; you have to be cheap to be wrong.
 **`stop` → verify stopped → respawn.**
 
 ```bash
-S="${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh"
+S=~/.claude/kit/infra/scripts/session-status.sh
 # the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
 id=$("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2}')
 claude stop "$id"
@@ -666,6 +671,9 @@ with real tests:
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
 | `resolve-tier.sh` | tier → {model, effort} |
+
+`session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra** plugin and are
+always called at `~/.claude/kit/infra/scripts/`.
 
 ---
 

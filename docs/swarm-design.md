@@ -276,7 +276,9 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
    keying duplication. Tests move with the scripts.
 2. **infra** plugin: move `spawn.sh`, `session-status.sh`, `check-inbound.sh`,
    `resolve-tier.sh`, the tier table. Add the stable-address hook. Generalize spawn from
-   "one issue" to "one role or one worker".
+   "one issue" to "one role or one worker". (Landed #85: `session-status.sh`, `check-inbound.sh`,
+   `resolve-tier.sh` + the tier table, and the hook. `spawn.sh` stays in workflow, calling infra
+   by the stable path, until spawn is generalized.)
 3. **workflow** trim: `/orchestrate` calls infra by the stable path; session prose moves to
    infra's README; `/to-prd` and `/to-issues` move in from personal-tools.
 4. **swarm** plugin: roster schema, `/init-swarm`, `swarm.sh up|down|attach`, charter,

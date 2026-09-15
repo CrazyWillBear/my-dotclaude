@@ -43,8 +43,17 @@ assert_equals()       { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3'
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/claude" <<'STUB'
 #!/usr/bin/env bash
-# Stub claude: record each invocation (all args on one line) then exit 0.
+# Stub claude: record each invocation (all args on one line) then exit 0 —
+# except `plugin update <name>` for a name in $CLAUDE_STUB_NOT_INSTALLED,
+# which fails the way the real CLI does for a plugin that isn't installed, and
+# `plugin install <name>@...` for a name in $CLAUDE_STUB_INSTALL_FAILS.
 printf '%s\n' "$*" >> "$CLAUDE_STUB_LOG"
+for missing in ${CLAUDE_STUB_NOT_INSTALLED:-}; do
+    [ "$*" = "plugin update $missing" ] && exit 1
+done
+for broken in ${CLAUDE_STUB_INSTALL_FAILS:-}; do
+    case "$*" in "plugin install $broken@"*) exit 1 ;; esac
+done
 exit 0
 STUB
 chmod +x "$WORK/bin/claude"
@@ -102,7 +111,8 @@ fi
 echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
+    want=$(( $(grep -c '"source": "./plugins/' "$REPO_ROOT/.claude-plugin/marketplace.json") + 1 ))
+    assert_equals "marketplace call + one per real manifest plugin" "$count" "$want"
 else
     no "no claude calls recorded (log missing)"
 fi
@@ -161,6 +171,47 @@ if [ -f "$CLAUDE_STUB_LOG" ]; then
     assert_contains "updates the third, unnamed plugin" "$calls3" "plugin update context"
 else
     no "no claude calls recorded for the third-plugin manifest"
+fi
+
+# ---------------------------------------------------------------------------
+# A plugin added to the manifest after the user installed the kit (e.g. infra)
+# isn't installed yet, so `claude plugin update` fails for it. update-kit must
+# install it instead, and keep going to the plugins listed after it.
+# ---------------------------------------------------------------------------
+echo "test: a manifest plugin that isn't installed yet gets installed, and later plugins still update"
+rm -f "$CLAUDE_STUB_LOG"
+outni=$(PATH="$WORK/bin:$PATH" HOME="$HOME_DIR" CLAUDE_STUB_NOT_INSTALLED=infra bash "$SCRIPT" 2>&1)
+rcni=$?
+assert_equals "exit 0 when a manifest plugin isn't installed yet" "$rcni" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    callsni="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "installs the not-yet-installed plugin" "$callsni" "plugin install infra@my-dotclaude"
+    assert_contains "still updates workflow, listed after infra" "$callsni" "plugin update workflow"
+    assert_not_contains "doesn't install an already-installed plugin" "$callsni" "plugin install workflow"
+else
+    no "no claude calls recorded for the not-installed plugin"
+fi
+assert_contains "still prints restart reminder" "$outni" "Restart"
+
+# ---------------------------------------------------------------------------
+# Round-2 medium: if the fallback install fails too, update-kit must not print
+# "Done" and exit 0 — the skill would report a successful update.
+# ---------------------------------------------------------------------------
+echo "test: update and install both fail -> non-zero exit, no 'Done', manual install command shown"
+rm -f "$CLAUDE_STUB_LOG"
+outif=$(PATH="$WORK/bin:$PATH" HOME="$HOME_DIR" CLAUDE_STUB_NOT_INSTALLED=infra CLAUDE_STUB_INSTALL_FAILS=infra bash "$SCRIPT" 2>&1)
+rcif=$?
+if [ "$rcif" -ne 0 ]; then
+    ok "exits non-zero when a plugin neither updates nor installs"
+else
+    no "exit code is 0 (want non-zero) when a plugin neither updates nor installs"
+fi
+assert_not_contains "doesn't print 'Done' after a failed install" "$outif" "Done"
+assert_contains "tells the user the manual install command" "$outif" "claude plugin install infra@my-dotclaude"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_contains "still updates workflow, listed after the failed plugin" "$(cat "$CLAUDE_STUB_LOG")" "plugin update workflow"
+else
+    no "no claude calls recorded for the failed-install run"
 fi
 
 # ---------------------------------------------------------------------------
