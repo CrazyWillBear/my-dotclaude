@@ -156,6 +156,37 @@ rc=$?
 assert_equals "malformed manifest -> non-zero exit" "$rc" "1"
 assert_contains "malformed manifest -> error message" "$out" "error"
 
+# ---- test: the remote curl fetch path (no TCR_LOCAL_ROOT) ------------------
+echo "test: tcr_install_our_plugins fetches the manifest via curl when no local checkout is set, and cleans up its tmp file"
+reset_calls
+make_claude_stub
+mkdir -p "$WORK/curl-stubs"
+cat > "$WORK/curl-stubs/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: write a fixture manifest to whatever -o path was given.
+for ((i=1; i<=$#; i++)); do
+  if [ "${!i}" = "-o" ]; then
+    j=$((i + 1))
+    cat > "${!j}" <<'JSON'
+{"plugins": [{"name": "personal-tools"}, {"name": "workflow"}]}
+JSON
+    exit 0
+  fi
+done
+exit 1
+EOF
+chmod +x "$WORK/curl-stubs/curl"
+out=$(PATH="$WORK/stubs:$WORK/curl-stubs:$PATH" bash -c "
+  NO_COLOR=1; TCR_LOCAL_ROOT=''; export NO_COLOR TCR_LOCAL_ROOT
+  . '$COMMON'
+  tcr_install_our_plugins
+" 2>&1)
+rc=$?
+calls=$(claude_calls)
+assert_equals "remote fetch path exits 0" "$rc" "0"
+assert_contains "remote fetch installs personal-tools" "$calls" "plugin install personal-tools@my-dotclaude"
+assert_contains "remote fetch installs workflow"       "$calls" "plugin install workflow@my-dotclaude"
+
 # ---- test: tcr_install_composio_plugins ------------------------------------
 echo "test: tcr_install_composio_plugins adds marketplace once, installs perf + security-guidance"
 reset_calls
