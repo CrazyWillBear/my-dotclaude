@@ -426,5 +426,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Round-4 low: AGENT_SETUP.md was missed by the doc sweep that already fixed
+# the same stale claim in the two READMEs (commit 44d5f85).
+# ---------------------------------------------------------------------------
+echo "test: AGENT_SETUP.md no longer claims update-kit hardcodes both plugins"
+AGENT_SETUP_FILE="$REPO_ROOT/AGENT_SETUP.md"
+if [ -f "$AGENT_SETUP_FILE" ]; then
+    assert_not_contains "AGENT_SETUP.md doesn't hardcode 'both the personal-tools and workflow plugins'" \
+        "$(cat "$AGENT_SETUP_FILE")" 'both the `personal-tools` and `workflow` plugins'
+else
+    no "AGENT_SETUP.md missing at $AGENT_SETUP_FILE"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
