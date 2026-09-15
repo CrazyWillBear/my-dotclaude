@@ -12,10 +12,9 @@ Two features in one plugin, versioned here with the rest of my setup:
 ```
 plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
-├── model-tiers.json                  # tier → {model, effort} roster, resolved by scripts/resolve-tier.sh
 ├── skills/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the dispatcher and both its lanes
-│   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via resolve-tier.sh
+│   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via infra's resolve-tier.sh
 ├── agents/
 │   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
@@ -27,18 +26,18 @@ plugins/workflow/
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction; OWNS the per-repo keyed dir
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── session-status.sh             # worker session state from `claude agents --json`; --self resolves this session's name
 │   ├── spawn.sh                      # build (or print) the `claude --bg` command + worker prompt for one issue
 │   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
-│   ├── check-inbound.sh              # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
-│   ├── scope-graph.sh                # fetch the whole issue graph at launch (bodies, comments, tiers, blockers, mock-debt)
-│   └── resolve-tier.sh               # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
+│   └── scope-graph.sh                # fetch the whole issue graph at launch (bodies, comments, tiers, blockers, mock-debt)
 ├── tests/                            # one bash test per script + one per skill and agent
 └── README.md                         # this file
 ```
+
+`session-status.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live in the
+[`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
 
 ## Why it works this way
 

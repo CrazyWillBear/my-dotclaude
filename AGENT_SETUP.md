@@ -5,7 +5,7 @@ from the **my-dotclaude** repo. Both paths install the same full kit **user-wide
 `~/.claude`, not a project folder); they differ only in audience. Keep the user informed
 in plain language as you go:
 
-- **Developer setup** — global technical `CLAUDE.md`, the personal-tools + workflow +
+- **Developer setup** — global technical `CLAUDE.md`, the personal-tools + infra + workflow +
   ponytail + agent-sdk-dev plugins, the Playwright MCP, a `gh` allowlist (read-only reads +
   issue-write), and `model=opus`.
 - **Non-developer setup** — the same kit, but with a plain-English global `CLAUDE.md`,
@@ -71,6 +71,7 @@ macOS / Linux / WSL only (on Windows, run under WSL).
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
    claude plugin install personal-tools@my-dotclaude
+   claude plugin install infra@my-dotclaude
    claude plugin install workflow@my-dotclaude
    claude plugin marketplace add DietrichGebert/ponytail
    claude plugin install ponytail@ponytail

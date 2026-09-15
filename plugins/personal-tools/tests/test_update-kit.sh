@@ -102,7 +102,8 @@ fi
 echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
+    want=$(( $(grep -c '"source": "./plugins/' "$REPO_ROOT/.claude-plugin/marketplace.json") + 1 ))
+    assert_equals "marketplace call + one per real manifest plugin" "$count" "$want"
 else
     no "no claude calls recorded (log missing)"
 fi
