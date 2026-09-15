@@ -179,13 +179,72 @@ Nothing rotates automatically. The context plugin's watchdog advises; the orches
 
 ## Codex backend
 
-Unverified until codex is installed and logged in; this section is the contract, not the
-implementation. A worker is one-shot, so it fits `codex exec`: the manager's spawn gives it a
-cwd (the issue's worktree), a prompt built the same way as the claude worker prompt, and a file
-path for its report. `infra/spawn.sh` switches on the tier's backend; `session-status.sh` reports
-a codex worker's state from its pid and exit code the way it reports a claude worker's from the
-agent list. The report contract — a fixed-shape status line plus an issue comment — is identical,
-so `/orchestrate` does not change.
+Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A worker is
+one-shot, so it maps onto `codex exec`:
+
+- **Launch.** `codex exec -C <worktree> -m gpt-5.6-<tier> -c model_reasoning_effort="<e>"
+  -c approval_policy="never" -s workspace-write --json -o <last-message-file>
+  [--output-schema <status-schema>] "<prompt>" </dev/null`. Model slugs are `gpt-5.6-luna`,
+  `gpt-5.6-terra`, `gpt-5.6-sol`; efforts low through max. **Stdin must be closed** or codex
+  blocks forever reading it. `-m` must always be passed: a resumed thread otherwise falls
+  back to the config default model.
+- **Commits.** Workspace-write keeps `.git` read-only, so a worker that must commit needs
+  `-c 'sandbox_workspace_write.writable_roots=["<git dir>"]'`. For a linked worktree that is
+  the main repo's common git dir, since objects and refs live there. Verified: with the root
+  listed the worker commits; without it, it writes the file and reports it could not commit.
+  `danger-full-access` also works and is the fallback, with the same containment claude
+  workers already have (worktree isolation plus the denylist; Bash was never fenced).
+- **Output.** stdout gets the final message; `-o` writes it to a file; `--output-schema`
+  forces a JSON final answer, which is the worker's fixed-shape status report. `--json`
+  streams one event per line: `thread.started` (with the thread id), `item.started` /
+  `item.completed` for messages, file changes and commands, `turn.completed` with token usage.
+  Progress goes to stderr. Exit 0 on completion. No ANSI, so `session-status.sh` parses it.
+- **Resume.** Every run persists under `~/.codex/sessions/`; `codex exec resume <thread-id>
+  "<prompt>"` continues it. A fix round may resume the implementer's thread or start fresh;
+  the orchestrate rule (a fresh implementer per round) stays the default.
+- **Review.** `codex exec review --base <branch>` is a working reviewer: it read the diff and
+  returned priority-graded findings with file and line. It fills the reviewer slot for
+  codex-routed tiers; `my-review` stays the reviewer for claude-routed ones.
+- **No inbox.** `codex queue` only feeds a running session's next turn. Codex is never a peer.
+
+`infra/spawn.sh` switches on the tier's backend and writes a pid file and an exit-code file
+beside the event log; `session-status.sh` reports a codex worker from those the way it reports
+a claude worker from the agent list. The report contract is identical, so `/orchestrate` does
+not change.
+
+## Rotation
+
+Peers fill up. Rotation is the peer version of `/clear` then `go`, and it was verified live
+(2026-09-15): stop a named background session, respawn under the same name with a handoff
+file prepended to its prompt, and the successor reads the doc, reports back, and receives
+messages sent to the name. The name is the stable address; the process is disposable.
+
+- **Trigger lives in the peer.** `claude agents --json` exposes no context size, so the
+  orchestrator cannot measure peers. The context plugin's watchdog already computes
+  occupancy from the session's own transcript and fires on every inbound message. Past the
+  roster's `rotate_at` (default 300k) it injects: *at the next natural stopping point, run
+  `/handoff`, then tell the orchestrator you are ready with the doc path.* The peer picks the
+  moment. This reintroduces a nudge that was once deleted for interrupting long runs; the
+  difference is that this one says "next natural stopping point" and the model chooses.
+- **Rotation is `swarm.sh rotate <role> <handoff-path>`.** Wait for idle, refuse if blocked,
+  stop by id, respawn via infra spawn with the handoff prepended. No pending pointer is used,
+  which removes the per-repo `.pending.json` collision peers keep hitting.
+- **Lost-message windows, and what closes them.**
+  1. Message arrives while the peer writes the handoff: it is delivered mid-turn, and the
+     charter says to append it to the doc verbatim before replying ready.
+  2. Message arrives between the ready reply and the stop: `rotate` re-checks idle right
+     before stopping, so the peer has started on it and rotate waits. The gap between that
+     check and the stop is the residual race.
+  3. Message arrives after the stop: SendMessage to a missing name fails on the sender's side
+     (verified), so the sender retries.
+  What makes all three harmless: **briefs are files, messages are pointers.** Every brief is
+  written to `.claude/swarm/inbox/<role>/` and the message carries only the path. The
+  successor's first act after reading its handoff is to list that inbox. A lost message is a
+  lost nudge, never lost work. This is `/orchestrate`'s "the issue thread is the bus" rule,
+  applied to peers.
+- **Backstop.** Peers launch with `--autocompact` at the roster's `autocompact` (default
+  400k). The context plugin's PreCompact hook writes a handoff before any compaction, so a
+  peer that never reaches a natural stopping point degrades to a compaction, not a cliff.
 
 ## Migration
 
@@ -196,8 +255,9 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
 ## Deliberately not built
 
 - **Per-role permission modes.** Bypass for every peer. A knob per row is a knob to get wrong.
-- **Automatic rotation.** Rotation loses context by design; a human or the orchestrator
-  chooses the moment.
+- **Orchestrator-measured rotation.** The peer nudges itself from its own transcript; the
+  orchestrator only runs `rotate` when told ready. Polling peers for context size has no
+  data source.
 - **Codex peers.** A peer needs an inbox. Codex has none. Workers only.
 - **A brief lane for managers.** Every manager work item is an issue. Briefs go through
   `/to-issues` first, which is where content stops flowing upward.
@@ -212,7 +272,9 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
    "one issue" to "one role or one worker".
 3. **workflow** trim: `/orchestrate` calls infra by the stable path; session prose moves to
    infra's README; `/to-prd` and `/to-issues` move in from personal-tools.
-4. **swarm** plugin: roster schema, `/init-swarm`, `swarm.sh`, charter, three briefs.
-5. **memory**: vault work order above, then the policy generator and charter lines in swarm.
-6. **codex**: the backend switch in infra, once the CLI is on the machine.
-7. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.
+4. **swarm** plugin: roster schema, `/init-swarm`, `swarm.sh up|down|attach`, charter,
+   three briefs, inbox dirs.
+5. **rotation**: the peer-mode watchdog threshold and `swarm.sh rotate`.
+6. **memory**: vault work order above, then the policy generator and charter lines in swarm.
+7. **codex**: the backend switch in infra.
+8. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.
