@@ -1,12 +1,12 @@
 {
   "trivial": {
     "planner":     { "model": "haiku",  "effort": "medium" },
-    "implementer": { "model": "haiku",  "effort": "medium" },
+    "implementer": { "model": "haiku",  "effort": "max" },
     "reviewer":    { "model": "sonnet", "effort": "high" }
   },
   "standard": {
     "planner":     { "model": "sonnet", "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
+    "implementer": { "model": "sonnet", "effort": "max" },
     "reviewer":    { "model": "opus",   "effort": "high" }
   },
   "complex": {

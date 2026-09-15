@@ -17,7 +17,7 @@ plugins/workflow/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the dispatcher and both its lanes
 │   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via resolve-tier.sh
 ├── agents/
-│   ├── implementer.md                # sonnet, xhigh effort — builds one issue in one worktree
+│   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
 │   └── planner.md                    # opus, high effort — complex-tier planning only, read-only
 ├── hooks/hooks.json                  # wires the scripts below to hook events

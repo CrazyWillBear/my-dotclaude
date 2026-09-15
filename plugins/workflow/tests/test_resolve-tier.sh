@@ -103,7 +103,7 @@ assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
 assert_equals "trivial: planner_model haiku" "$(val "$OUT" planner_model)" "haiku"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "trivial: implementer_model haiku" "$(val "$OUT" implementer_model)" "haiku"
-assert_equals "trivial: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "trivial: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
 assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
 assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 
@@ -114,7 +114,7 @@ assert_equals "standard: tier echoed" "$(val "$OUT" tier)" "standard"
 assert_equals "standard: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
 assert_equals "standard: planner_effort high" "$(val "$OUT" planner_effort)" "high"
 assert_equals "standard: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
-assert_equals "standard: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
+assert_equals "standard: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
 assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "standard: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 
@@ -141,7 +141,7 @@ assert_equals "missing: planner_model sonnet" "$(val "$OUT" planner_model)" "son
 assert_equals "missing: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
 assert_equals "missing: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "missing: planner_effort high" "$(val "$OUT" planner_effort)" "high"
-assert_equals "missing: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
+assert_equals "missing: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
 assert_equals "missing: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 
 # ---------------------------------------------------------------------------

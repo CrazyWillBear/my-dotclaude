@@ -40,7 +40,7 @@ fallback() {
     printf 'planner_model=sonnet\n'
     printf 'planner_effort=high\n'
     printf 'implementer_model=sonnet\n'
-    printf 'implementer_effort=high\n'
+    printf 'implementer_effort=max\n'
     printf 'reviewer_model=opus\n'
     printf 'reviewer_effort=high\n'
     exit 0
