@@ -58,8 +58,10 @@ for arg in "$@"; do
 done
 export TCR_FORCE TCR_LOCAL_ROOT
 
-# This path is user-scope (~/.claude), so it only needs claude (and curl when remote).
+# This path is user-scope (~/.claude), so it only needs claude, python3 (used to
+# read/merge JSON below), and curl when remote.
 tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+tcr_require python3 "Install python3, then re-run."
 if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
   tcr_require curl "Install curl, or run this script from a local checkout of the repo."
 fi
@@ -71,8 +73,7 @@ tcr_set_nested_setting worktree.baseRef head   # per-session worktrees branch of
 tcr_install_statusline         # default context status line (folds in ponytail badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
-tcr_install_personal_tools      # from our marketplace
-tcr_install_workflow            # from our marketplace
+tcr_install_our_plugins         # every plugin our marketplace lists (personal-tools, workflow, ...)
 tcr_install_ponytail
 tcr_install_agent_sdk_dev
 tcr_install_composio_plugins    # third-party: perf + security-guidance

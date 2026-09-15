@@ -2,9 +2,9 @@
 #
 # check-version-consistency.sh
 #
-# Verifies that the `version` field in both plugin.json files matches the
-# version recorded in VERSION.  Exits 0 when everything is in sync; exits 1
-# (with a human-readable message) when any discrepancy is found.
+# Verifies that the `version` field in every plugins/*/.claude-plugin/plugin.json
+# matches the version recorded in VERSION.  Exits 0 when everything is in sync;
+# exits 1 (with a human-readable message) when any discrepancy is found.
 #
 # Usage: bash scripts/check-version-consistency.sh
 #
@@ -61,8 +61,19 @@ check_plugin() {
     fi
 }
 
-check_plugin "personal-tools" "$ROOT/plugins/personal-tools/.claude-plugin/plugin.json"
-check_plugin "workflow"        "$ROOT/plugins/workflow/.claude-plugin/plugin.json"
+shopt -s nullglob
+plugin_jsons=("$ROOT"/plugins/*/.claude-plugin/plugin.json)
+shopt -u nullglob
+
+if [ "${#plugin_jsons[@]}" -eq 0 ]; then
+    printf 'Error: no plugin.json files found under %s/plugins/*/.claude-plugin/\n' "$ROOT" >&2
+    exit 1
+fi
+
+for json_file in "${plugin_jsons[@]}"; do
+    label="$(basename "$(dirname "$(dirname "$json_file")")")"
+    check_plugin "$label" "$json_file"
+done
 
 if [ "$fail" -ne 0 ]; then
     printf 'Version consistency check FAILED — run: bash scripts/sync-version.sh %s\n' \

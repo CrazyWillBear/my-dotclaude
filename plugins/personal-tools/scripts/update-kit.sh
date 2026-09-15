@@ -2,13 +2,19 @@
 #
 # update-kit.sh — apply the latest kit release on this machine.
 #
-# Two parts:
-#   1. Update the marketplace + both plugins via the `claude` CLI:
+# Three parts:
+#   1. Update the marketplace via the `claude` CLI:
 #        claude plugin marketplace update my-dotclaude
-#        claude plugin update personal-tools
-#        claude plugin update workflow
-#   2. Refresh the status line. global/statusline.py and its settings.json
-#      `statusLine` wiring are NOT plugin payload, so step 1 does not carry
+#   2. Update every plugin our marketplace lists — derived from
+#      .claude-plugin/marketplace.json (via tcr_our_plugin_names in
+#      setup/lib/common.sh) rather than hardcoded, so a plugin added to the
+#      manifest later gets updated here too:
+#        claude plugin update <name>   # for each plugin in the manifest
+#      setup/lib/common.sh is sourced from the local marketplace repo copy when
+#      found, else fetched over curl (same bootstrap setup-dev.sh/setup-simple.sh
+#      use) so this still derives the list instead of falling back to hardcoding.
+#   3. Refresh the status line. global/statusline.py and its settings.json
+#      `statusLine` wiring are NOT plugin payload, so steps 1-2 do not carry
 #      them. But the marketplace update in step 1 refreshes the local copy of
 #      the repo that Claude Code keeps for the my-dotclaude marketplace — a full
 #      git clone for a GitHub install, or the live checkout for a `directory`
@@ -24,23 +30,21 @@
 
 set -euo pipefail
 
-claude plugin marketplace update my-dotclaude
-claude plugin update personal-tools
-claude plugin update workflow
+REPO="CrazyWillBear/my-dotclaude"
+RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 
-# refresh_statusline — copy the latest status line out of the marketplace's
-# local repo copy and (re)wire it into settings.json. Prints a note and returns
-# without error whenever the repo copy or installer can't be located, so a
-# missing piece never blocks the (already-applied) plugin update.
-refresh_statusline() {
-  local config_dir known root common
+# our_marketplace_root — installLocation of the my-dotclaude marketplace (its
+# local repo copy: a full git clone for a GitHub install, or the live checkout
+# for a `directory` install). Prints nothing (and a note to stdout) when
+# known_marketplaces.json or the marketplace entry can't be found.
+our_marketplace_root() {
+  local config_dir known root
   config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   known="$config_dir/plugins/known_marketplaces.json"
   if [ ! -f "$known" ]; then
-    printf 'note: %s not found; skipped status line refresh.\n' "$known"
+    printf 'note: %s not found; skipped deriving the plugin list and status line refresh.\n' "$known" >&2
     return 0
   fi
-  # installLocation of the my-dotclaude marketplace = its local repo copy.
   root="$(python3 - "$known" <<'PY' 2>/dev/null
 import json, sys
 try:
@@ -51,20 +55,48 @@ except Exception:
 PY
 )" || root=""
   if [ -z "$root" ] || [ ! -d "$root" ]; then
-    printf 'note: my-dotclaude marketplace repo copy not found; skipped status line refresh.\n'
+    printf 'note: my-dotclaude marketplace repo copy not found; skipped deriving the plugin list and status line refresh.\n' >&2
     return 0
   fi
-  common="$root/setup/lib/common.sh"
-  if [ ! -f "$common" ]; then
-    printf 'note: %s not found; skipped status line refresh.\n' "$common"
-    return 0
-  fi
-  # Reuse the canonical installer from the repo copy. With TCR_LOCAL_ROOT set it
-  # copies global/statusline.py from there (no network) and merges the
-  # settings.json statusLine block, backing up any existing files first.
-  TCR_LOCAL_ROOT="$root"
+  printf '%s\n' "$root"
+}
+
+claude plugin marketplace update my-dotclaude
+
+ROOT="$(our_marketplace_root)"
+COMMON="${ROOT:+$ROOT/setup/lib/common.sh}"
+if [ -n "$COMMON" ] && [ -f "$COMMON" ]; then
+  TCR_LOCAL_ROOT="$ROOT"
   # shellcheck source=/dev/null
-  . "$common"
+  . "$COMMON"
+else
+  TCR_LOCAL_ROOT=""
+  _common_tmp="$(mktemp)"
+  trap 'rm -f "$_common_tmp"' EXIT
+  if curl -fsSL "$RAW_BASE/setup/lib/common.sh" -o "$_common_tmp" && [ -s "$_common_tmp" ]; then
+    # shellcheck disable=SC1090
+    . "$_common_tmp"
+  else
+    printf 'note: could not fetch setup/lib/common.sh from %s; skipped plugin updates and status line refresh — run: claude plugin update <name>\n' "$RAW_BASE" >&2
+  fi
+fi
+
+if declare -F tcr_our_plugin_names >/dev/null; then
+  # Bare assignment (not a process substitution): under `set -euo pipefail`
+  # this lets a tcr_die inside tcr_our_plugin_names (e.g. a malformed
+  # manifest) abort the script instead of silently reading zero names.
+  names="$(tcr_our_plugin_names)"
+  while IFS= read -r name; do
+    [ -n "$name" ] && claude plugin update "$name"
+  done <<< "$names"
+fi
+
+# refresh_statusline — copy the latest status line out of the marketplace's
+# local repo copy and (re)wire it into settings.json. Prints a note and returns
+# without error whenever the repo copy or installer can't be located, so a
+# missing piece never blocks the (already-applied) plugin update.
+refresh_statusline() {
+  declare -F tcr_install_statusline >/dev/null || return 0
   tcr_install_statusline
 }
 

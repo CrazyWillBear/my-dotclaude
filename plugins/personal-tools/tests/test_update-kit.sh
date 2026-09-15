@@ -5,14 +5,15 @@
 # Black-box: we stub `claude` on PATH so it logs every invocation to a file and
 # point HOME at a sandbox, then assert:
 #   1. `claude plugin marketplace update my-dotclaude` is called first.
-#   2. `claude plugin update personal-tools` is called second.
-#   3. `claude plugin update workflow` is called third.
-#   4. The restart reminder is printed to stdout.
-#   5. The script exits 0.
-#   6. The status line is refreshed from the marketplace's local repo copy:
+#   2. every plugin listed in .claude-plugin/marketplace.json is then updated
+#      (derived, not hardcoded to personal-tools/workflow — a third plugin in
+#      the manifest must be updated too).
+#   3. The restart reminder is printed to stdout.
+#   4. The script exits 0.
+#   5. The status line is refreshed from the marketplace's local repo copy:
 #      ~/.claude/statusline.py is written (matching global/statusline.py) and
 #      the statusLine block is merged into ~/.claude/settings.json.
-#   7. When the marketplace copy can't be located, the refresh is skipped
+#   6. When the marketplace copy can't be located, the refresh is skipped
 #      gracefully — the script still exits 0 and prints the restart reminder.
 #
 # Run: bash plugins/personal-tools/tests/test_update-kit.sh  (non-zero if any fail)
@@ -98,10 +99,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: exactly three claude invocations are made"
+echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded" "$count" "3"
+    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
 else
     no "no claude calls recorded (log missing)"
 fi
@@ -116,21 +117,50 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: second call is 'claude plugin update personal-tools'"
+echo "test: personal-tools and workflow are each updated (order not asserted)"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
-    second=$(sed -n '2p' "$CLAUDE_STUB_LOG")
-    assert_equals "second call: update personal-tools" "$second" "plugin update personal-tools"
+    calls="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "updates personal-tools" "$calls" "plugin update personal-tools"
+    assert_contains "updates workflow"       "$calls" "plugin update workflow"
 else
-    no "cannot check second call — log missing"
+    no "cannot check plugin update calls — log missing"
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: third call is 'claude plugin update workflow'"
+echo "test: a third plugin in the manifest is updated too — not hardcoded to personal-tools/workflow"
+THIRD_HOME="$WORK/third-home"
+FAKE_ROOT="$WORK/fakerepo"
+mkdir -p "$THIRD_HOME/.claude/plugins" "$FAKE_ROOT/.claude-plugin" "$FAKE_ROOT/setup/lib" "$FAKE_ROOT/global"
+cp "$REPO_ROOT/setup/lib/common.sh" "$FAKE_ROOT/setup/lib/common.sh"
+cp "$REPO_ROOT/global/statusline.py" "$FAKE_ROOT/global/statusline.py"
+cat > "$FAKE_ROOT/.claude-plugin/marketplace.json" <<'EOF'
+{
+  "plugins": [
+    {"name": "personal-tools"},
+    {"name": "workflow"},
+    {"name": "context"}
+  ]
+}
+EOF
+cat > "$THIRD_HOME/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$FAKE_ROOT" },
+    "installLocation": "$FAKE_ROOT"
+  }
+}
+EOF
+rm -f "$CLAUDE_STUB_LOG"
+out3=$(PATH="$WORK/bin:$PATH" HOME="$THIRD_HOME" bash "$SCRIPT" 2>&1)
+rc3=$?
+assert_equals "exits 0 with a third plugin in the manifest" "$rc3" "0"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
-    third=$(sed -n '3p' "$CLAUDE_STUB_LOG")
-    assert_equals "third call: update workflow" "$third" "plugin update workflow"
+    calls3="$(cat "$CLAUDE_STUB_LOG")"
+    count3=$(wc -l < "$CLAUDE_STUB_LOG")
+    assert_equals "four claude calls (marketplace + 3 plugins)" "$count3" "4"
+    assert_contains "updates the third, unnamed plugin" "$calls3" "plugin update context"
 else
-    no "cannot check third call — log missing"
+    no "no claude calls recorded for the third-plugin manifest"
 fi
 
 # ---------------------------------------------------------------------------
@@ -164,18 +194,94 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Graceful skip: a sandbox with no known_marketplaces.json must not error.
+# No known_marketplaces.json + no network: must not error, and must not
+# silently claim success while doing nothing dangerous — just skip.
 # ---------------------------------------------------------------------------
-echo "test: missing marketplace metadata -> refresh skipped, still succeeds"
+echo "test: missing marketplace metadata and no network -> refresh skipped, still succeeds"
 EMPTY_HOME="$WORK/empty-home"
 mkdir -p "$EMPTY_HOME/.claude"
+mkdir -p "$WORK/offline-stubs"
+cat > "$WORK/offline-stubs/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: simulate no network for the common.sh bootstrap fetch.
+exit 1
+EOF
+chmod +x "$WORK/offline-stubs/curl"
 rm -f "$CLAUDE_STUB_LOG"
-out2=$(PATH="$WORK/bin:$PATH" HOME="$EMPTY_HOME" bash "$SCRIPT" 2>&1)
+out2=$(PATH="$WORK/offline-stubs:$WORK/bin:$PATH" HOME="$EMPTY_HOME" bash "$SCRIPT" 2>&1)
 rc2=$?
-assert_equals "exit 0 even without marketplace metadata" "$rc2" "0"
+assert_equals "exit 0 even without marketplace metadata or network" "$rc2" "0"
 assert_contains "still prints restart reminder" "$out2" "Restart"
-assert_not_contains "no statusline written without metadata" \
+assert_not_contains "no statusline written without metadata or network" \
     "$(ls "$EMPTY_HOME/.claude" 2>/dev/null)" "statusline.py"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+
+# ---------------------------------------------------------------------------
+# No known_marketplaces.json, but the network is up: update-kit.sh must fall
+# back to fetching setup/lib/common.sh remotely (same bootstrap setup-dev.sh
+# uses) rather than silently skipping every plugin update — the round-2 fix
+# for the regression where the old hardcoded two-plugin update always ran.
+# ---------------------------------------------------------------------------
+echo "test: missing marketplace metadata but network up -> derives plugin list via remote common.sh, still updates every plugin"
+REMOTE_HOME="$WORK/remote-home"
+mkdir -p "$REMOTE_HOME/.claude"
+mkdir -p "$WORK/remote-stubs"
+cat > "$WORK/remote-stubs/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: serve a minimal common.sh fixture (defining just the two
+# functions update-kit.sh needs) for any setup/lib/common.sh URL.
+out=""
+url=""
+for ((i = 1; i <= $#; i++)); do
+    case "${!i}" in
+        -o) j=$((i + 1)); out="${!j}" ;;
+        http*://*) url="${!i}" ;;
+    esac
+done
+case "$url" in
+    *setup/lib/common.sh)
+        cat > "$out" <<'SH'
+tcr_our_plugin_names() { printf 'personal-tools\nworkflow\nremote-third\n'; }
+tcr_install_statusline() { :; }
+SH
+        exit 0
+        ;;
+esac
+exit 1
+EOF
+chmod +x "$WORK/remote-stubs/curl"
+rm -f "$CLAUDE_STUB_LOG"
+out3r=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_HOME" bash "$SCRIPT" 2>&1)
+rc3r=$?
+assert_equals "exit 0 with the remote common.sh fallback" "$rc3r" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    calls3r="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "remote fallback still updates personal-tools" "$calls3r" "plugin update personal-tools"
+    assert_contains "remote fallback still updates workflow"       "$calls3r" "plugin update workflow"
+    assert_contains "remote fallback updates a plugin not hardcoded here" "$calls3r" "plugin update remote-third"
+else
+    no "no claude calls recorded for the remote-fallback path"
+fi
+
+# ---------------------------------------------------------------------------
+# The skill's prose must describe the derived plugin list, not the old
+# hardcoded personal-tools/workflow pair.
+# ---------------------------------------------------------------------------
+echo "test: the update-kit skill doc no longer hardcodes personal-tools/workflow"
+SKILL_FILE="$PLUGIN_ROOT/skills/update-kit/SKILL.md"
+if [ -f "$SKILL_FILE" ]; then
+    skill="$(cat "$SKILL_FILE")"
+    assert_not_contains "no hardcoded 'three claude CLI calls'" "$skill" "three \`claude\` CLI calls"
+    assert_not_contains "no hardcoded 'both plugins' in the description" "$skill" "both plugins"
+    assert_contains "documents the manifest-derived plugin list" "$skill" "marketplace.json"
+else
+    no "SKILL.md missing at $SKILL_FILE"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

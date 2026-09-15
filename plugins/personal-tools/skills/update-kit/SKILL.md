@@ -1,6 +1,6 @@
 ---
 name: update-kit
-description: Apply the latest kit release on this machine — updates the my-dotclaude marketplace entry and both plugins, then reminds you to restart Claude Code. Use for "/update-kit", "update the kit", "apply latest kit release".
+description: Apply the latest kit release on this machine — updates the my-dotclaude marketplace entry and every plugin it lists, then reminds you to restart Claude Code. Use for "/update-kit", "update the kit", "apply latest kit release".
 argument-hint: ""
 model: inherit
 allowed-tools: Bash
@@ -17,10 +17,10 @@ Apply the latest kit release on this machine. No arguments needed.
    ```
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/update-kit.sh"
    ```
-   The script issues three `claude` CLI calls in order:
-   - `claude plugin marketplace update my-dotclaude`
-   - `claude plugin update personal-tools`
-   - `claude plugin update workflow`
+   The script issues `claude plugin marketplace update my-dotclaude`, then one
+   `claude plugin update <name>` call per plugin listed in
+   `.claude-plugin/marketplace.json` (derived, not hardcoded, so a plugin added
+   to the manifest later gets updated here too).
 
    It then refreshes the status line, which is not plugin payload: the
    marketplace update above also refreshes Claude Code's local copy of the repo

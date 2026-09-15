@@ -93,6 +93,21 @@ run_check
 assert_exit "exits non-zero when both desynced" "$rc" 1
 
 # ---------------------------------------------------------------------------
+echo "test: a third plugins/*/ directory is checked too, with no code change"
+setup_repo "0.2.0" "0.2.0" "0.2.0"
+mkdir -p "$WORK/repo/plugins/context/.claude-plugin"
+cat > "$WORK/repo/plugins/context/.claude-plugin/plugin.json" <<'EOF'
+{
+  "name": "context",
+  "version": "0.1.0",
+  "description": "stub"
+}
+EOF
+run_check
+assert_exit "exits non-zero when the third plugin desyncs" "$rc" 1
+assert_contains "message mentions the third plugin" "$out" "context"
+
+# ---------------------------------------------------------------------------
 echo "test: VERSION file missing -> exit non-zero with message"
 rm -rf "$WORK/repo"
 mkdir -p "$WORK/repo/plugins/personal-tools/.claude-plugin"
