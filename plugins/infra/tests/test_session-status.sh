@@ -16,7 +16,7 @@
 #     JSON object instead of a list, and a missing runid
 #   * zero matches is exit 0 but never silent
 #
-# Run: bash plugins/workflow/tests/test_session-status.sh   (non-zero if any fail)
+# Run: bash plugins/infra/tests/test_session-status.sh   (non-zero if any fail)
 
 set -u
 

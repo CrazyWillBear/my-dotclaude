@@ -40,7 +40,7 @@
 #      pause execution at that exact point — the tested lines themselves are
 #      byte-identical to the shipped script).
 #
-# Run: bash plugins/workflow/tests/test_resolve-tier.sh  (non-zero if any fail)
+# Run: bash plugins/infra/tests/test_resolve-tier.sh  (non-zero if any fail)
 
 set -u
 

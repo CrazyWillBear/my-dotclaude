@@ -57,6 +57,20 @@ run "$LINK/scripts/link-kit.sh"
 assert_equals "via link: exit 0" "$RC" "0"
 assert_equals "via link: not a self-link" "$(readlink "$LINK")" "$ROOT_P"
 
+echo "test: another plugin calls infra's scripts through the link"
+BIN="$WORK/bin"
+mkdir -p "$BIN"
+cat > "$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '[{ "id": "aa11", "kind": "background", "sessionId": "sess-abc", "name": "my-orchestrator" }]\n'
+STUB
+chmod +x "$BIN/claude"
+SELF="$(PATH="$BIN:$PATH" CLAUDE_CODE_SESSION_ID=sess-abc bash "$LINK/scripts/session-status.sh" --self 2>"$WORK/err")"
+assert_equals "session-status.sh --self via link prints this session's name" "$SELF" "my-orchestrator"
+TIERS="$(CLAUDE_PLUGIN_ROOT="$WORK/other" bash "$LINK/scripts/resolve-tier.sh" complex 2>"$WORK/err")"
+assert_contains "resolve-tier.sh via link resolves complex" "$TIERS" "tier=complex"
+assert_equals "resolve-tier.sh via link: no WARN" "$(cat "$WORK/err")" ""
+
 echo "test: a real directory in the way is refused, never deleted"
 rm -f "$LINK"
 mkdir -p "$LINK"
