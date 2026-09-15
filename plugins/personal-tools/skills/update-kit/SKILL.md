@@ -20,7 +20,9 @@ Apply the latest kit release on this machine. No arguments needed.
    The script issues `claude plugin marketplace update my-dotclaude`, then one
    `claude plugin update <name>` call per plugin listed in
    `.claude-plugin/marketplace.json` (derived, not hardcoded, so a plugin added
-   to the manifest later gets updated here too).
+   to the manifest later gets updated here too). A listed plugin that isn't
+   installed yet is installed with `claude plugin install <name>@my-dotclaude`
+   instead.
 
    It then refreshes the status line, which is not plugin payload: the
    marketplace update above also refreshes Claude Code's local copy of the repo

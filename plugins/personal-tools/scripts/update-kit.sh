@@ -10,6 +10,8 @@
 #      setup/lib/common.sh) rather than hardcoded, so a plugin added to the
 #      manifest later gets updated here too:
 #        claude plugin update <name>   # for each plugin in the manifest
+#      falling back to `claude plugin install <name>@my-dotclaude` for a plugin
+#      the manifest gained after this machine installed the kit.
 #      setup/lib/common.sh is sourced from the local marketplace repo copy when
 #      found, else fetched over curl (same bootstrap setup-dev.sh/setup-simple.sh
 #      use) so this still derives the list instead of falling back to hardcoding.
@@ -98,8 +100,13 @@ if declare -F tcr_our_plugin_names >/dev/null; then
       names=""
     fi
   fi
+  # A plugin added to the manifest after this machine installed the kit isn't
+  # installed yet, so `plugin update` fails for it — install it instead.
+  # tcr_install_plugin only warns on failure, so one bad plugin can't abort
+  # the updates listed after it.
   while IFS= read -r name; do
-    [ -n "$name" ] && claude plugin update "$name"
+    [ -n "$name" ] || continue
+    claude plugin update "$name" || tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
   done <<< "$names"
 fi
 

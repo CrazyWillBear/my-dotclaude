@@ -43,8 +43,13 @@ assert_equals()       { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3'
 mkdir -p "$WORK/bin"
 cat > "$WORK/bin/claude" <<'STUB'
 #!/usr/bin/env bash
-# Stub claude: record each invocation (all args on one line) then exit 0.
+# Stub claude: record each invocation (all args on one line) then exit 0 —
+# except `plugin update <name>` for a name in $CLAUDE_STUB_NOT_INSTALLED,
+# which fails the way the real CLI does for a plugin that isn't installed.
 printf '%s\n' "$*" >> "$CLAUDE_STUB_LOG"
+for missing in ${CLAUDE_STUB_NOT_INSTALLED:-}; do
+    [ "$*" = "plugin update $missing" ] && exit 1
+done
 exit 0
 STUB
 chmod +x "$WORK/bin/claude"
@@ -163,6 +168,26 @@ if [ -f "$CLAUDE_STUB_LOG" ]; then
 else
     no "no claude calls recorded for the third-plugin manifest"
 fi
+
+# ---------------------------------------------------------------------------
+# A plugin added to the manifest after the user installed the kit (e.g. infra)
+# isn't installed yet, so `claude plugin update` fails for it. update-kit must
+# install it instead, and keep going to the plugins listed after it.
+# ---------------------------------------------------------------------------
+echo "test: a manifest plugin that isn't installed yet gets installed, and later plugins still update"
+rm -f "$CLAUDE_STUB_LOG"
+outni=$(PATH="$WORK/bin:$PATH" HOME="$HOME_DIR" CLAUDE_STUB_NOT_INSTALLED=infra bash "$SCRIPT" 2>&1)
+rcni=$?
+assert_equals "exit 0 when a manifest plugin isn't installed yet" "$rcni" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    callsni="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "installs the not-yet-installed plugin" "$callsni" "plugin install infra@my-dotclaude"
+    assert_contains "still updates workflow, listed after infra" "$callsni" "plugin update workflow"
+    assert_not_contains "doesn't install an already-installed plugin" "$callsni" "plugin install workflow"
+else
+    no "no claude calls recorded for the not-installed plugin"
+fi
+assert_contains "still prints restart reminder" "$outni" "Restart"
 
 # ---------------------------------------------------------------------------
 # Regression test for the round-2->3 fix: a malformed local-copy manifest
