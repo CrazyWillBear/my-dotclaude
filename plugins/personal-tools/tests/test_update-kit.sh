@@ -194,18 +194,79 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Graceful skip: a sandbox with no known_marketplaces.json must not error.
+# No known_marketplaces.json + no network: must not error, and must not
+# silently claim success while doing nothing dangerous — just skip.
 # ---------------------------------------------------------------------------
-echo "test: missing marketplace metadata -> refresh skipped, still succeeds"
+echo "test: missing marketplace metadata and no network -> refresh skipped, still succeeds"
 EMPTY_HOME="$WORK/empty-home"
 mkdir -p "$EMPTY_HOME/.claude"
+mkdir -p "$WORK/offline-stubs"
+cat > "$WORK/offline-stubs/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: simulate no network for the common.sh bootstrap fetch.
+exit 1
+EOF
+chmod +x "$WORK/offline-stubs/curl"
 rm -f "$CLAUDE_STUB_LOG"
-out2=$(PATH="$WORK/bin:$PATH" HOME="$EMPTY_HOME" bash "$SCRIPT" 2>&1)
+out2=$(PATH="$WORK/offline-stubs:$WORK/bin:$PATH" HOME="$EMPTY_HOME" bash "$SCRIPT" 2>&1)
 rc2=$?
-assert_equals "exit 0 even without marketplace metadata" "$rc2" "0"
+assert_equals "exit 0 even without marketplace metadata or network" "$rc2" "0"
 assert_contains "still prints restart reminder" "$out2" "Restart"
-assert_not_contains "no statusline written without metadata" \
+assert_not_contains "no statusline written without metadata or network" \
     "$(ls "$EMPTY_HOME/.claude" 2>/dev/null)" "statusline.py"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+
+# ---------------------------------------------------------------------------
+# No known_marketplaces.json, but the network is up: update-kit.sh must fall
+# back to fetching setup/lib/common.sh remotely (same bootstrap setup-dev.sh
+# uses) rather than silently skipping every plugin update — the round-2 fix
+# for the regression where the old hardcoded two-plugin update always ran.
+# ---------------------------------------------------------------------------
+echo "test: missing marketplace metadata but network up -> derives plugin list via remote common.sh, still updates every plugin"
+REMOTE_HOME="$WORK/remote-home"
+mkdir -p "$REMOTE_HOME/.claude"
+mkdir -p "$WORK/remote-stubs"
+cat > "$WORK/remote-stubs/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stub curl: serve a minimal common.sh fixture (defining just the two
+# functions update-kit.sh needs) for any setup/lib/common.sh URL.
+out=""
+url=""
+for ((i = 1; i <= $#; i++)); do
+    case "${!i}" in
+        -o) j=$((i + 1)); out="${!j}" ;;
+        http*://*) url="${!i}" ;;
+    esac
+done
+case "$url" in
+    *setup/lib/common.sh)
+        cat > "$out" <<'SH'
+tcr_our_plugin_names() { printf 'personal-tools\nworkflow\nremote-third\n'; }
+tcr_install_statusline() { :; }
+SH
+        exit 0
+        ;;
+esac
+exit 1
+EOF
+chmod +x "$WORK/remote-stubs/curl"
+rm -f "$CLAUDE_STUB_LOG"
+out3r=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_HOME" bash "$SCRIPT" 2>&1)
+rc3r=$?
+assert_equals "exit 0 with the remote common.sh fallback" "$rc3r" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    calls3r="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "remote fallback still updates personal-tools" "$calls3r" "plugin update personal-tools"
+    assert_contains "remote fallback still updates workflow"       "$calls3r" "plugin update workflow"
+    assert_contains "remote fallback updates a plugin not hardcoded here" "$calls3r" "plugin update remote-third"
+else
+    no "no claude calls recorded for the remote-fallback path"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
