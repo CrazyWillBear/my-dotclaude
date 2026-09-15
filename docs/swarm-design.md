@@ -165,7 +165,7 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
 **Work order for the wilcus-vault session** (spawned once this doc is agreed):
 
 1. `vault init --layout swarm --roster <roster.json>` writes the three namespaces and a
-   `.vault/policy.json` from the roster.
+   `<vault>/.vault-policy.json` from the roster.
 2. CLI `propose`, `get`, `list` with `--agent <name>`, loading the policy from the vault dir.
    The library has these; the CLI does not, and agents only have the CLI.
 3. `vault promote <proposal-path> --agent orchestrator` runs the write gate into `shared/`.
