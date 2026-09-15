@@ -12,6 +12,6 @@
   "complex": {
     "planner":     { "model": "opus",   "effort": "xhigh" },
     "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "reviewer":    { "model": "opus",   "effort": "xhigh" }
   }
 }

@@ -126,7 +126,7 @@ assert_equals "complex: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "complex: planner_effort xhigh" "$(val "$OUT" planner_effort)" "xhigh"
 assert_equals "complex: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
 assert_equals "complex: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
-assert_equals "complex: reviewer_model fable" "$(val "$OUT" reviewer_model)" "fable"
+assert_equals "complex: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "complex: reviewer_effort xhigh" "$(val "$OUT" reviewer_effort)" "xhigh"
 
 # ---------------------------------------------------------------------------
