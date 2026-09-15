@@ -128,6 +128,34 @@ assert_contains "installs workflow"       "$calls" "plugin install workflow@my-d
 assert_contains "installs a third, unnamed plugin from the manifest" "$calls" "plugin install context@my-dotclaude"
 assert_contains "INSTALL_FAILED stays 0"  "$out" "INSTALL_FAILED=0"
 
+# ---- test: tcr_install_our_plugins returns success on the local-checkout path --
+echo "test: tcr_install_our_plugins returns 0 on the local-checkout path (no tmp file to clean up)"
+reset_calls
+make_claude_stub
+rc=999
+PATH="$WORK/stubs:$PATH" bash -c "
+  NO_COLOR=1; TCR_LOCAL_ROOT='$WORK/localroot'; export NO_COLOR TCR_LOCAL_ROOT
+  . '$COMMON'
+  tcr_install_our_plugins
+" >/dev/null 2>&1
+rc=$?
+assert_equals "tcr_install_our_plugins exits 0 on local-checkout path" "$rc" "0"
+
+# ---- test: a malformed manifest fails loudly instead of installing nothing silently --
+echo "test: an unparseable manifest makes tcr_install_our_plugins fail instead of silently installing nothing"
+reset_calls
+make_claude_stub
+mkdir -p "$WORK/badroot/.claude-plugin"
+printf 'not valid json' > "$WORK/badroot/.claude-plugin/marketplace.json"
+out=$(PATH="$WORK/stubs:$PATH" bash -c "
+  NO_COLOR=1; TCR_LOCAL_ROOT='$WORK/badroot'; export NO_COLOR TCR_LOCAL_ROOT
+  . '$COMMON'
+  tcr_install_our_plugins
+" 2>&1)
+rc=$?
+assert_equals "malformed manifest -> non-zero exit" "$rc" "1"
+assert_contains "malformed manifest -> error message" "$out" "error"
+
 # ---- test: tcr_install_composio_plugins ------------------------------------
 echo "test: tcr_install_composio_plugins adds marketplace once, installs perf + security-guidance"
 reset_calls
@@ -158,6 +186,18 @@ out=$(run_fn "$WORK/stubs" "tcr_install_plugin perf@awesome-claude-plugins")
 assert_contains "emits a warning"            "$out" "warn"
 assert_contains "warning names the plugin"   "$out" "perf@awesome-claude-plugins"
 assert_contains "INSTALL_FAILED set to 1"    "$out" "INSTALL_FAILED=1"
+
+# ---- test: setup scripts check python3 before writing anything --------------
+echo "test: setup-dev.sh and setup-simple.sh require python3 in the pre-flight block, before any write"
+for f in setup-dev.sh setup-simple.sh; do
+  py_line=$(grep -n "tcr_require python3" "$SETUP_DIR/$f" | head -1 | cut -d: -f1)
+  write_line=$(grep -n "tcr_install_global_claudemd" "$SETUP_DIR/$f" | head -1 | cut -d: -f1)
+  if [ -n "$py_line" ] && [ -n "$write_line" ] && [ "$py_line" -lt "$write_line" ]; then
+    ok "$f checks python3 before writing CLAUDE.md"
+  else
+    no "$f does not check python3 before writing CLAUDE.md (py_line=$py_line write_line=$write_line)"
+  fi
+done
 
 # ---- test: setup scripts wire both new installers once -----------------------
 echo "test: setup-dev.sh and setup-simple.sh each call the two new installers once"

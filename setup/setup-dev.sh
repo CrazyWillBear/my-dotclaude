@@ -58,8 +58,10 @@ for arg in "$@"; do
 done
 export TCR_FORCE TCR_LOCAL_ROOT
 
-# This path is user-scope (~/.claude), so it only needs claude (and curl when remote).
+# This path is user-scope (~/.claude), so it only needs claude, python3 (used to
+# read/merge JSON below), and curl when remote.
 tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+tcr_require python3 "Install python3, then re-run."
 if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
   tcr_require curl "Install curl, or run this script from a local checkout of the repo."
 fi

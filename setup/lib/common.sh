@@ -55,6 +55,7 @@ tcr_require() {
 tcr_check_deps() {
   tcr_require git "Install git, then re-run."
   tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+  tcr_require python3 "Install python3, then re-run."
   # curl is only needed for the remote-template path.
   if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
     tcr_require curl "Install curl, or run this script from a local checkout of the repo."
@@ -97,7 +98,6 @@ tcr_install_plugin() {
 # added there later — instead of one hand-written function per plugin name.
 # Assumes our marketplace is already added (call tcr_add_our_marketplace first).
 tcr_install_our_plugins() {
-  tcr_require python3 "python3 is required to read the marketplace manifest."
   local mp tmp=""
   if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
     mp="$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json"
@@ -107,17 +107,19 @@ tcr_install_our_plugins() {
       || tcr_die "Could not fetch marketplace manifest from $RAW_BASE."
     mp="$tmp"
   fi
-  local name
-  while IFS= read -r name; do
-    [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
-  done < <(python3 -c '
+  local names
+  names="$(python3 -c '
 import json, sys
 with open(sys.argv[1]) as fh:
     data = json.load(fh)
 for p in data["plugins"]:
     print(p["name"])
-' "$mp")
+' "$mp")" || { [ -n "$tmp" ] && rm -f "$tmp"; tcr_die "Could not parse marketplace manifest $mp."; }
   [ -n "$tmp" ] && rm -f "$tmp"
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
+  done <<< "$names"
 }
 
 tcr_install_ponytail() {
