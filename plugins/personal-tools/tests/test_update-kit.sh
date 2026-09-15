@@ -5,14 +5,15 @@
 # Black-box: we stub `claude` on PATH so it logs every invocation to a file and
 # point HOME at a sandbox, then assert:
 #   1. `claude plugin marketplace update my-dotclaude` is called first.
-#   2. `claude plugin update personal-tools` is called second.
-#   3. `claude plugin update workflow` is called third.
-#   4. The restart reminder is printed to stdout.
-#   5. The script exits 0.
-#   6. The status line is refreshed from the marketplace's local repo copy:
+#   2. every plugin listed in .claude-plugin/marketplace.json is then updated
+#      (derived, not hardcoded to personal-tools/workflow — a third plugin in
+#      the manifest must be updated too).
+#   3. The restart reminder is printed to stdout.
+#   4. The script exits 0.
+#   5. The status line is refreshed from the marketplace's local repo copy:
 #      ~/.claude/statusline.py is written (matching global/statusline.py) and
 #      the statusLine block is merged into ~/.claude/settings.json.
-#   7. When the marketplace copy can't be located, the refresh is skipped
+#   6. When the marketplace copy can't be located, the refresh is skipped
 #      gracefully — the script still exits 0 and prints the restart reminder.
 #
 # Run: bash plugins/personal-tools/tests/test_update-kit.sh  (non-zero if any fail)
@@ -98,10 +99,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: exactly three claude invocations are made"
+echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded" "$count" "3"
+    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
 else
     no "no claude calls recorded (log missing)"
 fi
@@ -116,21 +117,50 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: second call is 'claude plugin update personal-tools'"
+echo "test: personal-tools and workflow are each updated (order not asserted)"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
-    second=$(sed -n '2p' "$CLAUDE_STUB_LOG")
-    assert_equals "second call: update personal-tools" "$second" "plugin update personal-tools"
+    calls="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "updates personal-tools" "$calls" "plugin update personal-tools"
+    assert_contains "updates workflow"       "$calls" "plugin update workflow"
 else
-    no "cannot check second call — log missing"
+    no "cannot check plugin update calls — log missing"
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: third call is 'claude plugin update workflow'"
+echo "test: a third plugin in the manifest is updated too — not hardcoded to personal-tools/workflow"
+THIRD_HOME="$WORK/third-home"
+FAKE_ROOT="$WORK/fakerepo"
+mkdir -p "$THIRD_HOME/.claude/plugins" "$FAKE_ROOT/.claude-plugin" "$FAKE_ROOT/setup/lib" "$FAKE_ROOT/global"
+cp "$REPO_ROOT/setup/lib/common.sh" "$FAKE_ROOT/setup/lib/common.sh"
+cp "$REPO_ROOT/global/statusline.py" "$FAKE_ROOT/global/statusline.py"
+cat > "$FAKE_ROOT/.claude-plugin/marketplace.json" <<'EOF'
+{
+  "plugins": [
+    {"name": "personal-tools"},
+    {"name": "workflow"},
+    {"name": "context"}
+  ]
+}
+EOF
+cat > "$THIRD_HOME/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$FAKE_ROOT" },
+    "installLocation": "$FAKE_ROOT"
+  }
+}
+EOF
+rm -f "$CLAUDE_STUB_LOG"
+out3=$(PATH="$WORK/bin:$PATH" HOME="$THIRD_HOME" bash "$SCRIPT" 2>&1)
+rc3=$?
+assert_equals "exits 0 with a third plugin in the manifest" "$rc3" "0"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
-    third=$(sed -n '3p' "$CLAUDE_STUB_LOG")
-    assert_equals "third call: update workflow" "$third" "plugin update workflow"
+    calls3="$(cat "$CLAUDE_STUB_LOG")"
+    count3=$(wc -l < "$CLAUDE_STUB_LOG")
+    assert_equals "four claude calls (marketplace + 3 plugins)" "$count3" "4"
+    assert_contains "updates the third, unnamed plugin" "$calls3" "plugin update context"
 else
-    no "cannot check third call — log missing"
+    no "no claude calls recorded for the third-plugin manifest"
 fi
 
 # ---------------------------------------------------------------------------

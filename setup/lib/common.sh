@@ -93,11 +93,11 @@ tcr_install_plugin() {
   fi
 }
 
-# Installs every plugin listed in our marketplace manifest
-# (.claude-plugin/marketplace.json) — personal-tools, workflow, and any plugin
-# added there later — instead of one hand-written function per plugin name.
-# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
-tcr_install_our_plugins() {
+# Prints, one per line, every plugin name listed in our marketplace manifest
+# (.claude-plugin/marketplace.json — from TCR_LOCAL_ROOT when set, else fetched
+# from GitHub). Shared by tcr_install_our_plugins and update-kit.sh, so both
+# derive the plugin list instead of hardcoding plugin names.
+tcr_our_plugin_names() {
   local mp tmp=""
   if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
     mp="$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json"
@@ -107,15 +107,25 @@ tcr_install_our_plugins() {
       || tcr_die "Could not fetch marketplace manifest from $RAW_BASE."
     mp="$tmp"
   fi
-  local names
-  names="$(python3 -c '
+  python3 -c '
 import json, sys
 with open(sys.argv[1]) as fh:
     data = json.load(fh)
 for p in data["plugins"]:
     print(p["name"])
-' "$mp")" || { [ -n "$tmp" ] && rm -f "$tmp"; tcr_die "Could not parse marketplace manifest $mp."; }
+' "$mp"
+  local rc=$?
   [ -n "$tmp" ] && rm -f "$tmp"
+  [ "$rc" -eq 0 ] || tcr_die "Could not parse marketplace manifest $mp."
+}
+
+# Installs every plugin listed in our marketplace manifest — personal-tools,
+# workflow, and any plugin added there later — instead of one hand-written
+# function per plugin name. Assumes our marketplace is already added (call
+# tcr_add_our_marketplace first).
+tcr_install_our_plugins() {
+  local names
+  names="$(tcr_our_plugin_names)" || return 1
   local name
   while IFS= read -r name; do
     [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
