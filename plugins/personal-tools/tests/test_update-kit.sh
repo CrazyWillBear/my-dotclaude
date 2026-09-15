@@ -102,7 +102,7 @@ fi
 echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
+    assert_equals "four claude calls recorded (marketplace + 3 real plugins)" "$count" "4"
 else
     no "no claude calls recorded (log missing)"
 fi
@@ -117,9 +117,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: personal-tools and workflow are each updated (order not asserted)"
+echo "test: context, personal-tools and workflow are each updated (order not asserted)"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     calls="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "updates context"       "$calls" "plugin update context"
     assert_contains "updates personal-tools" "$calls" "plugin update personal-tools"
     assert_contains "updates workflow"       "$calls" "plugin update workflow"
 else
@@ -348,6 +349,7 @@ rc3r=$?
 assert_equals "exit 0 with the remote common.sh fallback" "$rc3r" "0"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     calls3r="$(cat "$CLAUDE_STUB_LOG")"
+    assert_contains "remote fallback still updates context"        "$calls3r" "plugin update context"
     assert_contains "remote fallback still updates personal-tools" "$calls3r" "plugin update personal-tools"
     assert_contains "remote fallback still updates workflow"       "$calls3r" "plugin update workflow"
 else
