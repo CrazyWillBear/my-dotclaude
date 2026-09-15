@@ -124,4 +124,11 @@ refresh_statusline() {
 ( refresh_statusline ) \
   || printf 'note: status line refresh failed; run setup-dev.sh to refresh it.\n'
 
+# tcr_install_plugin only flags a failed install, so fail the run here — after
+# the other plugins and the status line — rather than report "Done".
+if [ "${TCR_INSTALL_FAILED:-0}" = "1" ]; then
+  printf '\nerror: a plugin neither updated nor installed — run the claude plugin install command(s) shown above, then restart Claude Code.\n' >&2
+  exit 1
+fi
+
 printf '\nDone. Restart Claude Code to apply the updated kit.\n'
