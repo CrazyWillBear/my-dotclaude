@@ -31,11 +31,14 @@
 # after a compact. Each line gets a `ts` and the event name; the rest is yours.
 #
 # The log lives beside the handoffs, in the same per-repo keyed dir — one keying
-# scheme for the repo, not two. save-handoff.sh --print-dir OWNS that keying.
+# scheme for the repo, not two. The context plugin's save-handoff.sh owns that keying
+# for handoffs; a marketplace install caches every plugin under its own version
+# directory, so a sibling plugin's script can't be reached by a relative path (see
+# docs/swarm-design.md § Plugin split). run-log.sh stays in workflow and recomputes
+# the identical sha1(canonical --git-common-dir)[:16] key independently instead —
+# the same choice resume.sh already makes for the same reason.
 
 set -uo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -45,8 +48,20 @@ RUNID="${2:-}"
 
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
-DIR="$(bash "$SCRIPT_DIR/save-handoff.sh" --print-dir 2>/dev/null)"
-[ -n "$DIR" ] || die "not in a git repo — the run log is keyed per repo"
+# Per-repo keyed dir: ~/.claude/handoffs/<sha1(canonical --git-common-dir)[:16]>/,
+# byte-identical to save-handoff.sh's and resume.sh's keying (see comment above).
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
+GCD="$(git -C "$PROJECT_DIR" rev-parse --git-common-dir 2>/dev/null)" || GCD=""
+if [ -n "$GCD" ]; then
+    case "$GCD" in
+        /*) ABS_GCD="$GCD" ;;
+        *)  ABS_GCD="$PROJECT_DIR/$GCD" ;;
+    esac
+    ABS_GCD="$(cd "$ABS_GCD" 2>/dev/null && pwd -P)" || GCD=""
+fi
+[ -n "$GCD" ] || die "not in a git repo — the run log is keyed per repo"
+KEY="$(printf '%s' "$ABS_GCD" | sha1sum | cut -c1-16)"
+DIR="$HOME/.claude/handoffs/$KEY"
 
 case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-]" ;; esac
 

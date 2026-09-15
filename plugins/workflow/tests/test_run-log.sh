@@ -15,6 +15,9 @@
 #   * a torn line is counted, never silently dropped
 #   * replay/state on a run that was never logged fails loud
 #   * the log is keyed per repo, beside the handoffs — two repos never collide
+#   * the keyed dir matches the context plugin's save-handoff.sh independently —
+#     no cross-plugin call (a marketplace install cannot address a sibling plugin
+#     by relative path; see docs/swarm-design.md § Plugin split)
 #
 # Run: bash plugins/workflow/tests/test_run-log.sh   (non-zero if any fail)
 
@@ -144,6 +147,18 @@ echo "test: outside a git repo it fails loud rather than writing somewhere rando
 (cd "$WORK" && HOME="$GLOBAL_HOME" bash "$RUNLOG" append run1 scope) >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "says why" "$(err)" "keyed per repo"
+
+# ---------------------------------------------------------------------------
+echo "test: no cross-plugin call — run-log.sh never shells out to save-handoff.sh"
+assert_not_contains "run-log.sh source has no save-handoff.sh invocation (prose mentions are fine)" \
+    "$(cat "$RUNLOG")" '/save-handoff.sh"'
+
+echo "test: run-log.sh's keyed dir matches the context plugin's save-handoff.sh --print-dir (one keying scheme, not two)"
+CONTEXT_SAVE="$PLUGIN_ROOT/../context/scripts/save-handoff.sh"
+if [ -f "$CONTEXT_SAVE" ]; then ok "context plugin's save-handoff.sh exists"; else no "context plugin's save-handoff.sh exists (missing: $CONTEXT_SAVE)"; fi
+expected_dir="$(HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$WORK/repo" bash "$CONTEXT_SAVE" --print-dir)"
+got_dir="$(dirname "$(dirname "$(r path run1)")")"
+assert_equals "run-log and save-handoff key the same repo identically" "$got_dir" "$expected_dir"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
