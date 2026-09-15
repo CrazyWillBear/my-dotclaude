@@ -82,7 +82,7 @@ else
 fi
 
 if declare -F tcr_our_plugin_names >/dev/null; then
-  if [ -n "$TCR_LOCAL_ROOT" ]; then
+  if [ -n "$TCR_LOCAL_ROOT" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
     # Local marketplace copy path. Bare assignment (not a process
     # substitution): under `set -euo pipefail` this lets a tcr_die inside
     # tcr_our_plugin_names (e.g. a malformed manifest) abort the script

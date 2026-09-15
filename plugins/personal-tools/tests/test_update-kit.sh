@@ -257,6 +257,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Local repo copy has common.sh but no .claude-plugin/marketplace.json (e.g. a
+# stale or partial checkout). tcr_our_plugin_names then falls back to a
+# network fetch even though TCR_LOCAL_ROOT is set, so the script's own branch
+# condition must match that fallback and treat a manifest-fetch failure here
+# as non-fatal too — not take the hard-fail local-copy branch (round-4 low:
+# a 429 must not kill the script after the marketplace update already ran).
+# ---------------------------------------------------------------------------
+echo "test: local repo copy without a manifest falls back to the non-fatal remote path"
+NOMANIFEST_HOME="$WORK/no-manifest-home"
+NOMANIFEST_ROOT="$WORK/no-manifest-repo"
+mkdir -p "$NOMANIFEST_HOME/.claude/plugins" "$NOMANIFEST_ROOT/setup/lib" "$NOMANIFEST_ROOT/global"
+cp "$REPO_ROOT/setup/lib/common.sh" "$NOMANIFEST_ROOT/setup/lib/common.sh"
+cp "$REPO_ROOT/global/statusline.py" "$NOMANIFEST_ROOT/global/statusline.py"
+cat > "$NOMANIFEST_HOME/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$NOMANIFEST_ROOT" },
+    "installLocation": "$NOMANIFEST_ROOT"
+  }
+}
+EOF
+rm -f "$CLAUDE_STUB_LOG"
+outnm=$(PATH="$WORK/offline-stubs:$WORK/bin:$PATH" HOME="$NOMANIFEST_HOME" bash "$SCRIPT" 2>&1)
+rcnm=$?
+assert_equals "exit 0 when the local copy has no manifest and the network fetch fails" "$rcnm" "0"
+assert_contains "still prints restart reminder" "$outnm" "Restart"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+
+# ---------------------------------------------------------------------------
 # No known_marketplaces.json, but the network is up: update-kit.sh must fall
 # back to fetching setup/lib/common.sh remotely (same bootstrap setup-dev.sh
 # uses) rather than silently skipping every plugin update — the round-2 fix
