@@ -10,7 +10,7 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 
 - `global/CLAUDE.md` — developer machine-wide rules; `setup-dev.sh` installs to `~/.claude/CLAUDE.md`.
 - `global/CLAUDE.simple.md` — plain-English variant of the above; `setup-simple.sh` installs it instead, for non-coders.
-- `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
+- `plugins/context/`, `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
 - `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, session
   state, spawn, run log, merge fold). Logic belongs here, not in skill prose: a script gets a
   real test, prose gets a grep.
@@ -46,10 +46,9 @@ hand-edit a version anywhere else. Bump it with:
 bash scripts/sync-version.sh <x.y.z>
 ```
 
-That writes `VERSION` and stamps the same `version` into both plugin manifests
-(`plugins/personal-tools/.claude-plugin/plugin.json` and
-`plugins/workflow/.claude-plugin/plugin.json`) so all three stay in lockstep.
-`scripts/check-version-consistency.sh` enforces the lockstep — it fails if either
+That writes `VERSION` and stamps the same `version` into every
+`plugins/*/.claude-plugin/plugin.json` so all of them stay in lockstep.
+`scripts/check-version-consistency.sh` enforces the lockstep — it fails if any
 plugin.json drifts from `VERSION` — and CI (`.github/workflows/ci.yml`) runs it on
 every PR into `main`, so a mismatched version blocks the merge.
 
