@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Shared handoff writer for the workflow plugin.
+# Shared handoff writer for the context plugin.
 #
 # Single source of the resume-pointer JSON schema that resume.sh reads, and the
 # owner of the per-repo handoff keying. Used by the watchdog's Phase-A plan-start
@@ -8,14 +8,18 @@
 # calls it with NO args before every compaction), so the schema lives in exactly
 # one place.
 #
-#   save-handoff.sh [--session ID] [--size N]
+#   save-handoff.sh [--session ID] [--size N] [--handoff-path PATH]
 #   save-handoff.sh --print-dir
 #
-#     --session ID   session id; recorded for debugging (informational).
-#     --size N       context-token occupancy to record (informational).
-#     --print-dir    print the per-repo keyed handoff dir for the current repo and
-#                    exit (empty + exit 0 outside a repo). The canonical reference
-#                    the /handoff skill mirrors and a drift test asserts against.
+#     --session ID       session id; recorded for debugging (informational).
+#     --size N           context-token occupancy to record (informational).
+#     --handoff-path P   use P as handoff_path verbatim (if it exists) instead of the
+#                        default <keyed-dir>/<branch-slug>.md lookup. /handoff-plan
+#                        writes <branch-slug>-plan.md, a different shape the default
+#                        lookup never matches, so it passes this explicitly.
+#     --print-dir        print the per-repo keyed handoff dir for the current repo and
+#                        exit (empty + exit 0 outside a repo). The canonical reference
+#                        the /handoff + /handoff-plan skills call instead of recomputing it.
 #
 # Handoff keying: both the resume pointer and the handoff doc live under
 #   ~/.claude/handoffs/<sha1(git_common_dir)[:16]>/
@@ -24,8 +28,9 @@
 # share one pointer — a handoff written in a worktree resumes from anywhere in the
 # repo. Per-repo keying also means concurrent /handoff across repos never clobber
 # each other (the old single global ~/.claude/.pending-handoff was last-writer-wins).
-# resume.sh recomputes the same sha; the /handoff + /handoff-plan skills write the
-# same layout inline.
+# resume.sh recomputes the same sha independently; the /handoff + /handoff-plan skills
+# instead call this script (same plugin, so CLAUDE_PLUGIN_ROOT resolves it reliably)
+# rather than reimplementing the keying.
 #
 # Git state is read from CLAUDE_PROJECT_DIR (else cwd). The baseline is simply the
 # current HEAD — prior work is committed before a handoff. Fail open: any error
@@ -33,15 +38,16 @@
 
 set -u
 
-export SH_SESSION="" SH_SIZE="" SH_PRINT_DIR=""
+export SH_SESSION="" SH_SIZE="" SH_PRINT_DIR="" SH_HANDOFF_PATH=""
 while [ $# -gt 0 ]; do
     case "$1" in
         # Value flags guard against a missing/flag-like value so a bare
         # `--session --size 5` cannot swallow `--size` as the session id.
-        --session)   case "${2:-}" in ""|--*) shift 1 ;; *) SH_SESSION="$2"; shift 2 ;; esac ;;
-        --size)      case "${2:-}" in ""|--*) shift 1 ;; *) SH_SIZE="$2";    shift 2 ;; esac ;;
-        --print-dir) SH_PRINT_DIR=1; shift ;;
-        *)           shift ;;
+        --session)      case "${2:-}" in ""|--*) shift 1 ;; *) SH_SESSION="$2";      shift 2 ;; esac ;;
+        --size)         case "${2:-}" in ""|--*) shift 1 ;; *) SH_SIZE="$2";         shift 2 ;; esac ;;
+        --handoff-path) case "${2:-}" in ""|--*) shift 1 ;; *) SH_HANDOFF_PATH="$2"; shift 2 ;; esac ;;
+        --print-dir)    SH_PRINT_DIR=1; shift ;;
+        *)              shift ;;
     esac
 done
 
@@ -70,9 +76,10 @@ def git(*args):
 def keyed_dir(common_dir):
     # Per-repo handoff dir: ~/.claude/handoffs/<sha1(git_common_dir)[:16]>.
     # Keyed by the COMMON git dir so the primary tree and all its linked worktrees
-    # share one pointer. The 16-hex key must be byte-identical to resume.sh and the
-    # /handoff + /handoff-plan skills, which compute the same sha1 over the canonical
-    # absolute --git-common-dir (bash: (cd "$gcd" && pwd -P) | sha1sum | cut -c1-16).
+    # share one pointer. The 16-hex key must be byte-identical to resume.sh, which
+    # independently recomputes the same sha1 over the canonical absolute
+    # --git-common-dir (bash: (cd "$gcd" && pwd -P) | sha1sum | cut -c1-16). The
+    # /handoff + /handoff-plan skills never recompute it — they call this script.
     if not common_dir:
         return None
     key = hashlib.sha1(common_dir.encode()).hexdigest()[:16]
@@ -93,7 +100,7 @@ toplevel = git("rev-parse", "--show-toplevel")
 common_dir = common_git_dir()
 
 # --print-dir: emit the keyed dir for the current repo and exit (empty outside a
-# repo). The canonical reference the skill mirrors and the drift test checks.
+# repo). The /handoff + /handoff-plan skills call this instead of recomputing the key.
 if os.environ.get("SH_PRINT_DIR"):
     kd = keyed_dir(common_dir)
     if kd:
@@ -120,9 +127,20 @@ def resolve_handoff(branch):
         return None
 
 
+def resolved_handoff_path(branch):
+    # --handoff-path wins when given (e.g. /handoff-plan's <branch-slug>-plan.md,
+    # a shape resolve_handoff() never matches) but only if the file is really
+    # there — an explicit path pointing nowhere should still resolve to null
+    # rather than silently falling back to an unrelated doc.
+    explicit = os.environ.get("SH_HANDOFF_PATH") or ""
+    if explicit:
+        return explicit if os.path.isfile(explicit) else None
+    return resolve_handoff(branch)
+
+
 branch_val = git("rev-parse", "--abbrev-ref", "HEAD")
 obj = {
-    "handoff_path":   resolve_handoff(branch_val),
+    "handoff_path":   resolved_handoff_path(branch_val),
     "branch":         branch_val,
     "git_toplevel":   toplevel,
     "git_common_dir": common_dir,

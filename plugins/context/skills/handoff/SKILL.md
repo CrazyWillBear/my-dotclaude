@@ -1,13 +1,13 @@
 ---
 name: handoff
-description: Capture a rich handoff before /clear — write a markdown handoff doc (work done, in-flight state, next steps, key files, gotchas) plus the resume pointer the workflow plugin reads, then tell me to /clear and send `go`. Use for "/handoff", "hand this off", "save state and clear".
+description: Capture a rich handoff before /clear — write a markdown handoff doc (work done, in-flight state, next steps, key files, gotchas) plus the resume pointer resume.sh reads, then tell me to /clear and send `go`. Use for "/handoff", "hand this off", "save state and clear".
 argument-hint: "[optional note to fold into the handoff]"
 model: inherit
 allowed-tools: Read, Write, Bash
 ---
 
-Capture everything the next session needs, then send me into fresh context. `workflow`'s
-`resume.sh` re-injects the handoff after I `/clear`, so the only manual step is one command.
+Capture everything the next session needs, then send me into fresh context. `resume.sh`
+re-injects the handoff after I `/clear`, so the only manual step is one command.
 
 **Pre-req — committed work.** The resume pointer's baseline is the current `HEAD`. If
 `git status --porcelain` shows tracked changes, **stop and tell me to commit first** —
@@ -17,14 +17,9 @@ a handoff over uncommitted work would lose it on `/clear`.
 
 1. **Gather state** (Bash):
    - `branch` = `git rev-parse --abbrev-ref HEAD`
-   - `toplevel` = `git rev-parse --show-toplevel`
-   - `common_dir` = `git rev-parse --git-common-dir`, then canonicalize:
-     `common_dir="$(cd "$common_dir" && pwd -P)"` — the shared `.git`, identical from the primary
-     tree and every linked worktree (so a handoff written in a worktree resolves repo-wide)
-   - `head` = `git rev-parse HEAD`
-   - `ts` = `date +%s`
-   - `repo_key` = `printf %s "$common_dir" | sha1sum | cut -c1-16` — the per-repo key
-   - `dir` = `~/.claude/handoffs/$repo_key`, then `mkdir -p "$dir"`
+   - `dir` = `bash "${CLAUDE_PLUGIN_ROOT}/scripts/save-handoff.sh" --print-dir` — the per-repo
+     keyed handoff dir; `save-handoff.sh` owns that keying, so nothing here recomputes it. Empty
+     output means you're not in a git repo — stop and say so. `mkdir -p "$dir"`.
 2. **Write the handoff doc** to `$dir/<branch-slug>.md` — replace every `/` in the branch with
    `-` for the slug. Be concrete; this is the *only* memory the fresh session gets. Fold
    `$ARGUMENTS` in if given. Sections:
@@ -41,28 +36,11 @@ a handoff over uncommitted work would lose it on `/clear`.
    ## Gotchas
    <traps, assumptions, things that already bit us>
    ```
-3. **Write the resume pointer** `$dir/.pending.json` with the **Write tool**, as JSON in exactly
-   the `workflow` schema (this mirrors `save-handoff.sh` — the cross-plugin script path isn't
-   install-stable, so write it inline). The keyed-dir algorithm **must** match `save-handoff.sh`:
-   `~/.claude/handoffs/<sha1(canonical --git-common-dir)[:16]>/` (bash:
-   `printf %s "$common_dir" | sha1sum | cut -c1-16`), pointer named `.pending.json`. A drift test
-   enforces this, so don't diverge.
-   ```json
-   {
-     "handoff_path": "<absolute path to the handoff doc you just wrote>",
-     "branch": "<branch>",
-     "git_toplevel": "<toplevel>",
-     "git_common_dir": "<common_dir>",
-     "baseline_head": "<head>",
-     "session_id": null,
-     "context_tokens": null,
-     "ts": <ts>
-   }
-   ```
-   `handoff_path` points at the **handoff doc** you just wrote (in `$dir`). `git_common_dir` is the
-   canonical shared `.git`; `resume.sh` re-injects only when the new session's common dir matches.
-   `git_toplevel` records the working tree this handoff was written in — if that's a linked
-   worktree, `resume.sh` tells the fresh session to `EnterWorktree(path=…)` it before resuming.
+3. **Write the resume pointer** by running
+   `bash "${CLAUDE_PLUGIN_ROOT}/scripts/save-handoff.sh"` (no args, after the doc from step 2 is
+   on disk). It re-derives `branch`/`git_toplevel`/`git_common_dir`/`baseline_head` itself,
+   resolves the doc you just wrote at `$dir/<branch-slug>.md` into `handoff_path`, and writes
+   `$dir/.pending.json` — the one place that schema is written, so nothing here can drift from it.
 4. **Tell me what to do**, in plain English (this is a multi-step instruction — write it normally
    even if a terse output mode is active): run **`/clear`**, then send **`go`**. `resume.sh` will re-inject an
    order making **reading the handoff doc the fresh session's mandatory first action**, then

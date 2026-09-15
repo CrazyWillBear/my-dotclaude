@@ -3,26 +3,26 @@
 # Tests for scripts/save-handoff.sh — the per-repo keyed handoff writer.
 #
 # Black-box: we drive a real git repo, run the actual script, and assert on the
-# keyed dir it prints (--print-dir), the keyed pointer it writes (no args), and
-# the doc it resolves into handoff_path. A drift guard cross-checks that the
-# /handoff skill documents the SAME keying recipe the script implements, so the
-# skill's inline pointer writer can't silently diverge.
+# keyed dir it prints (--print-dir), the keyed pointer it writes (no args or
+# --handoff-path), and the doc it resolves into handoff_path. A drift guard
+# confirms the /handoff + /handoff-plan skills (same plugin) call this script via
+# CLAUDE_PLUGIN_ROOT instead of reimplementing the keying inline.
 #
 # Keying: ~/.claude/handoffs/<sha1(canonical --git-common-dir)[:16]>/ holding
 # .pending.json (pointer) and <branch-slug>.md (doc). Keyed by the shared common
 # .git so the primary tree and all its linked worktrees share one pointer.
 #
-# Run: bash plugins/workflow/tests/test_save_handoff.sh   (non-zero if any fail)
+# Run: bash plugins/context/tests/test_save_handoff.sh   (non-zero if any fail)
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SAVE="$PLUGIN_ROOT/scripts/save-handoff.sh"
-# The /handoff skill lives in the sibling personal-tools plugin.
-SKILL="$PLUGIN_ROOT/../personal-tools/skills/handoff/SKILL.md"
-# /handoff-plan writes the same keyed pointer inline, so it carries the same drift risk.
-SKILL_PLAN="$PLUGIN_ROOT/../personal-tools/skills/handoff-plan/SKILL.md"
+# /handoff and /handoff-plan live in this SAME plugin now (that's the whole point —
+# CLAUDE_PLUGIN_ROOT resolves reliably within one plugin, unlike across plugins).
+SKILL="$PLUGIN_ROOT/skills/handoff/SKILL.md"
+SKILL_PLAN="$PLUGIN_ROOT/skills/handoff-plan/SKILL.md"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -40,6 +40,7 @@ ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
 no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; esac; }
+assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got: $2)"; fi; }
 assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
 assert_file() { if [ -f "$2" ]; then ok "$1"; else no "$1 (missing file $2)"; fi; }
@@ -65,6 +66,11 @@ run_save_handoff() {
 print_dir() {
     HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
         bash "$SAVE" --print-dir
+}
+# run_save_handoff_hp <project_dir> <handoff_path> — the way /handoff-plan calls it.
+run_save_handoff_hp() {
+    HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$1" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
+        bash "$SAVE" --handoff-path "$2"
 }
 
 # expected_dir <project_dir> — the keyed dir computed independently of the script,
@@ -197,7 +203,40 @@ assert_contains "the plain doc resolves" \
 rm -f "$dir"/*.md 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-echo "test: drift guard — SKILL.md documents the same keyed recipe as the script"
+# /handoff-plan writes <branch-slug>-plan.md, a shape the default lookup above
+# never matches (by design — it's the /handoff shape). It passes --handoff-path
+# instead of relying on resolution.
+echo "test: --handoff-path uses that doc verbatim — the shape /handoff-plan writes"
+init_repo
+branch="$(g rev-parse --abbrev-ref HEAD)"
+safe="${branch//\//-}"
+dir="$(print_dir "$PROJECT_DIR")"
+mkdir -p "$dir"
+rm -f "$dir"/*.md 2>/dev/null || true
+printf '# Plan\n- step one\n' >"$dir/${safe}-plan.md"
+run_save_handoff_hp "$PROJECT_DIR" "$dir/${safe}-plan.md"
+assert_contains "handoff_path is the explicit -plan.md path" \
+    "$(read_field "$dir/.pending.json" handoff_path)" "${safe}-plan.md"
+
+echo "test: --handoff-path to a file that doesn't exist resolves to null, not a fallback"
+run_save_handoff_hp "$PROJECT_DIR" "$dir/${safe}-nonexistent.md"
+assert_equals "handoff_path is null for a missing explicit path" \
+    "$(read_field "$dir/.pending.json" handoff_path)" ""
+
+echo "test: --handoff-path wins over an existing plain doc (/handoff-plan run after an earlier /handoff)"
+printf '# Handoff\n## Done\n- work\n' >"$dir/${safe}.md"
+run_save_handoff_hp "$PROJECT_DIR" "$dir/${safe}-plan.md"
+assert_contains "explicit path wins even though the plain doc also exists" \
+    "$(read_field "$dir/.pending.json" handoff_path)" "${safe}-plan.md"
+rm -f "$dir"/*.md 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# The star rule (docs/swarm-design.md § Plugin split): /handoff + /handoff-plan now
+# live in the SAME plugin as save-handoff.sh, so CLAUDE_PLUGIN_ROOT resolves it
+# reliably and neither skill has an excuse to reimplement the keying inline any
+# more. This is the acceptance-criteria grep test — it pins the ABSENCE of the old
+# inline recipe, not its presence.
+echo "test: drift guard — /handoff calls save-handoff.sh instead of reimplementing the keying"
 init_repo
 dir="$(print_dir "$PROJECT_DIR")"
 case "$dir" in
@@ -206,26 +245,21 @@ case "$dir" in
 esac
 assert_file "SKILL.md exists" "$SKILL"
 skill_txt="$(cat "$SKILL")"
-assert_contains "skill documents sha1 keying" "$skill_txt" "sha1"
-assert_contains "skill documents the cut -c1-16 key length" "$skill_txt" "cut -c1-16"
-assert_contains "skill keys by the common dir" "$skill_txt" "--git-common-dir"
-assert_contains "skill names the .pending.json pointer" "$skill_txt" ".pending.json"
-assert_contains "skill names the keyed handoffs dir" "$skill_txt" "~/.claude/handoffs/"
+assert_not_contains "skill has no inline sha1 reimplementation" "$skill_txt" "sha1"
+assert_not_contains "skill has no inline cut -c1-16 reimplementation" "$skill_txt" "cut -c1-16"
+assert_contains "skill calls save-handoff.sh" "$skill_txt" "save-handoff.sh"
+assert_contains "skill calls it via CLAUDE_PLUGIN_ROOT" "$skill_txt" "CLAUDE_PLUGIN_ROOT"
+assert_contains "skill uses --print-dir to find the keyed dir" "$skill_txt" "--print-dir"
 
-# /handoff-plan writes the same keyed pointer inline, so the same recipe must be
-# documented there too or its inline writer could silently diverge.
+echo "test: drift guard — /handoff-plan calls save-handoff.sh --handoff-path instead of reimplementing the keying"
 assert_file "handoff-plan SKILL.md exists" "$SKILL_PLAN"
 plan_txt="$(cat "$SKILL_PLAN")"
-assert_contains "plan skill documents sha1 keying" "$plan_txt" "sha1"
-assert_contains "plan skill documents the cut -c1-16 key length" "$plan_txt" "cut -c1-16"
-assert_contains "plan skill keys by the common dir" "$plan_txt" "--git-common-dir"
-assert_contains "plan skill names the .pending.json pointer" "$plan_txt" ".pending.json"
-assert_contains "plan skill names the keyed handoffs dir" "$plan_txt" "~/.claude/handoffs/"
-
-# run-log.sh writes the run log into the SAME keyed dir, by asking this script for
-# it rather than recomputing the sha — one keying scheme per repo, not two.
-assert_contains "run-log.sh reuses --print-dir instead of its own sha" \
-    "$(cat "$PLUGIN_ROOT/scripts/run-log.sh")" "save-handoff.sh --print-dir"
+assert_not_contains "plan skill has no inline sha1 reimplementation" "$plan_txt" "sha1"
+assert_not_contains "plan skill has no inline cut -c1-16 reimplementation" "$plan_txt" "cut -c1-16"
+assert_contains "plan skill calls save-handoff.sh" "$plan_txt" "save-handoff.sh"
+assert_contains "plan skill calls it via CLAUDE_PLUGIN_ROOT" "$plan_txt" "CLAUDE_PLUGIN_ROOT"
+assert_contains "plan skill passes --handoff-path (resolve_handoff() can't match its -plan.md shape)" \
+    "$plan_txt" "--handoff-path"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
