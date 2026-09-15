@@ -105,6 +105,8 @@ structured prompt makes the subagent read the log in tiny chunks and crawl — ~
 > earlier ones. Report any contradictions or omissions, read-only. Lead with
 > `VERDICT: ALIGNED` or `VERDICT: MISMATCHES (n)`.
 
-## Step 5 — Relay the report
+## Step 5 — Report the verdict
 
-Relay the subagent's output verbatim to the user. Do not summarize, filter, or editorialize.
+Lead with the subagent's verdict line. Then give the mismatches, if any, one bullet each
+(what the target says, what the session decided). Drop the confirmations of what matched
+unless the user asks. Do not soften or reinterpret a mismatch.
