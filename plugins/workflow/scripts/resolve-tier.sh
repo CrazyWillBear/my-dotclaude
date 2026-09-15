@@ -5,7 +5,7 @@
 # Usage: bash resolve-tier.sh <tier>          # tier ∈ trivial | standard | complex
 #
 # Reads the roster table from:
-#   ${CLAUDE_PLUGIN_ROOT}/model-tiers.json     (falls back to <script-dir>/..)
+#   ${RESOLVE_TIER_ROOT}/model-tiers.json      (falls back to <script-dir>/..)
 #
 # Contract: prints EXACTLY seven key=value lines to stdout and ALWAYS exits 0 —
 #   tier=<tier>
@@ -49,7 +49,8 @@ fallback() {
 # ---------------------------------------------------------------------------
 # Locate the plugin root and the config (mirrors scripts/check-update.sh).
 # ---------------------------------------------------------------------------
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+# Not CLAUDE_PLUGIN_ROOT: other plugins call this script, and theirs is the caller's root.
+PLUGIN_ROOT="${RESOLVE_TIER_ROOT:-}"
 if [ -z "$PLUGIN_ROOT" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
     PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"

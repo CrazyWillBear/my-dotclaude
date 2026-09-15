@@ -5,7 +5,7 @@
 # Black-box, exercised for REAL: every assertion drives the shipped resolver
 # end-to-end — against the REAL shipped config (the BASH_SOURCE fallback resolves
 # the plugin root) and against REAL temp configs we write into a tmpdir pointed
-# at by CLAUDE_PLUGIN_ROOT. There is NO inlined/stubbed roster table anywhere in
+# at by RESOLVE_TIER_ROOT. There is NO inlined/stubbed roster table anywhere in
 # this test; the roster only ever comes out of the script reading a config.
 #
 #   1. Script exists + is executable, and carries no `jq` dependency (the plugin
@@ -32,7 +32,7 @@
 #   8. Fallback lockstep: the missing-config fallback output is byte-identical,
 #      line for line, to resolving `standard` from the shipped config.
 #   9. A `cd` failure inside the BASH_SOURCE fallback (the SCRIPT_DIR/PLUGIN_ROOT
-#      lines, exercised when CLAUDE_PLUGIN_ROOT is unset) is fully suppressed —
+#      lines, exercised when RESOLVE_TIER_ROOT is unset) is fully suppressed —
 #      stderr is EXACTLY the one WARN line, never that plus a leaked
 #      `cd: ...: No such file or directory`. Reproduced by running the REAL,
 #      unmodified fallback lines against a directory that is removed out from
@@ -71,14 +71,14 @@ WARN='WARN: model-tiers.json missing or invalid — falling back to standard tie
 write_cfg() { mkdir -p "$1"; cat > "$1/model-tiers.json"; }
 
 # run_tier <tier> [plugin_root] — run the real script and set OUT / ERR / RC.
-# With no plugin_root, run with CLAUDE_PLUGIN_ROOT unset so the BASH_SOURCE
+# With no plugin_root, run with RESOLVE_TIER_ROOT unset so the BASH_SOURCE
 # fallback resolves the REAL shipped config.
 run_tier() {
     local tier="$1" root="${2-__REAL__}" errfile="$WORK/err"
     if [ "$root" = "__REAL__" ]; then
-        OUT="$(env -u CLAUDE_PLUGIN_ROOT bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(env -u RESOLVE_TIER_ROOT bash "$SCRIPT" "$tier" 2>"$errfile")"
     else
-        OUT="$(CLAUDE_PLUGIN_ROOT="$root" bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(RESOLVE_TIER_ROOT="$root" bash "$SCRIPT" "$tier" 2>"$errfile")"
     fi
     RC=$?
     ERR="$(cat "$errfile")"
@@ -133,6 +133,11 @@ assert_equals "complex: reviewer_effort xhigh" "$(val "$OUT" reviewer_effort)" "
 echo "test: missing config → the exact WARN line + standard roster, exit 0"
 EMPTY="$WORK/empty"
 mkdir -p "$EMPTY"
+echo "test: a caller's CLAUDE_PLUGIN_ROOT is ignored — the table is the script's own"
+OUT="$(CLAUDE_PLUGIN_ROOT="$EMPTY" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" complex 2>"$WORK/err")"
+assert_equals "foreign plugin root: no WARN" "$(cat "$WORK/err")" ""
+assert_equals "foreign plugin root: resolves complex from the shipped table" "$(val "$OUT" tier)" "complex"
+
 run_tier complex "$EMPTY"
 assert_equals "missing: exit 0" "$RC" "0"
 assert_equals "missing: stderr is exactly the WARN line" "$ERR" "$WARN"
@@ -387,7 +392,7 @@ assert_equals "bogus tier: exact WARN" "$ERR" "$WARN"
 assert_equals "bogus tier: standard fallback" "$(val "$OUT" tier)" "standard"
 
 NOARG_ERR="$WORK/noarg-err"
-NOARG_OUT="$(env -u CLAUDE_PLUGIN_ROOT bash "$SCRIPT" 2>"$NOARG_ERR")"
+NOARG_OUT="$(env -u RESOLVE_TIER_ROOT bash "$SCRIPT" 2>"$NOARG_ERR")"
 NOARG_RC=$?
 assert_equals "no arg: exit 0" "$NOARG_RC" "0"
 assert_equals "no arg: exact WARN" "$(cat "$NOARG_ERR")" "$WARN"
@@ -420,7 +425,7 @@ else
 
     CDFAIL_OUTFILE="$WORK/cdfail-out"
     CDFAIL_ERRFILE="$WORK/cdfail-err"
-    env -u CLAUDE_PLUGIN_ROOT bash "$CDFAIL_DIR/resolve-tier.sh" trivial >"$CDFAIL_OUTFILE" 2>"$CDFAIL_ERRFILE" &
+    env -u RESOLVE_TIER_ROOT bash "$CDFAIL_DIR/resolve-tier.sh" trivial >"$CDFAIL_OUTFILE" 2>"$CDFAIL_ERRFILE" &
     CDFAIL_PID=$!
 
     # Block here (not a timed sleep) until the background script has actually
