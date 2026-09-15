@@ -89,6 +89,22 @@ wf_ver=$(jq -r '.version' "$WORK/repo/plugins/workflow/.claude-plugin/plugin.jso
 assert_equals "workflow plugin.json updated" "$wf_ver" "0.2.0"
 
 # ---------------------------------------------------------------------------
+echo "test: a third plugins/*/ directory is stamped too, with no code change"
+setup_repo "0.1.0"
+mkdir -p "$WORK/repo/plugins/context/.claude-plugin"
+cat > "$WORK/repo/plugins/context/.claude-plugin/plugin.json" <<'EOF'
+{
+  "name": "context",
+  "version": "0.1.0",
+  "description": "stub"
+}
+EOF
+run_sync "0.4.0"
+assert_exit "exits 0 with a third plugin present" "$rc" 0
+ctx_ver=$(jq -r '.version' "$WORK/repo/plugins/context/.claude-plugin/plugin.json")
+assert_equals "third plugin.json updated" "$ctx_ver" "0.4.0"
+
+# ---------------------------------------------------------------------------
 echo "test: idempotent — running twice with same version leaves files correct"
 setup_repo "0.1.0"
 run_sync "0.3.0"

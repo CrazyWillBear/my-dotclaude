@@ -11,8 +11,6 @@
 REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
-PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
-WORKFLOW_PLUGIN="workflow@${OUR_MARKETPLACE}"
 PONYTAIL_REPO="DietrichGebert/ponytail"
 PONYTAIL_PLUGIN="ponytail@ponytail"
 # Anthropic's official marketplace ships with Claude Code (usually already registered);
@@ -94,10 +92,32 @@ tcr_install_plugin() {
   fi
 }
 
-# Installs the workflow plugin (the autonomous dev loop + context watchdog).
+# Installs every plugin listed in our marketplace manifest
+# (.claude-plugin/marketplace.json) — personal-tools, workflow, and any plugin
+# added there later — instead of one hand-written function per plugin name.
 # Assumes our marketplace is already added (call tcr_add_our_marketplace first).
-tcr_install_workflow() {
-  tcr_install_plugin "$WORKFLOW_PLUGIN"
+tcr_install_our_plugins() {
+  tcr_require python3 "python3 is required to read the marketplace manifest."
+  local mp tmp=""
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
+    mp="$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json"
+  else
+    tmp="$(mktemp)"
+    curl -fsSL "$RAW_BASE/.claude-plugin/marketplace.json" -o "$tmp" \
+      || tcr_die "Could not fetch marketplace manifest from $RAW_BASE."
+    mp="$tmp"
+  fi
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
+  done < <(python3 -c '
+import json, sys
+with open(sys.argv[1]) as fh:
+    data = json.load(fh)
+for p in data["plugins"]:
+    print(p["name"])
+' "$mp")
+  [ -n "$tmp" ] && rm -f "$tmp"
 }
 
 tcr_install_ponytail() {
@@ -172,12 +192,6 @@ tcr_setup_gh() {
   else
     tcr_warn "gh (GitHub CLI) not found — install it from https://cli.github.com and run 'gh auth login'. Claude uses gh for GitHub (there is no GitHub MCP)."
   fi
-}
-
-# Installs personal-tools. Assumes our marketplace is already added (call
-# tcr_add_our_marketplace before this).
-tcr_install_personal_tools() {
-  tcr_install_plugin "$PERSONAL_PLUGIN"
 }
 
 # --- system tools ------------------------------------------------------------

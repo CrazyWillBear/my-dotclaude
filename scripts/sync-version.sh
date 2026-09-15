@@ -4,8 +4,7 @@
 #
 # Writes the given version into:
 #   - VERSION  (repo root)
-#   - plugins/personal-tools/.claude-plugin/plugin.json
-#   - plugins/workflow/.claude-plugin/plugin.json
+#   - every plugins/*/.claude-plugin/plugin.json
 #
 # Usage: bash scripts/sync-version.sh 1.2.3
 #
@@ -47,19 +46,21 @@ fi
 printf '%s\n' "$NEW_VER" > "$ROOT/VERSION"
 
 # ---------------------------------------------------------------------------
-# Update plugin.json files — use jq for robust JSON editing
+# Update every plugins/*/.claude-plugin/plugin.json — use jq for robust JSON editing
 # ---------------------------------------------------------------------------
-PT_JSON="$ROOT/plugins/personal-tools/.claude-plugin/plugin.json"
-WF_JSON="$ROOT/plugins/workflow/.claude-plugin/plugin.json"
+shopt -s nullglob
+plugin_jsons=("$ROOT"/plugins/*/.claude-plugin/plugin.json)
+shopt -u nullglob
 
-for json_file in "$PT_JSON" "$WF_JSON"; do
-    if [ ! -f "$json_file" ]; then
-        printf 'Error: expected file not found: %s\n' "$json_file" >&2
-        exit 1
-    fi
+if [ "${#plugin_jsons[@]}" -eq 0 ]; then
+    printf 'Error: no plugin.json files found under %s/plugins/*/.claude-plugin/\n' "$ROOT" >&2
+    exit 1
+fi
+
+for json_file in "${plugin_jsons[@]}"; do
     tmp="$(mktemp)"
     jq --arg v "$NEW_VER" '.version = $v' "$json_file" > "$tmp"
     mv "$tmp" "$json_file"
 done
 
-printf 'Synced version %s into VERSION and both plugin.json files.\n' "$NEW_VER"
+printf 'Synced version %s into VERSION and %d plugin.json file(s).\n' "$NEW_VER" "${#plugin_jsons[@]}"

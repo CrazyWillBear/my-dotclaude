@@ -90,14 +90,43 @@ assert_contains "SECURITY_SWEEP_PLUGIN"     "$consts" "SWEEP=security-sweep@secu
 echo "test: installer functions (new + existing) are defined"
 defs=$(bash -c ". '$COMMON'
   for f in tcr_install_plugin tcr_install_composio_plugins tcr_install_security_sweep \
-           tcr_install_personal_tools tcr_install_workflow tcr_install_ponytail \
+           tcr_install_our_plugins tcr_install_ponytail \
            tcr_install_agent_sdk_dev; do
     declare -F \"\$f\" >/dev/null && echo \"def \$f\" || echo \"missing \$f\"
   done" 2>&1)
 assert_contains "tcr_install_plugin defined"           "$defs" "def tcr_install_plugin"
 assert_contains "tcr_install_composio_plugins defined" "$defs" "def tcr_install_composio_plugins"
 assert_contains "tcr_install_security_sweep defined"   "$defs" "def tcr_install_security_sweep"
+assert_contains "tcr_install_our_plugins defined"      "$defs" "def tcr_install_our_plugins"
 assert_not_contains "no installer missing"             "$defs" "missing "
+
+# ---- test: tcr_install_our_plugins reads the marketplace manifest ----------
+echo "test: tcr_install_our_plugins installs every plugin the manifest lists, no hardcoded names"
+reset_calls
+make_claude_stub
+mkdir -p "$WORK/localroot/.claude-plugin"
+cat > "$WORK/localroot/.claude-plugin/marketplace.json" <<'EOF'
+{
+  "name": "my-dotclaude",
+  "plugins": [
+    {"name": "personal-tools", "source": "./plugins/personal-tools"},
+    {"name": "workflow", "source": "./plugins/workflow"},
+    {"name": "context", "source": "./plugins/context"}
+  ]
+}
+EOF
+out=$(PATH="$WORK/stubs:$PATH" bash -c "
+  NO_COLOR=1; TCR_LOCAL_ROOT='$WORK/localroot'; export NO_COLOR TCR_LOCAL_ROOT
+  . '$COMMON'
+  TCR_INSTALL_FAILED=0
+  tcr_install_our_plugins
+  echo \"INSTALL_FAILED=\$TCR_INSTALL_FAILED\"
+" 2>&1)
+calls=$(claude_calls)
+assert_contains "installs personal-tools" "$calls" "plugin install personal-tools@my-dotclaude"
+assert_contains "installs workflow"       "$calls" "plugin install workflow@my-dotclaude"
+assert_contains "installs a third, unnamed plugin from the manifest" "$calls" "plugin install context@my-dotclaude"
+assert_contains "INSTALL_FAILED stays 0"  "$out" "INSTALL_FAILED=0"
 
 # ---- test: tcr_install_composio_plugins ------------------------------------
 echo "test: tcr_install_composio_plugins adds marketplace once, installs perf + security-guidance"

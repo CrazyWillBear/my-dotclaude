@@ -71,8 +71,7 @@ tcr_set_nested_setting worktree.baseRef head   # per-session worktrees branch of
 tcr_install_statusline         # default context status line (folds in ponytail badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
-tcr_install_personal_tools      # from our marketplace
-tcr_install_workflow            # from our marketplace
+tcr_install_our_plugins         # every plugin our marketplace lists (personal-tools, workflow, ...)
 tcr_install_ponytail
 tcr_install_agent_sdk_dev
 tcr_install_composio_plugins    # third-party: perf + security-guidance
