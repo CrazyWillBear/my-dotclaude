@@ -164,6 +164,41 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Regression test for the round-2->3 fix: a malformed local-copy manifest
+# must abort the script (bare assignment under set -e propagates tcr_die),
+# not silently read zero plugin names and exit 0.
+# ---------------------------------------------------------------------------
+echo "test: malformed local-copy manifest aborts the script — no plugin updates, non-zero exit"
+BAD_HOME="$WORK/bad-manifest-home"
+BAD_ROOT="$WORK/bad-manifest-repo"
+mkdir -p "$BAD_HOME/.claude/plugins" "$BAD_ROOT/.claude-plugin" "$BAD_ROOT/setup/lib" "$BAD_ROOT/global"
+cp "$REPO_ROOT/setup/lib/common.sh" "$BAD_ROOT/setup/lib/common.sh"
+cp "$REPO_ROOT/global/statusline.py" "$BAD_ROOT/global/statusline.py"
+printf 'not valid json' > "$BAD_ROOT/.claude-plugin/marketplace.json"
+cat > "$BAD_HOME/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$BAD_ROOT" },
+    "installLocation": "$BAD_ROOT"
+  }
+}
+EOF
+rm -f "$CLAUDE_STUB_LOG"
+outbad=$(PATH="$WORK/bin:$PATH" HOME="$BAD_HOME" bash "$SCRIPT" 2>&1)
+rcbad=$?
+if [ "$rcbad" -ne 0 ]; then
+    ok "exits non-zero on a malformed local-copy manifest"
+else
+    no "exit code is 0 (want non-zero) on a malformed local-copy manifest"
+fi
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates, on malformed manifest" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+
+# ---------------------------------------------------------------------------
 echo "test: output includes a restart reminder"
 assert_contains "restart reminder in output" "$out" "Restart"
 
@@ -222,6 +257,40 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Local repo copy has common.sh but no .claude-plugin/marketplace.json (e.g. a
+# stale or partial checkout). tcr_our_plugin_names then falls back to a
+# network fetch even though TCR_LOCAL_ROOT is set, so the script's own branch
+# condition must match that fallback and treat a manifest-fetch failure here
+# as non-fatal too — not take the hard-fail local-copy branch (round-4 low:
+# a 429 must not kill the script after the marketplace update already ran).
+# ---------------------------------------------------------------------------
+echo "test: local repo copy without a manifest falls back to the non-fatal remote path"
+NOMANIFEST_HOME="$WORK/no-manifest-home"
+NOMANIFEST_ROOT="$WORK/no-manifest-repo"
+mkdir -p "$NOMANIFEST_HOME/.claude/plugins" "$NOMANIFEST_ROOT/setup/lib" "$NOMANIFEST_ROOT/global"
+cp "$REPO_ROOT/setup/lib/common.sh" "$NOMANIFEST_ROOT/setup/lib/common.sh"
+cp "$REPO_ROOT/global/statusline.py" "$NOMANIFEST_ROOT/global/statusline.py"
+cat > "$NOMANIFEST_HOME/.claude/plugins/known_marketplaces.json" <<EOF
+{
+  "my-dotclaude": {
+    "source": { "source": "directory", "path": "$NOMANIFEST_ROOT" },
+    "installLocation": "$NOMANIFEST_ROOT"
+  }
+}
+EOF
+rm -f "$CLAUDE_STUB_LOG"
+outnm=$(PATH="$WORK/offline-stubs:$WORK/bin:$PATH" HOME="$NOMANIFEST_HOME" bash "$SCRIPT" 2>&1)
+rcnm=$?
+assert_equals "exit 0 when the local copy has no manifest and the network fetch fails" "$rcnm" "0"
+assert_contains "still prints restart reminder" "$outnm" "Restart"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+
+# ---------------------------------------------------------------------------
 # No known_marketplaces.json, but the network is up: update-kit.sh must fall
 # back to fetching setup/lib/common.sh remotely (same bootstrap setup-dev.sh
 # uses) rather than silently skipping every plugin update — the round-2 fix
@@ -231,10 +300,15 @@ echo "test: missing marketplace metadata but network up -> derives plugin list v
 REMOTE_HOME="$WORK/remote-home"
 mkdir -p "$REMOTE_HOME/.claude"
 mkdir -p "$WORK/remote-stubs"
+# Stub curl: cp the REAL setup/lib/common.sh, .claude-plugin/marketplace.json
+# and global/statusline.py for their respective URLs, so this exercises the
+# real fallback behavior (real common.sh, the second curl for
+# marketplace.json inside tcr_our_plugin_names, real statusline install) —
+# not a fabricated stand-in that would hide bugs in that path. Set
+# FAIL_MANIFEST=1 to simulate the manifest fetch failing while common.sh
+# still succeeds.
 cat > "$WORK/remote-stubs/curl" <<'EOF'
 #!/usr/bin/env bash
-# Stub curl: serve a minimal common.sh fixture (defining just the two
-# functions update-kit.sh needs) for any setup/lib/common.sh URL.
 out=""
 url=""
 for ((i = 1; i <= $#; i++)); do
@@ -245,27 +319,95 @@ for ((i = 1; i <= $#; i++)); do
 done
 case "$url" in
     *setup/lib/common.sh)
-        cat > "$out" <<'SH'
-tcr_our_plugin_names() { printf 'personal-tools\nworkflow\nremote-third\n'; }
-tcr_install_statusline() { :; }
-SH
-        exit 0
-        ;;
+        cp "$REPO_ROOT/setup/lib/common.sh" "$out"; exit 0 ;;
+    *.claude-plugin/marketplace.json)
+        [ "${FAIL_MANIFEST:-0}" = "1" ] && exit 1
+        if [ "${THIRD_PLUGIN:-0}" = "1" ]; then
+            cat > "$out" <<'MANIFEST'
+{
+  "plugins": [
+    {"name": "personal-tools"},
+    {"name": "workflow"},
+    {"name": "context"}
+  ]
+}
+MANIFEST
+        else
+            cp "$REPO_ROOT/.claude-plugin/marketplace.json" "$out"
+        fi
+        exit 0 ;;
+    *global/statusline.py)
+        cp "$REPO_ROOT/global/statusline.py" "$out"; exit 0 ;;
 esac
 exit 1
 EOF
 chmod +x "$WORK/remote-stubs/curl"
 rm -f "$CLAUDE_STUB_LOG"
-out3r=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_HOME" bash "$SCRIPT" 2>&1)
+out3r=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_HOME" REPO_ROOT="$REPO_ROOT" bash "$SCRIPT" 2>&1)
 rc3r=$?
 assert_equals "exit 0 with the remote common.sh fallback" "$rc3r" "0"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     calls3r="$(cat "$CLAUDE_STUB_LOG")"
     assert_contains "remote fallback still updates personal-tools" "$calls3r" "plugin update personal-tools"
     assert_contains "remote fallback still updates workflow"       "$calls3r" "plugin update workflow"
-    assert_contains "remote fallback updates a plugin not hardcoded here" "$calls3r" "plugin update remote-third"
 else
     no "no claude calls recorded for the remote-fallback path"
+fi
+if [ -f "$REMOTE_HOME/.claude/statusline.py" ]; then
+    ok "remote fallback installs the real statusline.py"
+else
+    no "remote fallback did not install statusline.py"
+fi
+
+# ---------------------------------------------------------------------------
+# Same remote fallback, but the fetched manifest lists a third plugin — the
+# remote path must derive its list too, not just the local-copy path (round-4
+# finding: reverting the remote branch to a hardcoded pair would leave the
+# other remote-fallback tests green since they only ever see the real
+# 2-plugin manifest).
+# ---------------------------------------------------------------------------
+echo "test: remote fallback with a third plugin in the fetched manifest updates it too"
+REMOTE_THIRD_HOME="$WORK/remote-third-home"
+mkdir -p "$REMOTE_THIRD_HOME/.claude"
+rm -f "$CLAUDE_STUB_LOG"
+out3rt=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_THIRD_HOME" REPO_ROOT="$REPO_ROOT" THIRD_PLUGIN=1 bash "$SCRIPT" 2>&1)
+rc3rt=$?
+assert_equals "exit 0 with the remote fallback third-plugin manifest" "$rc3rt" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    calls3rt="$(cat "$CLAUDE_STUB_LOG")"
+    assert_equals "four claude calls via remote fallback (marketplace + 3 plugins)" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "4"
+    assert_contains "remote fallback updates the third, unnamed plugin" "$calls3rt" "plugin update context"
+else
+    no "no claude calls recorded for the remote-fallback third-plugin manifest"
+fi
+
+# ---------------------------------------------------------------------------
+# Same remote fallback, but only the marketplace.json fetch fails (common.sh
+# itself fetched fine) — e.g. a 429 or flaky DNS on the second curl inside
+# tcr_our_plugin_names. This must be non-fatal: no plugin updates happen, but
+# the marketplace update already ran, the status line still refreshes, and
+# the script still prints the restart reminder and exits 0 — round-3 fix for
+# tcr_die propagating through the bare assignment and killing the script.
+# ---------------------------------------------------------------------------
+echo "test: remote fallback, manifest fetch fails -> non-fatal, no plugin updates, still succeeds"
+MANIFEST_FAIL_HOME="$WORK/manifest-fail-home"
+mkdir -p "$MANIFEST_FAIL_HOME/.claude"
+rm -f "$CLAUDE_STUB_LOG"
+out3f=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$MANIFEST_FAIL_HOME" REPO_ROOT="$REPO_ROOT" FAIL_MANIFEST=1 bash "$SCRIPT" 2>&1)
+rc3f=$?
+assert_equals "exit 0 even when the remote manifest fetch fails" "$rc3f" "0"
+assert_contains "still prints restart reminder when manifest fetch fails" "$out3f" "Restart"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    assert_equals "only the marketplace-update call, no plugin updates" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "1"
+else
+    no "no claude calls recorded (log missing)"
+fi
+if [ -f "$MANIFEST_FAIL_HOME/.claude/statusline.py" ]; then
+    ok "status line still refreshes when only the manifest fetch fails"
+else
+    no "status line was not refreshed when only the manifest fetch fails"
 fi
 
 # ---------------------------------------------------------------------------
@@ -281,6 +423,19 @@ if [ -f "$SKILL_FILE" ]; then
     assert_contains "documents the manifest-derived plugin list" "$skill" "marketplace.json"
 else
     no "SKILL.md missing at $SKILL_FILE"
+fi
+
+# ---------------------------------------------------------------------------
+# Round-4 low: AGENT_SETUP.md was missed by the doc sweep that already fixed
+# the same stale claim in the two READMEs (commit 44d5f85).
+# ---------------------------------------------------------------------------
+echo "test: AGENT_SETUP.md no longer claims update-kit hardcodes both plugins"
+AGENT_SETUP_FILE="$REPO_ROOT/AGENT_SETUP.md"
+if [ -f "$AGENT_SETUP_FILE" ]; then
+    assert_not_contains "AGENT_SETUP.md doesn't hardcode 'both the personal-tools and workflow plugins'" \
+        "$(cat "$AGENT_SETUP_FILE")" 'both the `personal-tools` and `workflow` plugins'
+else
+    no "AGENT_SETUP.md missing at $AGENT_SETUP_FILE"
 fi
 
 # ---------------------------------------------------------------------------

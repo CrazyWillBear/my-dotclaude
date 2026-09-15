@@ -147,7 +147,7 @@ Releases and reach the machine like this:
 - **`/check-updates`** asks on demand, printing `kit is up to date (vX.Y.Z)` or
   `vX.Y.Z available — run /update-kit to upgrade`.
 - **`/update-kit`** applies the latest release: it updates the `my-dotclaude` marketplace
-  entry and both the `personal-tools` and `workflow` plugins, then reminds the user to
+  entry and every plugin listed in its manifest, then reminds the user to
   **restart Claude Code** so the new versions load.
 
 When you finish a setup, mention these to the user in plain language so they know how

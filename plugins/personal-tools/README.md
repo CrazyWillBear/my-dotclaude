@@ -124,8 +124,8 @@ plugins/personal-tools/
   and silently so it can never block a session. When a newer release exists it surfaces a short
   non-blocking notice naming the version and telling you to run `/update-kit`.
 - **`/update-kit`** — apply the latest kit release on this machine. Runs
-  `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
-  `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
+  `claude plugin marketplace update my-dotclaude`, then updates every plugin listed in its
+  manifest via `claude plugin update`, then prints a reminder to restart Claude Code.
   No arguments needed; works for both developer and simple-setup audiences.
 - **Worktree isolation** (`scripts/worktree-guard.sh` + `scripts/worktree-gc.sh`, wired in
   `hooks/hooks.json`) — enforces the global "worktree per coding task" rule so parallel sessions
