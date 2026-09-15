@@ -90,7 +90,14 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
-The three labels stay (issues already carry them); only the rosters change. `resolve-tier.sh`
+The three labels stay (issues already carry them); only the rosters change. **Open
+question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
+affordable on the $20 codex plan. A review is a shorter turn than an implementation but sol
+costs twice terra per token; the `turn.completed` usage on real runs decides it.
+
+The claude-side roster (used until codex is wired, and for claude-routed rows after) is
+trivial haiku with a sonnet reviewer, standard sonnet with an opus reviewer, complex opus
+with an opus reviewer. Fable no longer reviews. `resolve-tier.sh`
 keeps its seven-line contract and adds `<role>_backend=`. A backend of `claude` with the old
 model names keeps today's behaviour, so nothing breaks before codex is wired.
 
