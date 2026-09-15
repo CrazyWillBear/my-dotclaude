@@ -82,10 +82,22 @@ else
 fi
 
 if declare -F tcr_our_plugin_names >/dev/null; then
-  # Bare assignment (not a process substitution): under `set -euo pipefail`
-  # this lets a tcr_die inside tcr_our_plugin_names (e.g. a malformed
-  # manifest) abort the script instead of silently reading zero names.
-  names="$(tcr_our_plugin_names)"
+  if [ -n "$TCR_LOCAL_ROOT" ]; then
+    # Local marketplace copy path. Bare assignment (not a process
+    # substitution): under `set -euo pipefail` this lets a tcr_die inside
+    # tcr_our_plugin_names (e.g. a malformed manifest) abort the script
+    # instead of silently reading zero names.
+    names="$(tcr_our_plugin_names)"
+  else
+    # Remote-fallback path: the marketplace update already ran, so a failure
+    # here (429, flaky DNS on the manifest fetch) must stay non-fatal,
+    # matching the script's own "status-line refresh failure is non-fatal"
+    # contract — suppress errexit instead of letting tcr_die kill the script.
+    if ! names="$(tcr_our_plugin_names)"; then
+      printf 'note: could not derive plugin list from %s; skipped plugin updates — run: claude plugin update <name>\n' "$RAW_BASE" >&2
+      names=""
+    fi
+  fi
   while IFS= read -r name; do
     [ -n "$name" ] && claude plugin update "$name"
   done <<< "$names"
