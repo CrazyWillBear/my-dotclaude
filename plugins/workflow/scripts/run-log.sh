@@ -60,7 +60,7 @@ if [ -n "$GCD" ]; then
     ABS_GCD="$(cd "$ABS_GCD" 2>/dev/null && pwd -P)" || GCD=""
 fi
 [ -n "$GCD" ] || die "not in a git repo — the run log is keyed per repo"
-KEY="$(printf '%s' "$ABS_GCD" | sha1sum | cut -c1-16)"
+KEY="$(python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16])' "$ABS_GCD")"
 DIR="$HOME/.claude/handoffs/$KEY"
 
 case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-]" ;; esac

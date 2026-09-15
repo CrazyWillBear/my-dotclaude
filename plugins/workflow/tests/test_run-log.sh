@@ -160,6 +160,19 @@ expected_dir="$(HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$WORK/repo" bash "$CONTE
 got_dir="$(dirname "$(dirname "$(r path run1)")")"
 assert_equals "run-log and save-handoff key the same repo identically" "$got_dir" "$expected_dir"
 
+echo "test: keying still works with sha1sum absent from PATH (not present on macOS by default)"
+NOSHA_BIN="$WORK/nosha-bin"
+mkdir -p "$NOSHA_BIN"
+for bin in git python3; do
+    p="$(command -v "$bin" 2>/dev/null)" && ln -sf "$p" "$NOSHA_BIN/$bin"
+done
+BASH_BIN="$(command -v bash)"
+nosha_dir="$(cd "$WORK/repo" && HOME="$GLOBAL_HOME" PATH="$NOSHA_BIN" "$BASH_BIN" "$RUNLOG" path run1 2>"$WORK/err")"
+assert_equals "same keyed dir with sha1sum missing from PATH" "$nosha_dir" "$(r path run1)"
+
+echo "test: run-log.sh does not depend on the sha1sum binary"
+assert_not_contains "no sha1sum invocation in source" "$(cat "$RUNLOG")" "sha1sum"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
