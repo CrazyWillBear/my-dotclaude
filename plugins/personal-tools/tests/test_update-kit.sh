@@ -288,7 +288,20 @@ case "$url" in
         cp "$REPO_ROOT/setup/lib/common.sh" "$out"; exit 0 ;;
     *.claude-plugin/marketplace.json)
         [ "${FAIL_MANIFEST:-0}" = "1" ] && exit 1
-        cp "$REPO_ROOT/.claude-plugin/marketplace.json" "$out"; exit 0 ;;
+        if [ "${THIRD_PLUGIN:-0}" = "1" ]; then
+            cat > "$out" <<'MANIFEST'
+{
+  "plugins": [
+    {"name": "personal-tools"},
+    {"name": "workflow"},
+    {"name": "context"}
+  ]
+}
+MANIFEST
+        else
+            cp "$REPO_ROOT/.claude-plugin/marketplace.json" "$out"
+        fi
+        exit 0 ;;
     *global/statusline.py)
         cp "$REPO_ROOT/global/statusline.py" "$out"; exit 0 ;;
 esac
@@ -310,6 +323,29 @@ if [ -f "$REMOTE_HOME/.claude/statusline.py" ]; then
     ok "remote fallback installs the real statusline.py"
 else
     no "remote fallback did not install statusline.py"
+fi
+
+# ---------------------------------------------------------------------------
+# Same remote fallback, but the fetched manifest lists a third plugin — the
+# remote path must derive its list too, not just the local-copy path (round-4
+# finding: reverting the remote branch to a hardcoded pair would leave the
+# other remote-fallback tests green since they only ever see the real
+# 2-plugin manifest).
+# ---------------------------------------------------------------------------
+echo "test: remote fallback with a third plugin in the fetched manifest updates it too"
+REMOTE_THIRD_HOME="$WORK/remote-third-home"
+mkdir -p "$REMOTE_THIRD_HOME/.claude"
+rm -f "$CLAUDE_STUB_LOG"
+out3rt=$(PATH="$WORK/remote-stubs:$WORK/bin:$PATH" HOME="$REMOTE_THIRD_HOME" REPO_ROOT="$REPO_ROOT" THIRD_PLUGIN=1 bash "$SCRIPT" 2>&1)
+rc3rt=$?
+assert_equals "exit 0 with the remote fallback third-plugin manifest" "$rc3rt" "0"
+if [ -f "$CLAUDE_STUB_LOG" ]; then
+    calls3rt="$(cat "$CLAUDE_STUB_LOG")"
+    assert_equals "four claude calls via remote fallback (marketplace + 3 plugins)" \
+        "$(wc -l < "$CLAUDE_STUB_LOG")" "4"
+    assert_contains "remote fallback updates the third, unnamed plugin" "$calls3rt" "plugin update context"
+else
+    no "no claude calls recorded for the remote-fallback third-plugin manifest"
 fi
 
 # ---------------------------------------------------------------------------
