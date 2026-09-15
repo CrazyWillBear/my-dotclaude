@@ -102,7 +102,12 @@ fi
 echo "test: one marketplace-update call plus one plugin-update call per manifest plugin"
 if [ -f "$CLAUDE_STUB_LOG" ]; then
     count=$(wc -l < "$CLAUDE_STUB_LOG")
-    assert_equals "three claude calls recorded (marketplace + 2 real plugins)" "$count" "3"
+    # Derived from the REAL live manifest, never hardcoded — this test points
+    # known_marketplaces.json at $REPO_ROOT itself, so the real plugin count grows
+    # as the repo does (#83's whole point: nothing here should hardcode a count).
+    real_plugin_count=$(jq '.plugins | length' "$REPO_ROOT/.claude-plugin/marketplace.json")
+    expected=$((real_plugin_count + 1))
+    assert_equals "one claude call per manifest plugin, plus the marketplace update ($real_plugin_count real plugins)" "$count" "$expected"
 else
     no "no claude calls recorded (log missing)"
 fi
