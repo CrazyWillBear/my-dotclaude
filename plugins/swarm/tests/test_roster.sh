@@ -145,6 +145,34 @@ run get implementer-1 manager "$WITHMANAGER"
 assert_equals "withmanager: get implementer-1 manager" "$OUT" "swe-manager"
 
 # ---------------------------------------------------------------------------
+echo "test: a worker row whose manager names a role absent from the roster is rejected"
+BADMANAGERREF="$WORK/badmanagerref"
+roster "$BADMANAGERREF" '{
+  "implementer-1": {"kind": "worker", "backend": "codex", "model": "terra", "effort": "medium", "manager": "nonexistent-role"}
+}'
+run validate "$BADMANAGERREF"
+assert_equals "badmanagerref: validate exit 1" "$RC" "1"
+assert_contains "badmanagerref: names the role with the dangling manager ref" "$ERR" "implementer-1"
+assert_contains "badmanagerref: names the dangling manager reference" "$ERR" "nonexistent-role"
+
+run get implementer-1 manager "$BADMANAGERREF"
+assert_equals "badmanagerref: get also exit 1" "$RC" "1"
+
+# ---------------------------------------------------------------------------
+echo "test: a row missing backend/model/effort is rejected"
+MISSINGFIELDS="$WORK/missingfields"
+roster "$MISSINGFIELDS" '{"orchestrator": {"kind": "orchestrator"}}'
+run validate "$MISSINGFIELDS"
+assert_equals "missingfields: validate exit 1" "$RC" "1"
+assert_contains "missingfields: names the role" "$ERR" "orchestrator"
+assert_contains "missingfields: names backend" "$ERR" "backend"
+assert_contains "missingfields: names model" "$ERR" "model"
+assert_contains "missingfields: names effort" "$ERR" "effort"
+
+run list "$MISSINGFIELDS"
+assert_equals "missingfields: list also exit 1" "$RC" "1"
+
+# ---------------------------------------------------------------------------
 echo "test: missing roster, malformed JSON, and a non-object roster all fail loudly"
 
 MISSING="$WORK/missing"

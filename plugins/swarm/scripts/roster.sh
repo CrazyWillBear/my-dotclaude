@@ -30,8 +30,9 @@
 # peer under the wrong permissions or model.
 #
 # Exit 0 on success. Exit 1 + "error: ..." on stderr on any usage mistake, a
-# missing/unreadable/malformed roster, or a validation failure (unknown kind, or a
-# worker row with no manager).
+# missing/unreadable/malformed roster, or a validation failure (unknown kind, a row
+# missing backend/model/effort, a worker row with no manager, or a worker row whose
+# manager names a role absent from this roster).
 #
 # `list [kind]`'s one ambiguity — is a lone positional arg a kind or a project-dir?
 # — is resolved by the closed kind enum: if it matches one of the four kinds, it's a
@@ -100,6 +101,7 @@ project_dir = os.environ["ROSTER_PROJECT_DIR"]
 path = os.path.join(project_dir, ".claude", "swarm", "roster.json")
 
 KINDS = {"orchestrator", "manager", "doer", "worker"}
+REQUIRED_FIELDS = ("backend", "model", "effort")
 DEFAULTS = {"rotate_at": 300000, "autocompact": 400000}
 
 def fail(msg):
@@ -127,8 +129,17 @@ for name, row in roster.items():
         errors.append("role %r: unknown kind %r (want one of %s)"
                        % (name, kind, ", ".join(sorted(KINDS))))
         continue
-    if kind == "worker" and not row.get("manager"):
-        errors.append("role %r: worker row has no manager" % name)
+    missing = [f for f in REQUIRED_FIELDS if not row.get(f)]
+    if missing:
+        errors.append("role %r: missing required field(s): %s"
+                       % (name, ", ".join(missing)))
+    if kind == "worker":
+        manager = row.get("manager")
+        if not manager:
+            errors.append("role %r: worker row has no manager" % name)
+        elif manager not in roster:
+            errors.append("role %r: manager %r is not a role in this roster"
+                           % (name, manager))
 
 if errors:
     for e in errors:
