@@ -146,8 +146,8 @@ through the `personal-tools` plugin — no need to re-run the installer:
 3. **`/check-updates`** — run it any time to ask on demand. It prints either
    `kit is up to date (vX.Y.Z)` or `vX.Y.Z available — run /update-kit to upgrade`.
 4. **`/update-kit`** — applies the latest release: it updates the `my-dotclaude`
-   marketplace entry and both the `personal-tools` and `workflow` plugins, then reminds
-   you to **restart Claude Code** so the new versions load. Works for both the developer
+   marketplace entry and every plugin listed in its manifest, then reminds you to
+   **restart Claude Code** so the new versions load. Works for both the developer
    and non-developer setups.
 
 Per-command details are in
