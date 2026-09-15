@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Orchestrate context gate for the workflow plugin.
+# Orchestrate context gate for the context plugin.
 #
 # Wired on UserPromptSubmit only. When the user types the /orchestrate slash
 # command (bare or with arguments, e.g. `/orchestrate 3` or

@@ -18,7 +18,7 @@
 #   * Only UserPromptSubmit is handled — PostToolUse and Stop are silent.
 #   * Fail-open: a missing transcript stays silent.
 #
-# Run: bash plugins/workflow/tests/test_watchdog.sh   (non-zero if any fail)
+# Run: bash plugins/context/tests/test_watchdog.sh   (non-zero if any fail)
 
 set -u
 

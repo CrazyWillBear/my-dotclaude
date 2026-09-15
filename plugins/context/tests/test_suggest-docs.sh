@@ -15,7 +15,7 @@
 #   * stop_hook_active -> silent (no re-loop);
 #   * no git / python3 on PATH -> fail open (exit 0, silent).
 #
-# Run: bash plugins/workflow/tests/test_suggest-docs.sh  (non-zero if any fail)
+# Run: bash plugins/context/tests/test_suggest-docs.sh  (non-zero if any fail)
 
 set -u
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# SessionStart auto-resume for the workflow plugin.
+# SessionStart auto-resume for the context plugin.
 #
 # The other half of the handoff loop. /handoff writes a per-repo
 # keyed resume pointer (~/.claude/handoffs/<sha1(git_common_dir)[:16]>/.pending.json)

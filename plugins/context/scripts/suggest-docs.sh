@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Docs-staleness nudge — a Stop hook for the workflow plugin.
+# Docs-staleness nudge — a Stop hook for the context plugin.
 #
 # When a batch changed code but touched NO docs, give a soft "heads up — docs may
 # be stale" so the docs get folded into the same commit. It never edits or commits
