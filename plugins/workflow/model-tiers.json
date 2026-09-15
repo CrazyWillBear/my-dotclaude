@@ -1,7 +1,7 @@
 {
   "trivial": {
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" },
+    "planner":     { "model": "haiku",  "effort": "medium" },
+    "implementer": { "model": "haiku",  "effort": "medium" },
     "reviewer":    { "model": "sonnet", "effort": "high" }
   },
   "standard": {

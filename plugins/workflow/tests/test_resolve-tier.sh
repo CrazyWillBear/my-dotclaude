@@ -27,7 +27,7 @@
 #   6. Bad/missing tier arg against a good shipped config → the exact WARN line +
 #      standard fallback; exit 0.
 #   7. The shipped config is structurally complete: 9 tier×role cells resolve
-#      through the REAL helper to a model in {sonnet,opus,fable} and an effort in
+#      through the REAL helper to a model in {haiku,sonnet,opus,fable} and an effort in
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
 #   8. Fallback lockstep: the missing-config fallback output is byte-identical,
 #      line for line, to resolving `standard` from the shipped config.
@@ -100,9 +100,9 @@ assert_equals "trivial: exit 0" "$RC" "0"
 assert_equals "trivial: stderr empty (no WARN)" "$ERR" ""
 assert_equals "trivial: exactly 7 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "7"
 assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
-assert_equals "trivial: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
+assert_equals "trivial: planner_model haiku" "$(val "$OUT" planner_model)" "haiku"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
-assert_equals "trivial: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "trivial: implementer_model haiku" "$(val "$OUT" implementer_model)" "haiku"
 assert_equals "trivial: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
 assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
 assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
@@ -455,7 +455,7 @@ for t in trivial standard complex; do
     for r in planner implementer reviewer; do
         m="$(val "$OUT" "${r}_model")"
         e="$(val "$OUT" "${r}_effort")"
-        case "$m" in sonnet|opus|fable) ;; *) complete=0 ;; esac
+        case "$m" in haiku|sonnet|opus|fable) ;; *) complete=0 ;; esac
         case "$e" in low|medium|high|xhigh|max) ;; *) complete=0 ;; esac
     done
 done

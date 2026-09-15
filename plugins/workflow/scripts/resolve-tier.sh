@@ -23,7 +23,7 @@
 # Fallback (single WARN to stderr, then the hardcoded standard roster to stdout,
 # exit 0) on ANY of: a missing/unreadable config; unparseable content (including
 # a wrong-shape config); a structurally incomplete config (any of the 3 tiers ×
-# 3 roles missing a model/effort); a model outside {sonnet,opus,fable}; an effort
+# 3 roles missing a model/effort); a model outside {haiku,sonnet,opus,fable}; an effort
 # outside {low,medium,high,xhigh,max}; or a missing/unknown tier argument. Never
 # exits non-zero and never writes anything to stderr but the one WARN line.
 
@@ -130,14 +130,14 @@ cell() {
 [ -f "$CONFIG" ] || fallback
 
 # Structural + value validation: every one of the 9 tier×role cells must carry a
-# model in {sonnet,opus,fable} and an effort in {low,medium,high,xhigh,max}. Any
+# model in {haiku,sonnet,opus,fable} and an effort in {low,medium,high,xhigh,max}. Any
 # miss (absent cell, unparseable content, wrong shape, out-of-set value) → fallback.
 for t in trivial standard complex; do
     for r in planner implementer reviewer; do
         m="$(cell "$t" "$r" model)"
         e="$(cell "$t" "$r" effort)"
         case "$m" in
-            sonnet|opus|fable) ;;
+            haiku|sonnet|opus|fable) ;;
             *) fallback ;;
         esac
         case "$e" in
