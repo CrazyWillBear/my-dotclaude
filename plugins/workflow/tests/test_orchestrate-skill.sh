@@ -227,6 +227,40 @@ assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
 assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
 assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
 
+# The recovery block reads the status table TWICE — once to find the busy row, once to
+# verify the stop took — and both are its own command in a fresh shell, so `$RUNID` there
+# expands to nothing, the table comes back empty, and the verify gate reads "nothing busy"
+# as "safe to respawn". Same hole as the bounded wait below, one block up.
+assert_not_matches "the recovery block never reads the table through \$RUNID" "$BODY" '"\$S" +"\$RUNID"'
+assert_contains "the busy-row read uses the placeholder" "$BODY" 'read -r id kind < <("$S" <runid> <N>'
+
+echo "test: the verify-stopped gate fails CLOSED when the runid is left unfilled"
+# The gate exists to catch a stop that did not take. An empty runid makes the status read
+# come back empty, `-z` true, the gate pass, and the respawn land on a live worktree — so
+# run the SHIPPED line against a stub that, like session-status.sh, only reports rows for
+# the runid it was asked for. A snippet reading an outer `$RUNID` gets no row and returns 0.
+GATE_LINE="$(printf '%s\n' "$BODY" | grep -F '[ -z "$("$S"' | head -1)"
+if [ -z "$GATE_LINE" ]; then
+    no "no verify-stopped gate found in the skill"
+else
+    STUB="$(mktemp -d)"
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = r1 ] || exit 0\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
+    chmod +x "$STUB/status.sh"
+    (
+        set +u
+        unset RUNID
+        S="$STUB/status.sh"
+        eval "$(printf '%s\n' "$GATE_LINE" | sed "s|<runid>|r1|; s|<N>|12|")"
+    ) >/dev/null 2>&1
+    rc=$?
+    rm -rf "$STUB"
+    if [ "$rc" -ne 0 ]; then
+        ok "a still-busy row keeps the gate shut"
+    else
+        no "the verify gate passed with the runid unfilled — it is not self-contained"
+    fi
+fi
+
 echo "test: the bounded wait really waits — from a FRESH shell, with nothing preset"
 # Found live, twice. Each fenced block in the skill is its own shell invocation: `S=` is
 # assigned in the recovery block, `RUNID` nowhere in the file, so when the agent runs the

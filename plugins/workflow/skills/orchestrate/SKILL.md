@@ -548,7 +548,7 @@ S=~/.claude/kit/infra/scripts/session-status.sh
 # the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
 # column 3 is the backend, and it decides the stop: a codex id is a PID, which
 # `claude stop` cannot take, and the kill has to be a GROUP kill (see above).
-read -r id kind < <("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2, $3}')
+read -r id kind < <("$S" <runid> <N> | awk '$4 == "busy" {print $2, $3}')
 # Both guards below exit 1 and they mean OPPOSITE things, so each one says which it was:
 # "nothing to do" is safe, "recycled pid" means a live worker you must not respawn over.
 [ -n "$id" ] || { echo "nothing busy for issue <N>: nothing to stop"; exit 1; }
@@ -561,7 +561,7 @@ case "$kind" in
     *)     claude stop "$id" ;;
 esac
 # verify: NO row for this issue may still be busy
-[ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
+[ -z "$("$S" <runid> <N> | awk '$4 == "busy"')" ] || exit 1
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
 bash ~/.claude/kit/infra/scripts/spawn.sh ...                         # same worktree, same branch
 ```
@@ -583,11 +583,13 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
   timeout 60 bash -c 'S=~/.claude/kit/infra/scripts/session-status.sh; until [ -z "$("$S" <runid> <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
   ```
 
-  **Self-contained on purpose — fill `<runid>` and `<N>` in, do not reach for `$S` or `$RUNID`.**
-  You run this as its own command, which is a **fresh shell**: the `S=` in the recovery block
-  above is gone, and `RUNID` was never a shell variable at all. Either one left as a reference
-  expands to nothing, the command substitution comes back empty, the `until` is satisfied on its
-  first pass, and the wait passes instantly — which is a stop that did not take, missed.
+  **Self-contained on purpose — fill `<runid>` and `<N>` in, do not reach for `$S`.** You run
+  this as its own command, which is a **fresh shell**: the `S=` in the recovery block above is
+  gone. That is why every status read that gates a respawn — here and at both reads in the
+  recovery block — takes the `<runid>` placeholder and not `$RUNID`. A placeholder left as a
+  variable reference expands to nothing, the command substitution comes back empty, the `until`
+  is satisfied on its first pass, and the wait passes instantly — which is a stop that did not
+  take, missed.
 
   If that times out, **do not respawn**. The safety rule is unchanged — two processes on one
   worktree corrupts it — so tell the user instead, naming the id and the worktree, and let them
