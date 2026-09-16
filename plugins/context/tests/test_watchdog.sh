@@ -16,10 +16,11 @@
 #     long autonomous runs, and /orchestrate now runs its loop on the main
 #     thread where a mid-run "wrap up and /handoff" is actively harmful.)
 #   * Peer rotation nudge — the ONE exception to that silence, and it is scoped:
-#     only a session whose own name is a `manager`/`doer` row in this project's
+#     only a session whose transcript names it (`{"type":"agent-name"}`, which is
+#     what `claude -n` writes) as a `manager`/`doer` row in this project's
 #     roster.json, only past THAT row's rotate_at. The orchestrator row, a worker
-#     row, a name absent from the roster, and an unnamed interactive session are
-#     all silent (docs/swarm-design.md § Rotation).
+#     row, a name absent from the roster, and an unnamed session are all silent
+#     (docs/swarm-design.md § Rotation).
 #   * Only UserPromptSubmit is handled — PostToolUse and Stop are silent.
 #   * Fail-open: a missing transcript stays silent.
 #
@@ -49,44 +50,16 @@ mkdir -p "$PROJECT_DIR"
 SWARM_DIR="$WORK/swarm-proj"
 mkdir -p "$SWARM_DIR/.claude/swarm"
 
-# The watchdog asks infra "what is my name?" through the stable link, and infra asks
-# the `claude` CLI. Both are real here: the REAL session-status.sh at the REAL address
-# ($HOME/.claude/kit/infra), over a stub `claude agents --json` fixture.
-REPO_ROOT="$(cd "$PLUGIN_ROOT/../.." && pwd)"
-mkdir -p "$GLOBAL_HOME/.claude/kit"
-ln -s "$REPO_ROOT/plugins/infra" "$GLOBAL_HOME/.claude/kit/infra"
-
-BIN="$WORK/bin"
-mkdir -p "$BIN"
-PATH="$BIN:$PATH"
-export PATH
-cat >"$BIN/claude" <<STUB
-#!/usr/bin/env bash
-[ "\$1" = agents ] && exec cat "$WORK/agents.json"
-exit 0
-STUB
-chmod +x "$BIN/claude"
-
-# agents <name> — the session list `--self` resolves against. An empty name is how an
-# ordinary interactive session looks: it is in no agent list under any name.
-agents() {
-    if [ -z "$1" ]; then
-        printf '[]\n' >"$WORK/agents.json"
-    else
-        printf '[{"sessionId":"sid-peer","name":"%s","cwd":"%s","kind":"background","state":"busy"}]\n' \
-            "$1" "$SWARM_DIR" >"$WORK/agents.json"
-    fi
-}
-
 # roster <json> — this project's roster.json.
 roster() { printf '%s\n' "$1" >"$SWARM_DIR/.claude/swarm/roster.json"; }
 
-# run_peer <transcript> — the hook, run as a session named by the last `agents` call,
-# inside the swarm project.
+# run_peer <transcript> [prompt] — the hook, inside the swarm project. The session's
+# NAME is not passed in: it comes out of the transcript, exactly as it does live.
 run_peer() {
-    printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-peer","transcript_path":"%s","prompt":"carry on"}' "$1" \
+    printf '{"hook_event_name":"UserPromptSubmit","session_id":"sid-peer","transcript_path":"%s","prompt":"%s"}' \
+        "$1" "${2:-carry on}" \
         | HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$SWARM_DIR" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" \
-            CLAUDE_CODE_SESSION_ID=sid-peer bash "$WATCHDOG"
+            bash "$WATCHDOG"
 }
 
 pass=0
@@ -98,12 +71,17 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; 
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected silence, got: $2)"; fi; }
 
-# make_transcript <file> <total>  — a transcript whose LAST assistant entry sums
+# make_transcript <file> <total> [name] — a transcript whose LAST assistant entry sums
 # to <total> input-side tokens (an earlier, smaller entry proves we take the last).
+#
+# [name] adds the `agent-name` rows `claude -n` writes. A session RENAMED mid-run has
+# two of them (seen live: a peer renamed from performance-engineer-cogito), so a stale
+# first row is included to pin that the LAST one wins. No [name] is an ordinary session
+# started without -n: no such row at all.
 make_transcript() {
-    python3 - "$1" "$2" <<'PY'
+    python3 - "$1" "$2" "${3:-}" <<'PY'
 import sys, json
-path, total = sys.argv[1], int(sys.argv[2])
+path, total, name = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 rows = [
     {"type": "user", "message": {"role": "user", "content": "hi"}},
     {"type": "assistant", "message": {"role": "assistant", "usage": {
@@ -111,6 +89,9 @@ rows = [
     {"type": "assistant", "message": {"role": "assistant", "usage": {
         "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
 ]
+if name:
+    rows.insert(0, {"type": "agent-name", "agentName": "a-stale-former-name", "sessionId": "s"})
+    rows.insert(2, {"type": "agent-name", "agentName": name, "sessionId": "s"})
 with open(path, "w") as fh:
     for r in rows:
         fh.write(json.dumps(r) + "\n")
@@ -215,14 +196,17 @@ assert_empty "missing transcript: silent" "$out"
 # exposes no context size, so nothing else can — and past its roster row's rotate_at
 # it asks for a rotation. It never rotates itself: it nudges, and the orchestrator
 # runs `swarm.sh rotate` (docs/swarm-design.md § Rotation).
-echo "test: a roster peer past its rotate_at is nudged to /handoff"
-roster '{
+ROSTER='{
   "orchestrator": {"kind":"orchestrator","backend":"claude","model":"opus","effort":"high"},
-  "swe-manager":  {"kind":"manager","backend":"claude","model":"opus","effort":"high","rotate_at":50000}
+  "swe-manager":  {"kind":"manager","backend":"claude","model":"opus","effort":"high"},
+  "perf-eng":     {"kind":"doer","backend":"claude","model":"opus","effort":"high","rotate_at":120000},
+  "builder":      {"kind":"worker","backend":"claude","model":"opus","effort":"high","manager":"swe-manager"}
 }'
-agents swe-manager
-make_transcript "$WORK/peer-over.jsonl" 60000
-out=$(run_peer "$WORK/peer-over.jsonl")
+roster "$ROSTER"
+
+echo "test: a roster peer past its rotate_at is nudged to /handoff"
+make_transcript "$WORK/mgr-over.jsonl" 310000 swe-manager
+out=$(run_peer "$WORK/mgr-over.jsonl")
 assert_contains "injects as additionalContext" "$out" '"hookEventName": "UserPromptSubmit"'
 assert_not_contains "never blocks the prompt" "$out" '"decision": "block"'
 assert_contains "names the command to run" "$out" "/handoff"
@@ -230,64 +214,67 @@ assert_contains "at the next natural stopping point, not now" "$out" "natural st
 assert_contains "report back over SendMessage" "$out" "SendMessage"
 assert_contains "to the roster's orchestrator, by name" "$out" "orchestrator"
 assert_contains "and hand over the doc path" "$out" "path"
+assert_contains "names the role whose row was read" "$out" "swe-manager"
 assert_contains "shows a user-facing systemMessage" "$out" "swarm:"
 
-echo "test: the same peer under its rotate_at is silent"
-make_transcript "$WORK/peer-under.jsonl" 40000
-assert_empty "under rotate_at: silent" "$(run_peer "$WORK/peer-under.jsonl")"
+# A hook that prints two JSON objects prints invalid JSON, and the whole advisory is
+# dropped — so this has to be exactly one document, never the gate's plus the nudge's.
+echo "test: the hook prints exactly one JSON object"
+printf '%s' "$out" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' \
+    && ok "the nudge parses as one JSON document" || no "the nudge is not valid JSON"
+over=$(run_peer "$WORK/mgr-over.jsonl" "/orchestrate")
+printf '%s' "$over" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' \
+    && ok "a peer past rotate_at typing /orchestrate still prints one document" \
+    || no "gate and nudge were concatenated"
+assert_contains "and it is the orchestrate gate that wins" "$over" "workflow:"
+assert_not_contains "not both" "$over" "swarm:"
 
-# rotate_at is per-row, so a row that omits it must fall back to the documented 300k
-# (docs/swarm-design.md § Rotation) — the same default roster.sh serves.
-echo "test: a row with no rotate_at falls back to the documented 300k default"
-roster '{
-  "orchestrator": {"kind":"orchestrator","backend":"claude","model":"opus","effort":"high"},
-  "swe-manager":  {"kind":"manager","backend":"claude","model":"opus","effort":"high"}
-}'
-make_transcript "$WORK/peer-290k.jsonl" 290000
-assert_empty "290k with the default 300k: silent" "$(run_peer "$WORK/peer-290k.jsonl")"
-make_transcript "$WORK/peer-310k.jsonl" 310000
-assert_contains "310k with the default 300k: nudged" "$(run_peer "$WORK/peer-310k.jsonl")" "/handoff"
+echo "test: the same peer under its rotate_at is silent"
+make_transcript "$WORK/mgr-under.jsonl" 290000 swe-manager
+assert_empty "290k against the default 300k: silent" "$(run_peer "$WORK/mgr-under.jsonl")"
+
+# rotate_at is per-row. The manager row above omits it and falls back to the documented
+# 300k (docs/swarm-design.md § Rotation, the same default roster.sh serves); this row
+# sets its own, and 150k must trip it while it sits far under the default.
+echo "test: a row's own rotate_at is what is read, not the default"
+make_transcript "$WORK/doer.jsonl" 150000 perf-eng
+assert_contains "150k against the row's 120k: nudged" "$(run_peer "$WORK/doer.jsonl")" "/handoff"
+make_transcript "$WORK/doer-under.jsonl" 110000 perf-eng
+assert_empty "110k against the row's 120k: silent" "$(run_peer "$WORK/doer-under.jsonl")"
+make_transcript "$WORK/mgr-150.jsonl" 150000 swe-manager
+assert_empty "the same 150k on the default-300k row: silent" "$(run_peer "$WORK/mgr-150.jsonl")"
 
 # The orchestrator is Will's own session. A "wrap up and /handoff" in the seat someone
 # is sitting in is the interruption the old periodic nudge was deleted for.
 echo "test: the orchestrator is never nudged, however full it is"
-agents orchestrator
-assert_empty "orchestrator at 310k: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
+make_transcript "$WORK/orch.jsonl" 900000 orchestrator
+assert_empty "orchestrator at 900k: silent" "$(run_peer "$WORK/orch.jsonl")"
 
-echo "test: a worker row is not a peer and is never nudged"
-roster '{
-  "orchestrator": {"kind":"orchestrator","backend":"claude","model":"opus","effort":"high"},
-  "swe-manager":  {"kind":"manager","backend":"claude","model":"opus","effort":"high"},
-  "builder":      {"kind":"worker","backend":"claude","model":"opus","effort":"high","manager":"swe-manager"}
-}'
-agents builder
-assert_empty "worker row at 310k: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
+echo "test: a worker row is not a session and is never nudged"
+make_transcript "$WORK/worker.jsonl" 900000 builder
+assert_empty "worker row at 900k: silent" "$(run_peer "$WORK/worker.jsonl")"
 
-# An interactive session carries no `-n` name, so it is in no agent list under one and
-# `--self` cannot resolve it. That is what keeps the nudge out of a human's window.
-echo "test: an unnamed interactive session is silent"
-agents ""
-assert_empty "no name to match a roster role: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
+# A session started without -n writes no agent-name row, so it matches no roster role.
+# That is what keeps the nudge out of an ordinary interactive window.
+echo "test: a session with no name in its transcript is silent"
+make_transcript "$WORK/unnamed.jsonl" 900000
+assert_empty "no agent-name row at 900k: silent" "$(run_peer "$WORK/unnamed.jsonl")"
+make_transcript "$WORK/stranger.jsonl" 900000 some-other-session
+assert_empty "a name in no roster row at 900k: silent" "$(run_peer "$WORK/stranger.jsonl")"
 
-echo "test: a name that is in no roster row is silent"
-agents some-other-session
-assert_empty "unknown name at 310k: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
-
-# Fail open, every way the swarm side can be absent or broken.
+# Fail open, every way the swarm side can be absent or broken: a hook that errors on a
+# half-edited roster wedges the session it was meant to help.
 echo "test: the peer branch fails open"
-agents swe-manager
 rm -f "$SWARM_DIR/.claude/swarm/roster.json"
-assert_empty "no roster.json: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
+assert_empty "no roster.json: silent" "$(run_peer "$WORK/mgr-over.jsonl")"
 roster 'not json at all'
-assert_empty "unreadable roster: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
-roster '{
-  "orchestrator": {"kind":"orchestrator","backend":"claude","model":"opus","effort":"high"},
-  "swe-manager":  {"kind":"manager","backend":"claude","model":"opus","effort":"high"}
-}'
-assert_contains "sanity: the good roster still nudges" "$(run_peer "$WORK/peer-310k.jsonl")" "/handoff"
-mv "$GLOBAL_HOME/.claude/kit/infra" "$GLOBAL_HOME/.claude/kit/infra.off"
-assert_empty "no infra link — cannot know its own name: silent" "$(run_peer "$WORK/peer-310k.jsonl")"
-mv "$GLOBAL_HOME/.claude/kit/infra.off" "$GLOBAL_HOME/.claude/kit/infra"
+assert_empty "unreadable roster: silent" "$(run_peer "$WORK/mgr-over.jsonl")"
+roster '{"swe-manager": "not an object"}'
+assert_empty "a row that is not an object: silent" "$(run_peer "$WORK/mgr-over.jsonl")"
+roster '{"swe-manager": {"kind":"manager","backend":"claude","model":"opus","effort":"high","rotate_at":"soon"}}'
+assert_contains "a junk rotate_at falls back to the default" "$(run_peer "$WORK/mgr-over.jsonl")" "/handoff"
+roster "$ROSTER"
+assert_contains "sanity: the good roster still nudges" "$(run_peer "$WORK/mgr-over.jsonl")" "/handoff"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
