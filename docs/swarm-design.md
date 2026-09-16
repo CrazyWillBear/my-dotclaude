@@ -219,6 +219,13 @@ beside the event log; `session-status.sh` reports a codex worker from those the 
 a claude worker from the agent list. The report contract is identical, so `/orchestrate` does
 not change.
 
+Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
+`last-message.txt`, `status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
+`done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
+`/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
+also swaps two steps: `codex exec review --base` replaces the `my-review` subagent, and the
+schema'd final message replaces `SendMessage`, which codex does not have.
+
 ## Rotation
 
 Peers fill up. Rotation is the peer version of `/clear` then `go`, and it was verified live
@@ -289,5 +296,6 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
    this project" means when two projects share a `swe-manager`.)
 5. **rotation**: the peer-mode watchdog threshold and `swarm.sh rotate`.
 6. **memory**: vault work order above, then the policy generator and charter lines in swarm.
-7. **codex**: the backend switch in infra.
+7. **codex**: the backend switch in infra. (Landed #90: `spawn.sh`'s `codex exec` worker path,
+   codex worker state in `session-status.sh`, and the roster flip in `model-tiers.json`.)
 8. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.

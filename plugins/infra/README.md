@@ -10,8 +10,8 @@ plugins/infra/
 ├── model-tiers.json             # tier → {model, effort, backend} roster, read by resolve-tier.sh
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
-│   ├── spawn.sh                 # build (or print) the `claude --bg` command for a worker (one issue) or a peer (one role)
-│   ├── session-status.sh        # session state from `claude agents --json`; --self resolves this session's name, --peers resolves roster roles to ids
+│   ├── spawn.sh                 # start (or print) a worker (one issue) or a peer (one role): `claude --bg`, or `codex exec` when the tier says codex
+│   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   └── resolve-tier.sh          # resolve a complexity tier → its {model, effort, backend} roster (awk, no jq; standard fallback)
 ├── tests/                       # one bash test per script
@@ -34,6 +34,28 @@ bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <bas
 bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
      --brief b.md --charter c.md --model opus --effort high [--handoff h.md] [--autocompact 400k]
 ```
+
+## Two backends, for the worker form only
+
+A worker whose tier's `implementer_backend` is `codex` runs `codex exec` in the background
+instead of `claude --bg` ([`docs/swarm-design.md` § Codex backend](../../docs/swarm-design.md)).
+Codex has no agent list, so the run dir **is** the session:
+
+```
+${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
+├── events.jsonl        # the --json event stream
+├── last-message.txt    # -o: the final message, shaped by --output-schema
+├── status-schema.json  # the worker's fixed-shape status report
+├── pid                 # alive => busy
+└── exit                # 0 => done, anything else => failed
+```
+
+`session-status.sh <runid>` reports those alongside the claude sessions, in the same
+vocabulary, with the PID in column 2. The spawn returns immediately and prints the run dir.
+
+The repo's **common** git dir goes in `sandbox_workspace_write.writable_roots`, because
+`-s workspace-write` keeps `.git` read-only and a worker that cannot commit has nothing to
+hand back. A **peer is never codex** — a peer needs an inbox and codex has none.
 
 A peer's `--name` **is** its stable address: rotation stops the process and respawns under the
 same name, so there is no run prefix. `--charter`'s text is appended to the system prompt (the CLI

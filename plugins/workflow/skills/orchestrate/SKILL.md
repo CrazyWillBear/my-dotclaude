@@ -134,10 +134,12 @@ on a confirmation you already gave; the announcement *is* the veto window:
 
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
-**Claude-only.** Steps 3-5 spawn through the `Agent` tool, which accepts only claude model
-names — a `codex`-backend roster cell cannot run in this lane. Every shipped tier is
-all-claude today, so this is dormant; #90 wires codex routing for the *session* lane's
-`spawn.sh` only, and does not cover this consumer.
+**Claude-only, and the shipped roster is not.** Steps 3-5 spawn through the `Agent` tool,
+which accepts only claude model names. Since #90 every worker cell in `model-tiers.json`
+is `backend: codex`, so **`resolve-tier.sh`'s model is not usable here** — passing a
+`gpt-5.6-*` name to `Agent` fails. When a cell says `codex`, substitute the claude-side
+roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet` (reviewer `opus`), complex
+`opus`. #90 wired codex for the *session* lane's `spawn.sh` only; this lane is unchanged.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -505,7 +507,13 @@ One line per session — `<name> <id> <kind> <state>`:
 | `blocked` | a **permission wedge**: it is asking for something and nobody is there |
 | `done` | reported itself finished |
 | `stopped` | killed by `claude stop` — what a respawn waits for, and not the same as `gone` |
+| `failed` | codex workers only: exited non-zero, or died without recording an exit code |
 | `gone` | expected but not listed — it never came up, or it exited |
+
+A **codex** worker is a process, not a session, so it is in no agent list: `session-status.sh`
+reads it from `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` instead, and column 2
+is its PID. It reports in this same vocabulary — `busy`, then `done` or `failed` — and it never
+goes `idle`. Everything below keys on `busy`, so nothing changes.
 
 **Never parse `claude logs`.** It is a raw ANSI screen dump — cursor moves and spinner frames, not
 a transcript.
