@@ -176,7 +176,6 @@ if [ "\${1:-}" = "--help" ] || [ "\${1:-}" = "-h" ]; then
     exit 0
 fi
 if [ "\${1:-}" = "init" ]; then
-    echo "\$@" >> "$STUB_INIT_LOG"
     # find the --vault value and build the real layout, like the real CLI would.
     root=""
     prev=""
@@ -184,6 +183,17 @@ if [ "\${1:-}" = "init" ]; then
         if [ "\$prev" = "--vault" ]; then root="\$a"; fi
         prev="\$a"
     done
+    # Mimics wilcus-vault's own guard (cli/init.py cmd_init): refuse a root that
+    # already exists, is non-empty (even just empty scaffold dirs — no file
+    # required), and has no .vault-policy.json of its own. Without this, the
+    # "recovery, empty tree" test below would pass even if memory.sh's own
+    # clear-before-adopt step were deleted, since this stub would silently
+    # adopt a dirty tree that the real vault would refuse.
+    if [ -e "\$root" ] && [ ! -e "\$root/.vault-policy.json" ] && [ -n "\$(ls -A "\$root" 2>/dev/null)" ]; then
+        echo "init: \$root is not empty and has no .vault-policy.json of its own" >&2
+        exit 1
+    fi
+    echo "\$@" >> "$STUB_INIT_LOG"
     mkdir -p "\$root/shared" "\$root/roles/swe-manager" "\$root/proposals/swe-manager" \
              "\$root/roles/performance-engineer" "\$root/proposals/performance-engineer"
     printf '{}' > "\$root/.vault-policy.json"
