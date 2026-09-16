@@ -441,5 +441,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Review round 1 (issue #84): the manual `claude plugin install` fallback had
+# fallen behind the marketplace manifest (missing the context plugin) — assert
+# against the real manifest, derived the same way tcr_install_our_plugins does,
+# so a future plugin addition can't drift out of this doc silently again.
+# ---------------------------------------------------------------------------
+echo "test: AGENT_SETUP.md's manual install fallback names every plugin in the marketplace manifest"
+if [ -f "$AGENT_SETUP_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/setup/lib/common.sh"
+    setup="$(cat "$AGENT_SETUP_FILE")"
+    while IFS= read -r name; do
+        [ -n "$name" ] && assert_contains "installs $name@my-dotclaude" "$setup" "claude plugin install $name@my-dotclaude"
+    done <<< "$(TCR_LOCAL_ROOT="$REPO_ROOT" tcr_our_plugin_names)"
+else
+    no "AGENT_SETUP.md missing at $AGENT_SETUP_FILE"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

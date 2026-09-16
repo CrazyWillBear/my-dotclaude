@@ -70,6 +70,7 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
+   claude plugin install context@my-dotclaude
    claude plugin install personal-tools@my-dotclaude
    claude plugin install workflow@my-dotclaude
    claude plugin marketplace add DietrichGebert/ponytail
