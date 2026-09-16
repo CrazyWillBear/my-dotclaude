@@ -36,6 +36,7 @@ assert_file()    { if [ -f "$2" ]; then ok "$1"; else no "$1 (missing file: $2)"
 assert_nofile()  { if [ ! -f "$2" ]; then ok "$1"; else no "$1 (unexpected file: $2)"; fi; }
 assert_equals()  { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
 assert_exit0()   { if [ "$2" -eq 0 ]; then ok "$1"; else no "$1 (exit $2, want 0)"; fi; }
+assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 
 # Skip all tests if python3 is absent — the hook itself exits 0 without writing
 # anything, so there's nothing to assert on.
@@ -45,11 +46,13 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# Helper: compute the key the hook writes — sha1(root)[:16].
-# Used to predict the stash filename from outside the hook.
+# Helper: compute the key the hook writes — sha1(root)[:16], via python3
+# hashlib (matching the hook's own hashlib.sha1 call — not sha1sum, which
+# isn't on macOS by default). Used to predict the stash filename from
+# outside the hook.
 # ---------------------------------------------------------------------------
 sha1_key() {
-    printf '%s' "$1" | sha1sum | cut -c1-16
+    python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16])' "$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -202,6 +205,47 @@ if grep -q '\.claude/projects' "$SKILL"; then
 else
     no "skill has a session-id fallback for stale transcript paths"
 fi
+
+# ===========================================================================
+echo "test 7: /verify-plan SKILL.md Step 1 resolves the hook's stash, even with sha1sum absent from PATH"
+# ===========================================================================
+T="$WORK/t7"
+mkdir -p "$T/tmp"
+
+REPO7="$T/repo"
+mkdir -p "$REPO7"
+git -C "$REPO7" init -q
+
+TRANSCRIPT7="$T/tmp/session-real.jsonl"
+printf '{"type":"user"}\n' >"$TRANSCRIPT7"   # must exist+be non-empty: the skill's fallback only fires on a missing/empty log
+
+JSON7="$(printf '{"hook_event_name":"UserPromptSubmit","transcript_path":"%s","cwd":"%s"}' \
+    "$TRANSCRIPT7" "$REPO7")"
+run_hook "$JSON7" "$T/tmp"
+
+# Extract the FIRST ```bash fenced block from the skill — Step 1's resolver —
+# and actually run it, rather than grepping the prose for a string that could
+# still be wrong (as it was: sha1sum vs the hook's hashlib key, round 2).
+extract_first_bash_block() {
+    awk '
+        /^```bash$/ && !found { found = 1; next }
+        found && /^```$/ { exit }
+        found { print }
+    ' "$1"
+}
+BLOCK="$(extract_first_bash_block "$SKILL")"
+assert_not_contains "Step 1's code does not invoke the sha1sum binary (prose mentions elsewhere are fine)" "$BLOCK" "sha1sum"
+
+NOSHA_BIN="$T/nosha-bin"
+mkdir -p "$NOSHA_BIN"
+for bin in git python3 cat tr ls basename; do
+    p="$(command -v "$bin" 2>/dev/null)" && ln -sf "$p" "$NOSHA_BIN/$bin"
+done
+FAKE_HOME="$T/fake-home"
+mkdir -p "$FAKE_HOME"
+BASH_BIN="$(command -v bash)"
+resolved="$(cd "$REPO7" && TMPDIR="$T/tmp" HOME="$FAKE_HOME" PATH="$NOSHA_BIN" "$BASH_BIN" -c "$BLOCK")"
+assert_equals "skill Step 1 resolves the hook's stashed transcript path" "$resolved" "$TRANSCRIPT7"
 
 # ===========================================================================
 echo ""
