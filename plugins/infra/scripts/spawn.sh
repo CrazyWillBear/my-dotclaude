@@ -360,29 +360,10 @@ case "$GITDIR" in /*) ;; *) GITDIR="$WORKTREE/$GITDIR" ;; esac
 GITDIR="$(cd "$GITDIR" 2>/dev/null && pwd -P)" \
     || die "could not resolve the repo's common git dir for: $WORKTREE"
 
+# Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
+# no pid in it is a worker session-status.sh reports as one that died, so the phantom a
+# dry run left behind would be waited on forever.
 RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
-mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
-
-# The worker's fixed-shape status report. `--output-schema` is what turns the final
-# message from prose into something a caller can read without a model in the loop.
-# EVERY property is required and additionalProperties is false: that is strict
-# structured-output shape, and a schema that leaves a property optional is rejected
-# outright rather than relaxed. Unused fields come back empty — the prompt says so.
-cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status-schema.json"
-{
-  "type": "object",
-  "properties": {
-    "issue":  { "type": "integer" },
-    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate"] },
-    "round":  { "type": "integer" },
-    "head":   { "type": "string" },
-    "review": { "type": "string" },
-    "note":   { "type": "string" }
-  },
-  "required": ["issue", "status", "round", "head", "review", "note"],
-  "additionalProperties": false
-}
-SCHEMA
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the
@@ -410,6 +391,29 @@ if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
     exit 0
 fi
+
+mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
+
+# The worker's fixed-shape status report. `--output-schema` is what turns the final
+# message from prose into something a caller can read without a model in the loop.
+# EVERY property is required and additionalProperties is false: that is strict
+# structured-output shape, and a schema that leaves a property optional is rejected
+# outright rather than relaxed. Unused fields come back empty — the prompt says so.
+cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status-schema.json"
+{
+  "type": "object",
+  "properties": {
+    "issue":  { "type": "integer" },
+    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate"] },
+    "round":  { "type": "integer" },
+    "head":   { "type": "string" },
+    "review": { "type": "string" },
+    "note":   { "type": "string" }
+  },
+  "required": ["issue", "status", "round", "head", "review", "note"],
+  "additionalProperties": false
+}
+SCHEMA
 
 # Backgrounded as one group so the recorded pid stays alive until the exit code is
 # written: session-status.sh reads "pid alive" as busy, and a gap between the process

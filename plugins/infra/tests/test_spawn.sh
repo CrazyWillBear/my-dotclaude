@@ -316,6 +316,19 @@ assert_contains "its final message is the report" "$out" "output schema"
 assert_contains "fixed-shape JSON status" "$out" '"status": "built"'
 assert_contains "reviews with codex exec review" "$out" "codex exec review --base base"
 
+echo "test: a codex dry run leaves no run dir behind"
+# session-status.sh reads a run dir with a pid file as a live worker and one without as
+# a worker that died. A dry run that creates the dir hands it a phantom the orchestrator
+# waits on forever; the claude path's dry run touches nothing, and so must this one.
+rm -rf "$CODEX_ROOT/dryonly"
+CODEX_RUN_ROOT="$CODEX_ROOT/dryonly" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main >/dev/null 2>&1
+if [ -e "$CODEX_ROOT/dryonly" ]; then
+    no "the dry run created $CODEX_ROOT/dryonly — a phantom worker session-status reads as busy"
+else
+    ok "a dry run creates no run dir"
+fi
+
 echo "test: the codex tier is resolved per tier, not hardcoded"
 assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
 assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
