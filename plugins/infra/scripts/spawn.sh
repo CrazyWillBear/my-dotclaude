@@ -417,7 +417,12 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # PREVIOUS turn's report, instantly, as this turn's result — while this worker is still
 # writing the worktree. A stale `H > 0` then draws a second fix round onto the same
 # worktree; a stale clean one sends the issue to the merge queue mid-build.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit"
+# `pid` goes too. Between here and the `printf … >"$RUNDIR/pid"` below, the dir would
+# otherwise hold the PREVIOUS turn's dead pid with no exit file — which session-status.sh
+# reads as `failed`, inventing a failure for a worker that is merely still launching.
+# With it gone the same window has no pid at all, which is the launch-window case that
+# already reads `busy` — the safe direction, and the one this script argues for elsewhere.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.

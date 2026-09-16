@@ -182,7 +182,9 @@ if status in ("built", "fixed"):
         print("error: issue %d reported a head that is not a sha: %r" % (issue, head),
               file=sys.stderr)
         sys.exit(1)
-    if not re.match(r"^\d+ high, \d+ medium, \d+ low$", review):
+    # [0-9], not \d: \d is Unicode-aware in Python 3, so "٣ high, ٠ medium, ٠ low" would pass
+    # a shape check the head's own [0-9a-f] would refuse. Keep the two validators consistent.
+    if not re.match(r"^[0-9]+ high, [0-9]+ medium, [0-9]+ low$", review):
         print("error: issue %d reported a review in an unreadable shape: %r" % (issue, review),
               file=sys.stderr)
         sys.exit(1)

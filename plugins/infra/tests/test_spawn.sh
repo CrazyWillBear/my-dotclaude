@@ -519,16 +519,27 @@ printf '%s' '{"issue":12,"status":"built","round":0,"head":"aaaaaaa","review":"9
 PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
     RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" rstale 12 standard "$REPO" base \
     --role fix --round 2 --orchestrator orch-main >/dev/null 2>&1
+# Require the pid FIRST: this spawn's stderr and exit code are discarded above, so a spawn
+# that died after the `rm` — a failed schema write takes the run dir with it — would leave
+# an empty dir and green both assertions below while proving nothing.
+if [ -f "$STALE/pid" ]; then
+    ok "the worker actually launched"
+else
+    no "no pid file: the spawn aborted after the rm, so this case proves nothing"
+fi
 if [ -f "$STALE/exit" ]; then
     no "the previous turn's exit survived — the first poll reads this turn as already done"
 else
     ok "the previous turn's exit code is gone"
 fi
-if [ -f "$STALE/last-message.txt" ]; then
-    no "the previous turn's report survived — it would be returned as this turn's result"
-else
-    ok "the previous turn's report is gone"
-fi
+# By CONTENT, not absence: the stub writes its -o file BEFORE honouring STUB_CODEX_SLEEP,
+# so the wrapper recreates last-message.txt within milliseconds of the spawn returning.
+# Checking absence races the worker this test just launched and would flip red under load.
+case "$(cat "$STALE/last-message.txt" 2>/dev/null || true)" in
+    *aaaaaaa*|*"9 high"*)
+        no "the previous turn's report survived — it would be returned as this turn's result" ;;
+    *)  ok "the previous turn's report is gone" ;;
+esac
 stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 [ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 

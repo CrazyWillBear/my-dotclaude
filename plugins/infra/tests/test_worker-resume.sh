@@ -170,6 +170,10 @@ STUB_REPORT='' STUB_EXIT=4 run r1 82 standard "$REPO" --answer "x"
 assert_equals "exit 0 — a crash is still characterisable" "$RC" "0"
 assert_contains "failed" "$OUT" "issue 82 failed"
 assert_not_contains "the stale success is gone" "$OUT" "stale99"
+# stderr.log is appended to across turns and the no-report path reports its tail as the
+# reason, so without clearing it this crash would be explained by a turn that ran hours
+# ago — a truthful `failed` with an actively misleading reason, read by a human.
+assert_not_contains "and not the PREVIOUS turn's stderr reason" "$OUT" "thread not found"
 
 # ---------------------------------------------------------------------------
 echo "test: it refuses to resume a worker that has not finished"

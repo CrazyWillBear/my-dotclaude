@@ -79,8 +79,9 @@ branches on a codex report exactly as it does on a claude one. The orchestrator 
 polls: it makes one blocking call per worker.
 
 **Exit 0 means the line is a real result. Exit 1 means it could not tell what happened** — a
-timeout, a clean exit that wrote no report, an unparseable one, or `built` with no head sha — and
-then stdout is EMPTY. That split is the safety property: a result the orchestrator acts on merges
+timeout, a clean exit that wrote no report, an unparseable one, `built` with no head sha, an
+EMPTY review (a review that did not run is not a clean one), or a `head`/`review` whose shape
+does not parse — and then stdout is EMPTY. That split is the safety property: a result the orchestrator acts on merges
 branches, so anything this script cannot characterise must not look like one. `failed` and
 `escalate` are exit 0, because both are real outcomes the loop has a branch for.
 

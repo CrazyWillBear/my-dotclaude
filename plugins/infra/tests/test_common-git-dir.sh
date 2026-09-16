@@ -80,7 +80,10 @@ assert_equals "a missing dir exits 1" "$RC" "1"
 assert_empty "and prints no path" "$OUT"
 assert_contains "names it" "$ERR" "does not exist"
 
-run
+# `run ""`, never a bare `run`: an empty "$@" under `set -u` is an unbound-variable abort on
+# bash 3.2, which macOS still ships and this repo designs for — it would take the whole file
+# down there while CI stayed green. The empty string exercises the identical refusal.
+run ""
 assert_equals "no argument exits 1" "$RC" "1"
 assert_empty "and prints no path" "$OUT"
 assert_contains "usage" "$ERR" "usage"
