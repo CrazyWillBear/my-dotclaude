@@ -136,6 +136,44 @@ CLAUDE_CODE_SESSION_ID=sess-abc bash "$STATUS" --self >/dev/null 2>"$WORK/err"
 assert_equals "a session with no name exits 1" "$?" "1"
 
 # ---------------------------------------------------------------------------
+# --peers resolves a ROLE NAME to an id. A peer is named by its role with NO run
+# prefix (docs/swarm-design.md § Rotation: the name is the stable address), so the
+# runid filter above cannot see one at all. swarm.sh up needs this to know which
+# roster peers are missing; down and attach need it because `claude stop` and
+# `claude attach` take an id and reject a name.
+#
+# It is scoped to ONE PROJECT'S cwd, and that is not cosmetic: role names are
+# generic, so two projects each running a `swe-manager` share a name. Without the
+# cwd scope `swarm.sh down` in one project would stop the other project's peer.
+echo "test: --peers resolves roster roles to ids, scoped to the project"
+stub_claude 0 '[
+  { "id": "p111", "cwd": "/proj", "kind": "background", "name": "swe-manager", "state": "idle" },
+  { "id": "p222", "cwd": "/other", "kind": "background", "name": "performance-engineer", "state": "busy" },
+  { "id": "p333", "cwd": "/proj", "kind": "background", "name": "orch-r1-issue-3", "state": "busy" }
+]'
+out=$(run --peers /proj swe-manager performance-engineer)
+assert_contains "a peer in this project resolves to its id" "$out" "swe-manager p111 background idle"
+assert_contains "the same role in ANOTHER project is gone, never stopped by mistake" "$out" "performance-engineer - - gone"
+assert_not_contains "a worker is not a peer" "$out" "orch-r1-issue-3"
+assert_equals "one line per requested role" "$(printf '%s\n' "$out" | wc -l)" "2"
+assert_equals "in the order asked" "$(printf '%s\n' "$out" | head -1 | cut -d' ' -f1)" "swe-manager"
+assert_contains "--all is passed here too" "$(cat "$WORK/argv")" "--all"
+
+echo "test: --peers normalizes the cwd it is given"
+assert_contains "a trailing slash still matches" "$(run --peers /proj/ swe-manager)" "swe-manager p111"
+assert_contains "so does a dotted path" "$(run --peers /proj/. swe-manager)" "swe-manager p111"
+
+echo "test: a peer entry with no cwd cannot be claimed by this project"
+stub_claude 0 '[{ "id": "p444", "kind": "background", "name": "swe-manager", "state": "idle" }]'
+assert_contains "unattributable -> gone" "$(run --peers /proj swe-manager)" "swe-manager - - gone"
+
+echo "test: --peers needs a project dir and at least one role"
+run --peers >/dev/null; assert_equals "no project dir exits 1" "$?" "1"
+assert_contains "prints usage" "$(err)" "usage:"
+run --peers /proj >/dev/null; assert_equals "no roles exits 1" "$?" "1"
+assert_contains "prints usage" "$(err)" "usage:"
+
+# ---------------------------------------------------------------------------
 echo "test: every failure path is loud, never a silent empty"
 stub_claude 1 'boom'
 run r1 >/dev/null; assert_equals "non-zero claude exits 1" "$?" "1"

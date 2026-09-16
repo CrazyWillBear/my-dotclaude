@@ -9,7 +9,8 @@
 #
 # Usage:
 #   bash session-status.sh <runid> [N ...]
-#   bash session-status.sh --self          # this session's own name
+#   bash session-status.sh --self                             # this session's own name
+#   bash session-status.sh --peers <project-dir> <role> ...   # roster peers of one project
 #
 # `--self` matches $CLAUDE_CODE_SESSION_ID against the agent list and prints the
 # session's display name. That name is the orchestrator's ADDRESS: a worker replies
@@ -19,6 +20,18 @@
 #   N ...   issue numbers this run EXPECTS to be alive. Each one with no session is
 #           reported `gone` — a spawn that never came up, or a session that exited,
 #           must not read as "nothing to check".
+#
+# `--peers` is the same question for a SWARM PEER. A peer is named by its role with no
+# run prefix — the name is the stable address a rotation reuses (docs/swarm-design.md
+# § Rotation) — so the run-prefix filter above cannot see one. It prints one line per
+# role asked for, in that order, `gone` for a role with no session, and swarm.sh up /
+# down / attach all read column 2 from it.
+#
+# It is scoped to one project's cwd, and that scope is load-bearing: role names are
+# generic, so two projects each running a `swe-manager` share a name. Unscoped, a
+# `swarm.sh down` in one project would stop the other project's peer. An entry with no
+# cwd cannot be attributed to this project and so reads `gone` — the safe direction is
+# a duplicate spawn, never someone else's session killed.
 #
 # Output: one line per session, `<name> <id> <kind> <state>`. THE ID IS THE SECOND
 # COLUMN AND YOU NEED IT: `claude stop` and `claude attach` take an id, not a name
@@ -45,9 +58,24 @@
 
 set -uo pipefail
 
+usage() {
+    echo "error: usage: session-status.sh <runid> [issue numbers] | --self | --peers <project-dir> <role> ..." >&2
+    exit 1
+}
+
 RUNID="${1:-}"
-[ -n "$RUNID" ] || { echo "error: usage: session-status.sh <runid> [issue numbers] | --self" >&2; exit 1; }
+[ -n "$RUNID" ] || usage
 shift
+
+PROJECT_DIR=""; PEERS=""
+if [ "$RUNID" = --peers ]; then
+    # <project-dir> plus at least one role: a --peers with no roles would print
+    # nothing and exit 0, which reads exactly like "no peers are up".
+    [ $# -ge 2 ] || usage
+    PROJECT_DIR="$1"; shift
+    PEERS="$*"
+    set --
+fi
 
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exit 1; }
 command -v claude  >/dev/null 2>&1 || { echo "error: claude CLI not found — cannot read session state" >&2; exit 1; }
@@ -59,15 +87,19 @@ for arg in "$@"; do
     EXPECT="$EXPECT $n"
 done
 
-export STATUS_RUNID="$RUNID" STATUS_EXPECT="$EXPECT"
+export STATUS_RUNID="$RUNID" STATUS_EXPECT="$EXPECT" \
+       STATUS_PROJECT_DIR="$PROJECT_DIR" STATUS_PEERS="$PEERS"
 
 python3 <<"PY"
 import json, os, subprocess, sys
 
 runid  = os.environ["STATUS_RUNID"]
 prefix = "orch-%s-" % runid
-self_mode = runid == "--self"
+self_mode  = runid == "--self"
+peers_mode = runid == "--peers"
 expect = [int(t) for t in os.environ.get("STATUS_EXPECT", "").split()]
+peers  = os.environ.get("STATUS_PEERS", "").split()
+project_dir = os.path.realpath(os.environ.get("STATUS_PROJECT_DIR", "")) if peers_mode else ""
 
 try:
     # --all is REQUIRED, not optional: without it the list holds only ACTIVE
@@ -125,6 +157,28 @@ if self_mode:
     print("error: this session (%s) is not in `claude agents --json`, or has no name — "
           "pass the orchestrator name explicitly" % me[:8], file=sys.stderr)
     sys.exit(1)
+
+if peers_mode:
+    live = {}
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        if agent.get("name") not in peers:
+            continue
+        # No cwd = not attributable to this project. Reads `gone`, which costs a
+        # duplicate spawn at worst; the other direction stops a stranger's session.
+        cwd = agent.get("cwd")
+        if not cwd or os.path.realpath(cwd) != project_dir:
+            continue
+        live[agent["name"]] = agent
+    for role in peers:
+        agent = live.get(role)
+        if agent is None:
+            print("%s - - gone" % role)
+        else:
+            print("%s %s %s %s" % (role, agent.get("id") or "-",
+                                   agent.get("kind") or "-", state_of(agent)))
+    sys.exit(0)
 
 seen = set()
 lines = []
