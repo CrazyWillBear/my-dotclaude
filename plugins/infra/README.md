@@ -99,7 +99,20 @@ worktree is the recovery path if that capture is ever missing).
 
 So an escalation is a pause, not an ending: the worker reports `issue <N> escalate <question>`
 and exits, the orchestrator surfaces the question, and the answer is delivered by resuming that
-thread. Two traps, both verified on codex-cli 0.154 rather than assumed:
+thread — which `worker-resume.sh` does:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktree> \
+     --answer "the retry budget is per-request"        # or --answer-file FILE
+```
+
+It resolves the tier's model, reads the thread id out of the run dir's `events.jsonl`, resumes
+with the full flag set below, records the new exit code, and then hands rendering to
+`worker-report.sh` — so a resumed turn prints the same one-line report as a first one, and there
+is only ever one copy of the report-rendering rules. `--dry-run` prints the command one argument
+per line.
+
+Do not hand-assemble that resume. Two traps, both verified on codex-cli 0.154 rather than assumed:
 
 - **`resume` inherits none of the sandbox.** A resume that re-passes nothing comes back
   **offline** (verified: `http=200` on the original run, `DNSFAIL` on the resume), which would

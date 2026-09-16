@@ -464,10 +464,17 @@ A worker that hits something only a human can answer `SendMessage`s the orchestr
 nothing to relay to and nothing to `claude attach`. It reports `issue <N> escalate <question>`
 through `worker-report.sh` and its process exits — but **its context survives**: the answer is
 delivered by resuming its thread, so it picks up where it stopped rather than restarting. Offer
-the question to Will, then resume with his answer as the prompt. The resume is a precise command
-(the sandbox does not carry over, and there is no `-C`) — see
-[infra's README](../../../infra/README.md#escalation-on-a-codex-worker). Attaching is not an
-option to offer here; mediating is the only route.
+the question to Will, then send his answer back with:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --answer "..."
+```
+
+It prints the resumed turn's report in the same one line as any other worker, so handling is
+unchanged. **Do not hand-assemble a `codex exec resume`**: the sandbox does not carry over and
+there is no `-C`, so a hand-written one comes back offline and fails its own `gh` protocol
+silently ([infra's README](../../../infra/README.md#escalation-on-a-codex-worker)). Attaching is
+not an option to offer here — there is no session to attach to — so mediating is the only route.
 
 **Offer both routes. Recommend one.**
 
