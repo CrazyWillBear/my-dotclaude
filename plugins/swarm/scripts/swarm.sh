@@ -68,6 +68,8 @@ except FileNotFoundError:
     fail("no roster at %s" % roster_path)
 except (json.JSONDecodeError, ValueError):
     fail("%s is not valid JSON" % roster_path)
+except OSError as e:
+    fail("cannot read roster: %s" % e)
 
 if role not in roster:
     fail("unknown role: %s" % role)
@@ -79,7 +81,7 @@ if not os.path.isfile(file_src):
 try:
     with open(file_src, 'r') as fh:
         file_content = fh.read()
-except IOError as e:
+except OSError as e:
     fail("cannot read file: %s" % e)
 
 # Create inbox directory
@@ -89,7 +91,7 @@ try:
 except OSError as e:
     fail("cannot create inbox directory: %s" % e)
 
-# Generate filename: <timestamp>-<slug>.md
+# Generate filename: <nanosecond-timestamp>-<slug>.md
 # slug: alphanumeric + hyphens from the basename without extension
 basename = os.path.basename(file_src)
 name_without_ext = os.path.splitext(basename)[0]
@@ -98,7 +100,9 @@ slug = "".join(c.lower() if c.isalnum() or c == '-' else '-' for c in name_witho
 # Clean up multiple consecutive hyphens
 slug = "-".join(filter(None, slug.split("-")))
 
-timestamp = str(int(time.time()))
+# Use nanosecond precision to prevent collisions when multiple briefs
+# are sent to the same role with the same basename within one second
+timestamp = str(time.time_ns())
 filename = "%s-%s.md" % (timestamp, slug)
 dest_path = os.path.join(inbox_dir, filename)
 
