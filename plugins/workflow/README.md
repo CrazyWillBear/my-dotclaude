@@ -26,7 +26,6 @@ plugins/workflow/
 │   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction; OWNS the per-repo keyed dir
 │   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── spawn.sh                      # build (or print) the `claude --bg` command + worker prompt for one issue
 │   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
@@ -36,8 +35,8 @@ plugins/workflow/
 └── README.md                         # this file
 ```
 
-`session-status.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live in the
-[`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
+`spawn.sh`, `session-status.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live
+in the [`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
 
 ## Why it works this way
 
