@@ -283,7 +283,10 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
 3. **workflow** trim: `/orchestrate` calls infra by the stable path; session prose moves to
    infra's README; `/to-prd` and `/to-issues` move in from personal-tools.
 4. **swarm** plugin: roster schema, `/init-swarm`, `swarm.sh up|down|attach`, charter,
-   three briefs, inbox dirs.
+   three briefs, inbox dirs. (Landed #91: `up|down|attach`. A peer carries no run prefix,
+   so infra's `session-status.sh` gained `--peers <project-dir> <role>...` to resolve a
+   role name to a session id — scoped by the session's cwd, which is what "every peer of
+   this project" means when two projects share a `swe-manager`.)
 5. **rotation**: the peer-mode watchdog threshold and `swarm.sh rotate`.
 6. **memory**: vault work order above, then the policy generator and charter lines in swarm.
 7. **codex**: the backend switch in infra.
