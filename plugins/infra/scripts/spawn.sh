@@ -169,6 +169,11 @@ done
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
 [ -n "$RUNID" ] || die "runid is required"
+# Not just non-empty: $RUNID is joined into the codex run dir below, a path that reaches
+# both `mkdir -p` and `rm -rf`, and the caller is a model assembling argv by hand. A `..`
+# component would put both outside the run root. run-log.sh guards the identical value
+# with this same case.
+case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
 [ -n "$WORKTREE" ] || die "worktree is required"
 [ -n "$BASE" ] || die "base branch is required"
 

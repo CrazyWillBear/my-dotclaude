@@ -254,6 +254,34 @@ assert_contains "names the directory" "$ERR" "nope"
 # ---------------------------------------------------------------------------
 # `claude stop <name>` fails outright ("No job matching …"), so a down that reaches
 # for the name silently stops nothing while reporting success.
+echo "test: peer_roles works without mapfile — macOS ships bash 3.2, which has none"
+# `mapfile` is bash 4+. A mapfile in peer_roles fails SILENTLY on macOS: the function has
+# no `set -e` and returns 0 regardless, so PEER_LIST just comes back empty. That is
+# invisible in the happy path and wrong in opposite, equally bad ways in both callers —
+# `up` reads it as "every peer is already live" and execs the orchestrator into a swarm
+# with zero peers, reporting success; `down` reads it as "nothing to stop", returns 0, and
+# leaves every peer running for the next `up` to mistake for a live one.
+# A PATH shim cannot catch this the way the no-setsid test does, because mapfile is a
+# BUILTIN. BASH_ENV is sourced by every non-interactive bash, so disabling the builtin
+# there is what bash 3.2 actually looks like to this script and its subshells.
+NOMAPFILE="$WORK/no-mapfile.bash"
+printf 'enable -n mapfile 2>/dev/null\n' >"$NOMAPFILE"
+
+reset_calls
+agents '[
+  { "id": "p111", "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "idle" },
+  { "id": "p222", "cwd": "'"$PROJECT"'", "kind": "background", "name": "performance-engineer", "state": "busy" },
+  { "id": "o333", "cwd": "'"$PROJECT"'", "kind": "background", "name": "orchestrator", "state": "idle" }
+]'
+export BASH_ENV="$NOMAPFILE"
+run down "$PROJECT"
+unset BASH_ENV
+assert_equals "down exits 0 with no mapfile" "$RC" "0"
+assert_equals "still sees both peers, not zero" "$(ncalls)" "2"
+nm_stops="$(cat "$CALLS"/*)"
+assert_contains "still stops the manager by id" "$nm_stops" "p111"
+assert_contains "still stops the doer by id" "$nm_stops" "p222"
+
 echo "test: down stops every live peer BY ID, never by name"
 reset_calls
 agents '[

@@ -489,6 +489,16 @@ for t in trivial standard complex; do
         "$out" "codex exec"
 done
 
+echo "test: a runid carrying a path component is refused before it reaches mkdir -p or rm -rf"
+# $RUNID is joined into the codex run dir, which spawn.sh both creates and — on a failed
+# schema write — `rm -rf`s. The caller is a model assembling argv by hand, and run-log.sh
+# already guards the identical value, so spawn.sh must too.
+CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" "../../escape" 12 standard "$REPO" base --orchestrator orch-main --dry-run \
+    >/dev/null 2>"$WORK/err"
+assert_equals "exits 1 on a traversal runid" "$?" "1"
+assert_contains "names the value and what is allowed" "$(err)" "runid may only contain"
+
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"
 CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
