@@ -451,11 +451,42 @@ if [ -f "$AGENT_SETUP_FILE" ]; then
     # shellcheck source=/dev/null
     source "$REPO_ROOT/setup/lib/common.sh"
     setup="$(cat "$AGENT_SETUP_FILE")"
-    while IFS= read -r name; do
-        [ -n "$name" ] && assert_contains "installs $name@my-dotclaude" "$setup" "claude plugin install $name@my-dotclaude"
-    done <<< "$(TCR_LOCAL_ROOT="$REPO_ROOT" tcr_our_plugin_names)"
+    # Capture into a variable (not a bare here-string on the command
+    # substitution) so tcr_die's `exit` inside the $(...) subshell is visible
+    # as a non-zero $? here — round-2 fix: the old `done <<< "$(...)"` form
+    # swallowed that exit, so a broken manifest ran zero assertions and the
+    # test reported success instead of failing loud.
+    names="$(TCR_LOCAL_ROOT="$REPO_ROOT" tcr_our_plugin_names)"
+    names_rc=$?
+    if [ "$names_rc" -eq 0 ] && [ -n "$names" ]; then
+        while IFS= read -r name; do
+            [ -n "$name" ] && assert_contains "installs $name@my-dotclaude" "$setup" "claude plugin install $name@my-dotclaude"
+        done <<< "$names"
+    else
+        no "tcr_our_plugin_names returned a plugin list to check AGENT_SETUP.md against (rc=$names_rc)"
+    fi
 else
     no "AGENT_SETUP.md missing at $AGENT_SETUP_FILE"
+fi
+
+# ---------------------------------------------------------------------------
+# Round-2 medium (issue #84): pin the contract the fix above relies on —
+# tcr_our_plugin_names's tcr_die runs inside a $(...) subshell, so a broken
+# manifest must surface as a non-zero $? on the captured assignment, not as
+# an empty-but-"successful" list (which the old `done <<< "$(...)"` form
+# above silently treated as zero plugins / zero assertions / a passing test).
+# ---------------------------------------------------------------------------
+echo "test: an unparseable marketplace manifest fails tcr_our_plugin_names loud, not empty"
+BROKEN_ROOT="$WORK/broken-manifest-root"
+mkdir -p "$BROKEN_ROOT/.claude-plugin"
+printf 'not json' > "$BROKEN_ROOT/.claude-plugin/marketplace.json"
+source "$REPO_ROOT/setup/lib/common.sh"
+broken_names="$(TCR_LOCAL_ROOT="$BROKEN_ROOT" tcr_our_plugin_names 2>/dev/null)"
+broken_rc=$?
+if [ "$broken_rc" -ne 0 ] && [ -z "$broken_names" ]; then
+    ok "unparseable manifest: non-zero exit, no plugin names"
+else
+    no "unparseable manifest: non-zero exit, no plugin names (rc=$broken_rc, names='$broken_names')"
 fi
 
 # ---------------------------------------------------------------------------
