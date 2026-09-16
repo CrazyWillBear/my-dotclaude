@@ -6,3 +6,6 @@ orchestrator (or Will, through it) may redirect you to message swe-manager or to
 issues.
 
 After reading your handoff, list your inbox before anything else.
+
+Vault memory: your `--agent` is `performance-engineer`. Read `shared/`; read and write
+`roles/performance-engineer/` and `proposals/performance-engineer/`.

@@ -15,6 +15,11 @@
 #      templates plus the skill's own file-placement rules produce a roster that
 #      the REAL roster.sh (not a stub) accepts, and that role selectivity actually
 #      holds (an unchosen role gets no brief, no inbox dir, and no roster row).
+#      Step 8 (scaffold .claude/swarm/memory/) then runs through the real
+#      scripts/memory.sh against that same scratch roster — memory.sh's own edge
+#      cases (the HashiCorp-Vault collision guard, the fallback -> vault recovery
+#      path) have their own dedicated coverage in test_memory.sh; this file only
+#      proves the two compose correctly end to end.
 #
 # Run: bash plugins/swarm/tests/test_init-swarm-skill.sh  (non-zero if any fail)
 
@@ -90,6 +95,42 @@ assert_contains "never clobbers silently" "$BODY" "never clobber silently"
 echo "test: it hands off to the command that actually starts the roles"
 assert_contains "points at swarm.sh up" "$BODY" 'swarm.sh" up'
 assert_contains "and is clear it starts nothing itself" "$BODY" "spawn anything"
+
+echo "test: it scaffolds vault memory through the real memory.sh — never inline logic"
+assert_contains "runs the plugin's own memory scaffolder" "$BODY" \
+    '${CLAUDE_PLUGIN_ROOT}/scripts/memory.sh" scaffold'
+assert_contains "runs a literal, runnable vault init invocation" "$BODY" \
+    "vault init --layout swarm --roster .claude/swarm/roster.json --vault .claude/swarm/memory"
+assert_contains "names the policy file vault writes" "$BODY" ".vault-policy.json"
+assert_contains "one-line notice when vault is absent" "$BODY" "vault not on PATH"
+assert_contains "plain fallback still makes shared/" "$BODY" ".claude/swarm/memory/shared/"
+assert_contains "fallback never invents a policy file" "$BODY" "No policy file"
+assert_contains "explains the HashiCorp Vault collision a bare command -v vault would risk" \
+    "$BODY" "HashiCorp Vault"
+assert_contains "documents the fallback -> vault recovery path" "$BODY" "upgrades it in place"
+
+echo "test: charter carries the memory rules, including never Claude's own auto-memory"
+CHARTER_BODY="$(cat "$TEMPLATES/charter.md")"
+assert_contains "charter states read shared/ and your namespace" "$CHARTER_BODY" \
+    'read `shared/` and your namespace'
+assert_contains "charter states write only your namespace" "$CHARTER_BODY" \
+    "write only your namespace"
+assert_contains "charter states propose to shared/" "$CHARTER_BODY" "propose to"
+assert_contains "charter forbids Claude's own auto-memory" "$CHARTER_BODY" "auto-memory"
+
+echo "test: every brief names its vault --agent value"
+for role in orchestrator swe-manager performance-engineer; do
+    BRIEF_BODY="$(cat "$TEMPLATES/briefs/$role.md")"
+    assert_contains "$role brief names its --agent value" "$BRIEF_BODY" \
+        "\`--agent\` is \`$role\`"
+done
+
+echo "test: the orchestrator brief's promote example is runnable as written"
+ORCH_BRIEF="$(cat "$TEMPLATES/briefs/orchestrator.md")"
+assert_contains "names vault promote" "$ORCH_BRIEF" "vault promote"
+assert_contains "promote example passes --ceiling (promote hard-requires it)" "$ORCH_BRIEF" "--ceiling"
+assert_contains "promote example passes --vault (else it defaults to cwd)" "$ORCH_BRIEF" \
+    "--vault .claude/swarm/memory"
 
 # ---------------------------------------------------------------------------
 echo "test: central mechanism — simulate the skill's Steps 1/4/5/6/7 for real, in a scratch repo"
@@ -173,6 +214,89 @@ assert_equals "roster.sh list sees exactly the two chosen roles, nothing more" \
 
 GET_OUT="$(bash "$ROSTER_SCRIPT" get swe-manager kind "$SCRATCH" 2>/dev/null)"
 assert_equals "roster.sh get resolves a real field on the simulated roster" "$GET_OUT" "manager"
+
+# ---------------------------------------------------------------------------
+echo "test: central mechanism — Step 8, scaffold .claude/swarm/memory/ via the real memory.sh"
+#
+# memory.sh's own edge cases (a decoy 'vault' that isn't wilcus-vault, the
+# fallback -> vault recovery path) have dedicated coverage in test_memory.sh. This
+# block only proves Step 8 composes correctly with Steps 4-7's simulated roster: the
+# real script, run against the SAME scratch repo, scaffolds the right tree.
+
+MEMORY_SCRIPT="$PLUGIN_ROOT/scripts/memory.sh"
+MEMORY="$SCRATCH/.claude/swarm/memory"
+
+echo "test: the plain fallback is exercised for real on a bare PATH (never hypothetical)"
+if PATH=/usr/bin:/bin command -v vault >/dev/null 2>&1; then
+    no "test assumption broken: vault is reachable on a bare /usr/bin:/bin PATH"
+else
+    MEMORY_ERR="$WORK/memory-fallback-err"
+    MEMORY_OUT="$(PATH=/usr/bin:/bin bash "$MEMORY_SCRIPT" scaffold "$SCRATCH" 2>"$MEMORY_ERR")"
+    MEMORY_RC=$?
+    if [ "$MEMORY_RC" -eq 0 ]; then
+        ok "memory.sh scaffold exits 0 on a bare PATH"
+    else
+        no "memory.sh scaffold failed on a bare PATH: $(cat "$MEMORY_ERR")"
+    fi
+    assert_contains "fallback prints the one-line notice" "$MEMORY_OUT" "vault not on PATH"
+    if [ -d "$MEMORY/shared" ]; then ok "fallback makes shared/"; else no "fallback missing shared/"; fi
+    if [ -d "$MEMORY/roles/swe-manager" ] && [ -d "$MEMORY/proposals/swe-manager" ]; then
+        ok "fallback makes roles/ and proposals/ for the manager role"
+    else
+        no "fallback missing roles/ or proposals/ for swe-manager"
+    fi
+    if [ ! -e "$MEMORY/roles/orchestrator" ]; then
+        ok "fallback makes no roles/orchestrator/ (it already owns the whole tree)"
+    else
+        no "fallback wrongly made roles/orchestrator/"
+    fi
+    if [ ! -f "$MEMORY/.vault-policy.json" ]; then
+        ok "fallback writes no policy file — only vault generates one"
+    else
+        no "fallback should not have written a policy file"
+    fi
+fi
+
+echo "test: the real vault path, opportunistically, when this machine has wilcus-vault on PATH"
+if command -v vault >/dev/null 2>&1 && vault --help 2>&1 | grep -q -- "--layout swarm"; then
+    rm -rf "$MEMORY"
+    MEMORY_ERR="$WORK/memory-vault-err"
+    if bash "$MEMORY_SCRIPT" scaffold "$SCRATCH" >/dev/null 2>"$MEMORY_ERR"; then
+        ok "memory.sh scaffold exits 0 against the simulated roster with real vault on PATH"
+    else
+        no "memory.sh scaffold failed with real vault on PATH: $(cat "$MEMORY_ERR")"
+    fi
+    if [ -d "$MEMORY/shared" ]; then ok "real vault init makes shared/"; else no "real vault init missing shared/"; fi
+    if [ -d "$MEMORY/roles/swe-manager" ] && [ -d "$MEMORY/proposals/swe-manager" ]; then
+        ok "real vault init makes roles/ and proposals/ for the manager role"
+    else
+        no "real vault init missing roles/ or proposals/ for swe-manager"
+    fi
+    if [ ! -e "$MEMORY/roles/orchestrator" ]; then
+        ok "real vault init matches the fallback's owners-only rule (no roles/orchestrator/)"
+    else
+        no "real vault init unexpectedly made roles/orchestrator/"
+    fi
+    POLICY="$MEMORY/.vault-policy.json"
+    if [ -f "$POLICY" ]; then ok "real vault init writes .vault-policy.json"; else no "real vault init wrote no policy file"; fi
+    ORCH_WRITE="$(SIM_POLICY="$POLICY" python3 -c "
+import json, os
+p = json.load(open(os.environ['SIM_POLICY']))
+print(any(r.get('write') and r.get('prefix') == '' for r in p.get('orchestrator', [])))
+" 2>/dev/null)"
+    assert_equals "policy derived from the real roster gives orchestrator a write-everything rule" \
+        "$ORCH_WRITE" "True"
+    SWE_SCOPE="$(SIM_POLICY="$POLICY" python3 -c "
+import json, os
+p = json.load(open(os.environ['SIM_POLICY']))
+print(any(r.get('prefix') == 'roles/swe-manager/' and r.get('write') for r in p.get('swe-manager', [])))
+" 2>/dev/null)"
+    assert_equals "policy derived from the real roster scopes swe-manager to its own roles/ prefix" \
+        "$SWE_SCOPE" "True"
+else
+    echo "  SKIP: wilcus-vault not on PATH in this environment — real-vault sub-test not exercised" \
+         "(the plain fallback above already ran for real)"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
