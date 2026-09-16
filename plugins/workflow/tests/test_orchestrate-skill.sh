@@ -86,6 +86,22 @@ assert_matches "ambiguous builds nothing" "$BODY" "discuss.*[Bb]uild nothing|Bui
 assert_contains "explicit = what/where/done" "$BODY" "**Done**"
 assert_matches "announces the lane and proceeds without asking" "$BODY" "Announce the lane.*[Dd]o not ask|announcement .?is.? the veto window"
 
+echo "test: the ad-hoc lane's claim about the shipped roster is TRUE of the shipped roster"
+# The lane spawns through `Agent`, which takes claude model names only, so what it says
+# about `model-tiers.json` decides whether it passes a usable model or a `gpt-5.6-*` one.
+# Prose alone cannot stay honest here: assert it against the table it describes.
+assert_not_matches "no stale 'every cell is codex' claim" "$BODY" "every worker cell.{0,40}codex"
+assert_matches "the substitution is conditional on the cell" "$BODY" "[Ii]f a cell does say .?codex"
+TIERS="$(cd "$PLUGIN_ROOT/../infra" && pwd)/model-tiers.json"
+if grep -q '"backend": *"codex"' "$TIERS"; then
+    # not a failure of the table — a failure of THIS paragraph to have been updated with it
+    assert_matches "a codex cell shipped, so the lane must not call the roster claude-only" \
+        "$BODY" "backend: .?codex.? in (some|every)"
+else
+    assert_matches "the table is claude-only and the lane says so" "$BODY" \
+        "backend: .?claude.? in every cell"
+fi
+
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
 
@@ -151,6 +167,12 @@ echo "test: a codex worker is a PID, so the claude-only controls are called out"
 assert_not_matches "no blanket 'nothing changes' for the codex backend" "$BODY" "so nothing changes"
 assert_matches "a codex row is stopped with kill, not claude stop" "$BODY" "kill.{0,40}not .?claude stop|claude stop.{0,60}kill"
 assert_matches "and it cannot escalate mid-run" "$BODY" "cannot escalate mid-run|no mid-run escalation"
+# `kill $pid` is the WRONG kill: spawn.sh records its wrapper's pid and codex is the
+# child, so a plain kill orphans codex onto the worktree AND writes no exit file, which
+# reads as `failed` and clears the respawn gate below. The recipe must kill the group.
+assert_matches "the kill targets the process GROUP, not the bare pid" "$BODY" 'kill -- -"\$id"'
+assert_matches "and says why the bare pid is not enough" "$BODY" "orphan|wrapper"
+assert_not_matches "never a bare kill of the recorded pid" "$BODY" '[^-]kill "\$id"'
 
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"
@@ -180,6 +202,10 @@ assert_matches "explains why not per-spawn" "$BODY" "rename mid-run"
 echo "test: recovery"
 assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "recovery mechanism.{0,2}, not hygiene"
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"
+# The recovery recipe is copy-pasted, so it has to handle BOTH backends: `claude stop`
+# cannot take a PID, and a codex row's column 2 is one.
+assert_matches "the recovery recipe branches on the backend column" "$BODY" "codex\).{0,40}kill"
+assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
 assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
 assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"

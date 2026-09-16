@@ -233,7 +233,10 @@ beside the event log; `session-status.sh` reports a codex worker from those the 
 a claude worker from the agent list. The **state** vocabulary is identical, so `/orchestrate`'s
 liveness wait is unchanged — but **control is not**: column 2 is a PID, so a codex row is stopped
 with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no inbox a codex
-worker cannot escalate mid-run.
+worker cannot escalate mid-run. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
+is a **group** kill — `kill -- -<pid>`: `spawn.sh` `setsid`s the wrapper into its own process
+group for exactly this, because killing the wrapper alone orphans codex onto the worktree and
+leaves no exit file, which reads as `failed` and frees the orchestrator to respawn on top of it.
 
 Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
 `stderr.log` (the only place a failed worker's reason lands), `last-message.txt`,

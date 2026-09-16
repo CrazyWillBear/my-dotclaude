@@ -134,12 +134,14 @@ on a confirmation you already gave; the announcement *is* the veto window:
 
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
-**Claude-only, and the shipped roster is not.** Steps 3-5 spawn through the `Agent` tool,
-which accepts only claude model names. Since #90 every worker cell in `model-tiers.json`
-is `backend: codex`, so **`resolve-tier.sh`'s model is not usable here** — passing a
-`gpt-5.6-*` name to `Agent` fails. When a cell says `codex`, substitute the claude-side
-roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet` (reviewer `opus`), complex
-`opus`. #90 wired codex for the *session* lane's `spawn.sh` only; this lane is unchanged.
+**Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
+`Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
+`resolve-tier.sh` fails here. Today the shipped `model-tiers.json` is
+`backend: claude` in every cell, so its models are usable as-is: #90 built the codex path for
+the *session* lane's `spawn.sh` only and left the roster on claude until the orchestrator can
+read a codex worker's report. **If a cell does say `codex`, do not pass its model to `Agent`** —
+substitute the claude-side roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet`
+(reviewer `opus`), complex `opus`.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -515,8 +517,14 @@ reads it from `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` inste
 is its PID. It reports in this same vocabulary — `busy`, then `done` or `failed` — and it never
 goes `idle`, so the liveness wait below reads it unchanged. **Control does not.** Column 2 is a
 PID, and `claude stop` and `claude attach` take a *session* id: a codex row is stopped with
-`kill`, **not `claude stop`** — `kill "$id"`, then `kill -9 "$id"` if it outlives the bounded
-wait below — and there is nothing to attach to. It also has no inbox, so it **cannot escalate mid-run** — an `escalate`
+`kill`, **not `claude stop`**, and there is nothing to attach to.
+
+**Kill the process GROUP, not the pid.** That PID is `spawn.sh`'s wrapper and `codex` is its
+child, so a bare kill of it reaps the wrapper, leaves codex running as an **orphan still writing
+the worktree**, and writes no exit file — which this table reads as `failed`, which clears the
+respawn gate below, which puts a second worker on a worktree the first never left. `spawn.sh`
+`setsid`s the wrapper for exactly this, so the recorded pid leads its own group and one kill
+reaches both: `kill -- -"$id"`, then `kill -9 -- -"$id"` if it outlives the bounded wait below. It also has no inbox, so it **cannot escalate mid-run** — an `escalate`
 reaches you only in its final message, after the process has already exited. Its reason for
 dying is in `stderr.log` beside the event log; nothing else records it.
 
@@ -535,8 +543,13 @@ call. You do not have to be right; you have to be cheap to be wrong.
 ```bash
 S=~/.claude/kit/infra/scripts/session-status.sh
 # the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
-id=$("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2}')
-claude stop "$id"
+# column 3 is the backend, and it decides the stop: a codex id is a PID, which
+# `claude stop` cannot take, and the kill has to be a GROUP kill (see above).
+read -r id kind < <("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2, $3}')
+case "$kind" in
+    codex) kill -- -"$id" ;;        # the group — the pid is the wrapper, codex is its child
+    *)     claude stop "$id" ;;
+esac
 # verify: NO row for this issue may still be busy
 [ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
