@@ -259,6 +259,17 @@ assert_equals "empty brief file exits 1" "$?" "1"; assert_contains "says it is t
 dry peer --name p --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus --effort high \
     --handoff "$WORK/empty.md" >/dev/null
 assert_equals "empty handoff file exits 1" "$?" "1"; assert_contains "says it is the handoff" "$(err)" "handoff"
+# And a DIRECTORY is not a file: it has a nonzero size, so `-s` alone waves
+# `--charter /some/dir` through, `cat` fails to stderr, and the peer spawns with an
+# EMPTY system prompt — the same ungoverned session, by a different door. Both halves.
+mkdir -p "$WORK/adir"
+dry peer --name p --brief "$WORK/b.md" --charter "$WORK/adir" --model opus --effort high >/dev/null
+assert_equals "a directory charter exits 1" "$?" "1"; assert_contains "names the path" "$(err)" "adir"
+dry peer --name p --brief "$WORK/adir" --charter "$WORK/c.md" --model opus --effort high >/dev/null
+assert_equals "a directory brief exits 1" "$?" "1"; assert_contains "says it is the brief" "$(err)" "brief"
+dry peer --name p --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus --effort high \
+    --handoff "$WORK/adir" >/dev/null
+assert_equals "a directory handoff exits 1" "$?" "1"; assert_contains "says it is the handoff" "$(err)" "handoff"
 peer --dry-run --bogus >/dev/null; assert_equals "unknown peer flag exits 1" "$?" "1"
 peer --dry-run --name >/dev/null; assert_equals "a flag with no value exits 1" "$?" "1"
 
