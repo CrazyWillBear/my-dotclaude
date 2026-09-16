@@ -10,27 +10,35 @@
 #
 #   1. Script exists + is executable, and carries no `jq` dependency (the plugin
 #      runtime must not require jq — it parses the config with awk instead).
-#   2. Each shipped tier resolves to its full {model,effort} roster; stderr
-#      empty (no WARN); exit 0; exactly seven key=value lines.
+#   2. Each shipped tier resolves to its full {model,effort,backend} roster;
+#      stderr empty (no WARN); exit 0; exactly ten key=value lines. A codex
+#      cell's model is one of gpt-5.6-luna/terra/sol; a claude cell's is one of
+#      haiku/sonnet/opus/fable.
 #   3. Missing config → the single WARN line on stderr (exact equality) + the
-#      standard roster on stdout; exit 0.
+#      standard roster on stdout, backend=claude on every role; exit 0.
 #   4. Malformed configs (invalid JSON, a missing role, a bad model, a bad
-#      effort — all literal heredocs, no jq transforms) and a wrong-JSON-type
-#      config each → the exact WARN line + standard fallback; exit 0. The
-#      wrong-type case absorbs #55's intent (a wrong shape leaks nothing but the
-#      one WARN line). Also covers a brace-in-a-string tier value paired with a
-#      missing role, and a role object holding a nested object — both must fall
-#      back rather than return a chimera roster or nested values (#70).
+#      effort, a bad backend, a backend/model mismatch in either direction —
+#      all literal heredocs, no jq transforms) and a wrong-JSON-type config each
+#      → the exact WARN line + standard fallback; exit 0. The wrong-type case
+#      absorbs #55's intent (a wrong shape leaks nothing but the one WARN line).
+#      Also covers a brace-in-a-string tier value paired with a missing role, and
+#      a role object holding a nested object — both must fall back rather than
+#      return a chimera roster or nested values (#70).
 #   5. Reformatted-but-valid configs (a mixed single-line tier, two roles on one
 #      line, and a fully minified config) resolve to the correct roster with no
 #      WARN — the extractor is layout-independent, not fooled by whitespace.
 #   6. Bad/missing tier arg against a good shipped config → the exact WARN line +
 #      standard fallback; exit 0.
 #   7. The shipped config is structurally complete: 9 tier×role cells resolve
-#      through the REAL helper to a model in {haiku,sonnet,opus,fable} and an effort in
+#      through the REAL helper to a backend of claude paired with a model in
+#      {haiku,sonnet,opus,fable}, or codex paired with a model in
+#      {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}, and an effort in
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
-#   8. Fallback lockstep: the missing-config fallback output is byte-identical,
-#      line for line, to resolving `standard` from the shipped config.
+#   8. Fallback is pinned literally to the hardcoded claude standard roster
+#      (sonnet/sonnet/opus, backend=claude on every role) — independent of
+#      whatever the shipped config's standard tier resolves to, so a future
+#      codex rollout in the config can never change what a broken config
+#      falls back to.
 #   9. A `cd` failure inside the BASH_SOURCE fallback (the SCRIPT_DIR/PLUGIN_ROOT
 #      lines, exercised when RESOLVE_TIER_ROOT is unset) is fully suppressed —
 #      stderr is EXACTLY the one WARN line, never that plus a leaked
@@ -98,14 +106,17 @@ echo "test: shipped config resolves each tier's full roster (stderr clean, exit 
 run_tier trivial
 assert_equals "trivial: exit 0" "$RC" "0"
 assert_equals "trivial: stderr empty (no WARN)" "$ERR" ""
-assert_equals "trivial: exactly 7 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "7"
+assert_equals "trivial: exactly 10 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "10"
 assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
 assert_equals "trivial: planner_model haiku" "$(val "$OUT" planner_model)" "haiku"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "trivial: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "trivial: implementer_model haiku" "$(val "$OUT" implementer_model)" "haiku"
 assert_equals "trivial: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
+assert_equals "trivial: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
 assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "trivial: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier standard
 assert_equals "standard: exit 0" "$RC" "0"
@@ -113,10 +124,13 @@ assert_equals "standard: stderr empty (no WARN)" "$ERR" ""
 assert_equals "standard: tier echoed" "$(val "$OUT" tier)" "standard"
 assert_equals "standard: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
 assert_equals "standard: planner_effort high" "$(val "$OUT" planner_effort)" "high"
+assert_equals "standard: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "standard: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
 assert_equals "standard: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
+assert_equals "standard: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "standard: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "standard: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier complex
 assert_equals "complex: exit 0" "$RC" "0"
@@ -124,10 +138,13 @@ assert_equals "complex: stderr empty (no WARN)" "$ERR" ""
 assert_equals "complex: tier echoed" "$(val "$OUT" tier)" "complex"
 assert_equals "complex: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "complex: planner_effort xhigh" "$(val "$OUT" planner_effort)" "xhigh"
+assert_equals "complex: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "complex: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
 assert_equals "complex: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
+assert_equals "complex: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "complex: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "complex: reviewer_effort xhigh" "$(val "$OUT" reviewer_effort)" "xhigh"
+assert_equals "complex: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 # ---------------------------------------------------------------------------
 echo "test: missing config → the exact WARN line + standard roster, exit 0"
@@ -148,6 +165,9 @@ assert_equals "missing: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opu
 assert_equals "missing: planner_effort high" "$(val "$OUT" planner_effort)" "high"
 assert_equals "missing: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
 assert_equals "missing: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "missing: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
+assert_equals "missing: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "missing: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 # ---------------------------------------------------------------------------
 echo "test: malformed configs each fall back to standard with the exact WARN line"
@@ -165,18 +185,18 @@ assert_equals "malformed(invalid JSON): standard fallback" "$(val "$OUT" tier)" 
 write_cfg "$WORK/mal-b" <<'JSON'
 {
   "trivial": {
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -190,19 +210,19 @@ assert_equals "malformed(missing role): implementer_model sonnet" "$(val "$OUT" 
 write_cfg "$WORK/mal-c" <<'JSON'
 {
   "trivial": {
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner":     { "model": "gpt",    "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "gpt",    "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -215,19 +235,19 @@ assert_equals "malformed(bad model): standard fallback" "$(val "$OUT" tier)" "st
 write_cfg "$WORK/mal-d" <<'JSON'
 {
   "trivial": {
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "turbo" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "turbo" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -235,6 +255,81 @@ run_tier standard "$WORK/mal-d"
 assert_equals "malformed(bad effort): exit 0" "$RC" "0"
 assert_equals "malformed(bad effort): exact WARN" "$ERR" "$WARN"
 assert_equals "malformed(bad effort): standard fallback" "$(val "$OUT" tier)" "standard"
+
+# (d2) a backend outside {claude,codex}
+write_cfg "$WORK/mal-d2" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "openai", "model": "sonnet", "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
+  }
+}
+JSON
+run_tier standard "$WORK/mal-d2"
+assert_equals "malformed(bad backend): exit 0" "$RC" "0"
+assert_equals "malformed(bad backend): exact WARN" "$ERR" "$WARN"
+assert_equals "malformed(bad backend): standard fallback" "$(val "$OUT" tier)" "standard"
+
+# (d3) a codex cell wearing a claude model name — acceptance criterion: falls back
+write_cfg "$WORK/mal-d3" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",  "effort": "medium" },
+    "implementer": { "backend": "codex",  "model": "sonnet", "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "codex",  "model": "gpt-5.6-sol", "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol", "effort": "high" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol", "effort": "xhigh" }
+  }
+}
+JSON
+run_tier trivial "$WORK/mal-d3"
+assert_equals "malformed(codex backend, claude model): exit 0" "$RC" "0"
+assert_equals "malformed(codex backend, claude model): exact WARN" "$ERR" "$WARN"
+assert_equals "malformed(codex backend, claude model): standard fallback" "$(val "$OUT" tier)" "standard"
+
+# (d4) a claude cell wearing a codex model name — the other direction
+write_cfg "$WORK/mal-d4" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "gpt-5.6-terra", "effort": "high" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" }
+  }
+}
+JSON
+run_tier standard "$WORK/mal-d4"
+assert_equals "malformed(claude backend, codex model): exit 0" "$RC" "0"
+assert_equals "malformed(claude backend, codex model): exact WARN" "$ERR" "$WARN"
+assert_equals "malformed(claude backend, codex model): standard fallback" "$(val "$OUT" tier)" "standard"
 
 # (e) wrong JSON type — tiers are strings, not objects (absorbs #55's intent:
 #     a wrong shape leaks NOTHING to stderr but the single WARN line).
@@ -255,18 +350,18 @@ write_cfg "$WORK/mal-i" <<'JSON'
 {
   "trivial": {
     "note": "has { brace",
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" }
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" }
   },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -283,19 +378,19 @@ assert_equals "brace-in-string+missing-role: reviewer_model opus (from fallback,
 write_cfg "$WORK/mal-j" <<'JSON'
 {
   "trivial": {
-    "planner":     { "meta": { "model": "fable", "effort": "max" }, "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "meta": { "model": "fable", "effort": "max" }, "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -314,16 +409,16 @@ echo "test: reformatted-but-valid configs resolve correctly with no WARN (layout
 #     planner_model=sonnet / planner_effort=medium asserts are the discriminators.
 write_cfg "$WORK/fmt-f" <<'JSON'
 {
-  "trivial": { "planner": { "model": "sonnet", "effort": "medium" }, "implementer": { "model": "sonnet", "effort": "medium" }, "reviewer": { "model": "opus", "effort": "high" } },
+  "trivial": { "planner": { "backend": "claude", "model": "sonnet", "effort": "medium" }, "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" }, "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
   "standard": {
-    "planner":     { "model": "opus",   "effort": "high" },
-    "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -336,6 +431,7 @@ assert_equals "mixed-layout: planner_effort medium (not stolen high)" "$(val "$O
 assert_equals "mixed-layout: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
 assert_equals "mixed-layout: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
 assert_equals "mixed-layout: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
+assert_equals "mixed-layout: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 run_tier standard "$WORK/fmt-f"
 assert_equals "mixed-layout: standard planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "mixed-layout: standard stderr empty (no WARN)" "$ERR" ""
@@ -346,18 +442,18 @@ assert_equals "mixed-layout: standard stderr empty (no WARN)" "$ERR" ""
 write_cfg "$WORK/fmt-g" <<'JSON'
 {
   "trivial": {
-    "planner":     { "model": "sonnet", "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "medium" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "standard": {
-    "planner": { "model": "opus", "effort": "high" }, "implementer": { "model": "sonnet", "effort": "high" },
-    "reviewer":    { "model": "opus",   "effort": "high" }
+    "planner": { "backend": "claude", "model": "opus", "effort": "high" }, "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   },
   "complex": {
-    "planner":     { "model": "fable",  "effort": "xhigh" },
-    "implementer": { "model": "opus",   "effort": "high" },
-    "reviewer":    { "model": "fable",  "effort": "xhigh" }
+    "planner":     { "backend": "claude", "model": "fable",  "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "fable",  "effort": "xhigh" }
   }
 }
 JSON
@@ -371,16 +467,17 @@ assert_equals "two-roles-one-line: reviewer_model opus" "$(val "$OUT" reviewer_m
 
 # (h) fully minified — the whole config on ONE line, zero whitespace (jq -c shape).
 write_cfg "$WORK/fmt-h" <<'JSON'
-{"trivial":{"planner":{"model":"sonnet","effort":"medium"},"implementer":{"model":"sonnet","effort":"medium"},"reviewer":{"model":"opus","effort":"high"}},"standard":{"planner":{"model":"opus","effort":"high"},"implementer":{"model":"sonnet","effort":"high"},"reviewer":{"model":"opus","effort":"high"}},"complex":{"planner":{"model":"fable","effort":"xhigh"},"implementer":{"model":"opus","effort":"high"},"reviewer":{"model":"fable","effort":"xhigh"}}}
+{"trivial":{"planner":{"backend":"claude","model":"sonnet","effort":"medium"},"implementer":{"backend":"claude","model":"sonnet","effort":"medium"},"reviewer":{"backend":"claude","model":"opus","effort":"high"}},"standard":{"planner":{"backend":"claude","model":"opus","effort":"high"},"implementer":{"backend":"claude","model":"sonnet","effort":"high"},"reviewer":{"backend":"claude","model":"opus","effort":"high"}},"complex":{"planner":{"backend":"claude","model":"fable","effort":"xhigh"},"implementer":{"backend":"claude","model":"opus","effort":"high"},"reviewer":{"backend":"claude","model":"fable","effort":"xhigh"}}}
 JSON
 run_tier trivial "$WORK/fmt-h"
 assert_equals "minified: trivial stderr empty (no WARN)" "$ERR" ""
 assert_equals "minified: trivial planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
-assert_equals "minified: trivial exactly 7 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "7"
+assert_equals "minified: trivial exactly 10 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "10"
 run_tier standard "$WORK/fmt-h"
 assert_equals "minified: standard planner_model opus" "$(val "$OUT" planner_model)" "opus"
 run_tier complex "$WORK/fmt-h"
 assert_equals "minified: complex reviewer_model fable" "$(val "$OUT" reviewer_model)" "fable"
+assert_equals "minified: complex reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 assert_equals "minified: complex stderr empty (no WARN)" "$ERR" ""
 
 # ---------------------------------------------------------------------------
@@ -460,18 +557,35 @@ for t in trivial standard complex; do
     for r in planner implementer reviewer; do
         m="$(val "$OUT" "${r}_model")"
         e="$(val "$OUT" "${r}_effort")"
-        case "$m" in haiku|sonnet|opus|fable) ;; *) complete=0 ;; esac
+        b="$(val "$OUT" "${r}_backend")"
         case "$e" in low|medium|high|xhigh|max) ;; *) complete=0 ;; esac
+        case "$b" in
+            claude) case "$m" in haiku|sonnet|opus|fable) ;; *) complete=0 ;; esac ;;
+            codex)  case "$m" in gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;; *) complete=0 ;; esac ;;
+            *) complete=0 ;;
+        esac
     done
 done
-assert_equals "shipped config: all 9 tier×role cells resolve to valid model/effort" "$complete" "1"
+assert_equals "shipped config: all 9 tier×role cells resolve to a valid model/effort/backend" "$complete" "1"
 
 # ---------------------------------------------------------------------------
-echo "test: fallback roster ≡ shipped standard tier, line for line (lockstep)"
-run_tier standard
-shipped_standard="$OUT"
+echo "test: fallback is pinned literally to the hardcoded claude standard roster"
+# Deliberately NOT derived from resolving `standard` against the shipped config:
+# the fallback is a fixed roster independent of whatever the config's standard
+# tier currently resolves to, so a future codex rollout there can't change what
+# a broken config falls back to — even though both happen to match today.
+EXPECTED_FALLBACK="tier=standard
+planner_model=sonnet
+planner_effort=high
+planner_backend=claude
+implementer_model=sonnet
+implementer_effort=max
+implementer_backend=claude
+reviewer_model=opus
+reviewer_effort=high
+reviewer_backend=claude"
 run_tier complex "$EMPTY"   # missing config → fallback, whatever tier was asked
-assert_equals "fallback output equals shipped-standard output" "$OUT" "$shipped_standard"
+assert_equals "fallback output matches the pinned claude standard roster" "$OUT" "$EXPECTED_FALLBACK"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

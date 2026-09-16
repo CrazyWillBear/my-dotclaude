@@ -1,48 +1,61 @@
 #!/usr/bin/env bash
 #
-# resolve-tier.sh — resolve a complexity tier to its {model,effort} roster.
+# resolve-tier.sh — resolve a complexity tier to its {model,effort,backend} roster.
 #
 # Usage: bash resolve-tier.sh <tier>          # tier ∈ trivial | standard | complex
 #
 # Reads the roster table from:
 #   ${RESOLVE_TIER_ROOT}/model-tiers.json      (falls back to <script-dir>/..)
 #
-# Contract: prints EXACTLY seven key=value lines to stdout and ALWAYS exits 0 —
+# Contract: prints EXACTLY ten key=value lines to stdout and ALWAYS exits 0 —
 #   tier=<tier>
-#   planner_model=<m>      planner_effort=<e>
-#   implementer_model=<m>  implementer_effort=<e>
-#   reviewer_model=<m>     reviewer_effort=<e>
+#   planner_model=<m>      planner_effort=<e>      planner_backend=<b>
+#   implementer_model=<m>  implementer_effort=<e>  implementer_backend=<b>
+#   reviewer_model=<m>     reviewer_effort=<e>     reviewer_backend=<b>
 # Callers (classify-task, /orchestrate) route the planner/implementer/
-# reviewer models AND efforts off these lines, so a roster must always come back.
+# reviewer models, efforts AND backends off these lines, so a roster must
+# always come back.
 #
 # This script ships in the plugin and runs in-session on user machines, so it
 # depends on nothing beyond POSIX awk — the config is a format we fully control,
 # and a small awk extractor plus strict value-set validation of all 9 cells give
 # the same safety a JSON library would, without adding a runtime dependency.
 #
+# Each cell's backend is claude or codex, cross-validated against its own model:
+# backend claude takes a model in {haiku,sonnet,opus,fable}; backend codex takes a
+# model in {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}. Either paired with the other's
+# model — or any other backend value — is a miss like any other bad cell.
+#
 # Fallback (single WARN to stderr, then the hardcoded standard roster to stdout,
 # exit 0) on ANY of: a missing/unreadable config; unparseable content (including
 # a wrong-shape config); a structurally incomplete config (any of the 3 tiers ×
-# 3 roles missing a model/effort); a model outside {haiku,sonnet,opus,fable}; an effort
-# outside {low,medium,high,xhigh,max}; or a missing/unknown tier argument. Never
-# exits non-zero and never writes anything to stderr but the one WARN line.
+# 3 roles missing a model/effort/backend); a model that does not match its own
+# backend's allowed set; an effort outside {low,medium,high,xhigh,max}; a backend
+# outside {claude,codex}; or a missing/unknown tier argument. Never exits
+# non-zero and never writes anything to stderr but the one WARN line. The
+# fallback roster is the hardcoded claude standard roster, always — it does not
+# track whatever the shipped config's standard tier resolves to, so a codex
+# rollout in the config never changes what a broken config falls back to.
 
 set -uo pipefail
 
 TIER="${1:-}"
 
-# The one hardcoded roster in the script — the fallback source of truth. A
-# missing/broken-config fallback is byte-identical to resolving `standard` from a
-# healthy shipped config (a test pins this lockstep).
+# The one hardcoded roster in the script — the fallback source of truth, INDEPENDENT of
+# whatever the shipped config's standard tier resolves to (see the header above): a config
+# rollout that changes standard's values never changes what a broken config falls back to.
 fallback() {
     printf 'WARN: model-tiers.json missing or invalid — falling back to standard tier defaults\n' >&2
     printf 'tier=standard\n'
     printf 'planner_model=sonnet\n'
     printf 'planner_effort=high\n'
+    printf 'planner_backend=claude\n'
     printf 'implementer_model=sonnet\n'
     printf 'implementer_effort=max\n'
+    printf 'implementer_backend=claude\n'
     printf 'reviewer_model=opus\n'
     printf 'reviewer_effort=high\n'
+    printf 'reviewer_backend=claude\n'
     exit 0
 }
 
@@ -130,19 +143,33 @@ cell() {
 # Config must exist.
 [ -f "$CONFIG" ] || fallback
 
-# Structural + value validation: every one of the 9 tier×role cells must carry a
-# model in {haiku,sonnet,opus,fable} and an effort in {low,medium,high,xhigh,max}. Any
-# miss (absent cell, unparseable content, wrong shape, out-of-set value) → fallback.
+# Structural + value validation: every one of the 9 tier×role cells must carry an
+# effort in {low,medium,high,xhigh,max}, a backend of claude or codex, and a model
+# from THAT backend's set (haiku,sonnet,opus,fable for claude; gpt-5.6-luna,
+# gpt-5.6-terra,gpt-5.6-sol for codex). Any miss (absent cell, unparseable content,
+# wrong shape, out-of-set value, or a model/backend mismatch) → fallback.
 for t in trivial standard complex; do
     for r in planner implementer reviewer; do
         m="$(cell "$t" "$r" model)"
         e="$(cell "$t" "$r" effort)"
-        case "$m" in
-            haiku|sonnet|opus|fable) ;;
-            *) fallback ;;
-        esac
+        b="$(cell "$t" "$r" backend)"
         case "$e" in
             low|medium|high|xhigh|max) ;;
+            *) fallback ;;
+        esac
+        case "$b" in
+            claude)
+                case "$m" in
+                    haiku|sonnet|opus|fable) ;;
+                    *) fallback ;;
+                esac
+                ;;
+            codex)
+                case "$m" in
+                    gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
+                    *) fallback ;;
+                esac
+                ;;
             *) fallback ;;
         esac
     done
@@ -159,6 +186,8 @@ printf 'tier=%s\n' "$TIER"
 for r in planner implementer reviewer; do
     m="$(cell "$TIER" "$r" model)"
     e="$(cell "$TIER" "$r" effort)"
-    printf '%s_model=%s\n'  "$r" "$m"
-    printf '%s_effort=%s\n' "$r" "$e"
+    b="$(cell "$TIER" "$r" backend)"
+    printf '%s_model=%s\n'   "$r" "$m"
+    printf '%s_effort=%s\n'  "$r" "$e"
+    printf '%s_backend=%s\n' "$r" "$b"
 done
