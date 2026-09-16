@@ -6,10 +6,11 @@ allowed-tools: Read, Write, Bash, Glob, AskUserQuestion
 ---
 
 Scaffold `.claude/swarm/` for the current project: a roster of peer roles, the shared
-charter, and one brief per role chosen. This implements
-`docs/swarm-design.md` § Roster / § Roles shipped in v1 / § Charter. It does **not**
-spawn anything — `swarm.sh up|down|attach` (the piece that actually starts peers) is a
-later issue; this command only writes the roster, the charter, and the briefs.
+charter, one brief per role chosen, and the vault-scoped memory tree. This implements
+`docs/swarm-design.md` § Roster / § Roles shipped in v1 / § Charter / § Memory tiers.
+It does **not** spawn anything — `swarm.sh up|down|attach` (the piece that actually
+starts peers) is a later issue; this command only writes the roster, the charter, the
+briefs, and memory.
 
 ## Steps
 
@@ -50,10 +51,27 @@ later issue; this command only writes the roster, the charter, and the briefs.
    the matching `templates/briefs/<role>.md`, verbatim. An unchosen role gets no
    brief and no inbox directory.
 
-8. **Validate before reporting done.** Run the plugin's own roster validator —
+8. **Scaffold `.claude/swarm/memory/`** from the roster you just wrote
+   (`docs/swarm-design.md` § Memory tiers) — this is the real central mechanism, never
+   hand-invent the policy file yourself:
+   - Check `command -v vault`. **If found**, run it for real, literally:
+     `vault init --layout swarm --roster .claude/swarm/roster.json --vault .claude/swarm/memory`.
+     This creates `shared/`, plus `roles/<role>/` and `proposals/<role>/` for every
+     chosen role whose `kind` is `manager` or `doer` (orchestrator needs none of its
+     own — its policy rule already covers the whole tree), plus
+     `.claude/swarm/memory/.vault-policy.json`.
+   - **If not found**, print one line — `vault not on PATH — wrote the plain directory
+     layout, no policy file (install wilcus-vault to add scoping)` — and create the
+     same directories yourself with `mkdir -p`: `.claude/swarm/memory/shared/`, plus
+     `.claude/swarm/memory/roles/<role>/` and `.claude/swarm/memory/proposals/<role>/`
+     for every chosen role whose `kind` is `manager` or `doer`. No policy file — only
+     vault generates one.
+
+9. **Validate before reporting done.** Run the plugin's own roster validator —
    literally `bash "${CLAUDE_PLUGIN_ROOT}/scripts/roster.sh" validate` — against the
    project directory you just wrote to. If it fails, fix the roster and re-run it —
    never report success on a roster you have not validated through the real script.
 
-9. **Report** the files written and which roles were installed. Note that
-   `swarm.sh up`/`down`/`attach` (spawning these roles) ships in a later issue.
+10. **Report** the files and memory layout written, which roles were installed, and
+    whether vault ran or the plain fallback did. Note that `swarm.sh up`/`down`/`attach`
+    (spawning these roles) ships in a later issue.

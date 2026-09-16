@@ -131,7 +131,8 @@ What it says:
   schema or public-API changes, business or legal choices, deleting anyone else's work.
 - Every code change is reviewed by a fresh agent before merge. Never the one that wrote it.
 - Report with SendMessage; plain output is invisible. Stop every worker you spawned.
-- Memory: read `shared/` and your namespace; write only your namespace; propose to `shared/`.
+- Memory: read `shared/` and your namespace; write only your namespace; propose to
+  `shared/`; never Claude's own auto-memory — it's shared by cwd and cannot be scoped.
 - Handoff at the next natural stopping point when asked, to the path the orchestrator gives you.
 
 Peers run with `--permission-mode bypassPermissions`. The guardrails are the charter, the
@@ -285,5 +286,8 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
    three briefs, inbox dirs.
 5. **rotation**: the peer-mode watchdog threshold and `swarm.sh rotate`.
 6. **memory**: vault work order above, then the policy generator and charter lines in swarm.
+   (Landed #93: `/init-swarm` runs `vault init --layout swarm` when vault is on PATH, with
+   a plain-directory fallback otherwise, plus the charter's auto-memory rule and each
+   brief's `--agent` name.)
 7. **codex**: the backend switch in infra.
 8. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.
