@@ -194,6 +194,7 @@ calls=$(claude_calls)
 assert_contains "adds Composio marketplace" "$calls" "plugin marketplace add ComposioHQ/awesome-claude-plugins"
 assert_contains "installs security-guidance" "$calls" "plugin install security-guidance@awesome-claude-plugins"
 assert_equals  "marketplace added exactly once" "$(printf '%s\n' "$calls" | grep -c 'marketplace add ComposioHQ')" "1"
+assert_not_contains "does not install perf"  "$calls" "install perf@"
 assert_contains "INSTALL_FAILED stays 0"    "$out" "INSTALL_FAILED=0"
 
 # ---- test: tcr_install_security_sweep --------------------------------------
@@ -210,9 +211,9 @@ assert_contains "INSTALL_FAILED stays 0"          "$out" "INSTALL_FAILED=0"
 echo "test: failed 'claude plugin install' -> warns, sets INSTALL_FAILED=1, non-fatal"
 reset_calls
 make_claude_stub fail
-out=$(run_fn "$WORK/stubs" "tcr_install_plugin perf@awesome-claude-plugins")
+out=$(run_fn "$WORK/stubs" "tcr_install_plugin test-plugin@test-marketplace")
 assert_contains "emits a warning"            "$out" "warn"
-assert_contains "warning names the plugin"   "$out" "perf@awesome-claude-plugins"
+assert_contains "warning names the plugin"   "$out" "test-plugin@test-marketplace"
 assert_contains "INSTALL_FAILED set to 1"    "$out" "INSTALL_FAILED=1"
 
 # ---- test: setup scripts check python3 before writing anything --------------
