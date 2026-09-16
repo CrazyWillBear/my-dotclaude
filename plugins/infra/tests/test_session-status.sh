@@ -167,6 +167,21 @@ echo "test: a peer entry with no cwd cannot be claimed by this project"
 stub_claude 0 '[{ "id": "p444", "kind": "background", "name": "swe-manager", "state": "idle" }]'
 assert_contains "unattributable -> gone" "$(run --peers /proj swe-manager)" "swe-manager - - gone"
 
+# A rotation stops a peer and respawns it under the SAME name, so both the corpse and
+# the successor are in the list. Answer with the live one or `down` stops nothing and
+# `up` sees a peer that is really gone.
+echo "test: on a duplicate name the LIVE session wins"
+stub_claude 0 '[
+  { "id": "old1", "cwd": "/proj", "kind": "background", "name": "swe-manager", "state": "stopped" },
+  { "id": "new1", "cwd": "/proj", "kind": "background", "name": "swe-manager", "state": "idle" },
+  { "id": "old2", "cwd": "/proj", "kind": "background", "name": "performance-engineer", "state": "idle" },
+  { "id": "new2", "cwd": "/proj", "kind": "background", "name": "performance-engineer", "state": "stopped" }
+]'
+out=$(run --peers /proj swe-manager performance-engineer)
+assert_equals "still one line per role" "$(printf '%s\n' "$out" | wc -l)" "2"
+assert_contains "the live successor, not the corpse" "$out" "swe-manager new1 background idle"
+assert_contains "whichever order they are listed in" "$out" "performance-engineer old2 background idle"
+
 echo "test: --peers needs a project dir and at least one role"
 run --peers >/dev/null; assert_equals "no project dir exits 1" "$?" "1"
 assert_contains "prints usage" "$(err)" "usage:"

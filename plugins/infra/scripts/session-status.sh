@@ -133,6 +133,10 @@ if not isinstance(agents, list):
 # interactive one reports `busy`; leaving both spellings through would mean the
 # documented states above are a lie for half the sessions, and a caller matching on
 # `busy` would read a working session as something it has no rule for.
+# The states that mean a session is still there to talk to. Everything else — stopped,
+# done, gone, unknown — is a peer that has to be respawned, not one to stop or attach to.
+LIVE = ("busy", "idle", "blocked")
+
 def state_of(agent):
     raw = (agent.get("state") or agent.get("status") or "").lower()
     if raw in ("done", "completed", "finished", "exited"):
@@ -170,7 +174,12 @@ if peers_mode:
         cwd = agent.get("cwd")
         if not cwd or os.path.realpath(cwd) != project_dir:
             continue
-        live[agent["name"]] = agent
+        # A rotation leaves the stopped predecessor in the list under the SAME name.
+        # A running entry always wins it, so one line per role is the live one.
+        name = agent["name"]
+        if name in live and state_of(live[name]) in LIVE and state_of(agent) not in LIVE:
+            continue
+        live[name] = agent
     for role in peers:
         agent = live.get(role)
         if agent is None:
