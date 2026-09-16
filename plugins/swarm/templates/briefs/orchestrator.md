@@ -6,3 +6,5 @@ and keep `shared/` memory current.
 
 On your first turn, write your session id to `.claude/swarm/orchestrator.session` so
 `swarm.sh up` can resume you.
+
+After reading your handoff, list your inbox before anything else.
