@@ -218,6 +218,28 @@ assert_contains "peer stdin is closed too" "$argv" "STDIN:[]"
 echo "test: --autocompact is overridable"
 assert_arg "explicit window" "$(peer --dry-run --autocompact 250k)" "250k"
 
+# Rotation is stop-then-respawn under the same name, so the successor's ONLY link to
+# what its predecessor was doing is this doc. Read-it-first has to precede the brief:
+# a peer that acts on its standing role before reading the handoff redoes or drops
+# whatever was in flight (docs/swarm-design.md § Rotation).
+echo "test: a rotated peer reads its handoff BEFORE its brief"
+printf 'In flight: issue 41 awaiting review.\n' >"$WORK/h.md"
+out=$(peer --dry-run --handoff "$WORK/h.md")
+assert_contains "names the handoff path" "$out" "$WORK/h.md"
+assert_contains "says read it first" "$out" "FIRST"
+h=$(printf '%s\n' "$out" | grep -n "$WORK/h.md"              | head -1 | cut -d: -f1)
+b=$(printf '%s\n' "$out" | grep -n "You are the swe-manager" | head -1 | cut -d: -f1)
+if [ -n "$h" ] && [ -n "$b" ] && [ "$h" -lt "$b" ]; then
+    ok "the handoff instruction precedes the brief"
+else
+    no "handoff at line $h is not before the brief at line $b"
+fi
+assert_not_contains "and a fresh peer has no handoff line" "$(peer --dry-run)" "FIRST read your handoff"
+bash "$SPAWN" peer --name p --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus \
+     --effort high --handoff "$WORK/vanished.md" --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "missing handoff file exits 1" "$?" "1"
+assert_contains "names the path" "$(err)" "vanished.md"
+
 echo "test: a peer with a missing piece fails loud instead of half-spawning"
 bash "$SPAWN" peer --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus --effort high --dry-run >/dev/null 2>"$WORK/err"
 assert_equals "no --name exits 1" "$?" "1"; assert_contains "says which" "$(err)" "--name"
