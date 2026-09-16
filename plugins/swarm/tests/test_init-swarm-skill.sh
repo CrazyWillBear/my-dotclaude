@@ -228,7 +228,8 @@ if PATH=/usr/bin:/bin command -v vault >/dev/null 2>&1; then
 else
     MEMORY_ERR="$WORK/memory-fallback-err"
     MEMORY_OUT="$(PATH=/usr/bin:/bin bash "$MEMORY_SCRIPT" scaffold "$SCRATCH" 2>"$MEMORY_ERR")"
-    if [ $? -eq 0 ]; then
+    MEMORY_RC=$?
+    if [ "$MEMORY_RC" -eq 0 ]; then
         ok "memory.sh scaffold exits 0 on a bare PATH"
     else
         no "memory.sh scaffold failed on a bare PATH: $(cat "$MEMORY_ERR")"

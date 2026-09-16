@@ -30,7 +30,6 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="$PLUGIN_ROOT/scripts/memory.sh"
-ROSTER_SCRIPT="$PLUGIN_ROOT/scripts/roster.sh"
 
 # Captured before any test touches PATH: decoy/stub cases need everything else (bash,
 # mkdir, find, python3 for roster.sh, ...) to keep resolving normally while their fake
