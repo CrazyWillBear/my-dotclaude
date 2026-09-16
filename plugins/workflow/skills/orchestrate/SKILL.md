@@ -134,6 +134,11 @@ on a confirmation you already gave; the announcement *is* the veto window:
 
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
+**Claude-only.** Steps 3-5 spawn through the `Agent` tool, which accepts only claude model
+names — a `codex`-backend roster cell cannot run in this lane. Every shipped tier is
+all-claude today, so this is dormant; #90 wires codex routing for the *session* lane's
+`spawn.sh` only, and does not cover this consumer.
+
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
    prompt to confirm or override a tier.** Auto-accept and say what you got.
