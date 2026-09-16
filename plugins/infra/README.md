@@ -11,7 +11,7 @@ plugins/infra/
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
 │   ├── spawn.sh                 # build (or print) the `claude --bg` command for a worker (one issue) or a peer (one role)
-│   ├── session-status.sh        # worker session state from `claude agents --json`; --self resolves this session's name
+│   ├── session-status.sh        # session state from `claude agents --json`; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   └── resolve-tier.sh          # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
 ├── tests/                       # one bash test per script
