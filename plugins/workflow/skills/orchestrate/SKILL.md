@@ -670,7 +670,7 @@ with real tests:
 | `merge-fold.sh` | the deterministic fold |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
-| `resolve-tier.sh` | tier → {model, effort} |
+| `resolve-tier.sh` | tier → {model, effort, backend} |
 
 `session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra** plugin and are
 always called at `~/.claude/kit/infra/scripts/`.

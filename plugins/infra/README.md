@@ -7,12 +7,12 @@ See [`docs/swarm-design.md` § Plugin split](../../docs/swarm-design.md).
 plugins/infra/
 ├── .claude-plugin/plugin.json   # manifest
 ├── hooks/hooks.json             # SessionStart → scripts/link-kit.sh
-├── model-tiers.json             # tier → {model, effort} roster, read by resolve-tier.sh
+├── model-tiers.json             # tier → {model, effort, backend} roster, read by resolve-tier.sh
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
 │   ├── session-status.sh        # worker session state from `claude agents --json`; --self resolves this session's name
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
-│   └── resolve-tier.sh          # resolve a complexity tier → its {model, effort} roster (awk, no jq; standard fallback)
+│   └── resolve-tier.sh          # resolve a complexity tier → its {model, effort, backend} roster (awk, no jq; standard fallback)
 ├── tests/                       # one bash test per script
 └── README.md                    # this file
 ```
