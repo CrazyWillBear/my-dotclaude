@@ -90,6 +90,12 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
+**Not yet shipped.** `model-tiers.json` is still `backend=claude` in every cell. The codex path
+is built and tested, but the session lane subscribes to a worker with `SendMessage` and a codex
+worker's report lands in `last-message.txt`, which nothing reads — so a codex default would stall
+a run at its first worker. Orchestrator-side ingest of that file is the prerequisite, carried by
+the e2e gate (#96); `test_spawn.sh` pins the table to claude until then.
+
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
 affordable on the $20 codex plan. A review is a shorter turn than an implementation but sol
@@ -216,11 +222,14 @@ one-shot, so it maps onto `codex exec`:
 
 `infra/spawn.sh` switches on the tier's backend and writes a pid file and an exit-code file
 beside the event log; `session-status.sh` reports a codex worker from those the way it reports
-a claude worker from the agent list. The report contract is identical, so `/orchestrate` does
-not change.
+a claude worker from the agent list. The **state** vocabulary is identical, so `/orchestrate`'s
+liveness wait is unchanged — but **control is not**: column 2 is a PID, so a codex row is stopped
+with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no inbox a codex
+worker cannot escalate mid-run.
 
 Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
-`last-message.txt`, `status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
+`stderr.log` (the only place a failed worker's reason lands), `last-message.txt`,
+`status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
 `/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
 also swaps two steps: `codex exec review --base` replaces the `my-review` subagent, and the

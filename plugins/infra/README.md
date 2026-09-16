@@ -44,6 +44,7 @@ Codex has no agent list, so the run dir **is** the session:
 ```
 ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 ├── events.jsonl        # the --json event stream
+├── stderr.log          # codex's progress, and the ONLY place a failure's reason lands
 ├── last-message.txt    # -o: the final message, shaped by --output-schema
 ├── status-schema.json  # the worker's fixed-shape status report
 ├── pid                 # alive => busy

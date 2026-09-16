@@ -46,8 +46,8 @@ err() { cat "$WORK/err"; }
 # The roster a worker resolves decides which BACKEND it spawns through, so the tests
 # pin one instead of riding whatever the shipped table happens to say this week. The
 # claude-path assertions below run against CFG_CLAUDE; the codex section further down
-# swaps in CFG_CODEX. One test deliberately uses the REAL shipped table, to prove the
-# rollout in model-tiers.json actually reaches the codex path.
+# swaps in CFG_CODEX, which is what proves a codex-routed tier reaches the codex path.
+# One test deliberately uses the REAL shipped table — to pin that it is still claude.
 CFG_CLAUDE="$WORK/cfg-claude"
 mkdir -p "$CFG_CLAUDE"
 cat >"$CFG_CLAUDE/model-tiers.json" <<'JSON'
@@ -373,14 +373,19 @@ assert_not_contains "a peer stays claude whatever the tier table says" \
         --charter "$WORK/pc.md" --model opus --effort high --orchestrator orch-main \
         --dry-run 2>/dev/null)" "codex"
 
-# Everything above pins the codex path against a roster written by this test. This one
-# pins the ROLLOUT: the shipped model-tiers.json must actually route a worker there, or
-# the whole backend is dead code nobody reaches.
-echo "test: the SHIPPED roster routes a worker through the codex path"
-out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
-      bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
-assert_arg "shipped standard tier spawns codex" "$out" "codex"
-assert_arg "with the tier's codex model" "$out" "gpt-5.6-terra"
+# The codex path above is built, tested and ready; the SHIPPED roster is deliberately
+# NOT on it. The session lane subscribes to a worker with SendMessage and waits for its
+# report, and a codex worker's report lands in last-message.txt, which nothing reads —
+# so a codex default stalls a run at its first worker. Orchestrator-side ingest is the
+# prerequisite (#96). Flipping model-tiers.json before that lands trips this test.
+echo "test: the SHIPPED roster still routes workers through claude — the flip is on hold"
+for t in trivial standard complex; do
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+    assert_arg "shipped $t spawns claude" "$out" "--bg"
+    assert_not_contains "shipped $t is not on codex yet (needs #96's report ingest)" \
+        "$out" "codex exec"
+done
 
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"

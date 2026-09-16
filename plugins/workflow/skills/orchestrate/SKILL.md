@@ -513,7 +513,12 @@ One line per session — `<name> <id> <kind> <state>`:
 A **codex** worker is a process, not a session, so it is in no agent list: `session-status.sh`
 reads it from `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` instead, and column 2
 is its PID. It reports in this same vocabulary — `busy`, then `done` or `failed` — and it never
-goes `idle`. Everything below keys on `busy`, so nothing changes.
+goes `idle`, so the liveness wait below reads it unchanged. **Control does not.** Column 2 is a
+PID, and `claude stop` and `claude attach` take a *session* id: a codex row is stopped with
+`kill`, **not `claude stop`** — `kill "$id"`, then `kill -9 "$id"` if it outlives the bounded
+wait below — and there is nothing to attach to. It also has no inbox, so it **cannot escalate mid-run** — an `escalate`
+reaches you only in its final message, after the process has already exited. Its reason for
+dying is in `stderr.log` beside the event log; nothing else records it.
 
 **Never parse `claude logs`.** It is a raw ANSI screen dump — cursor moves and spinner frames, not
 a transcript.

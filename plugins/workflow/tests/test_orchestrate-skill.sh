@@ -144,6 +144,14 @@ assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
 assert_matches "blocked means a permission wedge" "$BODY" "permission wedge"
 assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
 
+echo "test: a codex worker is a PID, so the claude-only controls are called out"
+# `claude stop` and `claude attach` take a SESSION id; column 2 of a codex row is a PID,
+# and a codex worker has no inbox to attach to or escalate through mid-run. Claiming
+# "nothing changes" would send the recovery path at a process with the wrong tool.
+assert_not_matches "no blanket 'nothing changes' for the codex backend" "$BODY" "so nothing changes"
+assert_matches "a codex row is stopped with kill, not claude stop" "$BODY" "kill.{0,40}not .?claude stop|claude stop.{0,60}kill"
+assert_matches "and it cannot escalate mid-run" "$BODY" "cannot escalate mid-run|no mid-run escalation"
+
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"
 assert_matches "reads the id from session-status, not from spawn output" "$BODY" "column 2"

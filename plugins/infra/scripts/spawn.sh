@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 #
-# spawn.sh — start (or print) one `claude --bg` session, in one of two forms.
+# spawn.sh — start (or print) one background agent, in one of two forms.
+#
+# A worker's TIER decides its BACKEND. `backend: claude` (and every peer) is a
+# `claude --bg` session; `backend: codex` is a `codex exec` process instead — same
+# contract, different everything else. See § CODEX below and docs/swarm-design.md
+# § Codex backend. The shipped table is claude-only today; the codex path is live and
+# reached by any tier row that says so.
 #
 # A WORKER is one-shot and owns one issue; it exits when the issue is built. A PEER is
 # a standing role session that idles between briefs and is rotated by handoff. Both are
@@ -31,13 +37,14 @@
 #                           when omitted (session-status.sh --self)
 #     --dry-run             print the command instead of running it
 #
-# On a real spawn this EXECS claude, whose stdout is a short banner CONTAINING the
-# new session's id (`claude stop <id>   stop this session`) — not a bare id, so do
+# On a real CLAUDE spawn this EXECS claude, whose stdout is a short banner CONTAINING
+# the new session's id (`claude stop <id>   stop this session`) — not a bare id, so do
 # not parse it. Read the id from `session-status.sh <runid>`, column 2.
 #
 # You need it: `claude stop` and `claude attach` take that id — `Usage: claude stop
 # <id>` — and reject a session NAME outright. The name addresses SendMessage; the id
-# controls the process.
+# controls the process. A CODEX spawn instead backgrounds the process, prints its run
+# dir, and returns: column 2 is then a PID, which `claude stop` does not take (kill it).
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
@@ -71,9 +78,11 @@
 #                               stdin, and one blocked on it looks exactly like one
 #                               working.
 #
-# The prompt's last section is load-bearing for both forms: a session's plain text
-# output is invisible to every other agent, so it is told, explicitly, to report with
-# SendMessage. Miss that and whoever spawned it waits forever.
+# The prompt's last section is load-bearing for every form: an agent's plain text output
+# is invisible to everyone else, so it is told, explicitly, how to report. A claude
+# session reports with SendMessage. A codex worker HAS NO SendMessage — its report is
+# the schema'd final message in `last-message.txt`, and its prompt says so instead.
+# Miss that and whoever spawned it waits forever.
 #
 # `claude` has no --cwd, so a worker's session is started FROM its worktree.
 
