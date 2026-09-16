@@ -72,9 +72,8 @@ Then **restart Claude Code** so it loads the plugins.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **`swarm`** plugin (`plugins/swarm/`) — roster-driven multi-session teams: `/init-swarm` writes
   a project's `.claude/swarm/roster.json`, charter, and one brief per chosen role (orchestrator,
-  swe-manager, performance-engineer), and `swarm.sh up|down|rotate|attach` manages the peer
-  lifecycle. Replaces the third-party perf plugin with a performance-engineer role.
-  **Full reference:** [`plugins/swarm/README.md`](plugins/swarm/README.md).
+  swe-manager, performance-engineer), and `swarm.sh brief` distributes briefs to chosen roles.
+  Replaces the third-party perf plugin with a performance-engineer role.
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
@@ -218,7 +217,7 @@ my-dotclaude/
 │   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
 │   ├── infra/            # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
 │   ├── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
-│   └── swarm/            # roster-driven teams (/init-swarm, swarm.sh) — see plugins/swarm/README.md
+│   └── swarm/            # roster-driven teams (/init-swarm, swarm.sh briefs)
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)
