@@ -424,12 +424,29 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status
 }
 SCHEMA
 
-# Backgrounded as one group so the recorded pid stays alive until the exit code is
-# written: session-status.sh reads "pid alive" as busy, and a gap between the process
-# ending and the exit file appearing would read as a worker that died without a code.
+# Wrapped so the recorded pid stays alive until the exit code is written:
+# session-status.sh reads "pid alive" as busy, and a gap between the process ending and
+# the exit file appearing would read as a worker that died without a code.
+#
+# `setsid`, not a bare `&`, because THE RECORDED PID MUST BE KILLABLE. It names the
+# WRAPPER; codex is its child. `kill $pid` on its own reaps the wrapper, orphans codex
+# onto the worktree, and writes no exit file — which session-status.sh reads as `failed`,
+# clearing /orchestrate's respawn gate for a second worker on a worktree the orphan is
+# still writing. And a bare `&` leaves the wrapper in SPAWN.SH'S OWN process group, so
+# the obvious fix — kill the group — would take the orchestrator down with it. setsid
+# gives the wrapper its own group led by the recorded pid, so `kill -- -$pid` reaches
+# codex and nothing else. spawn.sh runs without job control, so setsid execs in place and
+# the pid it reports IS the group leader; test_spawn.sh checks that rather than trusting it.
+#
+# Its own stdout/stderr go to /dev/null: a background worker holding the caller's `$( )`
+# pipe open for its whole run turns this spawn into a blocking wait.
 # </dev/null because codex BLOCKS FOREVER on an open stdin.
-{ "${CMD[@]}" >"$RUNDIR/events.jsonl" 2>"$RUNDIR/stderr.log" </dev/null
-  printf '%s\n' "$?" >"$RUNDIR/exit"; } &
+command -v setsid >/dev/null 2>&1 \
+    || die "setsid is required to spawn a codex worker in its own process group"
+setsid bash -c '
+    rundir=$1; shift
+    "$@" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
+    printf "%s\n" "$?" >"$rundir/exit"' _ "$RUNDIR" "${CMD[@]}" >/dev/null 2>&1 &
 printf '%s\n' "$!" >"$RUNDIR/pid"
 printf '%s\n' "$RUNDIR"
 exit 0
