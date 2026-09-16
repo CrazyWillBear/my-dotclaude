@@ -260,7 +260,7 @@ resume_orchestrator() {
 # ---------------------------------------------------------------------------
 cmd_down() {
     require_infra
-    local status role id state
+    local status role id state err failed=0
 
     peer_roles
     if [ "${#PEER_LIST[@]}" -eq 0 ]; then
@@ -277,12 +277,21 @@ cmd_down() {
         fi
         # BY ID. `claude stop <name>` fails with "No job matching …", which would read
         # as a clean shutdown while every peer kept running.
-        if claude stop "$id" >/dev/null 2>&1; then
+        # Keep claude's own words: "No job matching ..." is the difference between a
+        # stale id and a stop that was refused.
+        if err="$(claude stop "$id" 2>&1 >/dev/null)"; then
             echo "stopped $role ($id)"
         else
-            echo "error: could not stop $role ($id)" >&2
+            echo "error: could not stop $role ($id): $err" >&2
+            failed=1
         fi
     done <<<"$status"
+
+    # Every peer is tried before this: a down that gives up on the first failure leaves
+    # the rest running too. Exiting 0 here would be worse still — the next `up` reads a
+    # survivor as already live and never replaces it.
+    [ "$failed" -eq 0 ] || die "one or more peers did not stop and are still running \
+in $PROJECT_DIR — check \`claude agents\` and re-run \`swarm.sh down\`"
 }
 
 # ---------------------------------------------------------------------------
@@ -305,22 +314,27 @@ case "$CMD" in
     brief)
         ROLE="${2:-}"; FILE="${3:-}"
         [ -n "$ROLE" ] && [ -n "$FILE" ] || usage
-        PROJECT_DIR="${4:-$PWD}"
-        cmd_brief
+        RAW_DIR="${4:-$PWD}"
         ;;
     up|down)
         [ $# -le 2 ] || usage
-        PROJECT_DIR="${2:-$PWD}"
-        "cmd_$CMD"
+        RAW_DIR="${2:-$PWD}"
         ;;
     attach)
         ROLE="${2:-}"
         [ -n "$ROLE" ] || usage
         [ $# -le 3 ] || usage
-        PROJECT_DIR="${3:-$PWD}"
-        cmd_attach
+        RAW_DIR="${3:-$PWD}"
         ;;
     *)
         usage
         ;;
 esac
+
+# Absolute from here on. `up` cds into the project twice — once per spawn, once for the
+# exec that replaces this process — and a path still relative at that point re-resolves
+# against the new cwd, so every brief, charter and roster read after it points at
+# nothing. Also the earliest place a bad directory can be named in the error.
+PROJECT_DIR="$(cd "$RAW_DIR" 2>/dev/null && pwd)" || die "no such directory: $RAW_DIR"
+
+"cmd_$CMD"

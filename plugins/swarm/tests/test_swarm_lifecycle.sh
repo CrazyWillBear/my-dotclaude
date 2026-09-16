@@ -65,8 +65,13 @@ cat >"$BIN/claude" <<STUB
 #!/usr/bin/env bash
 if [ "\$1" = agents ]; then cat "$WORK/agents.json"; exit 0; fi
 mkdir -p "$CALLS"
-n=\$(find "$CALLS" -type f | wc -l)
+n=\$(find "$CALLS" -type f | wc -l | tr -d ' ')
 { printf 'CWD=%s\n' "\$PWD"; printf '%s\n' "\$@"; } >"$CALLS/\$n"
+# STUB_STOP_FAIL makes \`claude stop\` refuse the way the real one does on a bad id.
+if [ "\$1" = stop ] && [ -n "\${STUB_STOP_FAIL:-}" ]; then
+    echo "No job matching \$2" >&2
+    exit 1
+fi
 STUB
 chmod +x "$BIN/claude"
 
@@ -200,6 +205,25 @@ assert_not_contains "the orchestrator is NOT handed a half-built swarm" \
 mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md"
 rm -f "$PROJECT/.claude/swarm/orchestrator.session"
 
+# `up` cds into the project — to spawn, and again for the exec that replaces this
+# process. A path still held relative at that point re-resolves against the new cwd
+# and every brief, charter and roster read after it points at nothing.
+echo "test: a relative project-dir works — it is made absolute before the first cd"
+reset_calls
+agents '[]'
+( cd "$WORK" && bash "$SCRIPT" up project ) >"$WORK/out" 2>"$WORK/err"
+RC=$?; OUT="$(cat "$WORK/out")"; ERR="$(cat "$WORK/err")"
+assert_equals "exit 0" "$RC" "0"
+assert_equals "both peers spawned, then the orchestrator" "$(ncalls)" "3"
+calls_all="$(cat "$CALLS"/* 2>/dev/null)"
+assert_contains "the briefs were found under the absolute dir" "$calls_all" "You are the orchestrator"
+assert_contains "and the peers were spawned FROM it" "$calls_all" "CWD=$PROJECT"
+
+echo "test: a project-dir that does not exist is a loud failure"
+run up "$WORK/nope"
+assert_equals "exits 1" "$RC" "1"
+assert_contains "names the directory" "$ERR" "nope"
+
 # ---------------------------------------------------------------------------
 # `claude stop <name>` fails outright ("No job matching …"), so a down that reaches
 # for the name silently stops nothing while reporting success.
@@ -243,6 +267,24 @@ run down "$PROJECT"
 assert_equals "exit 0" "$RC" "0"
 assert_equals "stops nothing" "$(ncalls)" "0"
 assert_contains "and says so" "$OUT" "not running"
+
+# A down that reports success while a peer keeps running is the worst outcome here:
+# the next `up` skips it as already live and the stale peer owns the inbox forever.
+echo "test: a stop that fails exits non-zero and surfaces claude's own reason"
+reset_calls
+agents '[
+  { "id": "p111", "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "idle" },
+  { "id": "p222", "cwd": "'"$PROJECT"'", "kind": "background", "name": "performance-engineer", "state": "busy" }
+]'
+export STUB_STOP_FAIL=1
+run down "$PROJECT"
+unset STUB_STOP_FAIL
+assert_equals "exits 1" "$RC" "1"
+assert_contains "names the peer" "$ERR" "swe-manager"
+assert_contains "and its id" "$ERR" "p111"
+assert_contains "quoting what claude said" "$ERR" "No job matching"
+assert_equals "every peer was still tried, not just the first" "$(ncalls)" "2"
+assert_contains "and says the peers are still up" "$ERR" "still running"
 
 # ---------------------------------------------------------------------------
 echo "test: attach resolves the role NAME to an id and attaches to the id"
