@@ -576,12 +576,14 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
   bounded, then escalate — never spin**:
 
   ```bash
-  S="$S" RUNID="$RUNID" timeout 60 bash -c 'until [ -z "$("$S" "$RUNID" <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
+  timeout 60 bash -c 'S=~/.claude/kit/infra/scripts/session-status.sh; until [ -z "$("$S" <runid> <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
   ```
 
-  The `S=` `RUNID=` prefix is load-bearing: the body runs in a **child** shell, and a plain
-  assignment above is not exported. Without it both expand to nothing, the `until` is satisfied
-  on its first pass, and the wait passes instantly — which is a stop that did not take, missed.
+  **Self-contained on purpose — fill `<runid>` and `<N>` in, do not reach for `$S` or `$RUNID`.**
+  You run this as its own command, which is a **fresh shell**: the `S=` in the recovery block
+  above is gone, and `RUNID` was never a shell variable at all. Either one left as a reference
+  expands to nothing, the command substitution comes back empty, the `until` is satisfied on its
+  first pass, and the wait passes instantly — which is a stop that did not take, missed.
 
   If that times out, **do not respawn**. The safety rule is unchanged — two processes on one
   worktree corrupts it — so tell the user instead, naming the id and the worktree, and let them

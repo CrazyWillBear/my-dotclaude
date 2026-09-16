@@ -219,13 +219,14 @@ assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
 assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
 assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
 
-echo "test: the bounded wait really waits — a single-quoted bash -c body does not"
-# Found live: the body runs in a CHILD shell, where a plain `S=...` assignment in the
-# recipe above is not visible. $S and $RUNID expand to nothing, the command substitution
-# is empty, the `until` is satisfied on its first pass, and the wait that exists to catch
-# a stop that did not take returns 0 instantly. So run the SHIPPED line against a stub
-# that never stops reporting busy, with S and RUNID unexported exactly as the recipe
-# leaves them: it must burn its deadline instead of passing.
+echo "test: the bounded wait really waits — from a FRESH shell, with nothing preset"
+# Found live, twice. Each fenced block in the skill is its own shell invocation: `S=` is
+# assigned in the recovery block, `RUNID` nowhere in the file, so when the agent runs the
+# wait as its own command both are unset. The command substitution comes back empty, the
+# `until` is satisfied on its first pass, and the wait that exists to catch a stop that
+# did not take returns 0 instantly — clearing the way to respawn onto a live worktree.
+# So run the SHIPPED line with S and RUNID UNSET, filling only the placeholders an agent
+# fills: a snippet that still reads an outer variable comes back empty and fails here.
 WAIT_LINE="$(printf '%s\n' "$BODY" | grep -F 'timeout 60 bash -c' | head -1)"
 if [ -z "$WAIT_LINE" ]; then
     no "no bounded-wait snippet found in the skill"
@@ -234,16 +235,18 @@ else
     printf '#!/usr/bin/env bash\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
     chmod +x "$STUB/status.sh"
     (
-        S="$STUB/status.sh"
-        RUNID=r1
-        eval "$(printf '%s\n' "$WAIT_LINE" | sed 's/timeout 60/timeout 3/; s/<N>/12/')"
+        unset S RUNID
+        eval "$(printf '%s\n' "$WAIT_LINE" | sed "s|timeout 60|timeout 3|
+            s|~/.claude/kit/infra/scripts/session-status.sh|$STUB/status.sh|
+            s|<runid>|r1|
+            s|<N>|12|")"
     ) >/dev/null 2>&1
     rc=$?
     rm -rf "$STUB"
     if [ "$rc" -eq 124 ]; then
         ok "it waits for the deadline while the row stays busy"
     else
-        no "the bounded wait returned $rc at once — \$S and \$RUNID do not reach the child shell"
+        no "the bounded wait returned $rc at once — the snippet is not self-contained"
     fi
 fi
 assert_matches "and it escalates rather than respawning blindly" "$BODY" "do not respawn"
