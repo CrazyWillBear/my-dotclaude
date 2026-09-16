@@ -370,11 +370,10 @@ if [ "$BACKEND" = codex ]; then
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
 # issue and then cannot commit — and says so only in its final message. Fail here
 # instead: a worker that cannot commit has nothing to hand back.
-GITDIR="$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null)" \
-    || die "not a git worktree, so a codex worker could never commit: $WORKTREE"
-case "$GITDIR" in /*) ;; *) GITDIR="$WORKTREE/$GITDIR" ;; esac
-GITDIR="$(cd "$GITDIR" 2>/dev/null && pwd -P)" \
-    || die "could not resolve the repo's common git dir for: $WORKTREE"
+# One script, not two copies: worker-resume.sh needs the IDENTICAL value, and a resume
+# that computes it even slightly differently hands the worker a different writable root
+# than its spawn did. It prints the canonical path or dies loudly.
+GITDIR="$(bash "$INFRA/common-git-dir.sh" "$WORKTREE")" || exit 1
 
 # Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
 # no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
@@ -409,6 +408,16 @@ if [ -n "$DRY" ]; then
 fi
 
 mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
+
+# THE RUN DIR IS REUSED. Its path carries the runid and the issue but NOT the round, so a
+# fix round — and any recovery respawn — lands on the previous turn's `exit` and
+# `last-message.txt`. The wrapper below truncates events.jsonl and stderr.log with `>`,
+# but these two survive, and they are exactly what the orchestrator reads: session-status.sh
+# treats any `exit` file as terminal, so worker-report.sh's FIRST poll would return the
+# PREVIOUS turn's report, instantly, as this turn's result — while this worker is still
+# writing the worktree. A stale `H > 0` then draws a second fix round onto the same
+# worktree; a stale clean one sends the issue to the merge queue mid-build.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.

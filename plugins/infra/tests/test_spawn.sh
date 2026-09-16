@@ -204,7 +204,8 @@ echo "test: --orchestrator resolves from this session when omitted"
 SPAWN_DIR="$(cd "$(dirname "$SPAWN")" && pwd)"
 mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL spawn.sh
     mkdir -p "$1"
-    cp "$SPAWN_DIR/resolve-tier.sh" "$SPAWN_DIR/check-inbound.sh" "$1/"
+    cp "$SPAWN_DIR/resolve-tier.sh" "$SPAWN_DIR/check-inbound.sh" \
+       "$SPAWN_DIR/common-git-dir.sh" "$1/"
     cp "$SPAWN" "$1/spawn.sh"
     if [ "$2" = - ]; then
         printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
@@ -502,6 +503,34 @@ assert_not_contains "a peer stays claude whatever the tier table says" \
     "$(RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" peer --name p --brief "$WORK/pb.md" \
         --charter "$WORK/pc.md" --model opus --effort high --orchestrator orch-main \
         --dry-run 2>/dev/null)" "codex"
+
+echo "test: a re-spawn clears the previous turn's report and exit code"
+# The run dir path carries the runid and the issue but NOT the round, so a fix round and
+# any recovery respawn land on the previous turn's files. session-status.sh treats ANY
+# exit file as terminal, so a surviving one makes worker-report.sh's first poll return the
+# PREVIOUS turn's report as this turn's result — while this worker is still writing the
+# worktree. A stale `H > 0` then draws a second fix round onto that worktree.
+# The stub sleeps, so this turn is still running: anything left here is genuinely stale.
+STALE="$CODEX_ROOT/rstale/issue-12"
+mkdir -p "$STALE"
+printf '0\n' >"$STALE/exit"
+printf '%s' '{"issue":12,"status":"built","round":0,"head":"aaaaaaa","review":"9 high, 0 medium, 0 low","note":""}' \
+    >"$STALE/last-message.txt"
+PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
+    RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" rstale 12 standard "$REPO" base \
+    --role fix --round 2 --orchestrator orch-main >/dev/null 2>&1
+if [ -f "$STALE/exit" ]; then
+    no "the previous turn's exit survived — the first poll reads this turn as already done"
+else
+    ok "the previous turn's exit code is gone"
+fi
+if [ -f "$STALE/last-message.txt" ]; then
+    no "the previous turn's report survived — it would be returned as this turn's result"
+else
+    ok "the previous turn's report is gone"
+fi
+stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
+[ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 
 # The codex path above is built, tested and ready; the SHIPPED roster is deliberately
 # NOT on it. The report ingest that used to block the flip now exists (worker-report.sh

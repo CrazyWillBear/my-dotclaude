@@ -83,9 +83,10 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
 [ "$BACKEND" = codex ] || die "tier '$TIER' is backend '$BACKEND', not codex — a claude worker is resumed by talking to its session, not by this script"
 
-GITDIR="$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null)" \
-    || die "not a git worktree: $WORKTREE"
-case "$GITDIR" in /*) ;; *) GITDIR="$(cd "$WORKTREE/$GITDIR" && pwd)" ;; esac
+# The SAME resolution the spawn used, from the same script — not a second copy. A resume
+# that resolved this differently would hand the worker a different writable root than its
+# spawn did, and the worker would not find out until it could not commit.
+GITDIR="$(bash "$INFRA/common-git-dir.sh" "$WORKTREE")" || exit 1
 
 PROMPT="Your escalation was answered. Here is the answer:
 
@@ -114,6 +115,16 @@ CMD=(codex exec resume "$THREAD"
      --output-schema "$RUNDIR/status-schema.json"
      "$PROMPT")
 
+# NEVER resume onto a worker that is still running. Checked BEFORE the dry run returns, so
+# `--dry-run` is a real safety preview rather than only a command printer. Below, the first
+# side effect is `rm` of the exit file, so a mis-aimed call — a wrong issue number, a stale
+# escalation acted on twice — would BOTH start a second codex on a worktree the first is
+# still writing AND destroy the running worker's exit code on the way in, making its
+# eventual state unreadable. An `exit` file is exactly what session-status.sh treats as
+# terminal, and reading it here needs no claude CLI.
+[ -f "$RUNDIR/exit" ] || die "issue $ISSUE has not finished (no $RUNDIR/exit) — resuming \
+now would put a second codex on a worktree the first is still writing"
+
 if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
     exit 0
@@ -123,7 +134,10 @@ fi
 # first matters: session-status.sh reads an exit file as terminal, so leaving the old one
 # in place would make this turn look finished before it began, and leaving the old
 # last-message.txt would let a crashed resume be read as the previous turn's success.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit"
+# stderr.log goes too: it is appended to below, and the no-report failure path reports its
+# tail as the reason — so a resume that dies quietly would otherwise be reported with the
+# reason from a turn that ran hours ago, at the exact moment a human is reading it.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log"
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
@@ -136,4 +150,8 @@ printf '%s\n' "$CODE" >"$RUNDIR/exit"
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the
 # lane's report line and already decides what is a result and what is "we cannot tell";
 # the run dir is now terminal, so it returns immediately.
-exec bash "$INFRA/worker-report.sh" "$RUNID" "$ISSUE" --interval 1 --timeout 60
+# Not 60: session-status.sh gives its own `claude agents` call a 60s subprocess timeout, so
+# a single slow or wedged CLI call would eat this entire budget on the FIRST poll and throw
+# away a resume that had already written a perfectly good report. The run dir is terminal
+# before we get here, so this budget only ever absorbs a slow status read.
+exec bash "$INFRA/worker-report.sh" "$RUNID" "$ISSUE" --interval 1 --timeout 300

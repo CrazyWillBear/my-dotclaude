@@ -111,7 +111,12 @@ assert_arg "the sandbox MODE, since -s does not exist on resume" \
                                         "$OUT" "sandbox_mode=workspace-write"
 assert_arg "the NETWORK, whose loss is silent and fatal" \
                                         "$OUT" "sandbox_workspace_write.network_access=true"
-assert_contains "the common git dir, so it can still commit" "$OUT" "writable_roots"
+# Pinned by VALUE, not by substring: `writable_roots=[""]` contains the word too, and an
+# empty or textually divergent root is exactly how a resumed worker silently loses the
+# ability to commit. test_spawn.sh pins the spawn side the same way.
+EXPECT_GITDIR="$(cd "$REPO/.git" && pwd -P)"
+assert_arg "the common git dir, spelled exactly as the spawn spells it" \
+    "$OUT" "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR\"]"
 assert_arg "the schema, so the report stays machine-readable" \
                                         "$OUT" "--output-schema"
 assert_contains "writes the report where worker-report.sh reads it" "$OUT" "last-message.txt"
@@ -148,11 +153,11 @@ STUB
 chmod +x "$BIN/codex"
 export STUB_CWD="$WORK/cwd" STUB_ARGV="$WORK/argv"
 mkrun 81 '{"issue":81,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
-STUB_REPORT='{"issue":81,"status":"built","round":0,"head":"newsha1","review":"0 high, 1 medium, 0 low","note":""}' \
+STUB_REPORT='{"issue":81,"status":"built","round":0,"head":"9c2b4d1","review":"0 high, 1 medium, 0 low","note":""}' \
     run r1 81 standard "$REPO" --answer "per-request"
 assert_equals "exit 0" "$RC" "0"
 assert_equals "the RESUMED turn's report, rendered by worker-report.sh" "$OUT" \
-    "issue 81 built head=newsha1 review=0 high, 1 medium, 0 low"
+    "issue 81 built head=9c2b4d1 review=0 high, 1 medium, 0 low"
 assert_not_contains "and not the stale escalation it replaced" "$OUT" "old question"
 assert_equals "the new exit code is recorded" "$(cat "$CODEX_ROOT/r1/issue-81/exit")" "0"
 assert_equals "launched FROM the worktree, since resume has no -C" \
@@ -167,6 +172,20 @@ assert_contains "failed" "$OUT" "issue 82 failed"
 assert_not_contains "the stale success is gone" "$OUT" "stale99"
 
 # ---------------------------------------------------------------------------
+echo "test: it refuses to resume a worker that has not finished"
+# The first side effect of a resume is `rm` of the exit file, so a mis-aimed call would
+# both start a second codex on a worktree the first is still writing AND destroy the
+# running worker's exit code. Everywhere else in this kit that is the cardinal sin.
+mkdir -p "$CODEX_ROOT/r1/issue-85"
+printf '{"type":"thread.started","thread_id":"thr-85-abc"}\n' >"$CODEX_ROOT/r1/issue-85/events.jsonl"
+printf '{}\n' >"$CODEX_ROOT/r1/issue-85/status-schema.json"   # note: no exit file
+run r1 85 standard "$REPO" --answer "x" --dry-run
+assert_equals "a still-running worker exits 1" "$RC" "1"
+assert_contains "says it has not finished" "$ERR" "has not finished"
+assert_equals "and the events.jsonl it would have resumed is untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-85/events.jsonl")" \
+    '{"type":"thread.started","thread_id":"thr-85-abc"}'
+
 echo "test: it refuses what it cannot safely resume"
 mkrun 83
 run r1 83 complex "$REPO" --answer "x" --dry-run

@@ -132,16 +132,24 @@ else
             set +u
             unset RUNID
             S="$STUB/status.sh"
+            # START distinguishes "our exit 1 fired" from "the line never ran at all".
+            # GATE_LINE is a single grep hit, so a gate re-wrapped across two markdown
+            # lines would evaluate as a truncated command, abort on a syntax error, print
+            # no marker — and green this test on a gate that no longer exists.
+            printf 'START\n'
             eval "$(printf '%s\n' "$GATE_LINE" | sed "s|<runid>|r1|; s|<N>|12|")"
             printf 'MARKER_PRINTED\n'
         ) 2>/dev/null
     )"
     rm -rf "$STUB"
-    if [ -z "$marker_output" ]; then
-        ok "a still-busy row keeps the gate shut (the || exit 1 aborted the subshell)"
-    else
-        no "the verify gate passed with the runid unfilled — the || exit 1 is missing from the gate"
-    fi
+    case "$marker_output" in
+        *MARKER_PRINTED*)
+            no "the verify gate passed with the runid unfilled — the || exit 1 is missing from the gate" ;;
+        START*)
+            ok "a still-busy row keeps the gate shut (the || exit 1 aborted the subshell)" ;;
+        *)
+            no "the gate line never ran at all — re-wrapped in the README? this test would otherwise green on a gate that no longer exists" ;;
+    esac
     # Also verify the || exit 1 is actually in the shipped line, not just relying on [ ] returning false
     if printf '%s\n' "$GATE_LINE" | grep -q -- '|| exit 1'; then
         ok "the gate explicitly contains || exit 1"

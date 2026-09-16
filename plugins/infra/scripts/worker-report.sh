@@ -100,7 +100,7 @@ done
 # Terminal. The report is the schema'd final message; on a crash there may be none, and
 # then stderr.log is the only place the reason lands (README § Two backends).
 REPORT_ISSUE="$ISSUE" REPORT_STATE="$STATE" REPORT_DIR="$RUNDIR" python3 <<"PY"
-import json, os, sys
+import json, os, re, sys
 
 issue = int(os.environ["REPORT_ISSUE"])
 state = os.environ["REPORT_STATE"]
@@ -164,8 +164,28 @@ if status in ("built", "fixed"):
     if not head:
         print("error: issue %d reported %s with no head sha" % (issue, status), file=sys.stderr)
         sys.exit(1)
+    # An ABSENT review is not a CLEAN review. The worker's prompt tells it to send "" for
+    # fields that do not apply, so a review step that never ran arrives here as "" —
+    # and defaulting that to "0 high, 0 medium, 0 low" would INVENT the single fact that
+    # decides whether the issue takes another fix round or goes straight to the merge
+    # queue. Same reasoning as the empty head above: unknown is exit 1, never a cheerful
+    # default.
     if not review:
-        review = "0 high, 0 medium, 0 low"
+        print("error: issue %d reported %s with an empty review — a review that did not "
+              "run is not a clean one" % (issue, status), file=sys.stderr)
+        sys.exit(1)
+    # Both fields are worker-controlled and land in a SPACE-DELIMITED line the orchestrator
+    # parses positionally, so a head carrying its own " review=..." could smuggle a second,
+    # cleaner review into the report. The worker is told to read the issue's comments, which
+    # anyone can write, so this is an untrusted-input path and not a hypothetical.
+    if not re.match(r"^[0-9a-f]{7,40}$", head):
+        print("error: issue %d reported a head that is not a sha: %r" % (issue, head),
+              file=sys.stderr)
+        sys.exit(1)
+    if not re.match(r"^\d+ high, \d+ medium, \d+ low$", review):
+        print("error: issue %d reported a review in an unreadable shape: %r" % (issue, review),
+              file=sys.stderr)
+        sys.exit(1)
     if status == "fixed":
         try:
             rnd = int(r.get("round", 0))
