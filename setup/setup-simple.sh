@@ -2,7 +2,7 @@
 #
 # Non-developer setup — installs the full Claude Code kit into ~/.claude, tuned
 # for someone who does not write code: the global CLAUDE.md (plain-English), the
-# personal-tools + workflow + ponytail + agent-sdk-dev + perf + security-guidance +
+# personal-tools + workflow + ponytail + agent-sdk-dev + security-guidance +
 # security-sweep plugins, the Playwright MCP
 # server, a gh (GitHub CLI) allowlist, and ponytail set to its gentler "lite"
 # level. User scope — not tied to any one project. (Model is left at Claude
@@ -74,7 +74,7 @@ tcr_add_our_marketplace         # register our marketplace (local checkout or re
 tcr_install_our_plugins         # every plugin our marketplace lists (personal-tools, workflow, ...)
 tcr_install_ponytail
 tcr_install_agent_sdk_dev
-tcr_install_composio_plugins    # third-party: perf + security-guidance
+tcr_install_composio_plugins    # third-party: security-guidance
 tcr_install_security_sweep      # third-party: read-only security-scan skill
 tcr_install_playwright_mcp
 tcr_setup_gh

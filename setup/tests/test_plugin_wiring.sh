@@ -11,7 +11,7 @@
 #   * tcr_install_plugin / tcr_install_composio_plugins / tcr_install_security_sweep
 #     are defined, and so are the existing installers (refactor didn't drop them).
 #   * tcr_install_composio_plugins adds the Composio marketplace once and installs
-#     perf + security-guidance.
+#     security-guidance.
 #   * tcr_install_security_sweep adds the Onome-AJ marketplace and installs security-sweep.
 #   * a failed `claude plugin install` sets TCR_INSTALL_FAILED=1 and warns (non-fatal).
 #   * setup-dev.sh and setup-simple.sh each wire the two new installers once.
@@ -76,12 +76,10 @@ run_fn() {
 echo "test: new plugin-id constants hold the expected values"
 consts=$(bash -c ". '$COMMON'
   echo \"COMPOSIO=\$COMPOSIO_MARKETPLACE_REPO\"
-  echo \"PERF=\$PERF_PLUGIN\"
   echo \"GUIDANCE=\$SECURITY_GUIDANCE_PLUGIN\"
   echo \"SWEEP_REPO=\$SECURITY_SWEEP_REPO\"
   echo \"SWEEP=\$SECURITY_SWEEP_PLUGIN\"" 2>&1)
 assert_contains "COMPOSIO_MARKETPLACE_REPO" "$consts" "COMPOSIO=ComposioHQ/awesome-claude-plugins"
-assert_contains "PERF_PLUGIN"               "$consts" "PERF=perf@awesome-claude-plugins"
 assert_contains "SECURITY_GUIDANCE_PLUGIN"  "$consts" "GUIDANCE=security-guidance@awesome-claude-plugins"
 assert_contains "SECURITY_SWEEP_REPO"       "$consts" "SWEEP_REPO=Onome-AJ/security-sweep-plugin"
 assert_contains "SECURITY_SWEEP_PLUGIN"     "$consts" "SWEEP=security-sweep@security-sweep-marketplace"
@@ -188,13 +186,12 @@ assert_contains "remote fetch installs personal-tools" "$calls" "plugin install 
 assert_contains "remote fetch installs workflow"       "$calls" "plugin install workflow@my-dotclaude"
 
 # ---- test: tcr_install_composio_plugins ------------------------------------
-echo "test: tcr_install_composio_plugins adds marketplace once, installs perf + security-guidance"
+echo "test: tcr_install_composio_plugins adds marketplace once, installs security-guidance"
 reset_calls
 make_claude_stub
 out=$(run_fn "$WORK/stubs" "tcr_install_composio_plugins")
 calls=$(claude_calls)
 assert_contains "adds Composio marketplace" "$calls" "plugin marketplace add ComposioHQ/awesome-claude-plugins"
-assert_contains "installs perf"             "$calls" "plugin install perf@awesome-claude-plugins"
 assert_contains "installs security-guidance" "$calls" "plugin install security-guidance@awesome-claude-plugins"
 assert_equals  "marketplace added exactly once" "$(printf '%s\n' "$calls" | grep -c 'marketplace add ComposioHQ')" "1"
 assert_contains "INSTALL_FAILED stays 0"    "$out" "INSTALL_FAILED=0"

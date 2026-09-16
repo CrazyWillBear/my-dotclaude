@@ -70,18 +70,20 @@ Then **restart Claude Code** so it loads the plugins.
   worktree, coordinating over the issue thread), and a context watchdog that drives deliberate,
   early `/clear` and `/handoff` as the window fills.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
+- **`swarm`** plugin (`plugins/swarm/`) — roster-driven multi-session teams: `/init-swarm` writes
+  a project's `.claude/swarm/roster.json`, charter, and one brief per chosen role (orchestrator,
+  swe-manager, performance-engineer), and `swarm.sh up|down|rotate|attach` manages the peer
+  lifecycle. Replaces the third-party perf plugin with a performance-engineer role.
+  **Full reference:** [`plugins/swarm/README.md`](plugins/swarm/README.md).
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
   official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed
   alongside the above.
-- **[perf](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/perf)** and
-  **[security-guidance](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/security-guidance)**
-  — third-party plugins from Composio's marketplace: `/perf` runs a multi-phase
-  performance investigation (baseline → profile → hypothesis → optimize), and
-  `security-guidance` adds an advisory hook that flags risky code (`eval(`, `execSync(`,
-  `os.system`, …) before a write. (The guidance hook *blocks* the first such edit per
-  session so it gets a second look; set `ENABLE_SECURITY_REMINDER=0` to silence it.)
+- **[security-guidance](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/security-guidance)**
+  — third-party plugin from Composio's marketplace: adds an advisory hook that flags
+  problematic code patterns before writes. The hook blocks the first such edit per session
+  so it gets a second look; set `ENABLE_SECURITY_REMINDER=0` to silence it.
 - **[security-sweep](https://github.com/Onome-AJ/security-sweep-plugin)** — third-party,
   read-only security-scan skill: greps the project for secrets, injection, auth/config
   issues, and weak deps against OWASP / LLM / Mobile top-ten patterns.
@@ -211,11 +213,12 @@ isn't installed or logged in. Playwright stays an MCP because it has no CLI equi
 
 ```
 my-dotclaude/
-├── .claude-plugin/marketplace.json  # lists personal-tools + infra + workflow
+├── .claude-plugin/marketplace.json  # lists personal-tools + infra + workflow + swarm
 ├── plugins/
 │   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
 │   ├── infra/            # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
-│   └── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
+│   ├── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
+│   └── swarm/            # roster-driven teams (/init-swarm, swarm.sh) — see plugins/swarm/README.md
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)
