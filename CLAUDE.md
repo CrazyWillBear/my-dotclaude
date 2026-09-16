@@ -12,20 +12,21 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `global/CLAUDE.simple.md` — plain-English variant of the above; `setup-simple.sh` installs it instead, for non-coders.
 - `plugins/context/` — context-window hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan`.
 - `plugins/personal-tools/` — my slash commands, subagents, hooks.
-- `plugins/workflow/` — the `/orchestrate` dispatcher.
-- `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness,
-  run log, merge fold). Logic belongs here, not in skill prose: a script gets a real test,
-  prose gets a grep.
+- `plugins/workflow/` — the `/orchestrate` dispatcher, `/classify-task`, and the manager's front half `/to-prd` + `/to-issues`.
+- `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, the one
+  graph fetch, PRD scoping, run log, merge fold). Logic belongs here, not in skill prose: a
+  script gets a real test, prose gets a grep.
 - `plugins/infra/` — scripts-only shared layer (`spawn.sh`, `session-status.sh`,
-  `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`). Its SessionStart hook links
-  `~/.claude/kit/infra`; other plugins call infra only through that path, never by relative path.
-- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, briefs, charter).
+  `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`). Its SessionStart hook runs
+  `link-kit.sh`, which links `~/.claude/kit/infra`; other plugins call infra only through that
+  path, never by relative path.
+- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, `roster.sh` + `memory.sh`, briefs, charter).
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
 - `.github/workflows/` — CI (`ci.yml`, gates PRs into `main`) and release (`release.yml`) automation.
 - `.claude-plugin/` — plugin marketplace manifest.
-- `docs/` — cross-cutting design notes (e.g. `anti-mock-drift.md`, the mock-drift guard woven through the `/to-prd`→`/to-issues`→`/orchestrate` flow).
+- `docs/` — cross-cutting design notes: `swarm-design.md` (the orchestrator → peers → workers kit and the plugin split) and `anti-mock-drift.md` (the mock-drift guard woven through the `/to-prd`→`/to-issues`→`/orchestrate` flow).
 
 ## Payload vs. governing — read this
 

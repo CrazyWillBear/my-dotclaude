@@ -78,7 +78,8 @@ Then **restart Claude Code** so it loads the plugins.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **`swarm`** plugin (`plugins/swarm/`) — roster-driven multi-session teams: `/init-swarm` writes
   a project's `.claude/swarm/roster.json`, charter, and one brief per chosen role (orchestrator,
-  swe-manager, performance-engineer), and `swarm.sh brief` distributes briefs to chosen roles.
+  swe-manager, performance-engineer), and `swarm.sh` runs the team — `up`, `down`, `rotate`,
+  `attach`, and `brief` (drop a brief into a role's inbox).
   Replaces the third-party perf plugin with a performance-engineer role.
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
@@ -157,9 +158,9 @@ through the `personal-tools` plugin — no need to re-run the installer:
 3. **`/check-updates`** — run it any time to ask on demand. It prints either
    `kit is up to date (vX.Y.Z)` or `vX.Y.Z available — run /update-kit to upgrade`.
 4. **`/update-kit`** — applies the latest release: it updates the `my-dotclaude`
-   marketplace entry and every plugin listed in its manifest, then reminds you to
-   **restart Claude Code** so the new versions load. Works for both the developer
-   and non-developer setups.
+   marketplace entry and every plugin listed in its manifest, refreshes the status line,
+   then reminds you to **restart Claude Code** so the new versions load. Works for both
+   the developer and non-developer setups.
 
 Per-command details are in
 [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
@@ -224,7 +225,7 @@ my-dotclaude/
 │   ├── personal-tools/    # slash commands + subagents — see plugins/personal-tools/README.md
 │   ├── infra/             # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
 │   ├── workflow/          # /orchestrate dispatcher + /to-prd, /to-issues — see plugins/workflow/README.md
-│   └── swarm/             # /init-swarm roster, charter + per-role briefs
+│   └── swarm/             # /init-swarm roster, charter + briefs; swarm.sh up|down|rotate|attach|brief
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)

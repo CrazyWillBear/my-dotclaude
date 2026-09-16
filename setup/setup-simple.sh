@@ -2,8 +2,9 @@
 #
 # Non-developer setup — installs the full Claude Code kit into ~/.claude, tuned
 # for someone who does not write code: the global CLAUDE.md (plain-English), the
-# personal-tools + workflow + ponytail + agent-sdk-dev + security-guidance +
-# security-sweep plugins, the Playwright MCP
+# plugins our marketplace lists (context, personal-tools, infra, workflow,
+# swarm) plus ponytail, agent-sdk-dev, security-guidance and
+# security-sweep, the Playwright MCP
 # server, a gh (GitHub CLI) allowlist, and ponytail set to its gentler "lite"
 # level. User scope — not tied to any one project. (Model is left at Claude
 # Code's default.)

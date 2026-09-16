@@ -2,8 +2,9 @@
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
 # the global CLAUDE.md (technical), model=opus, a default context status line,
-# the personal-tools + workflow + ponytail + agent-sdk-dev +
-# security-guidance + security-sweep plugins, the Playwright MCP server, and a
+# every plugin our marketplace lists (context, personal-tools, infra, workflow,
+# swarm) plus ponytail, agent-sdk-dev, security-guidance and
+# security-sweep, the Playwright MCP server, and a
 # gh (GitHub CLI) allowlist (read-only reads + issue-write for the dev loop).
 # User scope — not tied to any one project.
 #
@@ -87,5 +88,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm personal-tools, workflow, ponytail, agent-sdk-dev, security-guidance, and security-sweep are enabled.\n'
+printf '  2. Run /plugin to confirm context, personal-tools, infra, workflow, swarm, ponytail, agent-sdk-dev, security-guidance, and security-sweep are enabled.\n'
 printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

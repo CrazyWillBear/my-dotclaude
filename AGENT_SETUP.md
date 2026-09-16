@@ -5,9 +5,9 @@ from the **my-dotclaude** repo. Both paths install the same full kit **user-wide
 `~/.claude`, not a project folder); they differ only in audience. Keep the user informed
 in plain language as you go:
 
-- **Developer setup** — global technical `CLAUDE.md`, the personal-tools + infra + workflow +
-  ponytail + agent-sdk-dev plugins, the Playwright MCP, a `gh` allowlist (read-only reads +
-  issue-write), and `model=opus`.
+- **Developer setup** — global technical `CLAUDE.md`, the context + personal-tools + infra +
+  workflow + swarm plugins plus ponytail, agent-sdk-dev, security-guidance and security-sweep,
+  the Playwright MCP, a `gh` allowlist (read-only reads + issue-write), and `model=opus`.
 - **Non-developer setup** — the same kit, but with a plain-English global `CLAUDE.md`,
   ponytail set to `lite`, and the model left at Claude Code's default.
 
@@ -149,8 +149,8 @@ Releases and reach the machine like this:
 - **`/check-updates`** asks on demand, printing `kit is up to date (vX.Y.Z)` or
   `vX.Y.Z available — run /update-kit to upgrade`.
 - **`/update-kit`** applies the latest release: it updates the `my-dotclaude` marketplace
-  entry and every plugin listed in its manifest, then reminds the user to
-  **restart Claude Code** so the new versions load.
+  entry and every plugin listed in its manifest, refreshes the status line, then reminds the
+  user to **restart Claude Code** so the new versions load.
 
 When you finish a setup, mention these to the user in plain language so they know how
 they'll get updates.
