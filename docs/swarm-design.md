@@ -196,11 +196,19 @@ Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A w
 one-shot, so it maps onto `codex exec`:
 
 - **Launch.** `codex exec -C <worktree> -m gpt-5.6-<tier> -c model_reasoning_effort="<e>"
-  -c approval_policy="never" -s workspace-write --json -o <last-message-file>
+  -c approval_policy="never" -s workspace-write
+  -c 'sandbox_workspace_write.network_access=true' --json -o <last-message-file>
   [--output-schema <status-schema>] "<prompt>" </dev/null`. Model slugs are `gpt-5.6-luna`,
   `gpt-5.6-terra`, `gpt-5.6-sol`; efforts low through max. **Stdin must be closed** or codex
   blocks forever reading it. `-m` must always be passed: a resumed thread otherwise falls
-  back to the config default model.
+  back to the config default model. Verified: `workspace-write` is OFFLINE by default — a
+  `curl` inside it fails at DNS — and with `network_access=true` it returns 200. The flag is
+  not optional, since the worker's own prompt orders `gh` and `codex exec review`, and
+  `approval_policy=never` means it cannot ask for the network back. It cuts both ways:
+  workspace-write restricts writes, not reads, so a networked worker that ingests an
+  untrusted issue comment has both this machine's credentials and an egress path. Accepted
+  knowingly — claude workers already run with full network — and codex 0.154 offers no
+  domain allowlist to narrow it.
 - **Commits.** Workspace-write keeps `.git` read-only, so a worker that must commit needs
   `-c 'sandbox_workspace_write.writable_roots=["<git dir>"]'`. For a linked worktree that is
   the main repo's common git dir, since objects and refs live there. Verified: with the root

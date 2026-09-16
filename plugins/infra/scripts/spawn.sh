@@ -370,8 +370,8 @@ GITDIR="$(cd "$GITDIR" 2>/dev/null && pwd -P)" \
     || die "could not resolve the repo's common git dir for: $WORKTREE"
 
 # Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
-# no pid in it is a worker session-status.sh reports as one that died, so the phantom a
-# dry run left behind would be waited on forever.
+# no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
+# session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
 RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's

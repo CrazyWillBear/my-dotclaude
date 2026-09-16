@@ -317,9 +317,10 @@ assert_contains "fixed-shape JSON status" "$out" '"status": "built"'
 assert_contains "reviews with codex exec review" "$out" "codex exec review --base base"
 
 echo "test: a codex dry run leaves no run dir behind"
-# session-status.sh reads a run dir with a pid file as a live worker and one without as
-# a worker that died. A dry run that creates the dir hands it a phantom the orchestrator
-# waits on forever; the claude path's dry run touches nothing, and so must this one.
+# session-status.sh reads a run dir with a pid file as a live worker, and one without a
+# pid as BUSY — the launch-window rule. A dry run that creates the dir hands it a phantom
+# the orchestrator waits on forever; the claude path's dry run touches nothing, so nor
+# may this one.
 rm -rf "$CODEX_ROOT/dryonly"
 CODEX_RUN_ROOT="$CODEX_ROOT/dryonly" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main >/dev/null 2>&1
