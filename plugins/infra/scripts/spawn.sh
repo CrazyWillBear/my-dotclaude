@@ -237,18 +237,18 @@ if [ "$BACKEND" = codex ]; then
    priority-graded findings with file and line. YOU post them as a comment"
     REPORT_STEP="7. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
    Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
-   were launched with:
-      {\"issue\": $ISSUE, \"status\": \"built\", \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\"}
-   or, if you could not finish:
-      {\"issue\": $ISSUE, \"status\": \"failed\", \"note\": \"<one short line why>\"}
-   Stuck on something only a human can answer? Same shape with \"status\": \"escalate\"
-   and the question in \"note\"."
+   were launched with. EVERY field is required — send \"\" or 0 for the ones that do
+   not apply:
+      {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
+   or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
+   on something only a human can answer? \"status\": \"escalate\", question in \"note\"."
     FIX_REVIEW_STEP="4. Re-review the delta: \`codex exec review --base $BASE\`, then POST its findings
    YOURSELF"
     FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
-   report, as JSON matching the output schema you were launched with:
-      {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\"}
-   or {\"issue\": $ISSUE, \"status\": \"failed\", \"note\": \"<one short line why>\"}."
+   report, as JSON matching the output schema you were launched with. Every field is
+   required; send \"\" for any that does not apply:
+      {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
+   or the same shape with \"status\": \"failed\" and the reason in \"note\"."
 else
     REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
    my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment"
@@ -358,6 +358,9 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
+# EVERY property is required and additionalProperties is false: that is strict
+# structured-output shape, and a schema that leaves a property optional is rejected
+# outright rather than relaxed. Unused fields come back empty — the prompt says so.
 cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status-schema.json"
 {
   "type": "object",
@@ -369,7 +372,7 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status
     "review": { "type": "string" },
     "note":   { "type": "string" }
   },
-  "required": ["issue", "status"],
+  "required": ["issue", "status", "round", "head", "review", "note"],
   "additionalProperties": false
 }
 SCHEMA

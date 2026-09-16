@@ -45,7 +45,13 @@
 #   done     the session reported itself finished/completed
 #   stopped  killed by `claude stop` — the state a respawn waits for. NOT `gone`: the
 #            session and its transcript still exist, and the worktree is untouched
+#   failed   codex workers only: exited non-zero, or died without recording an exit code
 #   gone     expected (a positional N) but not listed at all — it never came up
+#
+# A CODEX-backed worker is in no agent list — it is a process. It is read instead from
+# `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/`, where spawn.sh leaves a
+# pid file and an exit file beside the event log, and it reports in the SAME vocabulary
+# (live pid -> busy, exit 0 -> done, anything else -> failed) with the PID in column 2.
 #
 # NEVER parse `claude logs`: it is a raw ANSI screen dump, cursor moves and spinner
 # frames, not a transcript.
@@ -87,8 +93,12 @@ for arg in "$@"; do
     EXPECT="$EXPECT $n"
 done
 
+# Where spawn.sh leaves a codex worker's run dir. Same default on both sides, and both
+# read the same override — if these two ever disagree, a live codex worker reports as
+# nothing at all. test_session-status.sh pins the default against a real spawn.
 export STATUS_RUNID="$RUNID" STATUS_EXPECT="$EXPECT" \
-       STATUS_PROJECT_DIR="$PROJECT_DIR" STATUS_PEERS="$PEERS"
+       STATUS_PROJECT_DIR="$PROJECT_DIR" STATUS_PEERS="$PEERS" \
+       STATUS_CODEX_ROOT="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}"
 
 python3 <<"PY"
 import json, os, subprocess, sys
@@ -200,6 +210,49 @@ for agent in agents:
     seen.add(name)
     lines.append("%s %s %s %s" % (name, agent.get("id") or "-",
                                   agent.get("kind") or "-", state_of(agent)))
+
+# A CODEX worker is a process, not a session: it is in no agent list at all. spawn.sh
+# leaves <codex root>/<runid>/issue-<N>/ with a pid file and, when the run ends, an exit
+# file beside the event log (docs/swarm-design.md § Codex backend) — that pair IS its
+# state. This runs BEFORE the `gone` pass so a live codex worker is never reported gone.
+#
+# The words go through the same state_of() the agent list does, deliberately: working ->
+# busy, completed -> done. /orchestrate's liveness loop waits on `$4 == "busy"`, so a
+# private spelling here would read as finished the moment the worker started and the run
+# would merge branches nothing had built yet. Column 2 is the PID — `kill` takes it the
+# way `claude stop` takes an id.
+codex_root = os.path.join(os.environ.get("STATUS_CODEX_ROOT", ""), runid)
+if not (self_mode or peers_mode) and os.path.isdir(codex_root):
+    for entry in sorted(os.listdir(codex_root)):
+        if not entry.startswith("issue-"):
+            continue
+        name = prefix + entry
+        if name in seen:
+            continue
+        def read(fname):
+            try:
+                with open(os.path.join(codex_root, entry, fname)) as fh:
+                    return fh.read().strip()
+            except OSError:
+                return None
+        pid, code = read("pid"), read("exit")
+        if code is not None:
+            raw = "completed" if code == "0" else "failed"
+        else:
+            # spawn.sh writes the exit file from the same subshell it records the pid
+            # for, so that pid outlives codex itself. A dead pid with no exit file is
+            # therefore a worker that was KILLED — `failed`, never a quiet `done`.
+            alive = False
+            try:
+                os.kill(int(pid), 0)
+                alive = True
+            except PermissionError:      # someone else's process: it exists
+                alive = True
+            except (OSError, TypeError, ValueError):
+                alive = False
+            raw = "working" if alive else "failed"
+        seen.add(name)
+        lines.append("%s %s codex %s" % (name, pid or "-", state_of({"state": raw})))
 
 for n in expect:
     name = "%sissue-%d" % (prefix, n)

@@ -12,6 +12,8 @@
 #   * `blocked` (permission wedge) survives as itself
 #   * an expected issue with no session reports `gone`
 #   * a done/completed state normalizes to `done`
+#   * a CODEX worker — which is in no agent list at all — reports from its run dir's
+#     pid/exit pair, in the same vocabulary
 #   * every failure path is LOUD: claude absent, non-zero exit, junk output, a
 #     JSON object instead of a list, and a missing runid
 #   * zero matches is exit 0 but never silent
@@ -187,6 +189,104 @@ run --peers >/dev/null; assert_equals "no project dir exits 1" "$?" "1"
 assert_contains "prints usage" "$(err)" "usage:"
 run --peers /proj >/dev/null; assert_equals "no roles exits 1" "$?" "1"
 assert_contains "prints usage" "$(err)" "usage:"
+
+# ---------------------------------------------------------------------------
+# CODEX WORKERS. A codex worker is not a claude session and is not in `claude agents`
+# at all — `codex exec` leaves a run dir behind instead, and the pid + exit files in it
+# ARE its state (docs/swarm-design.md § Codex backend). spawn.sh writes that layout.
+#
+# The states normalize into the SAME vocabulary as a claude session, and that is
+# load-bearing rather than tidy: /orchestrate's liveness loop waits on `$4 == "busy"`.
+# A codex worker reporting a private spelling like `working` would read as finished the
+# moment it started, and the run would merge branches nothing had built yet.
+echo "test: a codex worker reports from its run dir, in the same vocabulary"
+CODEX_ROOT="$WORK/codexruns"
+mkcodex() {  # mkcodex <issue> <pid|-> <exit|->
+    local d="$CODEX_ROOT/rc1/issue-$1"
+    mkdir -p "$d"
+    [ "$2" = - ] || printf '%s\n' "$2" >"$d/pid"
+    [ "$3" = - ] || printf '%s\n' "$3" >"$d/exit"
+}
+rm -rf "$CODEX_ROOT"
+sleep 300 & LIVE_PID=$!
+# Real, reaped pids rather than made-up numbers: a guessed "surely nothing owns that
+# number" is exactly the kind of assumption that fails on one machine and nowhere else.
+dead() { sleep 0 & local p=$!; wait "$p" 2>/dev/null; printf '%s' "$p"; }
+D1=$(dead); D2=$(dead); D3=$(dead)
+mkcodex 21 "$LIVE_PID" -          # still running
+mkcodex 22 "$D1" 0                # exited clean
+mkcodex 23 "$D2" 3                # exited non-zero
+mkcodex 24 "$D3" -                # died without recording a code
+stub_claude 0 '[]'
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>"$WORK/err")
+assert_contains "a live pid is busy" "$out" "orch-rc1-issue-21 $LIVE_PID codex busy"
+assert_contains "exit 0 is done" "$out" "orch-rc1-issue-22 $D1 codex done"
+assert_contains "a non-zero exit is failed" "$out" "orch-rc1-issue-23 $D2 codex failed"
+assert_contains "a dead pid with no exit code is failed, never silently fine" \
+    "$out" "orch-rc1-issue-24 $D3 codex failed"
+assert_equals "four lines" "$(printf '%s\n' "$out" | wc -l)" "4"
+assert_equals "sorted with everything else" "$(printf '%s\n' "$out" | sort)" "$out"
+kill "$LIVE_PID" 2>/dev/null
+
+echo "test: an expected codex worker is not reported gone just because claude never heard of it"
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 22 77 2>"$WORK/err")
+assert_contains "the codex worker reports its real state" "$out" "orch-rc1-issue-22 $D1 codex done"
+assert_not_contains "and is not also gone" "$out" "issue-22 - - gone"
+assert_contains "a genuinely absent one still is" "$out" "orch-rc1-issue-77 - - gone"
+
+echo "test: codex workers and claude sessions share one report"
+stub_claude 0 '[{ "id": "cc11", "kind": "background", "name": "orch-rc1-issue-30", "state": "busy" }]'
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>"$WORK/err")
+assert_contains "the claude one" "$out" "orch-rc1-issue-30 cc11 background busy"
+assert_contains "the codex one" "$out" "orch-rc1-issue-22 $D1 codex done"
+
+echo "test: another run's codex workers are invisible"
+mkdir -p "$CODEX_ROOT/rOTHER/issue-88"
+printf '0\n' >"$CODEX_ROOT/rOTHER/issue-88/exit"
+assert_not_contains "run prefix filters the run dir too" \
+    "$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>/dev/null)" "issue-88"
+
+# The two scripts agree on the override above only because both read CODEX_RUN_ROOT.
+# The DEFAULT is the half that silently rots: change it on one side and a live codex
+# worker reports as nothing at all — which /orchestrate reads as "finished". So drive a
+# real spawn with no override and make this script find what it wrote.
+echo "test: spawn.sh's DEFAULT codex run dir is the one this script reads"
+SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
+FAKE_HOME="$WORK/home"; mkdir -p "$FAKE_HOME"
+cat >"$BIN/codex" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+STUB
+chmod +x "$BIN/codex"
+CFG="$WORK/cfg"; mkdir -p "$CFG"
+cat >"$CFG/model-tiers.json" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "medium" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "sonnet", "effort": "high" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
+  "complex":  { "planner": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" } }
+}
+JSON
+REPO="$WORK/repo"; mkdir -p "$REPO"; git -C "$REPO" init -q 2>/dev/null
+HOME="$FAKE_HOME" RESOLVE_TIER_ROOT="$CFG" \
+    bash "$SPAWN" r7 31 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -f "$FAKE_HOME/.claude/codex-runs/r7/issue-31/exit" ] && break; sleep 0.2
+done
+stub_claude 0 '[]'
+assert_contains "no override on either side, and the worker is still visible" \
+    "$(HOME="$FAKE_HOME" bash "$STATUS" r7 2>/dev/null)" "orch-r7-issue-31"
+
+echo "test: no codex run dir at all is simply no codex workers"
+stub_claude 0 '[]'
+CODEX_RUN_ROOT="$WORK/nosuchroot" bash "$STATUS" rc1 >/dev/null 2>"$WORK/err"
+assert_equals "exit 0" "$?" "0"
+assert_contains "and still loud about the empty" "$(err)" "no sessions matching orch-rc1-"
 
 # ---------------------------------------------------------------------------
 echo "test: every failure path is loud, never a silent empty"
