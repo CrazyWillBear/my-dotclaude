@@ -247,6 +247,18 @@ bash "$SPAWN" peer --name p --brief "$WORK/nope.md" --charter "$WORK/c.md" --mod
 assert_equals "missing brief file exits 1" "$?" "1"; assert_contains "names the path" "$(err)" "nope.md"
 bash "$SPAWN" peer --name p --brief "$WORK/b.md" --charter "$WORK/gone.md" --model opus --effort high --dry-run >/dev/null 2>"$WORK/err"
 assert_equals "missing charter file exits 1" "$?" "1"
+# An empty file is a present file. `-f` waves it through and the peer spawns ungoverned
+# (no charter) or task-less (no brief) — the exact failure these checks exist to stop.
+# Via dry(), which supplies --orchestrator: without it every spawn exits 1 on the missing
+# session name and an exit-code assertion here passes no matter what the file check does.
+: >"$WORK/empty.md"
+dry peer --name p --brief "$WORK/b.md" --charter "$WORK/empty.md" --model opus --effort high >/dev/null
+assert_equals "empty charter file exits 1" "$?" "1"; assert_contains "names the path" "$(err)" "empty.md"
+dry peer --name p --brief "$WORK/empty.md" --charter "$WORK/c.md" --model opus --effort high >/dev/null
+assert_equals "empty brief file exits 1" "$?" "1"; assert_contains "says it is the brief" "$(err)" "brief"
+dry peer --name p --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus --effort high \
+    --handoff "$WORK/empty.md" >/dev/null
+assert_equals "empty handoff file exits 1" "$?" "1"; assert_contains "says it is the handoff" "$(err)" "handoff"
 peer --dry-run --bogus >/dev/null; assert_equals "unknown peer flag exits 1" "$?" "1"
 peer --dry-run --name >/dev/null; assert_equals "a flag with no value exits 1" "$?" "1"
 

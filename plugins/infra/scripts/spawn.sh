@@ -121,11 +121,13 @@ done
 [ -n "$EFFORT" ]  || die "peer requires --effort"
 [ -n "$BRIEF" ]   || die "peer requires --brief"
 [ -n "$CHARTER" ] || die "peer requires --charter"
-# Fail on a missing file HERE. Past this point the next stop is a live session whose
-# system prompt silently lost its charter — the peer would run ungoverned and look fine.
-[ -f "$BRIEF" ]   || die "brief file does not exist: $BRIEF"
-[ -f "$CHARTER" ] || die "charter file does not exist: $CHARTER"
-[ -z "$HANDOFF" ] || [ -f "$HANDOFF" ] || die "handoff file does not exist: $HANDOFF"
+# Fail on a missing OR EMPTY file HERE. Past this point the next stop is a live session
+# whose system prompt silently lost its charter — the peer would run ungoverned and look
+# fine. An empty file reads as present, so `-s`, not `-f`: a zero-byte charter appends
+# nothing and a zero-byte brief spawns a session with no task at all.
+[ -s "$BRIEF" ]   || die "brief file is missing or empty: $BRIEF"
+[ -s "$CHARTER" ] || die "charter file is missing or empty: $CHARTER"
+[ -z "$HANDOFF" ] || [ -s "$HANDOFF" ] || die "handoff file is missing or empty: $HANDOFF"
 
 else
 # ---------------------------------------------------------------------------
