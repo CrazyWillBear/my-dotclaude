@@ -47,8 +47,10 @@
 
 set -uo pipefail
 
-# infra's scripts, by the one fixed address its SessionStart hook links (docs/swarm-design.md § Plugin split).
-INFRA="$HOME/.claude/kit/infra/scripts"
+# infra's own scripts, BESIDE this one. `~/.claude/kit/infra` is how OTHER plugins reach
+# infra (docs/swarm-design.md § Plugin split); infra finds itself by its own dir, which
+# removes a live dependency on the SessionStart hook having already run.
+INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -85,7 +87,7 @@ case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;;
 # The tier's roster. resolve-tier.sh always exits 0 and always prints a roster
 # (falling back to standard), so a broken model-tiers.json degrades to a working
 # spawn rather than no spawn at all.
-[ -f "$INFRA/resolve-tier.sh" ] || die "infra plugin not linked at $INFRA — install infra@my-dotclaude and start a new session"
+[ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
 ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
 MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1)"
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"

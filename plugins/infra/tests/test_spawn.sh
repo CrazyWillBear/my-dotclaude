@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/spawn.sh — the worker session command for one issue.
+# Tests for scripts/spawn.sh — the worker OR peer session command.
 #
 # Every assertion here is about a way an unattended session dies quietly: a name
 # without the run prefix (one run stops another's workers), a permission mode that
@@ -15,7 +15,7 @@
 # no task at all — while every string assertion still passed. So the first test here
 # runs the real exec path against a STUB `claude` and checks where the prompt LANDS.
 #
-# Run: bash plugins/workflow/tests/test_spawn.sh   (non-zero if any fail)
+# Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
 
@@ -25,12 +25,10 @@ SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# spawn.sh reaches infra's scripts only through ~/.claude/kit/infra; link a fake HOME
-# with the real hook, so the stable path is exercised and the real ~/.claude untouched.
-REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# A fake HOME so nothing here can touch the real ~/.claude. spawn.sh now lives IN infra
+# and finds resolve-tier.sh / session-status.sh beside itself, so no link is needed.
 export HOME="$WORK/home"
 mkdir -p "$HOME"
-bash "$REPO_ROOT/plugins/infra/scripts/link-kit.sh" || { echo "FAIL: could not link infra"; exit 1; }
 
 pass=0
 fail=0
@@ -158,10 +156,12 @@ bash "$SPAWN" r1 12 standard "$WORK/nope" base --orchestrator orch-main >/dev/nu
 assert_equals "exits 1" "$?" "1"
 assert_contains "says which path" "$(err)" "worktree does not exist"
 
-echo "test: without the infra link, spawn fails loud instead of guessing a roster"
-HOME="$WORK/nolink" bash "$SPAWN" r1 12 standard /w base --dry-run --orchestrator orch-main >/dev/null 2>"$WORK/err"
+echo "test: without its infra siblings, spawn fails loud instead of guessing a roster"
+mkdir -p "$WORK/lone"
+cp "$SPAWN" "$WORK/lone/spawn.sh"
+bash "$WORK/lone/spawn.sh" r1 12 standard /w base --dry-run --orchestrator orch-main >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
-assert_contains "names the missing link" "$(err)" "infra plugin not linked"
+assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
