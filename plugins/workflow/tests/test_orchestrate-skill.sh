@@ -204,11 +204,19 @@ assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "re
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"
 # The recovery recipe is copy-pasted, so it has to handle BOTH backends: `claude stop`
 # cannot take a PID, and a codex row's column 2 is one.
-assert_matches "the recovery recipe branches on the backend column" "$BODY" 'codex\).*kill -- -'
+assert_matches "the recovery recipe branches on the backend column" "$BODY" 'codex\).*ps -o pgid='
+assert_matches "the codex branch group-kills" "$BODY" 'kill -- -"\$id"'
+assert_matches "the claude branch stops by session id" "$BODY" '\*\).*claude stop "\$id"'
 # With nothing busy, `read -r id kind` leaves both empty and the recipe falls through to
 # `claude stop ""`. And a recycled pid that no longer leads its own group means that group
 # is somebody else's — plausibly another run's worker wrapper, since those lead groups too.
-assert_matches "the stop is guarded on an empty id" "$BODY" '\[ -n "\$id" \] \|\| exit 1'
+assert_matches "the stop is guarded on an empty id" "$BODY" '\[ -n "\$id" \] \|\|'
+# Both guards `exit 1` and they mean OPPOSITE things: one is "nothing busy, safe", the
+# other is "a live worker whose pid was recycled — do not kill that group, do not
+# respawn". An agent that reads a bare `exit 1` and guesses the first when the second
+# fired puts a second process on a live worktree, so each guard says which one it is.
+assert_matches "the empty-id guard says so" "$BODY" 'nothing busy.*exit 1'
+assert_matches "the recycled-pid guard says so" "$BODY" 'RECYCLED.*exit 1'
 assert_matches "a group kill confirms the pid still leads its group" "$BODY" "ps -o pgid= -p"
 assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
