@@ -177,5 +177,57 @@ assert_equals "exits 1" "$?" "1"
 assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
 
 # ---------------------------------------------------------------------------
+# The PEER form. A peer is a standing role session, not a one-issue worker: it is named
+# by its role (the name is the stable address a rotation reuses), carries the charter in
+# its system prompt, and is never tier-resolved.
+echo "test: spawn.sh peer — a standing role session, not an issue worker"
+printf 'You are the swe-manager. Own the build loop.\n' >"$WORK/b.md"
+printf 'CHARTER: act within your role without sign-off.\n' >"$WORK/c.md"
+peer() { bash "$SPAWN" peer --name swe-manager --brief "$WORK/b.md" --charter "$WORK/c.md" \
+              --model opus --effort high --orchestrator orch-main "$@" 2>"$WORK/err"; }
+out=$(peer --dry-run)
+assert_arg "background" "$out" "--bg"
+assert_arg "named by role, no run prefix" "$out" "swe-manager"
+assert_arg "model" "$out" "opus"
+assert_arg "effort" "$out" "high"
+assert_arg "bypassPermissions" "$out" "bypassPermissions"
+assert_arg "snapshot off so a rotated peer picks up the current charter" "$out" "--system-prompt-snapshot"
+assert_arg "charter is appended to the system prompt" "$out" "--append-system-prompt"
+assert_contains "charter text is what is appended" "$out" "CHARTER: act within your role"
+assert_arg "autocompact backstop" "$out" "--autocompact"
+assert_arg "default window" "$out" "400k"
+assert_arg "same denylist as a worker" "$out" "Bash(git merge:*)"
+assert_arg "no gh issue close" "$out" "Bash(gh issue close:*)"
+assert_contains "the brief is the prompt" "$out" "You are the swe-manager"
+assert_contains "report paragraph is mandatory" "$out" "SendMessage"
+assert_contains "plain output is invisible" "$out" "INVISIBLE"
+assert_contains "addressed to the orchestrator" "$out" '"orch-main"'
+assert_not_contains "a peer is not fenced to a worktree" "$out" "--add-dir"
+
+echo "test: a peer's prompt lands after --, like a worker's"
+argv=$(PATH="$BIN:$PATH" peer)
+sep=$(printf '%s\n' "$argv" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
+prompt_line=$(printf '%s\n' "$argv" | grep -n "You are the swe-manager" | head -1 | cut -d: -f1)
+if [ -n "$sep" ] && [ -n "$prompt_line" ] && [ "$prompt_line" -eq "$((sep + 1))" ]; then
+    ok "peer prompt is the argument immediately after --"
+else
+    no "peer prompt is not fenced from the variadic deny list (-- at $sep, prompt at $prompt_line)"
+fi
+assert_contains "peer stdin is closed too" "$argv" "STDIN:[]"
+
+echo "test: --autocompact is overridable"
+assert_arg "explicit window" "$(peer --dry-run --autocompact 250k)" "250k"
+
+echo "test: a peer with a missing piece fails loud instead of half-spawning"
+bash "$SPAWN" peer --brief "$WORK/b.md" --charter "$WORK/c.md" --model opus --effort high --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "no --name exits 1" "$?" "1"; assert_contains "says which" "$(err)" "--name"
+bash "$SPAWN" peer --name p --brief "$WORK/nope.md" --charter "$WORK/c.md" --model opus --effort high --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "missing brief file exits 1" "$?" "1"; assert_contains "names the path" "$(err)" "nope.md"
+bash "$SPAWN" peer --name p --brief "$WORK/b.md" --charter "$WORK/gone.md" --model opus --effort high --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "missing charter file exits 1" "$?" "1"
+peer --dry-run --bogus >/dev/null; assert_equals "unknown peer flag exits 1" "$?" "1"
+peer --dry-run --name >/dev/null; assert_equals "a flag with no value exits 1" "$?" "1"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

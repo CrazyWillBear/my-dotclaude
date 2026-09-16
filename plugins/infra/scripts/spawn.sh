@@ -1,15 +1,35 @@
 #!/usr/bin/env bash
 #
-# spawn.sh — start (or print) the `claude --bg` worker session for one issue.
+# spawn.sh — start (or print) one `claude --bg` session, in one of two forms.
+#
+# A WORKER is one-shot and owns one issue; it exits when the issue is built. A PEER is
+# a standing role session that idles between briefs and is rotated by handoff. Both are
+# the same command with different framing, which is why they share one builder here:
+# diverging them is how the three copies this kit replaces drifted apart
+# (docs/swarm-design.md § Topology, § Charter, § Lifecycle).
 #
 # Usage:
-#   bash spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [options]
+#   bash spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [options]   # worker
+#   bash spawn.sh peer --name N --brief F --charter F --model M --effort E [options]
 #
-#   --role build|fix        build (default) or a fix round on an existing branch
-#   --round N               fix-round number, quoted in the fix prompt (default 1)
-#   --orchestrator NAME     who the worker reports to; resolved from this session
+#   worker:
+#     --role build|fix      build (default) or a fix round on an existing branch
+#     --round N             fix-round number, quoted in the fix prompt (default 1)
+#   peer:
+#     --name NAME           the role name. This IS the session's stable address: a
+#                           rotation stops the process and respawns under the same
+#                           name, so no run prefix (§ Rotation).
+#     --brief FILE          the role's standing brief; its TEXT becomes the prompt
+#     --charter FILE        the team charter; its TEXT is appended to the system
+#                           prompt. There is no --append-system-prompt-file on the
+#                           CLI, so it is read here.
+#     --handoff FILE        rotating a peer: prepend a read-this-first instruction
+#                           naming the predecessor's handoff doc
+#     --autocompact WINDOW  compaction backstop (default 400k, § Rotation)
+#   both:
+#     --orchestrator NAME   who the session reports to; resolved from this session
 #                           when omitted (session-status.sh --self)
-#   --dry-run               print the command instead of running it
+#     --dry-run             print the command instead of running it
 #
 # On a real spawn this EXECS claude, whose stdout is a short banner CONTAINING the
 # new session's id (`claude stop <id>   stop this session`) — not a bare id, so do
@@ -21,29 +41,41 @@
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
-#   -n orch-<runid>-issue-<N>   the run prefix. `claude agents --json` is global and
-#                               concurrent runs are intended; without it one run can
-#                               stop another run's workers.
+#   -n orch-<runid>-issue-<N>   worker only: the run prefix. `claude agents --json` is
+#                               global and concurrent runs are intended; without it one
+#                               run can stop another run's workers. A peer is named by
+#                               its role instead — see --name above.
 #   --permission-mode bypassPermissions
 #                               an unattended session in manual or acceptEdits mode
 #                               deadlocks on its FIRST prompt with nobody to answer.
-#   --add-dir <worktree>        fences the FILE tools to this issue's worktree.
-#                               KNOWN LIMIT, ACCEPTED: it does not fence Bash. The
-#                               containment is the denylist plus worktree isolation,
-#                               not a sandbox.
+#   --system-prompt-snapshot off
+#                               `on` (the default) records the rendered system prompt on
+#                               the conversation's first request and replays it verbatim
+#                               forever, so a rotated peer would keep the charter text it
+#                               was born with. Off re-renders it every request.
+#   --add-dir <worktree>        worker only: fences the FILE tools to this issue's
+#                               worktree. KNOWN LIMIT, ACCEPTED: it does not fence Bash.
+#                               The containment is the denylist plus worktree isolation,
+#                               not a sandbox. A peer works in the caller's cwd.
 #   --disallowedTools ...       the irreversible, outward-facing writes stay on the
 #                               main thread (#77: a close fired from a low-context
 #                               worker was killed by a safety classifier, correctly).
 #                               `git push` and `gh issue comment` are deliberately
 #                               ALLOWED — a comment is additive, and the issue thread
-#                               is the coordination medium.
-#   --model / --effort          routed by the issue's persisted tier, via resolve-tier.sh.
+#                               is the coordination medium. IDENTICAL for both forms:
+#                               a peer has more standing, not more reach.
+#   --model / --effort          a worker is routed by the issue's persisted tier, via
+#                               resolve-tier.sh. A PEER IS NOT TIER-ROUTED — its roster
+#                               row carries the model, so it passes them explicitly.
+#   </dev/null                  an unattended session has nobody to answer a read on
+#                               stdin, and one blocked on it looks exactly like one
+#                               working.
 #
-# The prompt's last section is load-bearing: a session's plain text output is
-# invisible to every other agent, so the worker is told, explicitly, to report with
-# SendMessage. Miss that and the orchestrator waits forever.
+# The prompt's last section is load-bearing for both forms: a session's plain text
+# output is invisible to every other agent, so it is told, explicitly, to report with
+# SendMessage. Miss that and whoever spawned it waits forever.
 #
-# `claude` has no --cwd, so the session is started FROM the worktree.
+# `claude` has no --cwd, so a worker's session is started FROM its worktree.
 
 set -uo pipefail
 
@@ -54,20 +86,59 @@ INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--orchestrator NAME] [--dry-run]"
+# `shift 2` with one argument left FAILS WITHOUT SHIFTING under `set -u` (no `-e`),
+# and the loop then re-matches the same arm forever. The caller here is a model
+# assembling argv by hand, so a dropped value is a live risk — and a hung dispatcher
+# is exactly the silent stall this design is organized against. Demand the value.
+need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
+
+# Each form fills these, and the tail below builds one command out of them.
+NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""
+EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
+
+if [ "${1:-}" = peer ]; then
+# ---------------------------------------------------------------------------
+# PEER — a standing role session.
+# ---------------------------------------------------------------------------
+shift
+BRIEF=""; CHARTER=""; HANDOFF=""; AUTOCOMPACT=400k
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --name)         need $# --name;         NAME="$2";        shift 2 ;;
+        --brief)        need $# --brief;        BRIEF="$2";       shift 2 ;;
+        --charter)      need $# --charter;      CHARTER="$2";     shift 2 ;;
+        --model)        need $# --model;        MODEL="$2";       shift 2 ;;
+        --effort)       need $# --effort;       EFFORT="$2";      shift 2 ;;
+        --handoff)      need $# --handoff;      HANDOFF="$2";     shift 2 ;;
+        --autocompact)  need $# --autocompact;  AUTOCOMPACT="$2"; shift 2 ;;
+        --orchestrator) need $# --orchestrator; ORCH="$2";        shift 2 ;;
+        --dry-run)      DRY=1; shift ;;
+        *)              die "unknown flag $1" ;;
+    esac
+done
+[ -n "$NAME" ]    || die "peer requires --name"
+[ -n "$MODEL" ]   || die "peer requires --model"
+[ -n "$EFFORT" ]  || die "peer requires --effort"
+[ -n "$BRIEF" ]   || die "peer requires --brief"
+[ -n "$CHARTER" ] || die "peer requires --charter"
+# Fail on a missing file HERE. Past this point the next stop is a live session whose
+# system prompt silently lost its charter — the peer would run ungoverned and look fine.
+[ -f "$BRIEF" ]   || die "brief file does not exist: $BRIEF"
+[ -f "$CHARTER" ] || die "charter file does not exist: $CHARTER"
+[ -z "$HANDOFF" ] || [ -f "$HANDOFF" ] || die "handoff file does not exist: $HANDOFF"
+
+else
+# ---------------------------------------------------------------------------
+# WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
+# ---------------------------------------------------------------------------
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--orchestrator NAME] [--dry-run]
+       spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
 shift 5
 
 ROLE=build
 ROUND=1
-ORCH=""
-DRY=""
-# `shift 2` with one argument left FAILS WITHOUT SHIFTING under `set -u` (no `-e`),
-# and the loop then re-matches the same arm forever. The caller here is a model
-# assembling argv by hand, so a dropped value is a live risk — and a hung dispatcher
-# is exactly the silent stall this design is organized against. Demand the value.
-need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --role)         need $# --role;         ROLE="$2"; shift 2 ;;
@@ -93,16 +164,44 @@ MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
 
-# The worker's report address. A worker that cannot name its orchestrator reports
-# into the void, so this fails LOUD rather than spawning a session nobody hears.
+NAME="orch-$RUNID-issue-$ISSUE"
+BRANCH="issue-$ISSUE"
+fi
+
+# The session's report address, for BOTH forms. A session that cannot name who it
+# reports to reports into the void, so this fails LOUD rather than spawning a session
+# nobody hears.
 if [ -z "$ORCH" ]; then
     ORCH="$(bash "$INFRA/session-status.sh" --self 2>/dev/null)" \
         || die "could not resolve this session's name — pass --orchestrator NAME"
     [ -n "$ORCH" ] || die "could not resolve this session's name — pass --orchestrator NAME"
 fi
 
-NAME="orch-$RUNID-issue-$ISSUE"
-BRANCH="issue-$ISSUE"
+if [ -z "$WORKTREE" ]; then
+# ---------------------------------------------------------------------------
+# The peer's prompt: [handoff instruction] + the brief + the report paragraph.
+# ---------------------------------------------------------------------------
+HANDOFF_BLOCK=""
+if [ -n "$HANDOFF" ]; then
+    HANDOFF_BLOCK="You are RESUMING the $NAME role. FIRST read your handoff at $HANDOFF, in
+full: it is your predecessor's state — what is in flight, what is blocked, and what was
+promised to whom. Then continue from there. Your standing role follows.
+
+"
+fi
+TASK="$HANDOFF_BLOCK$(cat "$BRIEF")
+
+REPORT WITH SendMessage. Your plain text output is INVISIBLE to every other session —
+anything anyone else needs MUST go through the SendMessage tool, addressed to \"$ORCH\".
+Stop every worker you spawn before you go idle."
+
+EXTRA=(--append-system-prompt "$(cat "$CHARTER")" --autocompact "$AUTOCOMPACT")
+
+else
+# ---------------------------------------------------------------------------
+# The worker's prompt: the issue protocol, build or fix.
+# ---------------------------------------------------------------------------
+EXTRA=(--add-dir "$WORKTREE")
 
 # Only COMPLEX work plans. Trivial and standard self-plan — planning TDD-first is
 # already in the implementer's contract, and a plan stage in front of an implementer
@@ -187,6 +286,7 @@ Never merge, never open a PR, never close or edit the issue.
 PROMPT
 )"
 fi
+fi
 
 # `--` BEFORE THE PROMPT IS LOAD-BEARING. `--disallowedTools` is a VARIADIC option:
 # it consumes every following non-option token, so a prompt placed after it is
@@ -200,7 +300,7 @@ CMD=(claude --bg -n "$NAME"
      --model "$MODEL" --effort "$EFFORT"
      --permission-mode bypassPermissions
      --system-prompt-snapshot off
-     --add-dir "$WORKTREE"
+     "${EXTRA[@]}"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
      -- "$TASK")
@@ -213,8 +313,12 @@ if [ -n "$DRY" ]; then
     exit 0
 fi
 
-[ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
-cd "$WORKTREE" || die "cannot enter worktree: $WORKTREE"
+# `claude` has no --cwd. A worker is started FROM its worktree; a peer stays in the
+# caller's cwd, which is the project root its role works in.
+if [ -n "$WORKTREE" ]; then
+    [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
+    cd "$WORKTREE" || die "cannot enter worktree: $WORKTREE"
+fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
 exec "${CMD[@]}" </dev/null
