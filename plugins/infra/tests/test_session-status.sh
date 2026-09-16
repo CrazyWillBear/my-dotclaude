@@ -228,6 +228,19 @@ assert_equals "four lines" "$(printf '%s\n' "$out" | wc -l)" "4"
 assert_equals "sorted with everything else" "$(printf '%s\n' "$out" | sort)" "$out"
 kill "$LIVE_PID" 2>/dev/null
 
+# spawn.sh creates the run dir, then backgrounds codex, THEN records $!. A poll landing
+# in that window sees a dir with no pid file yet. It must not read `failed`: the two
+# wrong answers are not symmetrical here. Calling a live worker dead lets /orchestrate
+# respawn it or merge a branch it has not finished — the silent-empty catastrophe.
+# Calling a dead one live only stalls, which is visible. So the window reports busy.
+echo "test: a worker caught mid-launch is busy, never failed"
+mkdir -p "$CODEX_ROOT/rc1/issue-25"
+: >"$CODEX_ROOT/rc1/issue-25/status-schema.json"
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>/dev/null)
+assert_contains "no pid file yet -> busy" "$out" "orch-rc1-issue-25 - codex busy"
+assert_not_contains "and never the terminal-looking answer" "$out" "issue-25 - codex failed"
+rm -rf "$CODEX_ROOT/rc1/issue-25"
+
 echo "test: an expected codex worker is not reported gone just because claude never heard of it"
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 22 77 2>"$WORK/err")
 assert_contains "the codex worker reports its real state" "$out" "orch-rc1-issue-22 $D1 codex done"

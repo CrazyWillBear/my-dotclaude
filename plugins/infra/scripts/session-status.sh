@@ -238,6 +238,13 @@ if not (self_mode or peers_mode) and os.path.isdir(codex_root):
         pid, code = read("pid"), read("exit")
         if code is not None:
             raw = "completed" if code == "0" else "failed"
+        elif pid is None:
+            # spawn.sh makes the run dir, backgrounds codex, THEN records $!. A poll
+            # landing in that window sees no pid file. The two wrong answers are not
+            # symmetrical: calling a live worker dead lets /orchestrate respawn it or
+            # merge a branch it has not finished, while calling a dead one live only
+            # stalls, visibly. So the launch window reports busy.
+            raw = "working"
         else:
             # spawn.sh writes the exit file from the same subshell it records the pid
             # for, so that pid outlives codex itself. A dead pid with no exit file is
