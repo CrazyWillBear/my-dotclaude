@@ -126,6 +126,7 @@ id=$("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2}')
 claude stop "$id"
 # verify: NO row for this issue may still be busy
 [ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
+# run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
 bash ~/.claude/kit/infra/scripts/spawn.sh ...                         # same worktree, same branch
 ```
@@ -157,6 +158,7 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
 a third 40k-token spawn. The count comes from the run log:
 
 ```bash
+# run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" state "$RUNID"    # respawned=12:2,13:1
 ```
 
