@@ -53,9 +53,9 @@ plugin holds every script other plugins need, and nothing else calls across.
 | plugin | holds | calls into |
 |---|---|---|
 | **context** | the four hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan` | nothing |
-| **infra** | scripts only: `spawn.sh`, `session-status.sh`, `check-inbound.sh`, stop/attach helpers, the backend switch, `roster.json` + `resolve-tier.sh` | nothing |
+| **infra** | scripts only: `spawn.sh`, `session-status.sh`, `check-inbound.sh`, the backend switch, `model-tiers.json` + `resolve-tier.sh`, and `link-kit.sh` (the stable-address hook) | nothing |
 | **workflow** | `/orchestrate`, `/classify-task`, `/to-prd`, `/to-issues`, the graph + merge scripts, the three agents | infra |
-| **swarm** | `/init-swarm`, `swarm.sh up|down|rotate|attach`, charter + brief templates, memory tiers | infra |
+| **swarm** | `/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, charter + brief templates, memory tiers | infra |
 | **personal-tools** | everything left | nothing |
 
 Moving `/handoff` next to `save-handoff.sh` deletes the inline duplication. `/to-prd` and
@@ -179,7 +179,7 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
 
 ## Lifecycle
 
-`swarm.sh`, one script, four verbs:
+`swarm.sh`, one script, five verbs:
 
 - `up` — starts every roster peer not already listed, then resumes the orchestrator by its saved
   id, or starts it fresh with its brief. Generalizes cogito's `orchestrator.sh` + `spawn.sh`.
@@ -188,6 +188,8 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
   stops it, respawns it with the handoff prepended. The path comes from the peer's own reply,
   so swarm never calls into context.
 - `attach <role>` — `claude attach` by id, for when Will wants to sit in a peer.
+- `brief <role> <file>` — copy a brief into `.claude/swarm/inbox/<role>/` and print the
+  absolute path to send: briefs are files, messages are pointers (§ Rotation).
 
 Nothing rotates automatically. The context plugin's watchdog advises; the orchestrator asks.
 
@@ -286,7 +288,7 @@ messages sent to the name. The name is the stable address; the process is dispos
 
 cogito and wilcus-agents stay as they are until the kit is done. Then each replaces its
 scripts with `/init-swarm` output and its briefs with roster rows, and they are the acceptance
-test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.md`.
+test. The perf plugin is already out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.md`.
 
 ## Deliberately not built
 
@@ -324,4 +326,4 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
 7. **codex**: the backend switch in infra. (Landed #90: `spawn.sh`'s `codex exec` worker path
    and codex worker state in `session-status.sh`. `model-tiers.json` stays on claude until
    #96 lands the orchestrator-side report ingest.)
-8. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.
+8. **migrate** cogito, then wilcus-agents. (The perf plugin is already out of the installer.)
