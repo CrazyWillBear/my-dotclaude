@@ -81,10 +81,10 @@ echo "test: the command carries the run-prefixed name and the tier's roster"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
 assert_arg "background" "$out" "--bg"
 assert_arg "run-prefixed session name" "$out" "orch-20260906-101500-issue-12"
-assert_arg "standard tier -> sonnet implementer" "$out" "sonnet"
+assert_arg "standard tier -> codex terra implementer" "$out" "gpt-5.6-terra"
 out_c=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
-assert_arg "complex tier -> opus implementer" "$out_c" "opus"
-assert_not_contains "and not the standard model" "$(printf '%s\n' "$out_c" | grep -A1 -- '--model')" "sonnet"
+assert_arg "complex tier -> codex sol implementer" "$out_c" "gpt-5.6-sol"
+assert_not_contains "and not the standard model" "$(printf '%s\n' "$out_c" | grep -A1 -- '--model')" "gpt-5.6-terra"
 
 echo "test: an unattended session never comes up able to prompt"
 assert_arg "bypassPermissions" "$out" "bypassPermissions"
