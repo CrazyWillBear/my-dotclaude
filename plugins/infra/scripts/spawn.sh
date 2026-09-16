@@ -410,7 +410,9 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # EVERY property is required and additionalProperties is false: that is strict
 # structured-output shape, and a schema that leaves a property optional is rejected
 # outright rather than relaxed. Unused fields come back empty — the prompt says so.
-cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status-schema.json"
+# On failure the dir goes with it: a pidless run dir is BUSY forever to session-status.sh,
+# so leaving one behind stalls /orchestrate's recovery gate with no way out.
+cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot write $RUNDIR/status-schema.json"; }
 {
   "type": "object",
   "properties": {

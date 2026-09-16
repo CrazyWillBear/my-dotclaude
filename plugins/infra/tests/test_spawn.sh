@@ -331,6 +331,25 @@ else
     ok "a dry run creates no run dir"
 fi
 
+echo "test: a failed schema write leaves no run dir behind either"
+# Same phantom, different exit: mkdir succeeds, then the schema redirect dies (read-only
+# fs, ENOSPC) and the pidless dir stays. session-status.sh:241-247 reads that as BUSY
+# forever, so /orchestrate's recovery gate never clears and the run stalls with no way
+# out. A `status-schema.json` that is already a DIRECTORY fails the redirect the same
+# way a read-only mount does, and does it for root too.
+rm -rf "$CODEX_ROOT/schemafail"
+mkdir -p "$CODEX_ROOT/schemafail/r9/issue-12/status-schema.json"
+CODEX_RUN_ROOT="$CODEX_ROOT/schemafail" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
+rc=$?
+assert_equals "an unwritable schema exits non-zero" "$rc" "1"
+if [ -e "$CODEX_ROOT/schemafail/r9/issue-12" ]; then
+    no "the failed spawn left $CODEX_ROOT/schemafail/r9/issue-12 — a phantom session-status reads as busy"
+else
+    ok "the failed spawn cleans up its run dir"
+fi
+rm -rf "$CODEX_ROOT/schemafail"
+
 echo "test: the codex tier is resolved per tier, not hardcoded"
 assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
 assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
