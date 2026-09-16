@@ -173,6 +173,27 @@ assert_equals "same keyed dir with sha1sum missing from PATH" "$nosha_dir" "$(r 
 echo "test: run-log.sh does not depend on the sha1sum binary"
 assert_not_contains "no sha1sum invocation in source" "$(cat "$RUNLOG")" "sha1sum"
 
+echo "test: a failing key computation dies loud instead of collapsing to the unkeyed dir"
+FAILPY_BIN="$WORK/failpy-bin"
+mkdir -p "$FAILPY_BIN"
+REAL_PYTHON3="$(command -v python3)"
+REAL_GIT="$(command -v git)"
+ln -sf "$REAL_GIT" "$FAILPY_BIN/git"
+cat >"$FAILPY_BIN/python3" <<EOF
+#!$BASH_BIN
+if [ "\$1" = "-c" ]; then
+    echo "simulated key-computation failure" >&2
+    exit 1
+fi
+exec "$REAL_PYTHON3" "\$@"
+EOF
+chmod +x "$FAILPY_BIN/python3"
+out=$(cd "$WORK/repo" && HOME="$GLOBAL_HOME" PATH="$FAILPY_BIN" "$BASH_BIN" "$RUNLOG" path run1 2>"$WORK/err")
+rc=$?
+assert_equals "exits 1 rather than printing a collapsed path" "$rc" "1"
+assert_equals "prints nothing on stdout" "$out" ""
+assert_contains "says the key computation failed" "$(cat "$WORK/err")" "key"
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
