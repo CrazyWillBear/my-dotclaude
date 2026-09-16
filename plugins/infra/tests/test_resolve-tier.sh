@@ -36,9 +36,9 @@
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
 #   8. Fallback is pinned literally to the hardcoded claude standard roster
 #      (sonnet/sonnet/opus, backend=claude on every role) — independent of
-#      whatever the shipped config's standard tier resolves to, since #87 moved
-#      standard's implementer/reviewer to codex while the fallback deliberately
-#      stayed all-claude, so nothing breaks before codex is wired.
+#      whatever the shipped config's standard tier resolves to, so a future
+#      codex rollout in the config can never change what a broken config
+#      falls back to.
 #   9. A `cd` failure inside the BASH_SOURCE fallback (the SCRIPT_DIR/PLUGIN_ROOT
 #      lines, exercised when RESOLVE_TIER_ROOT is unset) is fully suppressed —
 #      stderr is EXACTLY the one WARN line, never that plus a leaked
@@ -111,12 +111,12 @@ assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
 assert_equals "trivial: planner_model haiku" "$(val "$OUT" planner_model)" "haiku"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "trivial: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "trivial: implementer_model gpt-5.6-luna" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "trivial: implementer_model haiku" "$(val "$OUT" implementer_model)" "haiku"
 assert_equals "trivial: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
-assert_equals "trivial: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
-assert_equals "trivial: reviewer_model gpt-5.6-terra" "$(val "$OUT" reviewer_model)" "gpt-5.6-terra"
+assert_equals "trivial: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
 assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
-assert_equals "trivial: reviewer_backend codex" "$(val "$OUT" reviewer_backend)" "codex"
+assert_equals "trivial: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier standard
 assert_equals "standard: exit 0" "$RC" "0"
@@ -125,26 +125,26 @@ assert_equals "standard: tier echoed" "$(val "$OUT" tier)" "standard"
 assert_equals "standard: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
 assert_equals "standard: planner_effort high" "$(val "$OUT" planner_effort)" "high"
 assert_equals "standard: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "standard: implementer_model gpt-5.6-terra" "$(val "$OUT" implementer_model)" "gpt-5.6-terra"
+assert_equals "standard: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
 assert_equals "standard: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
-assert_equals "standard: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
-assert_equals "standard: reviewer_model gpt-5.6-terra" "$(val "$OUT" reviewer_model)" "gpt-5.6-terra"
+assert_equals "standard: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "standard: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
-assert_equals "standard: reviewer_backend codex" "$(val "$OUT" reviewer_backend)" "codex"
+assert_equals "standard: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier complex
 assert_equals "complex: exit 0" "$RC" "0"
 assert_equals "complex: stderr empty (no WARN)" "$ERR" ""
 assert_equals "complex: tier echoed" "$(val "$OUT" tier)" "complex"
-assert_equals "complex: planner_model gpt-5.6-sol" "$(val "$OUT" planner_model)" "gpt-5.6-sol"
+assert_equals "complex: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "complex: planner_effort xhigh" "$(val "$OUT" planner_effort)" "xhigh"
-assert_equals "complex: planner_backend codex" "$(val "$OUT" planner_backend)" "codex"
-assert_equals "complex: implementer_model gpt-5.6-sol" "$(val "$OUT" implementer_model)" "gpt-5.6-sol"
+assert_equals "complex: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
+assert_equals "complex: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
 assert_equals "complex: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
-assert_equals "complex: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
-assert_equals "complex: reviewer_model gpt-5.6-sol" "$(val "$OUT" reviewer_model)" "gpt-5.6-sol"
+assert_equals "complex: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "complex: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "complex: reviewer_effort xhigh" "$(val "$OUT" reviewer_effort)" "xhigh"
-assert_equals "complex: reviewer_backend codex" "$(val "$OUT" reviewer_backend)" "codex"
+assert_equals "complex: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 # ---------------------------------------------------------------------------
 echo "test: missing config → the exact WARN line + standard roster, exit 0"
@@ -571,9 +571,9 @@ assert_equals "shipped config: all 9 tier×role cells resolve to a valid model/e
 # ---------------------------------------------------------------------------
 echo "test: fallback is pinned literally to the hardcoded claude standard roster"
 # Deliberately NOT derived from resolving `standard` against the shipped config:
-# #87 moved the shipped standard tier's implementer/reviewer to codex, while the
-# fallback stayed the all-claude roster on purpose ("nothing breaks before codex
-# is wired") — so the two are expected to diverge now, not match.
+# the fallback is a fixed roster independent of whatever the config's standard
+# tier currently resolves to, so a future codex rollout there can't change what
+# a broken config falls back to — even though both happen to match today.
 EXPECTED_FALLBACK="tier=standard
 planner_model=sonnet
 planner_effort=high
