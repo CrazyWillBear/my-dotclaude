@@ -37,6 +37,10 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 
 ## Two backends, for the worker form only
 
+**Nothing routes to codex today.** `model-tiers.json` ships `backend: claude` in all nine
+cells. The path below is built and tested, but it stays unreached until the orchestrator can
+ingest a codex worker's report out of `last-message.txt` (#96).
+
 A worker whose tier's `implementer_backend` is `codex` runs `codex exec` in the background
 instead of `claude --bg` ([`docs/swarm-design.md` § Codex backend](../../docs/swarm-design.md)).
 Codex has no agent list, so the run dir **is** the session:

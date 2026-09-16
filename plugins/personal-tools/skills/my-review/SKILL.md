@@ -15,7 +15,7 @@ You are the main-thread launcher for the `my-review` agent. Pick the reviewer mo
    - else **judge the tier yourself from a cheap diff peek**: `git diff HEAD --stat` for the local
      working diff, or `gh pr diff <N> --stat` for a PR — the size and spread of the change decide
      trivial / standard / complex. This skill stays **dependency-free of the workflow plugin**: do
-     **not** invoke its `classify-task` skill or its `resolve-tier.sh` helper.
+     **not** invoke its `classify-task` skill, nor infra's `resolve-tier.sh` helper.
 2. **Pick the model from the tier.**
    - **complex** → `AskUserQuestion`: **opus** (default — cheaper, faster) vs **fable** (deepest,
      slowest).

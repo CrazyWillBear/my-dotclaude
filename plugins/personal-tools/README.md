@@ -22,6 +22,8 @@ plugins/personal-tools/
 │   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
+│   ├── update-kit.sh              # backing script for /update-kit — marketplace entry, every listed plugin, status line
+│   ├── dedup-search.sh            # backing script for /dedup-search — ripgrep/ctags candidate table for the given terms
 │   ├── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
 │   ├── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /verify-plan (fail-open)
 │   ├── distill-transcript.sh      # strips a transcript to its spoken turns (~12x) so /verify-plan reads dialogue, not tool output
@@ -97,7 +99,9 @@ plugins/personal-tools/
   non-blocking notice naming the version and telling you to run `/update-kit`.
 - **`/update-kit`** — apply the latest kit release on this machine. Runs
   `claude plugin marketplace update my-dotclaude`, then updates every plugin listed in its
-  manifest via `claude plugin update`, then prints a reminder to restart Claude Code.
+  manifest via `claude plugin update`, then refreshes the status line (`global/statusline.py`
+  plus its `settings.json` wiring — not plugin payload, so the plugin updates don't carry it;
+  a refresh failure is non-fatal), then prints a reminder to restart Claude Code.
   No arguments needed; works for both developer and simple-setup audiences.
 - **Worktree isolation** (`scripts/worktree-guard.sh` + `scripts/worktree-gc.sh`, wired in
   `hooks/hooks.json`) — enforces the global "worktree per coding task" rule so parallel sessions

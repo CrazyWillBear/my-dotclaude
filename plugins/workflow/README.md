@@ -146,7 +146,7 @@ run's context.
 ### Liveness and recovery
 
 `session-status.sh <runid>` classifies each worker `busy` / `idle` / `blocked` (a permission wedge) /
-`done` / `gone`, and **fails loud** if `claude` is missing or returns junk — silence there would read
+`done` / `stopped` / `failed` (codex workers) / `gone`, and **fails loud** if `claude` is missing or returns junk — silence there would read
 as "every session finished". **Never parse `claude logs`**: it is a raw ANSI screen dump.
 
 Workers **commit after every green sub-step**. That is the *recovery mechanism*, not hygiene: it caps
