@@ -77,7 +77,11 @@ fi
 OWNERS="$( { bash "$ROSTER_SCRIPT" list manager "$PROJECT_DIR" && bash "$ROSTER_SCRIPT" list doer "$PROJECT_DIR"; } 2>/dev/null)" \
     || { echo "error: roster.sh could not read $ROSTER" >&2; exit 1; }
 
-echo "vault not on PATH — wrote the plain directory layout, no policy file (install wilcus-vault to add scoping)"
+if command -v vault >/dev/null 2>&1; then
+    echo "\`vault\` on PATH is not wilcus-vault (its --help names no --layout swarm) — wrote the plain directory layout, no policy file (install wilcus-vault to add scoping)"
+else
+    echo "vault not on PATH — wrote the plain directory layout, no policy file (install wilcus-vault to add scoping)"
+fi
 mkdir -p "$MEMORY/shared"
 while IFS= read -r role; do
     [ -n "$role" ] || continue

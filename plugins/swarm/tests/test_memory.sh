@@ -152,7 +152,8 @@ DECOYTEST="$WORK/decoytest"
 roster "$DECOYTEST" "$TWOROLES"
 run "$DECOYBIN:$ORIG_PATH" scaffold "$DECOYTEST"
 assert_equals "decoy vault: exit 0 (falls back, does not error out)" "$RC" "0"
-assert_contains "decoy vault: falls back to the plain layout" "$OUT" "vault not on PATH"
+assert_contains "decoy vault: gets its own notice, not the vault-absent one" "$OUT" "not wilcus-vault"
+assert_not_contains "decoy vault: never claims vault is absent (one IS on PATH)" "$OUT" "vault not on PATH"
 if [ -f "$DECOY_RAN_MARKER" ]; then no "decoy vault: its init was invoked (should never run)"; else ok "decoy vault: its init was never invoked"; fi
 if [ -d "$DECOYTEST/.claude/swarm/memory/shared" ]; then
     ok "decoy vault: plain fallback still scaffolded shared/"

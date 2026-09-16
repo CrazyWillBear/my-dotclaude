@@ -66,8 +66,11 @@ briefs, and memory.
      policy rule already covers the whole tree), plus
      `.claude/swarm/memory/.vault-policy.json`.
    - Otherwise it prints one line — `vault not on PATH — wrote the plain directory
-     layout, no policy file (install wilcus-vault to add scoping)` — and makes the
-     same directories itself: `.claude/swarm/memory/shared/`, plus
+     layout, no policy file (install wilcus-vault to add scoping)` when no `vault`
+     binary is reachable at all, or, when one is on PATH but isn't wilcus-vault (e.g.
+     HashiCorp Vault), the same notice with `` `vault` on PATH is not wilcus-vault (its
+     --help names no --layout swarm) `` in place of `vault not on PATH` — and either
+     way makes the same directories itself: `.claude/swarm/memory/shared/`, plus
      `.claude/swarm/memory/roles/<role>/` and `.claude/swarm/memory/proposals/<role>/`
      for every chosen role whose `kind` is `manager` or `doer`. No policy file — only
      vault generates one.
