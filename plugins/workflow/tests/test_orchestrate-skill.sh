@@ -105,7 +105,7 @@ assert_contains "bypassPermissions" "$BODY" "bypassPermissions"
 assert_contains "the orchestrator address comes from --self" "$BODY" "session-status.sh --self"
 # The flags, the denylist and why each exists moved to infra's README (spawn.sh's own
 # test pins the actual flags — see plugins/infra/tests/test_spawn.sh); SKILL.md keeps a pointer.
-assert_contains "the full spawn protocol points at infra's README" "$BODY" "infra/README.md#spawn-protocol"
+assert_contains "the full spawn protocol points at infra's README" "$BODY" "../../../infra/README.md#spawn-protocol"
 
 echo "test: fix rounds are fresh sessions"
 assert_matches "a fresh session per fix round" "$BODY" "fresh.*session|--role fix"
@@ -119,7 +119,7 @@ assert_matches "cycles are counted from the comments" "$BODY" "counted by readin
 # The regenerable/not-regenerable table, brevity rationale and the review-comment example
 # moved to infra's README; the issue thread's brevity mandate itself lives in and is pinned
 # by agents/implementer.md (the contract every build session actually reads).
-assert_contains "the comment contract points at infra's README" "$BODY" "infra/README.md#the-bus"
+assert_contains "the comment contract points at infra's README" "$BODY" "../../../infra/README.md#the-bus"
 
 echo "test: the context map"
 assert_contains "written at admission" "$BODY" "at **admission**"
@@ -141,7 +141,7 @@ assert_matches "never poll" "$BODY" "never poll"
 assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
 # The state table (busy/idle/blocked/done/stopped/gone) and "never parse claude logs" moved
 # to infra's README, alongside session-status.sh — the script whose own test pins these states.
-assert_contains "liveness and recovery point at infra's README" "$BODY" "infra/README.md#liveness-and-recovery"
+assert_contains "liveness and recovery point at infra's README" "$BODY" "../../../infra/README.md#liveness-and-recovery"
 
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"

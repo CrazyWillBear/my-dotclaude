@@ -366,7 +366,7 @@ never by a field you keep. See [The bus](#the-bus).
 # Spawn protocol
 
 `spawn.sh` owns the flags — `bypassPermissions`, the write denylist, the invisible-output trap —
-and its test pins every one of them; see [infra's README](../../infra/README.md#spawn-protocol).
+and its test pins every one of them; see [infra's README](../../../infra/README.md#spawn-protocol).
 
 ---
 
@@ -374,7 +374,7 @@ and its test pins every one of them; see [infra's README](../../infra/README.md#
 
 The issue thread is the coordination medium: each agent reads it, does its job, and appends its
 own comment, so findings never pass through the orchestrator; see [infra's
-README](../../infra/README.md#the-bus) for the comment contract and the review-round format.
+README](../../../infra/README.md#the-bus) for the comment contract and the review-round format.
 
 ---
 
@@ -427,7 +427,7 @@ The reasoning:
 
 Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; session states
 (`busy`/`idle`/`blocked`/`done`/`stopped`/`gone`) and the full `stop` → verify → respawn recovery
-procedure are documented in [infra's README](../../infra/README.md#liveness-and-recovery).
+procedure are documented in [infra's README](../../../infra/README.md#liveness-and-recovery).
 
 ---
 
