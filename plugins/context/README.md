@@ -14,7 +14,7 @@ plugins/context/
 │   └── handoff-plan/SKILL.md      # /handoff-plan — capture the approved plan + resume pointer, then /clear
 ├── hooks/hooks.json               # wires the scripts below to hook events
 ├── scripts/
-│   ├── watchdog.sh                # UserPromptSubmit: advise /clear before /orchestrate in a full window
+│   ├── watchdog.sh                # UserPromptSubmit: advise /clear before /orchestrate in a full window; nudge a swarm peer past its roster rotate_at to /handoff
 │   ├── resume.sh                  # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
 │   ├── save-handoff.sh            # PreCompact: write a handoff before every compaction; OWNS the per-repo keyed dir
 │   └── suggest-docs.sh            # Stop: soft nudge when a batch changed code but no docs
@@ -49,8 +49,9 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
 
 - **`watchdog.sh`** (UserPromptSubmit) reads live context occupancy
   from the transcript — the last assistant entry's `input_tokens + cache_read +
-  cache_creation` — and fires one advisory signal. No hook can type a slash command, so it
-  injects instructions and tells you the one command to run.
+  cache_creation` — and fires at most one advisory signal (two concatenated JSON objects
+  would be invalid, so the gate wins when both would apply). No hook can type a slash
+  command, so it injects instructions and tells you the one command to run.
   - **Orchestrate gate** (advisory, UserPromptSubmit only): when you type the `workflow` plugin's
     `/orchestrate` slash command (bare or with args) and context is already ≥
     `WORKFLOW_PLANGATE_TOKENS` (default **60k**), it injects a hint to run `/clear` first so
@@ -58,11 +59,31 @@ missing `python3`/`git` or any error exits 0, so they never wedge a session.
     so `/orchestrate` still runs if you proceed. Natural-language phrasing ("please
     orchestrate") does *not* match; it requires the leading slash.
 
-  There is deliberately **no periodic wrap-up nudge**. An earlier version fired at a fixed
-  occupancy on any work and told the agent to stop, commit and `/handoff` — which interrupted
-  long autonomous runs at their worst moment, and is actively wrong now that `/orchestrate`
-  runs its loop on the main thread. A session that genuinely needs a handoff still gets one
-  from `save-handoff.sh` on `PreCompact`, which fires on real compaction rather than a guess.
+  - **Peer rotation nudge** (advisory, UserPromptSubmit only) — `docs/swarm-design.md`
+    § Rotation. A swarm peer is the one session that *should* be told to wrap up: its whole
+    purpose is to be rotated, and `claude agents --json` exposes no context size, so nothing
+    but the peer itself can measure it. Past its roster row's `rotate_at` (default **300k**)
+    the peer is told to run `/handoff` at the next natural stopping point and then
+    `SendMessage` the orchestrator the doc path — the peer picks the moment, and it never
+    rotates itself; the orchestrator runs `swarm.sh rotate`.
+
+    Three gates keep it off everyone else. The session's own name — read from the
+    `{"type":"agent-name"}` rows `claude -n` writes into the transcript this hook already
+    opens, so there is no subprocess and no call into another plugin (§ Plugin split:
+    context calls into **nothing**) — must be a `manager` or `doer` row in
+    `<project>/.claude/swarm/roster.json`; the threshold is *that row's*; and the wording
+    leaves the moment to the model. A session started without `-n` writes no such row, so an
+    ordinary interactive window is silent at any occupancy, as is the `orchestrator` row —
+    that one is the human's own seat. The roster read is fail-**open** (a malformed roster
+    means silence, not an error), unlike `roster.sh`, which is deliberately fail-closed: a
+    hook must never wedge the session it exists to help.
+
+  There is otherwise deliberately **no periodic wrap-up nudge**. An earlier version fired at a
+  fixed occupancy on any work and told the agent to stop, commit and `/handoff` — which
+  interrupted long autonomous runs at their worst moment, and is actively wrong now that
+  `/orchestrate` runs its loop on the main thread. A session that genuinely needs a handoff
+  still gets one from `save-handoff.sh` on `PreCompact`, which fires on real compaction rather
+  than a guess.
 - **`resume.sh`** (SessionStart) re-injects the in-flight per-repo handoff after each
   `/clear` or `/compact`. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
   written inside a linked worktree resumes from anywhere in the repo; when it was written in a

@@ -179,6 +179,13 @@ if [ -f "$SCRATCH/.claude/swarm/roster.json" ]; then ok "roster.json written"; e
 if [ -f "$SCRATCH/.claude/swarm/charter.md" ]; then ok "charter.md written"; else no "charter.md missing"; fi
 assert_equals "charter.md matches the shipped template verbatim" \
     "$(cat "$SCRATCH/.claude/swarm/charter.md")" "$(cat "$TEMPLATES/charter.md")"
+# Rotation's first lost-message window (docs/swarm-design.md § Rotation): a brief lands
+# while the peer is writing its handoff. Nothing in a script can catch that one — only
+# the charter closes it, so the line has to actually ship.
+CHARTER="$(cat "$TEMPLATES/charter.md")"
+assert_contains "the charter closes the mid-handoff window" "$CHARTER" "after you start"
+assert_contains "naming the command it applies to" "$CHARTER" "/handoff"
+assert_contains "and saying the message goes in verbatim" "$CHARTER" "verbatim"
 
 for role in $CHOSEN; do
     if [ -f "$SCRATCH/.claude/swarm/inbox/$role/brief.md" ]; then

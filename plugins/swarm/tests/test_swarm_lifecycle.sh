@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/swarm.sh up|down|attach — the swarm's process lifecycle.
+# Tests for scripts/swarm.sh up|down|rotate|attach — the swarm's process lifecycle.
 #
 # Black-box and driven for REAL: a real project dir with a real roster.json, charter
 # and briefs, the REAL infra scripts reached through the REAL stable link
@@ -20,6 +20,10 @@
 #   * up then execs the orchestrator: resume by the saved id, or fresh with its brief
 #   * a peer that fails to spawn stops up before the orchestrator, loudly
 #   * down stops each live peer BY ID and never by name; it never touches the orchestrator
+#   * rotate waits for idle, RE-CHECKS idle, stops that id and respawns with --handoff;
+#     it refuses a blocked peer, a non-peer row and a bad handoff path, and in every
+#     refusal it stops nothing; a peer that is already dead is respawned on the handoff
+#     rather than refused (docs/swarm-design.md § Rotation)
 #   * attach resolves the role name to an id and execs `claude attach <id>`
 #   * every failure path is loud: no roster, no orchestrator row, no infra link,
 #     an unknown role, a role that is not running
@@ -61,9 +65,21 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok 
 # exec, `claude stop`, `claude attach`, the orchestrator resume — is recorded as one
 # numbered file holding its cwd and then its argv, one argument per line.
 CALLS="$WORK/calls"
+# `agents --json` answers from agents.json, or — when a test scripted one with
+# agents_seq — from the next file in the sequence, so a `rotate` poll loop can be
+# walked through busy -> idle -> idle. Once the sequence runs out the final state
+# sticks, so a loop that polls more times than the test scripted still sees it.
 cat >"$BIN/claude" <<STUB
 #!/usr/bin/env bash
-if [ "\$1" = agents ]; then cat "$WORK/agents.json"; exit 0; fi
+if [ "\$1" = agents ]; then
+    n=\$(cat "$WORK/agents.n" 2>/dev/null || echo 0)
+    if [ -f "$WORK/agents.\$n.json" ]; then
+        cat "$WORK/agents.\$n.json"; echo \$((n + 1)) >"$WORK/agents.n"
+    else
+        cat "$WORK/agents.json"
+    fi
+    exit 0
+fi
 mkdir -p "$CALLS"
 n=\$(find "$CALLS" -type f | wc -l | tr -d ' ')
 { printf 'CWD=%s\n' "\$PWD"; printf '%s\n' "\$@"; } >"$CALLS/\$n"
@@ -81,7 +97,18 @@ ncalls() { find "$CALLS" -type f 2>/dev/null | wc -l | tr -d ' '; }
 # value_of <argv-text> <flag> — the argument that follows <flag>
 value_of() { printf '%s\n' "$1" | grep -A1 -xF -- "$2" | tail -1; }
 
-agents() { printf '%s\n' "$1" >"$WORK/agents.json"; }
+agents() { rm -f "$WORK"/agents.[0-9]*.json "$WORK/agents.n"; printf '%s\n' "$1" >"$WORK/agents.json"; }
+
+# agents_seq <json>... — one answer per `claude agents --json` call, in order.
+agents_seq() {
+    agents "$*"                       # clears any previous sequence
+    local i=0 j
+    for j in "$@"; do printf '%s\n' "$j" >"$WORK/agents.$i.json"; i=$((i + 1)); done
+    printf '%s\n' "${!#}" >"$WORK/agents.json"
+}
+
+# A rotate in a test must never actually sleep, and must be able to time out at once.
+export SWARM_ROTATE_INTERVAL=0
 
 run() {
     local errfile="$WORK/err"
@@ -287,6 +314,168 @@ assert_equals "every peer was still tried, not just the first" "$(ncalls)" "2"
 assert_contains "and says the peers are still up" "$ERR" "still running"
 
 # ---------------------------------------------------------------------------
+# ROTATE'S CENTRAL MECHANISM. The peer is busy, then goes idle; rotate must wait it
+# out, re-check idle, stop THAT id, and respawn under the SAME name with the handoff
+# prepended. The name is the address every other session sends to, so the one thing
+# rotate may never do is leave it unclaimed (docs/swarm-design.md § Rotation).
+echo "test: rotate waits for idle, stops by id, and respawns with the handoff"
+reset_calls
+HANDOFF="$WORK/handoff.md"
+printf 'In flight: issue 41 awaiting review.\n' >"$HANDOFF"
+LIVE='{ "id": "p111", "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "%s" },
+      { "id": "o333", "cwd": "'"$PROJECT"'", "kind": "background", "name": "orchestrator", "state": "idle" },
+      { "id": "x444", "cwd": "/somewhere/else", "kind": "background", "name": "swe-manager", "state": "idle" }'
+busy="[$(printf "$LIVE" busy)]"
+idle="[$(printf "$LIVE" idle)]"
+agents_seq "$busy" "$idle" "$idle"
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$HANDOFF" "$PROJECT"
+
+assert_equals "exit 0" "$RC" "0"
+assert_equals "one stop, then one spawn" "$(ncalls)" "2"
+stop="$(call 0)"
+assert_contains "stops" "$stop" "stop"
+assert_contains "the id it last saw idle" "$stop" "p111"
+assert_not_contains "never by name — claude stop rejects one" "$stop" "swe-manager"
+assert_not_contains "never the orchestrator" "$stop" "o333"
+assert_not_contains "nor another project's peer of the same name" "$stop" "x444"
+
+respawn="$(call 1)"
+assert_contains "respawns in the background" "$respawn" "--bg"
+assert_equals "under the SAME name — it is the address" "$(value_of "$respawn" -n)" "swe-manager"
+assert_contains "with the handoff doc" "$respawn" "$HANDOFF"
+assert_contains "told to read it FIRST, before its standing brief" "$respawn" "FIRST"
+assert_contains "and the brief is still there" "$respawn" "You are the swe-manager"
+assert_equals "the roster row's model" "$(value_of "$respawn" --model)" "opus"
+assert_contains "spawned FROM the project dir" "$respawn" "CWD=$PROJECT"
+assert_contains "reports what it did" "$OUT" "p111"
+# Three polls: it waited out the busy read, then required idle TWICE.
+assert_equals "idle was required twice, not once" "$(cat "$WORK/agents.n")" "3"
+
+# Window 2 of § Rotation: a brief lands between the peer's "ready" reply and the stop.
+# The re-check is the only thing that catches it; without it the peer is killed one
+# message into a turn nobody will redo.
+echo "test: a peer that goes busy again between the two idle reads is NOT stopped"
+reset_calls
+agents_seq "$idle" "$busy"
+SWARM_ROTATE_TIMEOUT=0 run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing" "$(ncalls)" "0"
+assert_contains "says it never settled" "$ERR" "idle"
+
+echo "test: rotate refuses a blocked peer and stops nothing"
+reset_calls
+agents "[$(printf "$LIVE" blocked)]"
+SWARM_ROTATE_TIMEOUT=0 run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing" "$(ncalls)" "0"
+assert_contains "names the role" "$ERR" "swe-manager"
+assert_contains "says it is blocked" "$ERR" "blocked"
+assert_contains "and how to clear it" "$ERR" "attach"
+
+echo "test: rotate times out on a peer that never goes idle, and stops nothing"
+reset_calls
+agents "[$(printf "$LIVE" busy)]"
+SWARM_ROTATE_TIMEOUT=0 run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing" "$(ncalls)" "0"
+assert_contains "says it timed out" "$ERR" "did not go idle"
+
+# A handoff path that turns out to be unusable must be found BEFORE the stop. Found
+# after, the role is dead with no successor and the handoff is unreadable anyway.
+echo "test: an unusable handoff path is refused before anything is stopped"
+reset_calls
+agents "[$(printf "$LIVE" idle)]"
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$WORK/vanished.md" "$PROJECT"
+assert_equals "a missing handoff exits 1" "$RC" "1"
+assert_contains "names the path" "$ERR" "vanished.md"
+assert_equals "and the peer is left running" "$(ncalls)" "0"
+: >"$WORK/empty.md"
+run rotate swe-manager "$WORK/empty.md" "$PROJECT"
+assert_equals "an empty handoff exits 1" "$RC" "1"
+assert_equals "and stops nothing" "$(ncalls)" "0"
+
+# `up` would bring a dead peer back from its brief alone, losing the predecessor's doc.
+# The orchestrator asked for a rotation ONTO this handoff, so honour that.
+# `-` in column 2 is session-status's "no id here" filler, and the dead branch sets it
+# deliberately. A LIVE peer whose entry carries no id reads the same `-`, and taking
+# that as "nothing to stop" respawns the name on top of a peer still holding it: two
+# sessions, one inbox.
+echo "test: a live peer with no id is refused, not silently double-spawned"
+reset_calls
+agents '[{ "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "idle" }]'
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing and spawns nothing" "$(ncalls)" "0"
+assert_contains "names the role" "$ERR" "swe-manager"
+assert_contains "says the id is the missing piece" "$ERR" "id"
+
+# Window 2 of § Rotation is a TIME window. Two reads taken back to back cover the same
+# instant, so the second one confirms nothing; the interval has to pass between them.
+echo "test: the confirming idle read is taken AFTER the interval, not back to back"
+reset_calls
+agents_seq "$idle" "$idle"
+t0=$SECONDS
+SWARM_ROTATE_TIMEOUT=60 SWARM_ROTATE_INTERVAL=1 run rotate swe-manager "$HANDOFF" "$PROJECT"
+elapsed=$((SECONDS - t0))
+assert_equals "exit 0" "$RC" "0"
+assert_equals "still exactly one stop and one spawn" "$(ncalls)" "2"
+if [ "$elapsed" -ge 1 ]; then ok "it waited the interval between the two reads"
+else no "the two reads were back to back (${elapsed}s elapsed)"; fi
+
+# Past the stop the NAME IS UNCLAIMED, so the message has to name the verb that claims
+# it back. `up` is the wrong one twice over: it execs the orchestrator over this
+# terminal, and it respawns a peer from its brief alone — dropping the handoff doc that
+# was the whole point. `rotate` is already idempotent for a dead peer.
+echo "test: a spawn that fails after the stop points at rotate, not up"
+reset_calls
+agents "[$(printf "$LIVE" idle)]"
+mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off"
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$HANDOFF" "$PROJECT"
+mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md"
+assert_equals "exits 1" "$RC" "1"
+assert_contains "says the successor did not start" "$ERR" "did not start"
+assert_contains "and tells you to re-run rotate" "$ERR" "rotate"
+assert_not_contains "never up — it would exec the orchestrator and drop the handoff" \
+    "$ERR" "swarm.sh up"
+assert_contains "the handoff is still named" "$ERR" "$HANDOFF"
+
+echo "test: a peer that is already dead is respawned ON the handoff, not refused"
+for dead in stopped done; do
+    reset_calls
+    agents "[$(printf "$LIVE" "$dead")]"
+    run rotate swe-manager "$HANDOFF" "$PROJECT"
+    assert_equals "$dead: exit 0" "$RC" "0"
+    assert_equals "$dead: nothing stopped, just the respawn" "$(ncalls)" "1"
+    assert_contains "$dead: and it carries the handoff" "$(call 0)" "$HANDOFF"
+    assert_contains "$dead: says it was not running" "$OUT" "not running"
+done
+reset_calls
+agents '[]'
+run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "gone: exit 0" "$RC" "0"
+assert_equals "gone: nothing stopped, just the respawn" "$(ncalls)" "1"
+assert_contains "gone: and it carries the handoff" "$(call 0)" "$HANDOFF"
+
+echo "test: rotate refuses any row that is not a peer"
+reset_calls
+agents "[$(printf "$LIVE" idle)]"
+run rotate orchestrator "$HANDOFF" "$PROJECT"
+assert_equals "the orchestrator is Will's session, not a peer — exits 1" "$RC" "1"
+assert_contains "says so" "$ERR" "peer"
+run rotate not-a-role "$HANDOFF" "$PROJECT"
+assert_equals "a role absent from the roster exits 1" "$RC" "1"
+assert_contains "names it" "$ERR" "not-a-role"
+assert_equals "nothing was stopped in either case" "$(ncalls)" "0"
+
+echo "test: rotate needs both a role and a handoff path"
+run rotate swe-manager
+assert_equals "no handoff path exits 1" "$RC" "1"
+assert_contains "prints usage" "$ERR" "usage:"
+run rotate
+assert_equals "no role exits 1" "$RC" "1"
+assert_contains "prints usage" "$ERR" "usage:"
+
+# ---------------------------------------------------------------------------
 echo "test: attach resolves the role NAME to an id and attaches to the id"
 reset_calls
 agents '[{ "id": "p222", "cwd": "'"$PROJECT"'", "kind": "background",
@@ -346,6 +535,7 @@ assert_equals "an unknown verb exits 1" "$RC" "1"
 assert_contains "prints usage" "$ERR" "usage:"
 assert_contains "usage lists up" "$ERR" "up"
 assert_contains "usage lists down" "$ERR" "down"
+assert_contains "usage lists rotate" "$ERR" "rotate"
 assert_contains "usage lists attach" "$ERR" "attach"
 
 # ---------------------------------------------------------------------------

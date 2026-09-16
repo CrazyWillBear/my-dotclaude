@@ -5,6 +5,7 @@
 # Usage:
 #   bash swarm.sh up [project-dir]
 #   bash swarm.sh down [project-dir]
+#   bash swarm.sh rotate <role> <handoff-path> [project-dir]
 #   bash swarm.sh attach <role> [project-dir]
 #   bash swarm.sh brief <role> <file> [project-dir]
 #
@@ -12,8 +13,9 @@
 #                 roster.json, charter.md, inbox/<role>/brief.md, orchestrator.session
 #   role          must be present in roster.json
 #   file          source file to copy into the inbox
+#   handoff-path  the doc the peer named in its own "ready to rotate" reply
 #
-# up|down|attach are docs/swarm-design.md § Lifecycle. A PEER is a roster row of kind
+# up|down|rotate|attach are docs/swarm-design.md § Lifecycle. A PEER is a roster row of kind
 # `manager` or `doer`: a standing `claude --bg` session named by its role. The
 # `orchestrator` row is NOT a peer — it is Will's own interactive session, the one that
 # merges and relays — and `worker` rows are never sessions at all.
@@ -22,6 +24,11 @@
 #           orchestrator: resumed by the id in orchestrator.session, or started fresh
 #           from its brief. Idempotent — re-running it skips the peers already running.
 #   down    stops every one of this project's live peers, BY ID. Never the orchestrator.
+#   rotate  replaces ONE peer's process, keeping its name: wait for idle, stop by id,
+#           respawn with the predecessor's handoff prepended (§ Rotation). This is the
+#           peer version of `/clear` then `go`. Nothing here measures context — the peer
+#           nudges itself from its own transcript (the context plugin's watchdog) and the
+#           orchestrator runs this only once the peer has replied that it is ready.
 #   attach  resolves a role name to its session id and opens it.
 #
 # "Already up" means state busy, idle or blocked. A `stopped` or `done` session is still
@@ -61,11 +68,18 @@ usage() {
     cat >&2 <<'USAGE'
 error: usage: swarm.sh up [project-dir]
               swarm.sh down [project-dir]
+              swarm.sh rotate <role> <handoff-path> [project-dir]
               swarm.sh attach <role> [project-dir]
               swarm.sh brief <role> <file> [project-dir]
 USAGE
     exit 1
 }
+
+# How long rotate waits for a peer to reach a natural stopping point, and how often it
+# looks. A peer mid-turn on a real task can easily take minutes, and the alternative to
+# waiting is killing that turn.
+: "${SWARM_ROTATE_TIMEOUT:=600}"
+: "${SWARM_ROTATE_INTERVAL:=5}"
 
 # ---------------------------------------------------------------------------
 # brief — copy a brief file into a role's inbox and print the pointer to send.
@@ -152,8 +166,8 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# Shared resolution. up, down and attach all ask the same two questions — which roles
-# are peers, and which of them is alive — so they ask them in one place.
+# Shared resolution. up, down, rotate and attach all ask the same two questions — which
+# roles are peers, and which of them is alive — so they ask them in one place.
 # ---------------------------------------------------------------------------
 
 require_infra() {
@@ -182,14 +196,26 @@ peer_status() {
 
 is_live() { case "$1" in busy|idle|blocked) return 0 ;; *) return 1 ;; esac; }
 
+# is_peer <kind> — only a manager or doer row is a session. Rotating the orchestrator
+# row would `claude stop` the terminal Will is sitting in.
+is_peer() { case "$1" in manager|doer) return 0 ;; *) return 1 ;; esac; }
+
+# orchestrator_role — the name every peer reports to. Both up and rotate need it, and a
+# peer spawned without one reports into the void.
+orchestrator_role() {
+    local role
+    role="$(roster list orchestrator | head -1)" || exit 1
+    [ -n "$role" ] || die "roster has no orchestrator row — a peer that cannot name an \
+orchestrator reports into the void"
+    printf '%s\n' "$role"
+}
+
 # ---------------------------------------------------------------------------
 cmd_up() {
     require_infra
     local orch_role status role id state failed=0
 
-    orch_role="$(roster list orchestrator | head -1)" || exit 1
-    [ -n "$orch_role" ] || die "roster has no orchestrator row — a peer that cannot \
-name an orchestrator reports into the void"
+    orch_role="$(orchestrator_role)" || exit 1
 
     peer_roles
     if [ "${#PEER_LIST[@]}" -gt 0 ]; then
@@ -212,21 +238,31 @@ re-run \`swarm.sh up\`; it skips the peers already running"
     resume_orchestrator "$orch_role"
 }
 
-# spawn_peer <role> <orchestrator-role>
+# spawn_peer <role> <orchestrator-role> [handoff-path]
+#
+# With a handoff this is a rotation's second half; without one it is a fresh peer. Same
+# builder either way — spawn.sh already prepends the read-this-first instruction, so the
+# only difference here is whether the flag is passed at all.
 spawn_peer() {
-    local role="$1" orch_role="$2" model effort autocompact
+    local role="$1" orch_role="$2" handoff="${3:-}" model effort autocompact
+    local -a hand=()
+    [ -z "$handoff" ] || hand=(--handoff "$handoff")
     model="$(roster get "$role" model)"             || return 1
     effort="$(roster get "$role" effort)"           || return 1
     autocompact="$(roster get "$role" autocompact)" || return 1
     # FROM the project dir. `claude` has no --cwd, a peer gets no --add-dir, and
     # session-status.sh --peers finds it again by cwd — born anywhere else it is
     # invisible to every later down and attach.
+    #
+    # ${hand[@]+...}: a fresh peer leaves the array EMPTY, and a bare "${hand[@]}" is an
+    # unbound-variable error under `set -u` on bash before 4.4.
     ( cd "$PROJECT_DIR" || exit 1
       bash "$INFRA/scripts/spawn.sh" peer \
           --name "$role" \
           --brief "$PROJECT_DIR/.claude/swarm/inbox/$role/brief.md" \
           --charter "$PROJECT_DIR/.claude/swarm/charter.md" \
           --model "$model" --effort "$effort" --autocompact "$autocompact" \
+          ${hand[@]+"${hand[@]}"} \
           --orchestrator "$orch_role" )
 }
 
@@ -295,6 +331,110 @@ in $PROJECT_DIR — check \`claude agents\` and re-run \`swarm.sh down\`"
 }
 
 # ---------------------------------------------------------------------------
+# rotate — replace one peer's process, keeping its name (docs/swarm-design.md § Rotation).
+#
+# THE ORDER IS THE SAFETY ARGUMENT, and every step of it is there because the name is
+# the address every other session sends to. Leave it unclaimed and the team is talking
+# to nobody.
+#
+#   1. Refuse a non-peer row. `claude stop` on the orchestrator row would kill the
+#      terminal Will is sitting in.
+#   2. Validate the handoff FIRST. spawn.sh validates it too, but it only gets to look
+#      after the predecessor is already dead — and by then a bad path means the role has
+#      no session and its state is gone.
+#   3. Wait for idle, and require it TWICE IN A ROW. The second read is the design's
+#      re-check: a brief delivered between the peer's "ready" reply and the stop puts it
+#      back to busy, and stopping it there loses a turn nobody will redo. The gap between
+#      that read and the stop is the residual race § Rotation accepts — briefs are files
+#      and messages are pointers, so what is lost is a nudge, never work.
+#   4. Stop BY ID, like `down`: `claude stop <name>` fails with "No job matching …",
+#      which would read as a clean stop while the predecessor kept running under the
+#      name its successor is about to claim.
+#
+# A `blocked` peer is refused outright: it is wedged on a permission prompt nobody
+# answered, holding unsaved state, and the answer is to clear it, not to kill it. Any
+# state the CLI grows that this does not know goes the same way — refusing costs a
+# re-run, guessing costs the turn.
+#
+# A peer that is already stopped, done or gone is respawned with no stop at all. `up`
+# would bring it back from its brief alone; the orchestrator asked for a rotation ONTO
+# this handoff, and that doc is the only record of what the predecessor was doing.
+cmd_rotate() {
+    require_infra
+    local kind orch_role line id state idles=0 deadline err
+
+    kind="$(roster get "$ROLE" kind)" || exit 1
+    is_peer "$kind" || die "$ROLE is a $kind row, not a peer — only manager and doer \
+rows are sessions that rotate"
+
+    [ -f "$HANDOFF" ] && [ -s "$HANDOFF" ] \
+        || die "handoff doc is missing or empty: $HANDOFF — nothing was stopped"
+
+    orch_role="$(orchestrator_role)" || exit 1
+
+    deadline=$((SECONDS + SWARM_ROTATE_TIMEOUT))
+    while :; do
+        line="$(peer_status "$ROLE")" || exit 1
+        read -r _role id _kind state <<<"$line"
+        case "$state" in
+            idle)
+                # `-` is session-status's filler for a missing id, and the dead branch
+                # below sets it on purpose. Reaching the stop with it on a LIVE peer
+                # would skip the stop and respawn the name on top of a session still
+                # holding it — two peers, one inbox.
+                [ -n "$id" ] && [ "$id" != "-" ] || die "$ROLE is idle in \
+$PROJECT_DIR but the agent list gives it no id, and \`claude stop\` takes an id, not a \
+name. Nothing was stopped."
+                idles=$((idles + 1))
+                ;;
+            busy)
+                idles=0
+                ;;
+            stopped|done|gone)
+                echo "$ROLE not running ($state) — respawning it on the handoff"
+                id="-"
+                break
+                ;;
+            *)
+                die "$ROLE is $state in $PROJECT_DIR — refusing to rotate. A blocked \
+peer is wedged on a prompt nobody answered and is holding unsaved state; clear it with \
+\`swarm.sh attach $ROLE\`, then rotate. Nothing was stopped."
+                ;;
+        esac
+        # Two in a row, with the interval BETWEEN them: window 2 of § Rotation is a
+        # span of time, so a confirming read taken back to back covers the same instant
+        # the first one did and confirms nothing.
+        [ "$idles" -ge 2 ] && break
+        # A peer that has gone idle once gets its confirming read regardless of the
+        # deadline — it has settled, and timing out here refuses a rotation that is ready.
+        [ "$idles" -eq 1 ] || [ "$SECONDS" -lt "$deadline" ] || die "$ROLE did not go idle within \
+${SWARM_ROTATE_TIMEOUT}s — still $state. Nothing was stopped; re-run rotate once it \
+settles, or raise SWARM_ROTATE_TIMEOUT."
+        sleep "$SWARM_ROTATE_INTERVAL"
+    done
+
+    if [ "$id" != "-" ]; then
+        if err="$(claude stop "$id" 2>&1 >/dev/null)"; then
+            echo "stopped $ROLE ($id)"
+        else
+            die "could not stop $ROLE ($id): $err — nothing was respawned, so the \
+predecessor still holds the name"
+        fi
+    fi
+
+    # Past this point the name is UNCLAIMED, so the failure message has to say how to
+    # get it back — and that verb is `rotate`, not `up`. `up` would exec the
+    # orchestrator over this terminal and respawn the peer from its brief alone,
+    # dropping the handoff that was the whole point; `rotate` against the now-dead peer
+    # is the same command again, and it respawns ON the handoff.
+    spawn_peer "$ROLE" "$orch_role" "$HANDOFF" \
+        || die "$ROLE was stopped but its successor did not start — fix the above and \
+re-run this same \`swarm.sh rotate $ROLE $HANDOFF\`; it respawns a dead peer on the \
+handoff. The handoff is still at $HANDOFF."
+    echo "rotated $ROLE on $HANDOFF"
+}
+
+# ---------------------------------------------------------------------------
 cmd_attach() {
     require_infra
     local id
@@ -308,7 +448,7 @@ cmd_attach() {
 # ---------------------------------------------------------------------------
 CMD="${1:-}"
 [ -n "$CMD" ] || usage
-ROLE=""; FILE=""
+ROLE=""; FILE=""; HANDOFF=""
 
 case "$CMD" in
     brief)
@@ -319,6 +459,12 @@ case "$CMD" in
     up|down)
         [ $# -le 2 ] || usage
         RAW_DIR="${2:-$PWD}"
+        ;;
+    rotate)
+        ROLE="${2:-}"; HANDOFF="${3:-}"
+        [ -n "$ROLE" ] && [ -n "$HANDOFF" ] || usage
+        [ $# -le 4 ] || usage
+        RAW_DIR="${4:-$PWD}"
         ;;
     attach)
         ROLE="${2:-}"
@@ -336,5 +482,13 @@ esac
 # against the new cwd, so every brief, charter and roster read after it points at
 # nothing. Also the earliest place a bad directory can be named in the error.
 PROJECT_DIR="$(cd "$RAW_DIR" 2>/dev/null && pwd)" || die "no such directory: $RAW_DIR"
+
+# The handoff path too, and for the same reason: spawn_peer cds into the project, and a
+# path still relative at that point points at nothing from there.
+if [ -n "$HANDOFF" ]; then
+    HANDOFF_DIR="$(cd "$(dirname "$HANDOFF")" 2>/dev/null && pwd)" \
+        || die "handoff doc is missing or empty: $HANDOFF — nothing was stopped"
+    HANDOFF="$HANDOFF_DIR/$(basename "$HANDOFF")"
+fi
 
 "cmd_$CMD"

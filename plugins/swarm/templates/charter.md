@@ -13,4 +13,7 @@ the keyboard, and you are not one.
 - Memory: read `shared/` and your namespace; write only your namespace; propose to
   `shared/`; never Claude's own auto-memory — it's shared by cwd and cannot be scoped.
 - Handoff at the next natural stopping point when asked, to the path the orchestrator gives you.
+- A message that arrives after you start `/handoff` goes into the doc verbatim, before you
+  reply that you are ready. Your process is about to be replaced; the doc is all your
+  successor gets.
 - Briefs travel as files, messages are pointers. After reading your handoff, list your inbox before anything else.

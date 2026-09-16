@@ -175,6 +175,23 @@ for role in "${BRIEF_ROLES[@]}"; do
     fi
 done
 
+# A peer replies "ready to rotate" when its own watchdog nudges it. Nothing else the
+# orchestrator reads says what to DO with that reply, so without this line the rotation
+# loop has no middle: the peer waits, the orchestrator has no verb, and the handoff
+# never gets picked up.
+echo "test: the orchestrator brief names the verb that answers a rotate request"
+ORCH_BRIEF="$PLUGIN_ROOT/templates/briefs/orchestrator.md"
+if grep -q "swarm.sh rotate" "$ORCH_BRIEF"; then
+    ok "orchestrator.md names \`swarm.sh rotate\`"
+else
+    no "orchestrator.md never names \`swarm.sh rotate\`"
+fi
+if grep -qi "ready to rotate" "$ORCH_BRIEF"; then
+    ok "orchestrator.md ties it to the peer's 'ready to rotate' reply"
+else
+    no "orchestrator.md does not say what triggers the rotate"
+fi
+
 # ---------------------------------------------------------------------------
 echo "test: project-dir defaults to \$PWD"
 PWDPROJ="$WORK/pwdproj"
