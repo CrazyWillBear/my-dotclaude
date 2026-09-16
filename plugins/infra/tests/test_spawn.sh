@@ -193,13 +193,41 @@ assert_contains "reports the round back" "$out" "round=2"
 assert_not_contains "does not re-post the tackled comment" "$out" "Tackled #12"
 
 echo "test: --orchestrator resolves from this session when omitted"
-out=$(bash "$SPAWN" r1 12 standard /w/issue-12 base --dry-run 2>"$WORK/err"); rc=$?
-if [ "$rc" -eq 0 ]; then
-    assert_contains "resolved a name" "$out" "SendMessage"
-else
-    assert_contains "or fails LOUD — a worker with no address reports into the void" \
-        "$(err)" "pass --orchestrator NAME"
-fi
+# Stub `session-status.sh --self` to a KNOWN, distinctive name and assert THAT NAME is
+# what the worker is told to report to. The old shape of this test asserted only that
+# "SendMessage" appeared in the prompt — a string every worker prompt carries
+# unconditionally — so it passed whether the resolution worked, was deleted, or died.
+#
+# The stub is reached by RELOCATING the real spawn.sh, never by editing it: spawn.sh
+# resolves its siblings from its OWN directory, so an untouched copy placed beside stub
+# siblings picks them up for free. A sed-rewritten copy would not be the script that ships.
+SPAWN_DIR="$(cd "$(dirname "$SPAWN")" && pwd)"
+mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL spawn.sh
+    mkdir -p "$1"
+    cp "$SPAWN_DIR/resolve-tier.sh" "$SPAWN_DIR/check-inbound.sh" "$1/"
+    cp "$SPAWN" "$1/spawn.sh"
+    if [ "$2" = - ]; then
+        printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
+    else
+        printf '#!/usr/bin/env bash\n[ "${1:-}" = --self ] || exit 1\nprintf "%%s\\n" "%s"\n' \
+            "$2" >"$1/session-status.sh"
+    fi
+    chmod +x "$1/session-status.sh"
+}
+
+mk_infra "$WORK/infra-ok" "test-orchestrator-unique-name-xyz"
+out=$(RESOLVE_TIER_ROOT="$CFG_CLAUDE" bash "$WORK/infra-ok/spawn.sh" \
+      r1 12 standard "$WORK/wt" base --dry-run 2>"$WORK/err"); rc=$?
+assert_equals "spawn succeeds with a resolvable name" "$rc" "0"
+assert_contains "the RESOLVED name is the address the worker reports to" \
+    "$out" "test-orchestrator-unique-name-xyz"
+
+echo "test: --orchestrator fails loud when the session name cannot be resolved"
+mk_infra "$WORK/infra-bad" -
+out=$(RESOLVE_TIER_ROOT="$CFG_CLAUDE" bash "$WORK/infra-bad/spawn.sh" \
+      r1 12 standard "$WORK/wt" base --dry-run 2>"$WORK/err"); rc=$?
+assert_equals "exits 1 rather than spawning a worker with no address" "$rc" "1"
+assert_contains "and says how to fix it" "$(err)" "pass --orchestrator NAME"
 
 # ---------------------------------------------------------------------------
 echo "test: bad input fails loud instead of spawning something wrong"

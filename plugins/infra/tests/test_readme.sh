@@ -125,27 +125,37 @@ else
     STUB="$(mktemp -d)"
     printf '#!/usr/bin/env bash\n[ "${1:-}" = r1 ] || exit 0\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
     chmod +x "$STUB/status.sh"
-    (
-        set +u
-        unset RUNID
-        S="$STUB/status.sh"
-        eval "$(printf '%s\n' "$GATE_LINE" | sed "s|<runid>|r1|; s|<N>|12|")"
-    ) >/dev/null 2>&1
-    rc=$?
+    # Use a marker to detect if the abort is working: if the `|| exit 1` executes,
+    # the subshell exits before printing the marker. If it doesn't, the marker prints.
+    marker_output="$(
+        (
+            set +u
+            unset RUNID
+            S="$STUB/status.sh"
+            eval "$(printf '%s\n' "$GATE_LINE" | sed "s|<runid>|r1|; s|<N>|12|")"
+            printf 'MARKER_PRINTED\n'
+        ) 2>/dev/null
+    )"
     rm -rf "$STUB"
-    if [ "$rc" -ne 0 ]; then
-        ok "a still-busy row keeps the gate shut"
+    if [ -z "$marker_output" ]; then
+        ok "a still-busy row keeps the gate shut (the || exit 1 aborted the subshell)"
     else
-        no "the verify gate passed with the runid unfilled — it is not self-contained"
+        no "the verify gate passed with the runid unfilled — the || exit 1 is missing from the gate"
+    fi
+    # Also verify the || exit 1 is actually in the shipped line, not just relying on [ ] returning false
+    if printf '%s\n' "$GATE_LINE" | grep -q -- '|| exit 1'; then
+        ok "the gate explicitly contains || exit 1"
+    else
+        no "the gate line is missing '|| exit 1': $GATE_LINE"
     fi
 fi
 
 echo "test: the bounded wait really waits — from a FRESH shell, with nothing preset"
 # Found live, twice. Each fenced block is its own shell invocation: `S=` is assigned in the
-# recovery block, `RUNID` nowhere in the file, so when the agent runs the wait as its own
-# command both are unset. The command substitution comes back empty, the `until` is
-# satisfied on its first pass, and the wait that exists to catch a stop that did not take
-# returns 0 instantly — clearing the way to respawn onto a live worktree. So run the
+# recovery block, `RUNID` is never assigned in the gate's fresh shell, so when the agent runs
+# the wait as its own command both are unset. The command substitution comes back empty, the
+# `until` is satisfied on its first pass, and the wait that exists to catch a stop that did
+# not take returns 0 instantly — clearing the way to respawn onto a live worktree. So run the
 # SHIPPED line with S and RUNID UNSET, filling only the placeholders an agent fills.
 WAIT_LINE="$(printf '%s\n' "$BODY" | grep -F 'timeout 60 bash -c' | head -1)"
 if [ -z "$WAIT_LINE" ]; then
