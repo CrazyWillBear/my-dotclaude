@@ -199,6 +199,7 @@ fi
 CMD=(claude --bg -n "$NAME"
      --model "$MODEL" --effort "$EFFORT"
      --permission-mode bypassPermissions
+     --system-prompt-snapshot off
      --add-dir "$WORKTREE"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
@@ -214,4 +215,6 @@ fi
 
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 cd "$WORKTREE" || die "cannot enter worktree: $WORKTREE"
-exec "${CMD[@]}"
+# </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
+# to answer a read, and a session blocked on one looks exactly like a session working.
+exec "${CMD[@]}" </dev/null

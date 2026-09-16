@@ -44,11 +44,14 @@ dry() { bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"; }
 err() { cat "$WORK/err"; }
 
 # A stub `claude` that dumps its argv, one per line, so the real exec path is testable.
+# It also echoes its stdin: an unattended session that inherits the caller's stdin can
+# block forever reading it, so the redirect is a flag-equivalent and is asserted below.
 BIN="$WORK/bin"
 mkdir -p "$BIN"
 cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
+printf 'STDIN:['; cat; printf ']\n'
 STUB
 chmod +x "$BIN/claude"
 
@@ -74,6 +77,11 @@ assert_contains "and it is the LAST argument" "$(printf '%s\n' "$argv" | sed -n 
 denies=$(printf '%s\n' "$argv" | grep -cxF "Bash(git merge:*)")
 assert_equals "the deny rules still land" "$denies" "1"
 
+echo "test: the session never inherits the caller's stdin"
+argv=$(PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main <<<"LEAKED")
+assert_contains "stdin is empty" "$argv" "STDIN:[]"
+assert_not_contains "nothing leaked through" "$argv" "LEAKED"
+
 # ---------------------------------------------------------------------------
 echo "test: the command carries the run-prefixed name and the tier's roster"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
@@ -87,6 +95,11 @@ assert_not_contains "and not the standard model" "$(printf '%s\n' "$out_c" | gre
 echo "test: an unattended session never comes up able to prompt"
 assert_arg "bypassPermissions" "$out" "bypassPermissions"
 assert_arg "--add-dir the worktree" "$out" "/w/issue-12"
+
+# `on` (the default) records the rendered system prompt on the first request and replays
+# it on every resume, so a resumed session would keep a stale charter forever.
+assert_arg "system prompt is re-rendered, not snapshotted" "$out" "--system-prompt-snapshot"
+assert_arg "snapshot off" "$out" "off"
 
 echo "test: the denylist keeps the irreversible writes on the main thread"
 assert_arg "no git merge" "$out" "Bash(git merge:*)"
