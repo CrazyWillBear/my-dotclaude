@@ -5,6 +5,10 @@ routes work by **shape**: one explicit unit of work runs as a subagent chain, an
 PRD gets **one real `claude --bg` session per issue** in its own worktree, and anything ambiguous
 is discussed rather than built. It absorbed the old `/pipeline`; there is one front door.
 
+**`/to-prd`** and **`/to-issues`** are the manager's front half: `/to-prd` turns an aligned task
+into a PRD issue, and `/to-issues` slices a PRD (or a spec, or the current discussion) into the
+tiered, dependency-ordered `ready-for-agent` issues `/orchestrate` then builds.
+
 The [`context`](../context/README.md) plugin is a companion, not a dependency called at
 runtime (the star rule — see `docs/swarm-design.md` § Plugin split): its watchdog advises
 `/clear` before `/orchestrate` runs in an already-full window, and its `/handoff` is how you
@@ -15,7 +19,9 @@ plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
 ├── skills/
 │   ├── orchestrate/SKILL.md          # /orchestrate — the dispatcher and both its lanes
-│   └── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via infra's resolve-tier.sh
+│   ├── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via infra's resolve-tier.sh
+│   ├── to-prd/SKILL.md               # /to-prd — write a PRD, file it as a labeled GitHub issue
+│   └── to-issues/SKILL.md            # /to-issues <#> — slice a PRD into vertical-slice issues, tiered for /orchestrate
 ├── agents/
 │   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder

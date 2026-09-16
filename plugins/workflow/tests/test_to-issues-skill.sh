@@ -20,7 +20,7 @@
 #      the whole flow that can tier them for real. /orchestrate then just READS the
 #      label (and backfills any issue that lacks one).
 #
-# Run: bash plugins/personal-tools/tests/test_to-issues-skill.sh  (non-zero if any fail)
+# Run: bash plugins/workflow/tests/test_to-issues-skill.sh  (non-zero if any fail)
 
 set -u
 

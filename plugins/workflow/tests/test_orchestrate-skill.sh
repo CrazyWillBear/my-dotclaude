@@ -102,12 +102,10 @@ echo "test: the spawn protocol's silent-failure traps"
 assert_matches "plain output is invisible" "$BODY" "invisible"
 assert_contains "workers report with SendMessage" "$BODY" "SendMessage"
 assert_contains "bypassPermissions" "$BODY" "bypassPermissions"
-assert_matches "an unattended session in manual mode deadlocks" "$BODY" "deadlock"
-assert_contains "denylist keeps merge off the worker" "$BODY" "git merge"
-assert_contains "denylist keeps gh issue close off the worker" "$BODY" "gh issue close"
-assert_matches "push and comment stay allowed" "$BODY" "push.{0,2} and .{0,2}gh issue comment.{0,2} are deliberately allowed"
-assert_matches "add-dir does not fence Bash — stated as a known limit" "$BODY" "not fence Bash|fences the .*file tools"
 assert_contains "the orchestrator address comes from --self" "$BODY" "session-status.sh --self"
+# The flags, the denylist and why each exists moved to infra's README (spawn.sh's own
+# test pins the actual flags — see plugins/infra/tests/test_spawn.sh); SKILL.md keeps a pointer.
+assert_contains "the full spawn protocol points at infra's README" "$BODY" "../../../infra/README.md#spawn-protocol"
 
 echo "test: fix rounds are fresh sessions"
 assert_matches "a fresh session per fix round" "$BODY" "fresh.*session|--role fix"
@@ -116,12 +114,12 @@ assert_matches "the fixer is not defending its own code" "$BODY" "not defending 
 # ---------------------------------------------------------------------------
 echo "test: the bus — the issue thread is the coordination medium"
 assert_matches "issue thread is the medium" "$BODY" "issue thread is the coordination medium"
-assert_matches "findings never pass through the orchestrator" "$BODY" "never handed through the orchestrator"
-assert_matches "issue carries what cannot be regenerated" "$BODY" "cannot be regenerated"
-assert_matches "local files carry the regenerable" "$BODY" "regenerable"
-assert_matches "brevity is a correctness property" "$BODY" "[Bb]revity is a correctness property"
-assert_contains "the review comment format" "$BODY" "**Review round 1**"
+assert_matches "findings never pass through the orchestrator" "$BODY" "never (pass|handed) through the orchestrator"
 assert_matches "cycles are counted from the comments" "$BODY" "counted by reading the issue|number of those comments"
+# The regenerable/not-regenerable table, brevity rationale and the review-comment example
+# moved to infra's README; the issue thread's brevity mandate itself lives in and is pinned
+# by agents/implementer.md (the contract every build session actually reads).
+assert_contains "the comment contract points at infra's README" "$BODY" "../../../infra/README.md#the-bus"
 
 echo "test: the context map"
 assert_contains "written at admission" "$BODY" "at **admission**"
@@ -139,10 +137,11 @@ assert_matches "spawned by the session, not the orchestrator" "$BODY" "session s
 echo "test: liveness — subscribe, never poll"
 assert_contains "notify_when_idle subscription" "$BODY" "notify_when_idle"
 assert_matches "no message at spawn" "$BODY" "no message"
-assert_matches "never poll" "$BODY" "[Ss]ubscribe, don.t poll|never to poll"
+assert_matches "never poll" "$BODY" "never poll"
 assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
-assert_matches "blocked means a permission wedge" "$BODY" "permission wedge"
-assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
+# The state table (busy/idle/blocked/done/stopped/gone) and "never parse claude logs" moved
+# to infra's README, alongside session-status.sh — the script whose own test pins these states.
+assert_contains "liveness and recovery point at infra's README" "$BODY" "../../../infra/README.md#liveness-and-recovery"
 
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"
@@ -162,29 +161,16 @@ echo "test: the session lane keeps the mock-debt declaration contract"
 assert_matches "points the session at the implementer contract" "$BODY" "agents/implementer.md"
 assert_matches "names the declaration" "$BODY" "Real wiring blocked by"
 
-echo "test: trivial issues are excluded from the expected-session list"
-assert_matches "says trivial issues have no session" "$BODY" "Expect only the issues that actually have a session"
-
 echo "test: the orchestrator address is resolved once and passed"
 assert_contains "resolved with --self at setup" "$BODY" 'ORCH="$(bash'
 assert_matches "explains why not per-spawn" "$BODY" "rename mid-run"
 
 echo "test: recovery"
-assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "recovery mechanism.{0,2}, not hygiene"
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"
-assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
-assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
-assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
-# A stop that is acknowledged but does not take would hang the "verify stopped" gate
-# forever — observed live, so the wait is bounded and ends in an escalation.
-assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
-assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
-assert_matches "and it escalates rather than respawning blindly" "$BODY" "do not respawn"
 assert_contains "the count comes from the run log" "$BODY" "run-log.sh"
-
-echo "test: a respawned issue has several rows — match on state, not the name"
-assert_matches "warns about multiple rows per issue" "$BODY" "several rows|One issue can have"
-assert_matches "says to match on state" "$BODY" "Match on state, never on the name"
+# The recovery mechanism rationale, the never-rm / never-spawn-onto-a-live-worktree rules,
+# the bounded-wait/escalate procedure and the several-rows-per-issue caveat all moved to
+# infra's README (see the liveness-and-recovery pointer assertion above).
 
 echo "test: escalation"
 assert_matches "offers both mediate and attach" "$BODY" "claude attach"
@@ -274,7 +260,7 @@ assert_matches "per-slice PRs" "$BODY" "[Pp]er-slice PRs"
 # ---------------------------------------------------------------------------
 echo "test: it stays smaller than the thing it replaced"
 lines=$(wc -l <"$SKILL_FILE")
-if [ "$lines" -lt 900 ]; then ok "SKILL.md is $lines lines (was 1330)"; else no "SKILL.md grew back to $lines lines"; fi
+if [ "$lines" -lt 700 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
 for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh; do
