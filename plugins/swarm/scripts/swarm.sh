@@ -378,6 +378,13 @@ rows are sessions that rotate"
         read -r _role id _kind state <<<"$line"
         case "$state" in
             idle)
+                # `-` is session-status's filler for a missing id, and the dead branch
+                # below sets it on purpose. Reaching the stop with it on a LIVE peer
+                # would skip the stop and respawn the name on top of a session still
+                # holding it — two peers, one inbox.
+                [ -n "$id" ] && [ "$id" != "-" ] || die "$ROLE is idle in \
+$PROJECT_DIR but the agent list gives it no id, and \`claude stop\` takes an id, not a \
+name. Nothing was stopped."
                 idles=$((idles + 1))
                 ;;
             busy)
@@ -394,10 +401,13 @@ peer is wedged on a prompt nobody answered and is holding unsaved state; clear i
 \`swarm.sh attach $ROLE\`, then rotate. Nothing was stopped."
                 ;;
         esac
-        # Two in a row, and the second is taken with NO sleep in between.
+        # Two in a row, with the interval BETWEEN them: window 2 of § Rotation is a
+        # span of time, so a confirming read taken back to back covers the same instant
+        # the first one did and confirms nothing.
         [ "$idles" -ge 2 ] && break
-        [ "$idles" -eq 1 ] && continue
-        [ "$SECONDS" -lt "$deadline" ] || die "$ROLE did not go idle within \
+        # A peer that has gone idle once gets its confirming read regardless of the
+        # deadline — it has settled, and timing out here refuses a rotation that is ready.
+        [ "$idles" -eq 1 ] || [ "$SECONDS" -lt "$deadline" ] || die "$ROLE did not go idle within \
 ${SWARM_ROTATE_TIMEOUT}s — still $state. Nothing was stopped; re-run rotate once it \
 settles, or raise SWARM_ROTATE_TIMEOUT."
         sleep "$SWARM_ROTATE_INTERVAL"
@@ -413,11 +423,14 @@ predecessor still holds the name"
     fi
 
     # Past this point the name is UNCLAIMED, so the failure message has to say how to
-    # get it back: `up` respawns exactly the peers that are not running.
+    # get it back — and that verb is `rotate`, not `up`. `up` would exec the
+    # orchestrator over this terminal and respawn the peer from its brief alone,
+    # dropping the handoff that was the whole point; `rotate` against the now-dead peer
+    # is the same command again, and it respawns ON the handoff.
     spawn_peer "$ROLE" "$orch_role" "$HANDOFF" \
         || die "$ROLE was stopped but its successor did not start — fix the above and \
-re-run \`swarm.sh up\`, which starts the peers that are down. The handoff is still at \
-$HANDOFF."
+re-run this same \`swarm.sh rotate $ROLE $HANDOFF\`; it respawns a dead peer on the \
+handoff. The handoff is still at $HANDOFF."
     echo "rotated $ROLE on $HANDOFF"
 }
 

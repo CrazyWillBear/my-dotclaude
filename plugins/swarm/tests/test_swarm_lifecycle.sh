@@ -396,6 +396,49 @@ assert_equals "and stops nothing" "$(ncalls)" "0"
 
 # `up` would bring a dead peer back from its brief alone, losing the predecessor's doc.
 # The orchestrator asked for a rotation ONTO this handoff, so honour that.
+# `-` in column 2 is session-status's "no id here" filler, and the dead branch sets it
+# deliberately. A LIVE peer whose entry carries no id reads the same `-`, and taking
+# that as "nothing to stop" respawns the name on top of a peer still holding it: two
+# sessions, one inbox.
+echo "test: a live peer with no id is refused, not silently double-spawned"
+reset_calls
+agents '[{ "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "idle" }]'
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing and spawns nothing" "$(ncalls)" "0"
+assert_contains "names the role" "$ERR" "swe-manager"
+assert_contains "says the id is the missing piece" "$ERR" "id"
+
+# Window 2 of § Rotation is a TIME window. Two reads taken back to back cover the same
+# instant, so the second one confirms nothing; the interval has to pass between them.
+echo "test: the confirming idle read is taken AFTER the interval, not back to back"
+reset_calls
+agents_seq "$idle" "$idle"
+t0=$SECONDS
+SWARM_ROTATE_TIMEOUT=60 SWARM_ROTATE_INTERVAL=1 run rotate swe-manager "$HANDOFF" "$PROJECT"
+elapsed=$((SECONDS - t0))
+assert_equals "exit 0" "$RC" "0"
+assert_equals "still exactly one stop and one spawn" "$(ncalls)" "2"
+if [ "$elapsed" -ge 1 ]; then ok "it waited the interval between the two reads"
+else no "the two reads were back to back (${elapsed}s elapsed)"; fi
+
+# Past the stop the NAME IS UNCLAIMED, so the message has to name the verb that claims
+# it back. `up` is the wrong one twice over: it execs the orchestrator over this
+# terminal, and it respawns a peer from its brief alone — dropping the handoff doc that
+# was the whole point. `rotate` is already idempotent for a dead peer.
+echo "test: a spawn that fails after the stop points at rotate, not up"
+reset_calls
+agents "[$(printf "$LIVE" idle)]"
+mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off"
+SWARM_ROTATE_TIMEOUT=60 run rotate swe-manager "$HANDOFF" "$PROJECT"
+mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md"
+assert_equals "exits 1" "$RC" "1"
+assert_contains "says the successor did not start" "$ERR" "did not start"
+assert_contains "and tells you to re-run rotate" "$ERR" "rotate"
+assert_not_contains "never up — it would exec the orchestrator and drop the handoff" \
+    "$ERR" "swarm.sh up"
+assert_contains "the handoff is still named" "$ERR" "$HANDOFF"
+
 echo "test: a peer that is already dead is respawned ON the handoff, not refused"
 for dead in stopped done; do
     reset_calls
