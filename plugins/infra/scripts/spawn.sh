@@ -218,8 +218,15 @@ EXTRA=(--add-dir "$WORKTREE")
 # that explores anyway was measured at 26% of all agent-minutes on a 56-agent run.
 # The SESSION spawns the planner, never the orchestrator: a plan is prose, and prose
 # the orchestrator reads is prose in its context for the rest of the run.
+# A codex worker has no subagents, so it plans in its own context instead. Either way
+# the plan stays HERE: prose the orchestrator reads is prose in its context all run.
 PLAN_STEP=""
-if [ "$TIER" = complex ]; then
+if [ "$TIER" = complex ] && [ "$BACKEND" = codex ]; then
+    PLAN_STEP="0. This is a COMPLEX issue: PLAN FIRST. Read the repo, write yourself an ordered
+   implementation plan with file paths and testable acceptance criteria, then build to
+   it. Keep the plan in YOUR context — it is never part of your report.
+"
+elif [ "$TIER" = complex ]; then
     PLAN_STEP="0. This is a COMPLEX issue: spawn the workflow:planner agent FIRST and build to the
    plan it returns. Keep the plan in YOUR context — never send it to the orchestrator.
 "

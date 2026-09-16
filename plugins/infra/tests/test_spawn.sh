@@ -311,8 +311,12 @@ assert_contains "reviews with codex exec review" "$out" "codex exec review --bas
 echo "test: the codex tier is resolved per tier, not hardcoded"
 assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
 assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
-assert_contains "and complex still plans first" \
-    "$(codex_dry r9 12 complex "$REPO" base)" "spawn the workflow:planner agent FIRST"
+# A codex worker has no subagents either, so "spawn the planner" is the same stranding
+# bug as "use SendMessage" — it still has to PLAN, it just has to do it itself.
+out_cx=$(codex_dry r9 12 complex "$REPO" base)
+assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
+assert_not_contains "but is not told to spawn an agent it cannot spawn" \
+    "$out_cx" "workflow:planner"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 rm -rf "$CODEX_ROOT"
