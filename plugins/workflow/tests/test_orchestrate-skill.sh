@@ -217,6 +217,10 @@ assert_matches "the stop is guarded on an empty id" "$BODY" '\[ -n "\$id" \] \|\
 # fired puts a second process on a live worktree, so each guard says which one it is.
 assert_matches "the empty-id guard says so" "$BODY" 'nothing busy.*exit 1'
 assert_matches "the recycled-pid guard says so" "$BODY" 'RECYCLED.*exit 1'
+# `ps -o pgid= -p` also comes back empty for a dead pid and errors for the id `-`, which is
+# what session-status.sh prints for a pid-less run dir — the launch window and the phantom
+# run dir. Refusing to kill is right for all three; calling all three "recycled" is not.
+assert_matches "and does not over-diagnose the other two" "$BODY" 'recycled, dead, or still launching'
 assert_matches "a group kill confirms the pid still leads its group" "$BODY" "ps -o pgid= -p"
 assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"

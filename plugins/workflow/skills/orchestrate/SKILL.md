@@ -550,13 +550,13 @@ S=~/.claude/kit/infra/scripts/session-status.sh
 # `claude stop` cannot take, and the kill has to be a GROUP kill (see above).
 read -r id kind < <("$S" <runid> <N> | awk '$4 == "busy" {print $2, $3}')
 # Both guards below exit 1 and they mean OPPOSITE things, so each one says which it was:
-# "nothing to do" is safe, "recycled pid" means a live worker you must not respawn over.
+# "nothing to do" is safe, the other means a pid you must not kill or respawn over.
 [ -n "$id" ] || { echo "nothing busy for issue <N>: nothing to stop"; exit 1; }
-# The codex pid is the wrapper and leads its own group. If it no longer does, it was
-# RECYCLED and that group belongs to someone else — plausibly another run's worker.
+# The codex pid is the wrapper and leads its own group. If it no longer does, that group
+# is someone else's — plausibly another run's worker — or there is no group at all.
 case "$kind" in
     codex) [ "$(ps -o pgid= -p "$id" | tr -d ' ')" = "$id" ] ||
-               { echo "pid $id RECYCLED, leads no group of its own: do NOT kill, do NOT respawn"; exit 1; }
+               { echo "pid $id is not a live group leader (recycled, dead, or still launching): do NOT kill, do NOT respawn"; exit 1; }
            kill -- -"$id" ;;
     *)     claude stop "$id" ;;
 esac
