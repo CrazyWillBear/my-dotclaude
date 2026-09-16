@@ -4,11 +4,12 @@ My Claude Code setup, version-controlled so I can drop it back onto a fresh mach
 one command. It's also packaged so anyone can install the same kit, tuned for either a
 developer or a non-coder.
 
-Deep docs live with the code they describe: the `workflow` plugin's internals (the
-autonomous loop + the context watchdog) are in
-[`plugins/workflow/README.md`](plugins/workflow/README.md), and the slash-command kit is
-in [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md). This file is
-the front door: what it is, how to install it, and how the pieces fit.
+Deep docs live with the code they describe: the `workflow` plugin's autonomous loop is in
+[`plugins/workflow/README.md`](plugins/workflow/README.md), the context watchdog and
+`/handoff` are in [`plugins/context/README.md`](plugins/context/README.md), and the
+slash-command kit is in
+[`plugins/personal-tools/README.md`](plugins/personal-tools/README.md). This file is the
+front door: what it is, how to install it, and how the pieces fit.
 
 ## Quickstart
 
@@ -53,22 +54,26 @@ Then **restart Claude Code** so it loads the plugins.
 - **Global `CLAUDE.md`** (`global/CLAUDE.md` → `~/.claude/CLAUDE.md`) — my machine-wide
   working rules: test-driven, small diffs, ask before anything destructive, never
   commit secrets. (The non-developer kit installs a plain-English `CLAUDE.md` instead.)
+- **`context`** plugin (`plugins/context/`) — context-window management: the four hooks
+  (watchdog, resume, save-handoff, suggest-docs) that drive deliberate, early `/clear` and
+  `/handoff` as a session's window fills, plus the `/handoff` and `/handoff-plan` skills
+  themselves. Calls into nothing else, so every other plugin can depend on it.
+  **Full reference:** [`plugins/context/README.md`](plugins/context/README.md).
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
   subagents: `/explain`, `/diagnose`, `/my-review`, `/dedup-search`, `/init-python-project`,
-  and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues` plus
-  `/handoff`. It also ships the **worktree guard** — a `PreToolUse` hook that keeps writes out
-  of a repo's primary checkout and into a per-task worktree (`EnterWorktree`), so parallel
-  sessions never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
+  and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues`. It also
+  ships the **worktree guard** — a `PreToolUse` hook that keeps writes out of a repo's
+  primary checkout and into a per-task worktree (`EnterWorktree`), so parallel sessions
+  never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
   **Full reference:** [`plugins/personal-tools/README.md`](plugins/personal-tools/README.md).
 - **`infra`** plugin (`plugins/infra/`) — scripts-only shared layer (session state, inbound
   check, tier resolution). A `SessionStart` hook links `~/.claude/kit/infra` so other plugins
   call its scripts by one fixed path. `workflow` needs it.
   **Full reference:** [`plugins/infra/README.md`](plugins/infra/README.md).
-- **`workflow`** plugin (`plugins/workflow/`) — two things in one plugin: `/orchestrate`, a
-  standing dispatcher that routes work by shape (one explicit unit runs as a subagent chain; an
-  issue graph or PRD gets one real background Claude Code session per issue, each in its own
-  worktree, coordinating over the issue thread), and a context watchdog that drives deliberate,
-  early `/clear` and `/handoff` as the window fills.
+- **`workflow`** plugin (`plugins/workflow/`) — `/orchestrate`, a standing dispatcher that
+  routes work by shape: one explicit unit runs as a subagent chain; an issue graph or PRD
+  gets one real background Claude Code session per issue, each in its own worktree,
+  coordinating over the issue thread.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
@@ -121,7 +126,7 @@ details are in [`plugins/personal-tools/README.md`](plugins/personal-tools/READM
 
 ### Working a long session
 
-The `workflow` plugin manages the context window with deliberate, **early** `/clear` and
+The `context` plugin manages the context window with deliberate, **early** `/clear` and
 `/handoff` instead of waiting for Claude Code's near-the-limit auto-compact. No hook or
 agent can type a slash command, so the watchdog halts the agent and tells you the one
 command to type. In short:
@@ -134,7 +139,7 @@ command to type. In short:
 
 The full hook wiring (`watchdog.sh`, `resume.sh`, `save-handoff.sh`, `suggest-docs.sh`),
 the env-overridable thresholds, and the `PreCompact` handoff are documented in
-[`plugins/workflow/README.md`](plugins/workflow/README.md#inside-the-watchdog).
+[`plugins/context/README.md`](plugins/context/README.md#inside-the-watchdog).
 
 ### Keeping the kit updated
 
@@ -211,11 +216,13 @@ isn't installed or logged in. Playwright stays an MCP because it has no CLI equi
 
 ```
 my-dotclaude/
-├── .claude-plugin/marketplace.json  # lists personal-tools + infra + workflow
+├── .claude-plugin/marketplace.json  # lists context + personal-tools + infra + workflow + swarm
 ├── plugins/
-│   ├── personal-tools/   # slash commands + subagents — see plugins/personal-tools/README.md
-│   ├── infra/            # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
-│   └── workflow/         # /orchestrate dispatcher + context watchdog — see plugins/workflow/README.md
+│   ├── context/           # watchdog/resume/handoff hooks + /handoff, /handoff-plan — see plugins/context/README.md
+│   ├── personal-tools/    # slash commands + subagents — see plugins/personal-tools/README.md
+│   ├── infra/             # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
+│   ├── workflow/          # /orchestrate dispatcher — see plugins/workflow/README.md
+│   └── swarm/             # /init-swarm roster, charter + per-role briefs
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)

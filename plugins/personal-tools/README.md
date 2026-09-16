@@ -12,8 +12,6 @@ plugins/personal-tools/
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
-│   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
-│   ├── handoff-plan/SKILL.md      # /handoff-plan — capture the approved plan + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted review; forward-or-judge model pick
 │   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
@@ -62,18 +60,6 @@ plugins/personal-tools/
   `classify-task`'s rubric — the tier is what routes `/orchestrate`'s planner/implementer/reviewer
   models, and it's set here because the slicing exploration already grounds it), plus `hitl` where
   a human is needed; never edits the parent PRD.
-- **`/handoff [note]`** — capture a rich handoff before `/clear`: write the handoff doc and the
-  resume pointer the `workflow` plugin reads, both under a per-repo keyed dir
-  `~/.claude/handoffs/<sha1(--git-common-dir)[:16]>/` (`<branch-slug>.md` + `.pending.json`).
-  Keying by the shared common `.git` means the primary tree and all its linked worktrees share one
-  pointer (a worktree handoff resumes from anywhere in the repo) while concurrent handoffs across
-  *different* repos never collide. Captures work done, in-flight state, next steps, key files, and
-  gotchas, then tells me to `/clear` and send `go`. Requires committed work first.
-- **`/handoff-plan [path]`** — the plan-only sibling of `/handoff`, run *right after* exiting plan
-  mode: capture the just-approved plan (or the file at `[path]`, which wins when given) verbatim to
-  `<branch-slug>-plan.md` in the same keyed dir, write the same `.pending.json` resume pointer, then
-  tell me to `/clear` and send `go` so a fresh session reads the plan and implements it from the
-  committed baseline. No rich doc — the plan *is* the doc. Warns (not blocks) on a dirty tree.
 - **`/dedup-search [task]`** — search the repo for reusable or extendable code before writing
   anything new. It extracts 3–8 concrete search terms from the task description, runs the
   `scripts/dedup-search.sh` helper against the repo, and triages each candidate into

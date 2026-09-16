@@ -1,13 +1,14 @@
 # workflow
 
-Two features in one plugin, versioned here with the rest of my setup:
+**`/orchestrate`** — the **standing dispatcher**, versioned here with the rest of my setup. It
+routes work by **shape**: one explicit unit of work runs as a subagent chain, an issue graph or
+PRD gets **one real `claude --bg` session per issue** in its own worktree, and anything ambiguous
+is discussed rather than built. It absorbed the old `/pipeline`; there is one front door.
 
-1. **`/orchestrate`** — the **standing dispatcher**. It routes work by **shape**: one explicit
-   unit of work runs as a subagent chain, an issue graph or PRD gets **one real `claude --bg`
-   session per issue** in its own worktree, and anything ambiguous is discussed rather than
-   built. It absorbed the old `/pipeline`; there is one front door.
-2. **An orchestrate context gate** — a `UserPromptSubmit` hook that advises `/clear` when you
-   type `/orchestrate` with a window that is already full, so the loop starts with room to run.
+The [`context`](../context/README.md) plugin is a companion, not a dependency called at
+runtime (the star rule — see `docs/swarm-design.md` § Plugin split): its watchdog advises
+`/clear` before `/orchestrate` runs in an already-full window, and its `/handoff` is how you
+hand an in-flight `/orchestrate` run to a fresh session.
 
 ```
 plugins/workflow/
@@ -19,12 +20,7 @@ plugins/workflow/
 │   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
 │   └── planner.md                    # opus, high effort — complex-tier planning only, read-only
-├── hooks/hooks.json                  # wires the scripts below to hook events
 ├── scripts/
-│   ├── watchdog.sh                   # UserPromptSubmit: advise /clear before /orchestrate in a full window
-│   ├── resume.sh                     # SessionStart: re-inject the common-dir-keyed handoff (worktree-reuse aware) after /clear or /compact
-│   ├── save-handoff.sh               # PreCompact: write a handoff before every compaction; OWNS the per-repo keyed dir
-│   ├── suggest-docs.sh               # Stop: soft nudge when a batch changed code but no docs
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
 │   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
@@ -182,59 +178,17 @@ session, not only this run's workers. Observed on a live run.
 it is missing. my-review **owns** the `mock-debt` filing from its central-mechanism audit. PR merges
 stay a human decision; the loop never merges PRs.
 
-## Inside the watchdog
+## The orchestrate gate
 
-`hooks.json` wires five scripts to Claude Code hook events. All of them **fail open**: a
-missing `python3`/`git` or any error exits 0, so they never wedge a session.
+Context management (the four hooks + `/handoff` + `/handoff-plan`) moved to the
+[`context`](../context/README.md) plugin — see its README for the full hook reference. The
+one piece worth knowing here: `context`'s `watchdog.sh` (`UserPromptSubmit`) advises `/clear`
+when you type the `/orchestrate` slash command (bare or with args) and context is already ≥
+`WORKFLOW_PLANGATE_TOKENS` (default **60k**) — **purely advisory**, never a `decision: block`,
+so `/orchestrate` still runs if you proceed. Natural-language phrasing ("please orchestrate")
+does *not* match; it requires the leading slash.
 
-- **`watchdog.sh`** (UserPromptSubmit) reads live context occupancy
-  from the transcript — the last assistant entry's `input_tokens + cache_read +
-  cache_creation` — and fires one advisory signal. No hook can type a slash command, so it
-  injects instructions and tells you the one command to run.
-  - **Orchestrate gate** (advisory, UserPromptSubmit only): when you type the `/orchestrate`
-    slash command (bare or with args) and context is already ≥ `WORKFLOW_PLANGATE_TOKENS`
-    (default **60k**), it injects a hint to run `/clear` first so the loop starts in a fresh
-    window. It is **purely advisory** — never a `decision: block` — so `/orchestrate` still
-    runs if you proceed. Natural-language phrasing ("please orchestrate") does *not* match;
-    it requires the leading slash.
-
-  There is deliberately **no periodic wrap-up nudge**. An earlier version fired at a fixed
-  occupancy on any work and told the agent to stop, commit and `/handoff` — which interrupted
-  long autonomous runs at their worst moment, and is actively wrong now that `/orchestrate`
-  runs its loop on the main thread. A session that genuinely needs a handoff still gets one
-  from `save-handoff.sh` on `PreCompact`, which fires on real compaction rather than a guess.
-- **`resume.sh`** (SessionStart) re-injects the in-flight per-repo handoff after each
-  `/clear` or `/compact`. The handoff dir is keyed by the repo's shared `--git-common-dir`, so a handoff
-  written inside a linked worktree resumes from anywhere in the repo; when it was written in a
-  worktree, the re-injected order tells the fresh session to `EnterWorktree(path=…)` that
-  worktree first. Resolution is **3-tier**: the common-dir key, then the old `--show-toplevel`
-  key (one release of migration), then the legacy global pointer.
-- **`save-handoff.sh`** (PreCompact) writes a handoff before *every* compaction — a manual
-  `/compact` or Claude Code's auto-compact — so the plan re-injects either way.
-- **`suggest-docs.sh`** (Stop) gives a soft nudge when a batch changed code but touched no
-  docs (`*.md`), so usage/behavior docs land in the same commit. Advisory, deduped once per
-  `HEAD`, silent the moment any `.md` is in the batch. This is the *interactive* counterpart
-  to `my-review`'s stale-docs check: the Stop hook nudges you while you work; `my-review`
-  is the AFK backstop that flags a stale doc in the run report when an autonomous slice leaves
-  one behind.
-
-### Long session, in practice
-
-The watchdog turns a long session into deliberate `/clear` points instead of one late
-auto-compact:
-
-1. **Starting `/orchestrate` in a full window** → advisory hint to `/clear` first, then
-   re-run `/orchestrate`, so the loop runs in fresh context.
-2. **`/handoff`** (from the `personal-tools` plugin) writes a rich handoff doc + a per-repo
-   resume pointer and walks you through `/clear`; `resume.sh` then re-injects the plan into
-   the fresh window, where it auto-resumes.
-
-### Thresholds & env
-
-| Var | Default | Effect |
-|---|---|---|
-| `WORKFLOW_PLANGATE_TOKENS` | `60000` | orchestrate-gate floor (advisory `/clear` hint) |
-| `DOCS_FILE_THRESHOLD` / `DOCS_LINE_THRESHOLD` | off | optional sensitivity for the docs nudge |
+To hand an in-flight `/orchestrate` run to a fresh session, run `context`'s `/handoff`.
 
 ## Conventions
 
@@ -249,5 +203,5 @@ auto-compact:
   iff every blocker is **closed**. A `#N` in prose is **not** a blocker — only a bare ref on its
   own line inside that section counts (`scripts/scope-graph.sh` owns the parse).
 
-Adding a script or agent is just dropping a file in (and wiring a script into `hooks.json`),
-then **restarting Claude Code** so it registers.
+Adding a script or agent is just dropping a file in, then **restarting Claude Code** so it
+registers.

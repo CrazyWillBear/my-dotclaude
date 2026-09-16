@@ -7,6 +7,11 @@
   },
   "plugins": [
     {
+      "name": "context",
+      "source": "./plugins/context",
+      "description": "Context-window management: the four hooks (watchdog, resume, save-handoff, suggest-docs) that drive deliberate, early /clear and /handoff as a session's window fills, plus /handoff and /handoff-plan themselves. Calls into nothing else, so every other plugin can depend on it."
+    },
+    {
       "name": "personal-tools",
       "source": "./plugins/personal-tools",
       "description": "My personal Claude Code slash commands and subagents."
@@ -19,7 +24,7 @@
     {
       "name": "workflow",
       "source": "./plugins/workflow",
-      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread. Plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
+      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread."
     },
     {
       "name": "swarm",

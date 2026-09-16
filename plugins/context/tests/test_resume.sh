@@ -22,7 +22,7 @@
 # cross-repo isolation; the legacy wrong-repo guard; no-handoff silence; the
 # no-handoff-path variant; and save-handoff's keyed pointer/doc writing.
 #
-# Run: bash plugins/workflow/tests/test_resume.sh   (non-zero if any fail)
+# Run: bash plugins/context/tests/test_resume.sh   (non-zero if any fail)
 
 set -u
 
