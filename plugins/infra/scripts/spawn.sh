@@ -388,6 +388,11 @@ SCHEMA
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the
 # verified shell command delivered); writable_roots is a TOML array and keeps its
 # brackets and quotes.
+#
+# network_access is not optional either: workspace-write is OFFLINE by default, and this
+# worker's prompt orders `gh issue view`, `gh issue comment` and `codex exec review`.
+# Every one of them needs the network, and `approval_policy=never` means the worker
+# cannot ask for it back — it would fail its whole protocol silently.
 CMD=(codex exec
      -C "$WORKTREE"
      -m "$MODEL"
@@ -395,6 +400,7 @@ CMD=(codex exec
      -c "approval_policy=never"
      -s workspace-write
      -c "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+     -c "sandbox_workspace_write.network_access=true"
      --json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"

@@ -236,6 +236,9 @@ assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
 #                    and reports success. That is a whole issue built and lost.
 #   approval_policy=never
 #                    an unattended run that stops to ask is wedged with nobody there
+#   network_access=true
+#                    workspace-write is OFFLINE by default; the prompt orders gh and
+#                    codex commands, and approval_policy=never cannot ask for it back
 #   </dev/null       codex BLOCKS FOREVER reading an open stdin
 #   --json / -o / --output-schema / pid / exit
 #                    codex has no agent list, so these files ARE the session's state;
@@ -285,6 +288,11 @@ assert_arg "sandbox mode" "$out" "-s"
 assert_arg "workspace-write" "$out" "workspace-write"
 assert_arg "the common git dir is writable, or the worker cannot commit" "$out" \
     "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+# workspace-write turns the network OFF by default (verified on codex-cli 0.154), and
+# this worker's own prompt orders `gh issue view`, `gh issue comment` and `codex exec
+# review` — all network. With approval_policy=never it cannot even ask for it back.
+assert_arg "the sandbox lets the worker reach the network" "$out" \
+    "sandbox_workspace_write.network_access=true"
 assert_arg "streams events as json" "$out" "--json"
 assert_arg "-o the last message" "$out" "-o"
 assert_arg "last-message path" "$out" "$RUNDIR/last-message.txt"
