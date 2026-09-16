@@ -476,16 +476,19 @@ assert_not_contains "a peer stays claude whatever the tier table says" \
         --dry-run 2>/dev/null)" "codex"
 
 # The codex path above is built, tested and ready; the SHIPPED roster is deliberately
-# NOT on it. The session lane subscribes to a worker with SendMessage and waits for its
-# report, and a codex worker's report lands in last-message.txt, which nothing reads —
-# so a codex default stalls a run at its first worker. Orchestrator-side ingest is the
-# prerequisite (#96). Flipping model-tiers.json before that lands trips this test.
+# NOT on it. The report ingest that used to block the flip now exists (worker-report.sh
+# reads last-message.txt and returns the lane's own report line), so the remaining hold
+# is the two guardrail gaps recorded on #96: writable_roots is the whole COMMON git dir,
+# which lets a worker arm .git/hooks or .git/config and get host code execution outside
+# the sandbox; and the codex path carries no --disallowedTools equivalent, so gh pr merge
+# and gh issue close are reachable with only prose restraining them. Both are latent
+# ONLY while this test holds. Flipping model-tiers.json before they land trips it.
 echo "test: the SHIPPED roster still routes workers through claude — the flip is on hold"
 for t in trivial standard complex; do
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
     assert_arg "shipped $t spawns claude" "$out" "--bg"
-    assert_not_contains "shipped $t is not on codex yet (needs #96's report ingest)" \
+    assert_not_contains "shipped $t is not on codex yet (needs #96's guardrails)" \
         "$out" "codex exec"
 done
 

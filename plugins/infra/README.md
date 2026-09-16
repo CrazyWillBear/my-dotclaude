@@ -38,8 +38,11 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 ## Two backends, for the worker form only
 
 **Nothing routes to codex today.** `model-tiers.json` ships `backend: claude` in all nine
-cells. The path below is built and tested, but it stays unreached until the orchestrator can
-ingest a codex worker's report out of `last-message.txt` (#96).
+cells. The report ingest that used to be missing now exists — `worker-report.sh`, below — but
+the flip stays held on two guardrail gaps recorded on #96: `writable_roots` is the whole
+**common** git dir (so a worker can arm `.git/hooks` or `.git/config`), and the codex path
+carries no `--disallowedTools` equivalent (so `gh pr merge` and `gh issue close` are reachable,
+restrained only by prose in its prompt).
 
 A worker whose tier's `implementer_backend` is `codex` runs `codex exec` in the background
 instead of `claude --bg` ([`docs/swarm-design.md` § Codex backend](../../docs/swarm-design.md)).
@@ -58,6 +61,52 @@ ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 
 `session-status.sh <runid>` reports those alongside the claude sessions, in the same
 vocabulary, with the PID in column 2. The spawn returns immediately and prints the run dir.
+
+### `worker-report.sh` — reading a codex worker's report
+
+A claude worker reports with `SendMessage`. A codex worker cannot: it is a process, with no
+inbox. Its report is the schema'd final message in `last-message.txt`, and this script is what
+reads it.
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh <runid> <issue> [--interval S] [--timeout S]
+```
+
+It blocks until `session-status.sh` says that worker is `done` or `failed`, then prints **one
+line in the same vocabulary the session lane already parses** — `issue <N> built head=… review=…`,
+`fixed round=…`, `failed <why>`, or `escalate <question>` — so the orchestrator's admission loop
+branches on a codex report exactly as it does on a claude one. The orchestrator still never
+polls: it makes one blocking call per worker.
+
+**Exit 0 means the line is a real result. Exit 1 means it could not tell what happened** — a
+timeout, a clean exit that wrote no report, an unparseable one, or `built` with no head sha — and
+then stdout is EMPTY. That split is the safety property: a result the orchestrator acts on merges
+branches, so anything this script cannot characterise must not look like one. `failed` and
+`escalate` are exit 0, because both are real outcomes the loop has a branch for.
+
+State comes from `session-status.sh` rather than a second copy of the pid/exit rules, whose
+subtleties (mid-launch is `busy`; a dead pid with no exit file is `failed`, never a quiet `done`)
+are exactly the half that would silently rot in a private reimplementation.
+
+### Escalation on a codex worker
+
+A codex worker has no inbox, so it cannot be relayed to or attached to — but **its context is not
+lost when it exits.** Every `codex exec` run persists at
+`~/.codex/sessions/<Y>/<M>/<D>/rollout-<ts>-<uuid>.jsonl`, and `codex exec resume <thread-id>
+"<prompt>"` continues it. The thread id is already in the run dir: `events.jsonl` carries a
+`thread.started` event with `thread_id` (the rollout whose `session_meta.cwd` is the issue
+worktree is the recovery path if that capture is ever missing).
+
+So an escalation is a pause, not an ending: the worker reports `issue <N> escalate <question>`
+and exits, the orchestrator surfaces the question, and the answer is delivered by resuming that
+thread. Two traps, both verified on codex-cli 0.154 rather than assumed:
+
+- **`resume` inherits none of the sandbox.** A resume that re-passes nothing comes back
+  **offline** (verified: `http=200` on the original run, `DNSFAIL` on the resume), which would
+  fail the worker's own `gh` protocol silently. Re-pass the sandbox through `-c`.
+- **`resume` takes no `-C` and no `-s`.** It accepts `-m`, `-o`, `--output-schema`, `--json` and
+  `-c`, so the sandbox goes through `-c` and the resume must be launched **from the worktree**.
+  `-m` is not optional either: a resumed thread otherwise falls back to the config default model.
 
 The repo's **common** git dir goes in `sandbox_workspace_write.writable_roots`, because
 `-s workspace-write` keeps `.git` read-only and a worker that cannot commit has nothing to

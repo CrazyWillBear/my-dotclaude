@@ -90,11 +90,14 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
-**Not yet shipped.** `model-tiers.json` is still `backend=claude` in every cell. The codex path
-is built and tested, but the session lane subscribes to a worker with `SendMessage` and a codex
-worker's report lands in `last-message.txt`, which nothing reads — so a codex default would stall
-a run at its first worker. Orchestrator-side ingest of that file is the prerequisite, carried by
-the e2e gate (#96); `test_spawn.sh` pins the table to claude until then.
+**Not yet shipped.** `model-tiers.json` is still `backend=claude` in every cell. The ingest that
+used to block this is done — `infra/worker-report.sh` reads `last-message.txt` and returns the
+session lane's own one-line report, so a codex worker no longer reports into nothing. What still
+holds the flip is two guardrail gaps, both recorded on the e2e gate (#96): `writable_roots` is the
+whole **common** git dir, so a worker can arm `.git/hooks` or `.git/config` and get host code
+execution outside the sandbox; and the codex path carries no `--disallowedTools` equivalent, so
+`gh pr merge` and `gh issue close` stay reachable with only prose restraining them. Both are
+latent only while the table is claude — `test_spawn.sh` pins it until they land.
 
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
@@ -223,9 +226,19 @@ one-shot, so it maps onto `codex exec`:
   streams one event per line: `thread.started` (with the thread id), `item.started` /
   `item.completed` for messages, file changes and commands, `turn.completed` with token usage.
   Progress goes to stderr. Exit 0 on completion. No ANSI, so `session-status.sh` parses it.
-- **Resume.** Every run persists under `~/.codex/sessions/`; `codex exec resume <thread-id>
-  "<prompt>"` continues it. A fix round may resume the implementer's thread or start fresh;
-  the orchestrate rule (a fresh implementer per round) stays the default.
+- **Resume.** Every run persists under `~/.codex/sessions/<Y>/<M>/<D>/rollout-<ts>-<uuid>.jsonl`,
+  whose first line is `session_meta` carrying `session_id` and `cwd`; `codex exec resume
+  <thread-id> "<prompt>"` continues it. The id is also in the run dir already — `events.jsonl`
+  carries a `thread.started` event with `thread_id` — and a rollout can be found by its `cwd`
+  (the issue worktree) if that is ever missing. A fix round may resume the implementer's thread
+  or start fresh; the orchestrate rule (a fresh implementer per round) stays the default. This is
+  what makes an escalation a pause rather than an ending (§ below).
+  **Verified 2026-09-16: `resume` inherits NONE of the sandbox.** With explicit flags a run
+  returned `http=200`; the same thread resumed re-passing nothing returned `DNSFAIL`, i.e. a
+  resumed worker is OFFLINE and fails its own `gh` protocol silently. `resume` accepts `-m`,
+  `-o`, `--output-schema`, `--json` and `-c`, but **not** `-s` and **not** `-C` — so the sandbox
+  must be re-passed through `-c` and the resume launched from the worktree directory. `-m` must
+  be re-passed for the same reason it must on a fresh run.
 - **Review.** `codex exec review --base <branch>` is a working reviewer: it read the diff and
   returned priority-graded findings with file and line. It fills the reviewer slot for
   codex-routed tiers; `my-review` stays the reviewer for claude-routed ones.
@@ -236,7 +249,8 @@ beside the event log; `session-status.sh` reports a codex worker from those the 
 a claude worker from the agent list. The **state** vocabulary is identical, so `/orchestrate`'s
 liveness wait is unchanged — but **control is not**: column 2 is a PID, so a codex row is stopped
 with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no inbox a codex
-worker cannot escalate mid-run. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
+worker cannot be spoken to mid-run — it escalates by ENDING its turn (`status: escalate`, the
+question in `note`) and is answered by resuming its thread, which keeps everything it had. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
 is a **group** kill — `kill -- -<pid>`: `spawn.sh` starts the wrapper under bash job control
 (`set -m`, a builtin — `setsid` is Linux-only and the kit runs on macOS too) so it leads its own
 process group, because killing the wrapper alone orphans codex onto the worktree and

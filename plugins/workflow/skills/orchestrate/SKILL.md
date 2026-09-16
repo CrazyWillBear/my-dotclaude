@@ -347,6 +347,20 @@ never reads the implementer contract would never declare one.
 
 **Then wait.** Do not poll. The next thing that happens is a message.
 
+**Unless the worker is codex-backed — then there is no message.** A `codex exec` worker is a
+process, not a session: no inbox, no `SendMessage`. For a worker whose tier's backend is `codex`,
+skip the subscribe and make one blocking call instead:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh "$RUNID" <N>
+```
+
+It returns the **same one-line report** — `built`, `fixed`, `failed`, `escalate` — so every branch
+below is unchanged. **Exit 0 means that line is a real result; exit 1 means it could not tell what
+happened** (a timeout, or a worker that finished without a readable report) and prints nothing.
+Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
+so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
+
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
 session takes my-review's report and posts the `**Review round N**` comment itself. If you ever
@@ -445,6 +459,15 @@ and the full `stop` → verify → respawn recovery procedure are documented in
 
 A worker that hits something only a human can answer `SendMessage`s the orchestrator:
 `issue <N> escalate <question>`.
+
+**A codex worker escalates by ending its turn, not by waiting.** It has no inbox, so there is
+nothing to relay to and nothing to `claude attach`. It reports `issue <N> escalate <question>`
+through `worker-report.sh` and its process exits — but **its context survives**: the answer is
+delivered by resuming its thread, so it picks up where it stopped rather than restarting. Offer
+the question to Will, then resume with his answer as the prompt. The resume is a precise command
+(the sandbox does not carry over, and there is no `-C`) — see
+[infra's README](../../../infra/README.md#escalation-on-a-codex-worker). Attaching is not an
+option to offer here; mediating is the only route.
 
 **Offer both routes. Recommend one.**
 
