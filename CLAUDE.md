@@ -10,13 +10,16 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 
 - `global/CLAUDE.md` — developer machine-wide rules; `setup-dev.sh` installs to `~/.claude/CLAUDE.md`.
 - `global/CLAUDE.simple.md` — plain-English variant of the above; `setup-simple.sh` installs it instead, for non-coders.
-- `plugins/context/`, `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
+- `plugins/context/` — context-window hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan`.
+- `plugins/personal-tools/` — my slash commands, subagents, hooks.
+- `plugins/workflow/` — the `/orchestrate` dispatcher.
 - `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness,
   run log, merge fold). Logic belongs here, not in skill prose: a script gets a real test,
   prose gets a grep.
 - `plugins/infra/` — scripts-only shared layer (`spawn.sh`, `session-status.sh`,
   `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`). Its SessionStart hook links
   `~/.claude/kit/infra`; other plugins call infra only through that path, never by relative path.
+- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh brief`, briefs, charter).
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.

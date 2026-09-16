@@ -75,18 +75,19 @@ Then **restart Claude Code** so it loads the plugins.
   gets one real background Claude Code session per issue, each in its own worktree,
   coordinating over the issue thread.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
+- **`swarm`** plugin (`plugins/swarm/`) — roster-driven multi-session teams: `/init-swarm` writes
+  a project's `.claude/swarm/roster.json`, charter, and one brief per chosen role (orchestrator,
+  swe-manager, performance-engineer), and `swarm.sh brief` distributes briefs to chosen roles.
+  Replaces the third-party perf plugin with a performance-engineer role.
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
   official plugin for scaffolding Claude Agent SDK apps (`/new-sdk-app`); installed
   alongside the above.
-- **[perf](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/perf)** and
-  **[security-guidance](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/security-guidance)**
-  — third-party plugins from Composio's marketplace: `/perf` runs a multi-phase
-  performance investigation (baseline → profile → hypothesis → optimize), and
-  `security-guidance` adds an advisory hook that flags risky code (`eval(`, `execSync(`,
-  `os.system`, …) before a write. (The guidance hook *blocks* the first such edit per
-  session so it gets a second look; set `ENABLE_SECURITY_REMINDER=0` to silence it.)
+- **[security-guidance](https://github.com/ComposioHQ/awesome-claude-plugins/tree/master/security-guidance)**
+  — third-party plugin from Composio's marketplace: adds an advisory hook that flags
+  problematic code patterns before writes. The hook blocks the first such edit per session
+  so it gets a second look; set `ENABLE_SECURITY_REMINDER=0` to silence it.
 - **[security-sweep](https://github.com/Onome-AJ/security-sweep-plugin)** — third-party,
   read-only security-scan skill: greps the project for secrets, injection, auth/config
   issues, and weak deps against OWASP / LLM / Mobile top-ten patterns.

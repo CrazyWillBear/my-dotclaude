@@ -80,7 +80,6 @@ macOS / Linux / WSL only (on Windows, run under WSL).
    claude plugin marketplace add anthropics/claude-plugins-official
    claude plugin install agent-sdk-dev@claude-plugins-official
    claude plugin marketplace add ComposioHQ/awesome-claude-plugins
-   claude plugin install perf@awesome-claude-plugins
    claude plugin install security-guidance@awesome-claude-plugins
    claude plugin marketplace add Onome-AJ/security-sweep-plugin
    claude plugin install security-sweep@security-sweep-marketplace

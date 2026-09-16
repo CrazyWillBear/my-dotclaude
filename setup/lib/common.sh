@@ -17,10 +17,8 @@ PONYTAIL_PLUGIN="ponytail@ponytail"
 # agent-sdk-dev scaffolds new Claude Agent SDK apps.
 OFFICIAL_MARKETPLACE_REPO="anthropics/claude-plugins-official"
 AGENT_SDK_PLUGIN="agent-sdk-dev@claude-plugins-official"
-# Composio marketplace (third-party): perf (perf-investigation workflow) +
-# security-guidance (advisory PreToolUse hook).
+# Composio marketplace (third-party): security-guidance (advisory PreToolUse hook).
 COMPOSIO_MARKETPLACE_REPO="ComposioHQ/awesome-claude-plugins"
-PERF_PLUGIN="perf@awesome-claude-plugins"
 SECURITY_GUIDANCE_PLUGIN="security-guidance@awesome-claude-plugins"
 # security-sweep (third-party, read-only scan skill): its repo is its own marketplace.
 SECURITY_SWEEP_REPO="Onome-AJ/security-sweep-plugin"
@@ -143,11 +141,9 @@ tcr_install_agent_sdk_dev() {
   tcr_install_plugin "$AGENT_SDK_PLUGIN"
 }
 
-# Installs the Composio marketplace plugins: perf (perf-investigation workflow) and
-# security-guidance (advisory PreToolUse hook). Both live in one marketplace.
+# Installs the Composio marketplace plugin: security-guidance (advisory PreToolUse hook).
 tcr_install_composio_plugins() {
   tcr_add_marketplace "$COMPOSIO_MARKETPLACE_REPO"
-  tcr_install_plugin "$PERF_PLUGIN"
   tcr_install_plugin "$SECURITY_GUIDANCE_PLUGIN"
 }
 
