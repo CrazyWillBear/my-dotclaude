@@ -122,9 +122,11 @@ assert_contains "says the live peer was left alone" "$OUT" "swe-manager already 
 spawn="$(call 0)"
 assert_contains "the spawn is a background session" "$spawn" "--bg"
 assert_equals "named for the MISSING peer, not the live one" "$(value_of "$spawn" -n)" "performance-engineer"
-assert_equals "its brief" "$(value_of "$spawn" --brief)" \
-    "$PROJECT/.claude/swarm/inbox/performance-engineer/brief.md"
-assert_equals "the shared charter" "$(value_of "$spawn" --append-system-prompt)" \
+# spawn.sh reads the brief and the charter and passes their TEXT, so what reaches
+# `claude` is the only proof the right two files were opened: this project's charter
+# (not the plugin template) and THIS role's brief (not the other peer's).
+assert_equals "the project's charter, appended to the system prompt" \
+    "$(value_of "$spawn" --append-system-prompt)" \
     "CHARTER: act within your role without sign-off."
 assert_equals "the roster row's model" "$(value_of "$spawn" --model)" "opus"
 assert_equals "the roster row's effort" "$(value_of "$spawn" --effort)" "high"
@@ -185,14 +187,18 @@ done
 echo "test: a peer that cannot spawn stops up before the orchestrator"
 reset_calls
 agents '[]'
+printf 'sess-orch-42\n' >"$PROJECT/.claude/swarm/orchestrator.session"
 mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off"
 run up "$PROJECT"
 assert_equals "exits 1" "$RC" "1"
 assert_contains "names the missing brief" "$ERR" "brief.md"
+assert_contains "names the role that did not start" "$ERR" "swe-manager"
 assert_contains "and says re-running is safe" "$ERR" "re-run"
+assert_equals "only the peer that COULD start did" "$(ncalls)" "1"
 assert_not_contains "the orchestrator is NOT handed a half-built swarm" \
     "$(cat "$CALLS"/* 2>/dev/null)" "--resume"
 mv "$PROJECT/.claude/swarm/inbox/swe-manager/brief.off" "$PROJECT/.claude/swarm/inbox/swe-manager/brief.md"
+rm -f "$PROJECT/.claude/swarm/orchestrator.session"
 
 # ---------------------------------------------------------------------------
 # `claude stop <name>` fails outright ("No job matching …"), so a down that reaches
@@ -216,6 +222,19 @@ assert_not_contains "never by name" "$stops" "performance-engineer"
 assert_not_contains "and never the orchestrator — that is Will's session" "$stops" "o333"
 assert_not_contains "nor another project's peer of the same name" "$stops" "x444"
 assert_contains "reports what it stopped" "$OUT" "p111"
+
+# `claude stop` on a session that is already stopped is noise at best; worse, it hides
+# which peers this down actually ended.
+echo "test: down leaves an already-stopped peer alone"
+reset_calls
+agents '[
+  { "id": "p111", "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "stopped" },
+  { "id": "p222", "cwd": "'"$PROJECT"'", "kind": "background", "name": "performance-engineer", "state": "idle" }
+]'
+run down "$PROJECT"
+assert_equals "only the live one is stopped" "$(ncalls)" "1"
+assert_contains "by its id" "$(call 0)" "p222"
+assert_contains "and the stopped one is reported, not re-stopped" "$OUT" "swe-manager not running"
 
 echo "test: down on a swarm that is not up says so and exits 0"
 reset_calls
