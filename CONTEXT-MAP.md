@@ -1,17 +1,13 @@
-plugins/swarm/scripts/swarm.sh — the file to extend; today only implements brief, needs up/down/attach
-plugins/swarm/tests/test_swarm_brief.sh — existing black-box suite; the new verbs need sibling tests in the same style
-plugins/infra/scripts/spawn.sh — up calls this in its peer form per missing roster peer, passing brief/charter/model/effort/autocompact; its --dry-run is the pattern for pinning argv in tests
-plugins/infra/scripts/session-status.sh — enumerates live sessions and resolves a role name to a session id; up needs it to find missing peers, down/attach need it because claude stop/attach reject names
-plugins/infra/tests/test_spawn.sh — the stub-claude dry-run testing pattern (fake HOME, PATH-stubbed claude, argv assertions)
-plugins/infra/tests/test_session-status.sh — coverage for the id/name resolution down and attach depend on
-plugins/swarm/scripts/roster.sh — up reads .claude/swarm/roster.json through this for peers, kind, model/effort/rotate_at/autocompact
-plugins/swarm/templates/roster.json — the shipped default roster used by test fixtures
-plugins/swarm/tests/test_roster.sh — roster.sh coverage; up depends on its validate-then-answer contract
-plugins/swarm/templates/briefs/orchestrator.md — documents .claude/swarm/orchestrator.session, which up reads to resume by saved id vs start fresh
-plugins/swarm/templates/briefs/swe-manager.md — brief passed to spawn.sh's peer form
-plugins/swarm/templates/briefs/performance-engineer.md — brief passed to spawn.sh's peer form
-plugins/swarm/templates/charter.md — appended via spawn.sh's peer charter flag for every peer
-plugins/swarm/skills/init-swarm/SKILL.md — defers up/down/attach to this issue; documents the roster shape up consumes
-plugins/swarm/tests/test_init-swarm-skill.sh — asserts the skill calls swarm.sh a later issue; may need updating
-docs/swarm-design.md — Lifecycle defines up/down/rotate/attach; Roster and Charter define the peer row and brief/charter wiring; Plugin split says swarm calls only into infra
-plugins/infra/scripts/resolve-tier.sh — NOT called for peers: peers are not tier-routed, their model and effort come from the roster row
+plugins/infra/scripts/spawn.sh — switch on the tier's backend; add the codex exec path (pid file + exit-code file beside the event log) alongside the claude path
+plugins/infra/scripts/resolve-tier.sh — already emits <role>_backend= and validates codex model names; spawn.sh consumes it to pick backend/model/effort
+plugins/infra/scripts/session-status.sh — must report a codex worker (working/completed/failed) from the pid and exit files, as it does for claude from the agent list
+plugins/infra/model-tiers.json — THE ROSTER FLIP this issue now owns (amended scope): per the Roster section, trivial implementer=codex luna and reviewer=codex terra, standard implementer and reviewer=codex terra, complex planner/implementer/reviewer=codex sol; all rows currently still say backend=claude
+plugins/infra/tests/test_resolve-tier.sh — shipped-config assertions pin every tier to backend=claude and the old model names; update to match the flipped roster
+plugins/infra/tests/test_spawn.sh — stub-claude black-box tests; add codex-path tests with a stub codex on PATH pinning every flag: -C, -m, -c model_reasoning_effort, -c approval_policy=never, -s workspace-write, sandbox_workspace_write.writable_roots including the common git dir, --json, -o, --output-schema, closed stdin, pid file, exit-code file
+plugins/infra/tests/test_session-status.sh — add tests reading codex worker state from the pid/exit pair (working for a live pid, completed for exit 0, failed otherwise)
+docs/swarm-design.md — Roster gives the exact tier-to-backend table; the codex backend section gives the verified codex exec flag set, the writable-roots requirement for commits, and the output shapes
+plugins/infra/README.md — documents model-tiers.json and spawn.sh's two forms; only covers the claude flow today
+plugins/workflow/skills/orchestrate/SKILL.md — notes this issue wires codex for the session lane only; the ad-hoc lane stays claude-only. Boundary, not edited here
+plugins/swarm/tests/test_roster.sh — swarm's own roster fixtures use backend=codex vocabulary; a different config, check it assumes nothing claude-only
+
+Note: no stub codex binary exists yet; add it alongside the existing stub-claude pattern rather than in a new file.

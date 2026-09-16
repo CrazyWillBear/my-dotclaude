@@ -92,8 +92,10 @@ die() { echo "error: $*" >&2; exit 1; }
 # is exactly the silent stall this design is organized against. Demand the value.
 need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 
-# Each form fills these, and the tail below builds one command out of them.
-NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""
+# Each form fills these, and the tail below builds one command out of them. BACKEND is
+# claude unless a WORKER's tier row says codex — a peer needs an inbox and codex has none
+# (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
+NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
 EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
 
 if [ "${1:-}" = peer ]; then
@@ -166,7 +168,11 @@ case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;;
 ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
 MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1)"
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"
+BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
+# resolve-tier.sh validates the backend against the model and falls back rather than
+# emit an unknown one, so anything that is not codex is the claude path.
+[ "$BACKEND" = codex ] || BACKEND=claude
 
 NAME="orch-$RUNID-issue-$ISSUE"
 BRANCH="issue-$ISSUE"
@@ -219,6 +225,49 @@ if [ "$TIER" = complex ]; then
 "
 fi
 
+# How the worker REVIEWS and how it REPORTS are the two steps the backend changes, and
+# they are the two that strand the run when they are wrong. A codex worker has no
+# SendMessage tool and no subagents: telling it to use either produces a session that
+# finishes the work and then reports into nothing, which reads to the orchestrator
+# exactly like a worker still thinking. Its final message IS its report (`--output-schema`
+# forces the shape), and `codex exec review --base` is its reviewer
+# (docs/swarm-design.md § Codex backend).
+if [ "$BACKEND" = codex ]; then
+    REVIEW_STEP="6. Review your own diff: \`codex exec review --base $BASE\`. It returns
+   priority-graded findings with file and line. YOU post them as a comment"
+    REPORT_STEP="7. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
+   Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
+   were launched with:
+      {\"issue\": $ISSUE, \"status\": \"built\", \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\"}
+   or, if you could not finish:
+      {\"issue\": $ISSUE, \"status\": \"failed\", \"note\": \"<one short line why>\"}
+   Stuck on something only a human can answer? Same shape with \"status\": \"escalate\"
+   and the question in \"note\"."
+    FIX_REVIEW_STEP="4. Re-review the delta: \`codex exec review --base $BASE\`, then POST its findings
+   YOURSELF"
+    FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
+   report, as JSON matching the output schema you were launched with:
+      {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\"}
+   or {\"issue\": $ISSUE, \"status\": \"failed\", \"note\": \"<one short line why>\"}."
+else
+    REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
+   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment"
+    REPORT_STEP="7. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
+   MUST use the SendMessage tool, addressed to \"$ORCH\", with exactly:
+      issue $ISSUE built head=<sha> review=<H high, M medium, L low>
+   or, if you could not finish:
+      issue $ISSUE failed <one short line why>
+
+Never merge, never open a PR, never close or edit the issue. If you are stuck on
+something only a human can answer, SendMessage \"$ORCH\" with \"issue $ISSUE escalate
+<question>\" and wait."
+    FIX_REVIEW_STEP="4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
+   review, then POST its findings YOURSELF"
+    FIX_REPORT_STEP="5. REPORT, THEN STOP — plain output is invisible. SendMessage to \"$ORCH\":
+      issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
+   or \"issue $ISSUE failed <one short line why>\"."
+fi
+
 if [ "$ROLE" = build ]; then
     TASK="$(cat <<PROMPT
 You are the BUILD session for issue #$ISSUE, run $RUNID.
@@ -243,8 +292,7 @@ ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --c
    integration", in the commit body and in your review comment. An undeclared central
    mock is the drift this whole loop exists to catch.
 5. Run the project's done-check. It must be green.
-6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
-   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
+$REVIEW_STEP
    in exactly this shape (the "Review round N" heading is the run's cycle counter;
    nothing else records how many rounds this issue has had):
 
@@ -256,15 +304,9 @@ ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --c
    Lows are listed, not fixed. Keep every line short: this comment is read by every
    future run that touches this issue. Do NOT fix what the review finds:
    a fresh session does that, so nobody is defending their own code.
-7. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
-   MUST use the SendMessage tool, addressed to "$ORCH", with exactly:
-      issue $ISSUE built head=<sha> review=<H high, M medium, L low>
-   or, if you could not finish:
-      issue $ISSUE failed <one short line why>
+$REPORT_STEP
 
-Never merge, never open a PR, never close or edit the issue. If you are stuck on
-something only a human can answer, SendMessage "$ORCH" with "issue $ISSUE escalate
-<question>" and wait.
+Never merge, never open a PR, never close or edit the issue.
 PROMPT
 )"
 else
@@ -278,18 +320,90 @@ Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
    highs and mediums; lows are listed, not fixed.
 2. Fix them, TDD-first, committing after every green sub-step.
 3. Run the project's done-check. It must be green.
-4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
-   review, then POST its findings YOURSELF as the next "**Review round**" comment, in
-   the same shape as the previous one, incrementing the round number. my-review is
-   REPORT-ONLY; it posts nothing, and that comment is the run's cycle counter.
-5. REPORT, THEN STOP — plain output is invisible. SendMessage to "$ORCH":
-      issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
-   or "issue $ISSUE failed <one short line why>".
+$FIX_REVIEW_STEP as the next "**Review round**" comment, in
+   the same shape as the previous one, incrementing the round number. The reviewer
+   POSTS NOTHING itself, and that comment is the run's cycle counter.
+$FIX_REPORT_STEP
 
 Never merge, never open a PR, never close or edit the issue.
 PROMPT
 )"
 fi
+fi
+
+if [ "$BACKEND" = codex ]; then
+# ---------------------------------------------------------------------------
+# CODEX — a one-shot worker through `codex exec`. Worker form only; verified against
+# codex-cli 0.154 (docs/swarm-design.md § Codex backend).
+#
+# Codex has NO agent list, so unlike a claude session there is nothing to ask about its
+# state afterwards. These four files ARE the session: the `--json` event stream, the `-o`
+# final message (shaped by --output-schema), the pid, and the exit code.
+# session-status.sh reads exactly this layout.
+# ---------------------------------------------------------------------------
+[ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
+
+# Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
+# live in the MAIN repo's common git dir, so without it listed the worker does the whole
+# issue and then cannot commit — and says so only in its final message. Fail here
+# instead: a worker that cannot commit has nothing to hand back.
+GITDIR="$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null)" \
+    || die "not a git worktree, so a codex worker could never commit: $WORKTREE"
+case "$GITDIR" in /*) ;; *) GITDIR="$WORKTREE/$GITDIR" ;; esac
+GITDIR="$(cd "$GITDIR" 2>/dev/null && pwd -P)" \
+    || die "could not resolve the repo's common git dir for: $WORKTREE"
+
+RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
+
+# The worker's fixed-shape status report. `--output-schema` is what turns the final
+# message from prose into something a caller can read without a model in the loop.
+cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/status-schema.json"
+{
+  "type": "object",
+  "properties": {
+    "issue":  { "type": "integer" },
+    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate"] },
+    "round":  { "type": "integer" },
+    "head":   { "type": "string" },
+    "review": { "type": "string" },
+    "note":   { "type": "string" }
+  },
+  "required": ["issue", "status"],
+  "additionalProperties": false
+}
+SCHEMA
+
+# `-m` is not optional: without it a resumed thread silently falls back to the config's
+# default model, which is not the tier's. Scalar `-c` values are bare (that is what the
+# verified shell command delivered); writable_roots is a TOML array and keeps its
+# brackets and quotes.
+CMD=(codex exec
+     -C "$WORKTREE"
+     -m "$MODEL"
+     -c "model_reasoning_effort=$EFFORT"
+     -c "approval_policy=never"
+     -s workspace-write
+     -c "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+     --json
+     -o "$RUNDIR/last-message.txt"
+     --output-schema "$RUNDIR/status-schema.json"
+     "$TASK")
+
+if [ -n "$DRY" ]; then
+    printf '%s\n' "${CMD[@]}"
+    exit 0
+fi
+
+# Backgrounded as one group so the recorded pid stays alive until the exit code is
+# written: session-status.sh reads "pid alive" as busy, and a gap between the process
+# ending and the exit file appearing would read as a worker that died without a code.
+# </dev/null because codex BLOCKS FOREVER on an open stdin.
+{ "${CMD[@]}" >"$RUNDIR/events.jsonl" 2>"$RUNDIR/stderr.log" </dev/null
+  printf '%s\n' "$?" >"$RUNDIR/exit"; } &
+printf '%s\n' "$!" >"$RUNDIR/pid"
+printf '%s\n' "$RUNDIR"
+exit 0
 fi
 
 # `--` BEFORE THE PROMPT IS LOAD-BEARING. `--disallowedTools` is a VARIADIC option:
