@@ -121,6 +121,13 @@ for role in orchestrator swe-manager performance-engineer; do
         "\`--agent\` is \`$role\`"
 done
 
+echo "test: the orchestrator brief's promote example is runnable as written"
+ORCH_BRIEF="$(cat "$TEMPLATES/briefs/orchestrator.md")"
+assert_contains "names vault promote" "$ORCH_BRIEF" "vault promote"
+assert_contains "promote example passes --ceiling (promote hard-requires it)" "$ORCH_BRIEF" "--ceiling"
+assert_contains "promote example passes --vault (else it defaults to cwd)" "$ORCH_BRIEF" \
+    "--vault .claude/swarm/memory"
+
 # ---------------------------------------------------------------------------
 echo "test: central mechanism — simulate the skill's Steps 1/4/5/6/7 for real, in a scratch repo"
 

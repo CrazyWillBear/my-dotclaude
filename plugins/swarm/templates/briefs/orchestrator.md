@@ -8,4 +8,6 @@ On your first turn, write your session id to `.claude/swarm/orchestrator.session
 `swarm.sh up` can resume you.
 
 Vault memory: your `--agent` is `orchestrator`. You read and write the whole vault;
-`vault promote <path> --agent orchestrator` is how a peer's proposal reaches `shared/`.
+`vault promote <path> --agent orchestrator --ceiling 0.35 --vault .claude/swarm/memory`
+is how a peer's proposal reaches `shared/` (`--ceiling` is the write gate's dedup
+threshold; without `--vault` promote defaults to the current directory).
