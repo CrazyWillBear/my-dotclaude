@@ -26,6 +26,7 @@ ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
 no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; esac; }
 assert_matches()  { if printf '%s\n' "$2" | grep -Eqi -- "$3"; then ok "$1"; else no "$1 (no match: $3)"; fi; }
+assert_not_matches() { if printf '%s\n' "$2" | grep -Eqi -- "$3"; then no "$1 (unexpected match: $3)"; else ok "$1"; fi; }
 
 if [ ! -f "$README_FILE" ]; then
     printf '  FAIL: README.md missing at %s\n' "$README_FILE"
@@ -63,6 +64,110 @@ if [ "$note_count" -ge 2 ]; then
     ok "run-log.sh's foreign origin is noted at both call sites ($note_count)"
 else
     no "run-log.sh's foreign origin noted only $note_count/2 times"
+fi
+
+# ---------------------------------------------------------------------------
+# The codex backend (#90). These assertions were written against SKILL.md, which is where
+# this prose used to live; #89 moved liveness/recovery here, so they moved with it.
+
+echo "test: a codex worker is a PID, so the claude-only controls are called out"
+# `claude stop` and `claude attach` take a SESSION id; column 2 of a codex row is a PID,
+# and a codex worker has no inbox to attach to or escalate through mid-run. Claiming
+# "nothing changes" would send the recovery path at a process with the wrong tool.
+assert_not_matches "no blanket 'nothing changes' for the codex backend" "$BODY" "so nothing changes"
+assert_matches "a codex row is stopped with kill, not claude stop" "$BODY" "kill.{0,40}not .?claude stop|claude stop.{0,60}kill"
+assert_matches "and it cannot escalate mid-run" "$BODY" "cannot escalate mid-run|no mid-run escalation"
+# `kill $pid` is the WRONG kill: spawn.sh records its wrapper's pid and codex is the
+# child, so a plain kill orphans codex onto the worktree AND writes no exit file, which
+# reads as `failed` and clears the respawn gate. The recipe must kill the group.
+assert_matches "the kill targets the process GROUP, not the bare pid" "$BODY" 'kill -- -"\$id"'
+assert_matches "and says why the bare pid is not enough" "$BODY" "orphan|wrapper"
+assert_not_matches "never a bare kill of the recorded pid" "$BODY" '[^-]kill "\$id"'
+assert_matches "the state table carries codex's failed state" "$BODY" '`failed`'
+
+echo "test: the recovery recipe is copy-pasted, so it handles BOTH backends"
+assert_matches "the recovery recipe branches on the backend column" "$BODY" 'codex\).*ps -o pgid='
+assert_matches "the codex branch group-kills" "$BODY" 'kill -- -"\$id"'
+assert_matches "the claude branch stops by session id" "$BODY" '\*\).*claude stop "\$id"'
+# With nothing busy, `read -r id kind` leaves both empty and the recipe falls through to
+# `claude stop ""`. And a recycled pid that no longer leads its own group means that group
+# is somebody else's — plausibly another run's worker wrapper, since those lead groups too.
+assert_matches "the stop is guarded on an empty id" "$BODY" '\[ -n "\$id" \] \|\|'
+# Both guards `exit 1` and they mean OPPOSITE things: one is "nothing busy, safe", the
+# other is "a live worker whose pid was recycled — do not kill that group, do not
+# respawn". An agent that reads a bare `exit 1` and guesses the first when the second
+# fired puts a second process on a live worktree, so each guard says which one it is.
+assert_matches "the empty-id guard says so" "$BODY" 'nothing busy.*exit 1'
+assert_matches "the recycled-pid guard says so" "$BODY" 'RECYCLED.*exit 1'
+# `ps -o pgid= -p` also comes back empty for a dead pid and errors for the id `-`, which is
+# what session-status.sh prints for a pid-less run dir — the launch window and the phantom
+# run dir. Refusing to kill is right for all three; calling all three "recycled" is not.
+assert_matches "and does not over-diagnose the other two" "$BODY" 'recycled, dead, or still launching'
+assert_matches "a group kill confirms the pid still leads its group" "$BODY" "ps -o pgid= -p"
+assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
+
+# The recovery block reads the status table TWICE — once to find the busy row, once to
+# verify the stop took — and each fenced block is its own command in a fresh shell, so a
+# `$RUNID` there expands to nothing, the table comes back empty, and the verify gate reads
+# "nothing busy" as "safe to respawn". Same hole as the bounded wait.
+assert_not_matches "the recovery block never reads the table through \$RUNID" "$BODY" '"\$S" +"\$RUNID"'
+assert_contains "the busy-row read uses the placeholder" "$BODY" 'read -r id kind < <("$S" <runid> <N>'
+
+echo "test: the verify-stopped gate fails CLOSED when the runid is left unfilled"
+# The gate exists to catch a stop that did not take. An empty runid makes the status read
+# come back empty, `-z` true, the gate pass, and the respawn land on a live worktree — so
+# run the SHIPPED line against a stub that, like session-status.sh, only reports rows for
+# the runid it was asked for. A snippet reading an outer `$RUNID` gets no row and returns 0.
+GATE_LINE="$(printf '%s\n' "$BODY" | grep -F '[ -z "$("$S"' | head -1)"
+if [ -z "$GATE_LINE" ]; then
+    no "no verify-stopped gate found in the README"
+else
+    STUB="$(mktemp -d)"
+    printf '#!/usr/bin/env bash\n[ "${1:-}" = r1 ] || exit 0\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
+    chmod +x "$STUB/status.sh"
+    (
+        set +u
+        unset RUNID
+        S="$STUB/status.sh"
+        eval "$(printf '%s\n' "$GATE_LINE" | sed "s|<runid>|r1|; s|<N>|12|")"
+    ) >/dev/null 2>&1
+    rc=$?
+    rm -rf "$STUB"
+    if [ "$rc" -ne 0 ]; then
+        ok "a still-busy row keeps the gate shut"
+    else
+        no "the verify gate passed with the runid unfilled — it is not self-contained"
+    fi
+fi
+
+echo "test: the bounded wait really waits — from a FRESH shell, with nothing preset"
+# Found live, twice. Each fenced block is its own shell invocation: `S=` is assigned in the
+# recovery block, `RUNID` nowhere in the file, so when the agent runs the wait as its own
+# command both are unset. The command substitution comes back empty, the `until` is
+# satisfied on its first pass, and the wait that exists to catch a stop that did not take
+# returns 0 instantly — clearing the way to respawn onto a live worktree. So run the
+# SHIPPED line with S and RUNID UNSET, filling only the placeholders an agent fills.
+WAIT_LINE="$(printf '%s\n' "$BODY" | grep -F 'timeout 60 bash -c' | head -1)"
+if [ -z "$WAIT_LINE" ]; then
+    no "no bounded-wait snippet found in the README"
+else
+    STUB="$(mktemp -d)"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
+    chmod +x "$STUB/status.sh"
+    (
+        unset S RUNID
+        eval "$(printf '%s\n' "$WAIT_LINE" | sed "s|timeout 60|timeout 3|
+            s|~/.claude/kit/infra/scripts/session-status.sh|$STUB/status.sh|
+            s|<runid>|r1|
+            s|<N>|12|")"
+    ) >/dev/null 2>&1
+    rc=$?
+    rm -rf "$STUB"
+    if [ "$rc" -eq 124 ]; then
+        ok "it waits for the deadline while the row stays busy"
+    else
+        no "the bounded wait returned $rc at once — the snippet is not self-contained"
+    fi
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

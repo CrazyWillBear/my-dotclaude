@@ -86,6 +86,22 @@ assert_matches "ambiguous builds nothing" "$BODY" "discuss.*[Bb]uild nothing|Bui
 assert_contains "explicit = what/where/done" "$BODY" "**Done**"
 assert_matches "announces the lane and proceeds without asking" "$BODY" "Announce the lane.*[Dd]o not ask|announcement .?is.? the veto window"
 
+echo "test: the ad-hoc lane's claim about the shipped roster is TRUE of the shipped roster"
+# The lane spawns through `Agent`, which takes claude model names only, so what it says
+# about `model-tiers.json` decides whether it passes a usable model or a `gpt-5.6-*` one.
+# Prose alone cannot stay honest here: assert it against the table it describes.
+assert_not_matches "no stale 'every cell is codex' claim" "$BODY" "every worker cell.{0,40}codex"
+assert_matches "the substitution is conditional on the cell" "$BODY" "[Ii]f a cell does say .?codex"
+TIERS="$(cd "$PLUGIN_ROOT/../infra" && pwd)/model-tiers.json"
+if grep -q '"backend": *"codex"' "$TIERS"; then
+    # not a failure of the table — a failure of THIS paragraph to have been updated with it
+    assert_matches "a codex cell shipped, so the lane must not call the roster claude-only" \
+        "$BODY" "backend: .?codex.? in (some|every)"
+else
+    assert_matches "the table is claude-only and the lane says so" "$BODY" \
+        "backend: .?claude.? in every cell"
+fi
+
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
 
@@ -142,6 +158,10 @@ assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
 # The state table (busy/idle/blocked/done/stopped/gone) and "never parse claude logs" moved
 # to infra's README, alongside session-status.sh — the script whose own test pins these states.
 assert_contains "liveness and recovery point at infra's README" "$BODY" "../../../infra/README.md#liveness-and-recovery"
+
+# The codex backend's control rules (a codex row is a PID: group-kill it, never `claude
+# stop`, and it cannot escalate mid-run) live with the liveness/recovery prose in infra's
+# README, and are pinned by plugins/infra/tests/test_readme.sh.
 
 echo "test: control is by session ID, not by name — stop/attach reject a name"
 assert_matches "says the id is what stop/attach take" "$BODY" "id, not the name|takes an id"

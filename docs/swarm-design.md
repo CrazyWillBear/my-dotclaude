@@ -90,6 +90,12 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
+**Not yet shipped.** `model-tiers.json` is still `backend=claude` in every cell. The codex path
+is built and tested, but the session lane subscribes to a worker with `SendMessage` and a codex
+worker's report lands in `last-message.txt`, which nothing reads — so a codex default would stall
+a run at its first worker. Orchestrator-side ingest of that file is the prerequisite, carried by
+the e2e gate (#96); `test_spawn.sh` pins the table to claude until then.
+
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
 affordable on the $20 codex plan. A review is a shorter turn than an implementation but sol
@@ -191,11 +197,19 @@ Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A w
 one-shot, so it maps onto `codex exec`:
 
 - **Launch.** `codex exec -C <worktree> -m gpt-5.6-<tier> -c model_reasoning_effort="<e>"
-  -c approval_policy="never" -s workspace-write --json -o <last-message-file>
+  -c approval_policy="never" -s workspace-write
+  -c 'sandbox_workspace_write.network_access=true' --json -o <last-message-file>
   [--output-schema <status-schema>] "<prompt>" </dev/null`. Model slugs are `gpt-5.6-luna`,
   `gpt-5.6-terra`, `gpt-5.6-sol`; efforts low through max. **Stdin must be closed** or codex
   blocks forever reading it. `-m` must always be passed: a resumed thread otherwise falls
-  back to the config default model.
+  back to the config default model. Verified: `workspace-write` is OFFLINE by default — a
+  `curl` inside it fails at DNS — and with `network_access=true` it returns 200. The flag is
+  not optional, since the worker's own prompt orders `gh` and `codex exec review`, and
+  `approval_policy=never` means it cannot ask for the network back. It cuts both ways:
+  workspace-write restricts writes, not reads, so a networked worker that ingests an
+  untrusted issue comment has both this machine's credentials and an egress path. Accepted
+  knowingly — claude workers already run with full network — and codex 0.154 offers no
+  domain allowlist to narrow it.
 - **Commits.** Workspace-write keeps `.git` read-only, so a worker that must commit needs
   `-c 'sandbox_workspace_write.writable_roots=["<git dir>"]'`. For a linked worktree that is
   the main repo's common git dir, since objects and refs live there. Verified: with the root
@@ -217,8 +231,22 @@ one-shot, so it maps onto `codex exec`:
 
 `infra/spawn.sh` switches on the tier's backend and writes a pid file and an exit-code file
 beside the event log; `session-status.sh` reports a codex worker from those the way it reports
-a claude worker from the agent list. The report contract is identical, so `/orchestrate` does
-not change.
+a claude worker from the agent list. The **state** vocabulary is identical, so `/orchestrate`'s
+liveness wait is unchanged — but **control is not**: column 2 is a PID, so a codex row is stopped
+with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no inbox a codex
+worker cannot escalate mid-run. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
+is a **group** kill — `kill -- -<pid>`: `spawn.sh` starts the wrapper under bash job control
+(`set -m`, a builtin — `setsid` is Linux-only and the kit runs on macOS too) so it leads its own
+process group, because killing the wrapper alone orphans codex onto the worktree and
+leaves no exit file, which reads as `failed` and frees the orchestrator to respawn on top of it.
+
+Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
+`stderr.log` (the only place a failed worker's reason lands), `last-message.txt`,
+`status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
+`done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
+`/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
+also swaps two steps: `codex exec review --base` replaces the `my-review` subagent, and the
+schema'd final message replaces `SendMessage`, which codex does not have.
 
 ## Rotation
 
@@ -293,5 +321,7 @@ test. The perf plugin comes out of `setup-dev.sh`, `README.md` and `AGENT_SETUP.
    (Landed #93: `/init-swarm` runs `vault init --layout swarm` when vault is on PATH, with
    a plain-directory fallback otherwise, plus the charter's auto-memory rule and each
    brief's `--agent` name.)
-7. **codex**: the backend switch in infra.
+7. **codex**: the backend switch in infra. (Landed #90: `spawn.sh`'s `codex exec` worker path
+   and codex worker state in `session-status.sh`. `model-tiers.json` stays on claude until
+   #96 lands the orchestrator-side report ingest.)
 8. **migrate** cogito, then wilcus-agents. Remove the perf plugin from the installer.

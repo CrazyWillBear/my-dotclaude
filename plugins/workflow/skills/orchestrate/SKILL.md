@@ -134,10 +134,14 @@ on a confirmation you already gave; the announcement *is* the veto window:
 
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
-**Claude-only.** Steps 3-5 spawn through the `Agent` tool, which accepts only claude model
-names — a `codex`-backend roster cell cannot run in this lane. Every shipped tier is
-all-claude today, so this is dormant; #90 wires codex routing for the *session* lane's
-`spawn.sh` only, and does not cover this consumer.
+**Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
+`Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
+`resolve-tier.sh` fails here. Today the shipped `model-tiers.json` is
+`backend: claude` in every cell, so its models are usable as-is: #90 built the codex path for
+the *session* lane's `spawn.sh` only and left the roster on claude until the orchestrator can
+read a codex worker's report. **If a cell does say `codex`, do not pass its model to `Agent`** —
+substitute the claude-side roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet`
+(reviewer `opus`), complex `opus`.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -431,8 +435,9 @@ The reasoning:
 # Liveness
 
 Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; session states
-(`busy`/`idle`/`blocked`/`done`/`stopped`/`gone`) and the full `stop` → verify → respawn recovery
-procedure are documented in [infra's README](../../../infra/README.md#liveness-and-recovery).
+(`busy`/`idle`/`blocked`/`done`/`stopped`/`failed`/`gone`), the codex backend's PID-based control,
+and the full `stop` → verify → respawn recovery procedure are documented in
+[infra's README](../../../infra/README.md#liveness-and-recovery).
 
 ---
 

@@ -43,6 +43,55 @@ assert_arg() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then ok "$1"; else no 
 dry() { bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"; }
 err() { cat "$WORK/err"; }
 
+# The roster a worker resolves decides which BACKEND it spawns through, so the tests
+# pin one instead of riding whatever the shipped table happens to say this week. The
+# claude-path assertions below run against CFG_CLAUDE; the codex section further down
+# swaps in CFG_CODEX, which is what proves a codex-routed tier reaches the codex path.
+# One test deliberately uses the REAL shipped table — to pin that it is still claude.
+CFG_CLAUDE="$WORK/cfg-claude"
+mkdir -p "$CFG_CLAUDE"
+cat >"$CFG_CLAUDE/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",  "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "haiku",  "effort": "max" },
+    "reviewer":    { "backend": "claude", "model": "sonnet", "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "max" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "xhigh" },
+    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "xhigh" }
+  }
+}
+JSON
+CFG_CODEX="$WORK/cfg-codex"
+mkdir -p "$CFG_CODEX"
+cat >"$CFG_CODEX/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" }
+  }
+}
+JSON
+export RESOLVE_TIER_ROOT="$CFG_CLAUDE"
+
 # A stub `claude` that dumps its argv, one per line, so the real exec path is testable.
 # It also echoes its stdin: an unattended session that inherits the caller's stdin can
 # block forever reading it, so the redirect is a flag-equivalent and is asserted below.
@@ -175,6 +224,278 @@ cp "$SPAWN" "$WORK/lone/spawn.sh"
 bash "$WORK/lone/spawn.sh" r1 12 standard /w base --dry-run --orchestrator orch-main >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
+
+# ---------------------------------------------------------------------------
+# The CODEX backend. A tier whose implementer row says `backend: codex` spawns through
+# `codex exec` instead of `claude --bg` (docs/swarm-design.md § Codex backend). Every
+# flag below is a way that worker dies quietly:
+#   -m               a resumed thread silently falls back to the config's default model
+#   -s workspace-write + writable_roots
+#                    workspace-write keeps .git READ-ONLY, so without the repo's common
+#                    git dir listed the worker writes its files and cannot commit —
+#                    and reports success. That is a whole issue built and lost.
+#   approval_policy=never
+#                    an unattended run that stops to ask is wedged with nobody there
+#   network_access=true
+#                    workspace-write is OFFLINE by default; the prompt orders gh and
+#                    codex commands, and approval_policy=never cannot ask for it back
+#   </dev/null       codex BLOCKS FOREVER reading an open stdin
+#   --json / -o / --output-schema / pid / exit
+#                    codex has no agent list, so these files ARE the session's state;
+#                    session-status.sh has nothing else to read it from
+CODEX_BIN="$WORK/codexbin"
+mkdir -p "$CODEX_BIN"
+# A stub `codex` that dumps its argv and stdin to stdout (which spawn.sh redirects into
+# the events file) and, like the real one, writes its final message to the `-o` path.
+cat >"$CODEX_BIN/codex" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@"
+printf 'STDIN:['; cat; printf ']\n'
+while [ $# -gt 0 ]; do
+    if [ "$1" = -o ]; then printf '{"issue":12,"status":"built"}\n' >"$2"; fi
+    shift
+done
+[ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
+exit "${STUB_CODEX_EXIT:-0}"
+STUB
+chmod +x "$CODEX_BIN/codex"
+
+# A REAL git worktree, because the writable root is resolved with
+# `git rev-parse --git-common-dir` and a fake path would make that assertion a fiction.
+REPO="$WORK/repo"
+mkdir -p "$REPO"
+git -C "$REPO" init -q 2>/dev/null
+GITDIR="$(cd "$REPO/.git" && pwd -P)"
+CODEX_ROOT="$WORK/codexruns"
+RUNDIR="$CODEX_ROOT/r9/issue-12"
+
+codex_dry() {
+    CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+        bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"
+}
+
+echo "test: a codex-tier worker spawns through codex exec, not claude"
+out=$(codex_dry r9 12 standard "$REPO" base)
+assert_arg "the codex CLI" "$out" "codex"
+assert_arg "exec subcommand" "$out" "exec"
+assert_not_contains "no claude --bg" "$out" "--bg"
+assert_arg "-C the worktree" "$out" "-C"
+assert_arg "the worktree path" "$out" "$REPO"
+assert_arg "-m is always passed" "$out" "-m"
+assert_arg "standard tier -> terra" "$out" "gpt-5.6-terra"
+assert_arg "reasoning effort from the roster" "$out" "model_reasoning_effort=max"
+assert_arg "never stops to ask" "$out" "approval_policy=never"
+assert_arg "sandbox mode" "$out" "-s"
+assert_arg "workspace-write" "$out" "workspace-write"
+assert_arg "the common git dir is writable, or the worker cannot commit" "$out" \
+    "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+# workspace-write turns the network OFF by default (verified on codex-cli 0.154), and
+# this worker's own prompt orders `gh issue view`, `gh issue comment` and `codex exec
+# review` — all network. With approval_policy=never it cannot even ask for it back.
+assert_arg "the sandbox lets the worker reach the network" "$out" \
+    "sandbox_workspace_write.network_access=true"
+assert_arg "streams events as json" "$out" "--json"
+assert_arg "-o the last message" "$out" "-o"
+assert_arg "last-message path" "$out" "$RUNDIR/last-message.txt"
+assert_arg "--output-schema" "$out" "--output-schema"
+assert_arg "schema path" "$out" "$RUNDIR/status-schema.json"
+assert_contains "and it carries the build protocol" "$out" "BUILD session for issue #12"
+# codex exec takes the prompt as its last positional, with no `--` fence and no variadic
+# option to swallow it — but it still has to BE last, or a flag lands after the prompt.
+p=$(printf '%s\n' "$out" | grep -n "BUILD session for issue #12" | head -1 | cut -d: -f1)
+o=$(printf '%s\n' "$out" | grep -nxF -- "--output-schema" | head -1 | cut -d: -f1)
+if [ -n "$p" ] && [ -n "$o" ] && [ "$p" -gt "$o" ]; then
+    ok "the prompt is the last argument, after every flag"
+else
+    no "the prompt at line $p is not after the flags (--output-schema at $o)"
+fi
+
+echo "test: the codex worker is told how to report — it has no SendMessage tool"
+assert_contains "says outright it has no SendMessage tool" "$out" "NO SendMessage tool"
+assert_not_contains "and is never told to use one" "$out" "MUST use the SendMessage tool"
+assert_contains "its final message is the report" "$out" "output schema"
+assert_contains "fixed-shape JSON status" "$out" '"status": "built"'
+assert_contains "reviews with codex exec review" "$out" "codex exec review --base base"
+
+echo "test: a codex dry run leaves no run dir behind"
+# session-status.sh reads a run dir with a pid file as a live worker, and one without a
+# pid as BUSY — the launch-window rule. A dry run that creates the dir hands it a phantom
+# the orchestrator waits on forever; the claude path's dry run touches nothing, so nor
+# may this one.
+rm -rf "$CODEX_ROOT/dryonly"
+CODEX_RUN_ROOT="$CODEX_ROOT/dryonly" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main >/dev/null 2>&1
+if [ -e "$CODEX_ROOT/dryonly" ]; then
+    no "the dry run created $CODEX_ROOT/dryonly — a phantom worker session-status reads as busy"
+else
+    ok "a dry run creates no run dir"
+fi
+
+echo "test: a failed schema write leaves no run dir behind either"
+# Same phantom, different exit: mkdir succeeds, then the schema redirect dies (read-only
+# fs, ENOSPC) and the pidless dir stays. session-status.sh:241-247 reads that as BUSY
+# forever, so /orchestrate's recovery gate never clears and the run stalls with no way
+# out. A `status-schema.json` that is already a DIRECTORY fails the redirect the same
+# way a read-only mount does, and does it for root too.
+rm -rf "$CODEX_ROOT/schemafail"
+mkdir -p "$CODEX_ROOT/schemafail/r9/issue-12/status-schema.json"
+CODEX_RUN_ROOT="$CODEX_ROOT/schemafail" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
+rc=$?
+assert_equals "an unwritable schema exits non-zero" "$rc" "1"
+if [ -e "$CODEX_ROOT/schemafail/r9/issue-12" ]; then
+    no "the failed spawn left $CODEX_ROOT/schemafail/r9/issue-12 — a phantom session-status reads as busy"
+else
+    ok "the failed spawn cleans up its run dir"
+fi
+rm -rf "$CODEX_ROOT/schemafail"
+
+echo "test: the codex tier is resolved per tier, not hardcoded"
+assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
+assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
+# A codex worker has no subagents either, so "spawn the planner" is the same stranding
+# bug as "use SendMessage" — it still has to PLAN, it just has to do it itself.
+out_cx=$(codex_dry r9 12 complex "$REPO" base)
+assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
+assert_not_contains "but is not told to spawn an agent it cannot spawn" \
+    "$out_cx" "workflow:planner"
+
+echo "test: a real codex spawn writes events, last-message, pid and exit files"
+rm -rf "$CODEX_ROOT"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
+# the spawn returns immediately; the worker runs in the background
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+for f in events.jsonl last-message.txt pid exit status-schema.json; do
+    if [ -f "$RUNDIR/$f" ]; then ok "wrote $f"; else no "missing $RUNDIR/$f"; fi
+done
+assert_equals "exit 0 recorded" "$(cat "$RUNDIR/exit" 2>/dev/null)" "0"
+assert_contains "the events file holds what codex streamed" "$(cat "$RUNDIR/events.jsonl")" "workspace-write"
+assert_contains "codex wrote its final message" "$(cat "$RUNDIR/last-message.txt")" '"status":"built"'
+assert_contains "the schema is real JSON naming the status field" \
+    "$(cat "$RUNDIR/status-schema.json")" '"status"'
+assert_contains "stdin is closed — codex blocks forever on an open one" \
+    "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
+assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
+
+echo "test: a codex worker that dies non-zero records it"
+rm -rf "$CODEX_ROOT"
+PATH="$CODEX_BIN:$PATH" STUB_CODEX_EXIT=3 CODEX_RUN_ROOT="$CODEX_ROOT" \
+    RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "the exit code is the one codex returned" "$(cat "$RUNDIR/exit" 2>/dev/null)" "3"
+
+# THE ORPHAN TRAP. The pid in the run dir is what /orchestrate's recovery kills, and the
+# process it names is the WRAPPER, not codex — codex is its child. Backgrounded with a
+# bare `&` the wrapper shares spawn.sh's process group, so the only safe target is the
+# wrapper alone: `kill $pid` reaps it, leaves codex running as an orphan still writing the
+# worktree, and writes no exit file — which session-status.sh reads as `failed`, clearing
+# the recovery gate for a respawn onto that same worktree. Two processes, one worktree,
+# corruption, reached by following the recovery recipe. So spawn.sh starts the wrapper
+# under job control: the recorded pid leads its own group and `kill -- -$pid` reaches
+# codex with it.
+#
+# Spawns a long-running worker under $2 as PATH, proves the recorded pid leads its own
+# group, then group-kills it and proves nothing survived. $1 labels the case.
+check_group() {
+    local label="$1" spath="$2" wpid pgid
+    rm -rf "$CODEX_ROOT"
+    PATH="$spath" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
+        RESOLVE_TIER_ROOT="$CFG_CODEX" \
+        bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$RUNDIR/pid" ] && break; sleep 0.2; done
+    wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
+    pgid="$(ps -o pgid= -p "$wpid" 2>/dev/null | tr -d ' ')"
+    # an empty wpid must not meet an empty pgid and read as a pass
+    if [ -z "$wpid" ] || [ "$pgid" != "$wpid" ]; then
+        # NEVER kill this group: it is the test runner's own, which is the whole finding.
+        no "$label: the recorded pid ('$wpid') does not lead its own group ('$pgid') — a group kill would take the caller down"
+        [ -n "$wpid" ] && kill "$wpid" 2>/dev/null
+        pkill -f "$CODEX_BIN/codex" 2>/dev/null
+        return
+    fi
+    ok "$label: the recorded pid IS its group leader"
+    # wait for the stub to actually join the group, or "no orphan" passes on a group
+    # codex had not reached yet
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        [ "$(pgrep -g "$pgid" 2>/dev/null | wc -l)" -ge 2 ] && break; sleep 0.2
+    done
+    assert_equals "$label: codex runs inside that group, not beside it" \
+        "$([ "$(pgrep -g "$pgid" 2>/dev/null | wc -l)" -ge 2 ] && echo yes)" "yes"
+    kill -- -"$pgid" 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(pgrep -g "$pgid" 2>/dev/null)" ] && break; sleep 0.2; done
+    if [ -z "$(pgrep -g "$pgid" 2>/dev/null)" ]; then
+        ok "$label: one group kill leaves no orphan behind"
+    else
+        no "$label: survivors after kill -- -$pgid: $(pgrep -g "$pgid" | tr '\n' ' ')"
+        pkill -9 -g "$pgid" 2>/dev/null
+    fi
+}
+
+echo "test: the recorded pid leads its own process group, so a stop can reach codex"
+check_group "group" "$CODEX_BIN:$PATH"
+
+echo "test: and it does so without setsid — macOS ships none, and the kit promises macOS"
+# `setsid` is util-linux, i.e. Linux-only, while README.md and AGENT_SETUP.md both promise
+# macOS / Linux / WSL. So the wrapper's group comes from bash's own job control (`set -m`),
+# a builtin, not from an external command. This shim fails the way a missing setsid would:
+# if spawn.sh reaches for it at all, no worker comes up and the group assertions go red.
+NOSETSID="$WORK/nosetsid"
+mkdir -p "$NOSETSID"
+printf '#!/usr/bin/env bash\necho "setsid: not found" >&2\nexit 127\n' >"$NOSETSID/setsid"
+chmod +x "$NOSETSID/setsid"
+check_group "no setsid" "$NOSETSID:$CODEX_BIN:$PATH"
+
+echo "test: the spawn prints the run dir and returns — it does not hold stdout open"
+# The codex path's stdout IS its return value (the run dir), so a caller reads it with
+# `$(...)`. A worker that inherits stdout holds the pipe's write end for its whole run,
+# and that command substitution blocks until the worker exits — the opposite of a spawn.
+rm -rf "$CODEX_ROOT"
+t0=$SECONDS
+out=$(PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=8 CODEX_RUN_ROOT="$CODEX_ROOT" \
+      RESOLVE_TIER_ROOT="$CFG_CODEX" \
+      bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main 2>/dev/null)
+assert_equals "prints the run dir" "$out" "$RUNDIR"
+if [ "$((SECONDS - t0))" -lt 4 ]; then
+    ok "and returns at once"
+else
+    no "the capture blocked $((SECONDS - t0))s — the worker inherited stdout"
+fi
+# no `|| echo 0` fallback: pkill reads group 0 as its OWN group, so a run that wrote no
+# pid file — i.e. a red test — would SIGTERM the test runner instead of a worker.
+wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
+[ -n "$wpid" ] && kill -- -"$wpid" 2>/dev/null
+
+echo "test: codex is never a peer — a peer needs an inbox and codex has none"
+printf 'You are the swe-manager.\n' >"$WORK/pb.md"
+printf 'CHARTER line.\n' >"$WORK/pc.md"
+assert_not_contains "a peer stays claude whatever the tier table says" \
+    "$(RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" peer --name p --brief "$WORK/pb.md" \
+        --charter "$WORK/pc.md" --model opus --effort high --orchestrator orch-main \
+        --dry-run 2>/dev/null)" "codex"
+
+# The codex path above is built, tested and ready; the SHIPPED roster is deliberately
+# NOT on it. The session lane subscribes to a worker with SendMessage and waits for its
+# report, and a codex worker's report lands in last-message.txt, which nothing reads —
+# so a codex default stalls a run at its first worker. Orchestrator-side ingest is the
+# prerequisite (#96). Flipping model-tiers.json before that lands trips this test.
+echo "test: the SHIPPED roster still routes workers through claude — the flip is on hold"
+for t in trivial standard complex; do
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+    assert_arg "shipped $t spawns claude" "$out" "--bg"
+    assert_not_contains "shipped $t is not on codex yet (needs #96's report ingest)" \
+        "$out" "codex exec"
+done
+
+echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
+mkdir -p "$WORK/nogit"
+CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$WORK/nogit" base --orchestrator orch-main --dry-run \
+    >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "says why" "$(err)" "git"
 
 # ---------------------------------------------------------------------------
 # The PEER form. A peer is a standing role session, not a one-issue worker: it is named
