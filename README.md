@@ -61,7 +61,7 @@ Then **restart Claude Code** so it loads the plugins.
   **Full reference:** [`plugins/context/README.md`](plugins/context/README.md).
 - **`personal-tools`** plugin (`plugins/personal-tools/`) — my own slash commands and
   subagents: `/explain`, `/diagnose`, `/my-review`, `/dedup-search`, `/init-python-project`,
-  and the human-in-the-loop dev front-end `/grill-me` → `/to-prd` → `/to-issues`. It also
+  and the human-in-the-loop front-end `/grill-me`. It also
   ships the **worktree guard** — a `PreToolUse` hook that keeps writes out of a repo's
   primary checkout and into a per-task worktree (`EnterWorktree`), so parallel sessions
   never collide, plus a `SessionStart` GC backstop for crash-orphaned worktrees.
@@ -73,7 +73,8 @@ Then **restart Claude Code** so it loads the plugins.
 - **`workflow`** plugin (`plugins/workflow/`) — `/orchestrate`, a standing dispatcher that
   routes work by shape: one explicit unit runs as a subagent chain; an issue graph or PRD
   gets one real background Claude Code session per issue, each in its own worktree,
-  coordinating over the issue thread.
+  coordinating over the issue thread. Also ships the manager's front half, `/to-prd` → `/to-issues`,
+  which turns an aligned task into a PRD issue and slices it into the tiered issues `/orchestrate` builds.
   **Full reference:** [`plugins/workflow/README.md`](plugins/workflow/README.md).
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
@@ -221,7 +222,7 @@ my-dotclaude/
 │   ├── context/           # watchdog/resume/handoff hooks + /handoff, /handoff-plan — see plugins/context/README.md
 │   ├── personal-tools/    # slash commands + subagents — see plugins/personal-tools/README.md
 │   ├── infra/             # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
-│   ├── workflow/          # /orchestrate dispatcher — see plugins/workflow/README.md
+│   ├── workflow/          # /orchestrate dispatcher + /to-prd, /to-issues — see plugins/workflow/README.md
 │   └── swarm/             # /init-swarm roster, charter + per-role briefs
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)

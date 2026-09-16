@@ -14,8 +14,6 @@ plugins/personal-tools/
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted review; forward-or-judge model pick
-│   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
-│   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 │   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
@@ -48,18 +46,6 @@ plugins/personal-tools/
   results and tool-call parameters, so measuring the raw file tripped the size cap on exactly the
   long, reversal-heavy sessions this check is worth running on. Pairs with `/grill-me` →
   `/to-prd` → `/to-issues`.
-- **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
-  a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
-  template verbatim, and publish it labeled `prd` (a tracking doc — *not* built directly).
-  `/to-issues` then slices it into the `ready-for-agent` issues the `workflow` plugin's
-  `/orchestrate` loop builds.
-- **`/to-issues <#>`** — break a PRD issue into **tracer-bullet vertical slices** (each cuts all
-  layers, demoable alone): quiz me on granularity/dependencies/HITL/tier, then file them in
-  dependency order so each issue's `## Blocked by` carries real `#N` refs. Labels slices
-  `ready-for-agent` **and their complexity tier** (`tier:trivial|standard|complex`, by
-  `classify-task`'s rubric — the tier is what routes `/orchestrate`'s planner/implementer/reviewer
-  models, and it's set here because the slicing exploration already grounds it), plus `hitl` where
-  a human is needed; never edits the parent PRD.
 - **`/dedup-search [task]`** — search the repo for reusable or extendable code before writing
   anything new. It extracts 3–8 concrete search terms from the task description, runs the
   `scripts/dedup-search.sh` helper against the repo, and triages each candidate into
