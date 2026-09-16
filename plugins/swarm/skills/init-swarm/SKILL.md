@@ -51,21 +51,31 @@ briefs, and memory.
    the matching `templates/briefs/<role>.md`, verbatim. An unchosen role gets no
    brief and no inbox directory.
 
-8. **Scaffold `.claude/swarm/memory/`** from the roster you just wrote
-   (`docs/swarm-design.md` § Memory tiers) — this is the real central mechanism, never
-   hand-invent the policy file yourself:
-   - Check `command -v vault`. **If found**, run it for real, literally:
-     `vault init --layout swarm --roster .claude/swarm/roster.json --vault .claude/swarm/memory`.
-     This creates `shared/`, plus `roles/<role>/` and `proposals/<role>/` for every
-     chosen role whose `kind` is `manager` or `doer` (orchestrator needs none of its
-     own — its policy rule already covers the whole tree), plus
+8. **Scaffold `.claude/swarm/memory/`** — run the plugin's own memory scaffolder,
+   literally `bash "${CLAUDE_PLUGIN_ROOT}/scripts/memory.sh" scaffold`, against the
+   project directory you just wrote the roster into. This is the real central
+   mechanism (`docs/swarm-design.md` § Memory tiers) — never hand-invent the policy
+   file, and never re-implement its vault-vs-fallback decision inline here:
+   - Real `wilcus-vault` runs, literally
+     `vault init --layout swarm --roster .claude/swarm/roster.json --vault .claude/swarm/memory`,
+     when `vault` is on PATH **and** identifies itself as wilcus-vault (its `--help`
+     names `--layout swarm` — a bare `command -v vault` alone would also match
+     HashiCorp Vault, a common tool with the same binary name). This creates
+     `shared/`, plus `roles/<role>/` and `proposals/<role>/` for every chosen role
+     whose `kind` is `manager` or `doer` (orchestrator needs none of its own — its
+     policy rule already covers the whole tree), plus
      `.claude/swarm/memory/.vault-policy.json`.
-   - **If not found**, print one line — `vault not on PATH — wrote the plain directory
-     layout, no policy file (install wilcus-vault to add scoping)` — and create the
-     same directories yourself with `mkdir -p`: `.claude/swarm/memory/shared/`, plus
+   - Otherwise it prints one line — `vault not on PATH — wrote the plain directory
+     layout, no policy file (install wilcus-vault to add scoping)` — and makes the
+     same directories itself: `.claude/swarm/memory/shared/`, plus
      `.claude/swarm/memory/roles/<role>/` and `.claude/swarm/memory/proposals/<role>/`
      for every chosen role whose `kind` is `manager` or `doer`. No policy file — only
      vault generates one.
+   - Re-running this once vault is installed, on a project that so far only has the
+     plain fallback, upgrades it in place: an empty fallback tree is cleared and
+     handed to vault init for real, but one that already holds a file is left alone
+     and the script refuses — relay that refusal to me rather than retrying blindly.
+   Report whatever the script printed.
 
 9. **Validate before reporting done.** Run the plugin's own roster validator —
    literally `bash "${CLAUDE_PLUGIN_ROOT}/scripts/roster.sh" validate` — against the
