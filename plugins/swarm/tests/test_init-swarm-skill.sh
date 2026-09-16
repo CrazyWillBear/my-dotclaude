@@ -84,8 +84,12 @@ assert_contains "shows a diff before overwriting" "$BODY" "diff"
 assert_contains "asks before overwriting, same precedent as init-python-project" "$BODY" "ask before overwriting"
 assert_contains "never clobbers silently" "$BODY" "never clobber silently"
 
-echo "test: it sets honest expectations about what ships later"
-assert_contains "notes swarm.sh is a later issue" "$BODY" "swarm.sh"
+# The skill writes the roster and stops. Someone who has just run it needs the one
+# command that turns those files into running sessions, or the swarm is three files
+# and nothing else.
+echo "test: it hands off to the command that actually starts the roles"
+assert_contains "points at swarm.sh up" "$BODY" 'swarm.sh" up'
+assert_contains "and is clear it starts nothing itself" "$BODY" "spawn anything"
 
 # ---------------------------------------------------------------------------
 echo "test: central mechanism — simulate the skill's Steps 1/4/5/6/7 for real, in a scratch repo"

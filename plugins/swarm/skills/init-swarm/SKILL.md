@@ -8,8 +8,8 @@ allowed-tools: Read, Write, Bash, Glob, AskUserQuestion
 Scaffold `.claude/swarm/` for the current project: a roster of peer roles, the shared
 charter, and one brief per role chosen. This implements
 `docs/swarm-design.md` § Roster / § Roles shipped in v1 / § Charter. It does **not**
-spawn anything — `swarm.sh up|down|attach` (the piece that actually starts peers) is a
-later issue; this command only writes the roster, the charter, and the briefs.
+spawn anything: this command only writes the roster, the charter, and the briefs.
+Starting the roles is `bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm.sh" up`, afterwards.
 
 ## Steps
 
@@ -55,5 +55,6 @@ later issue; this command only writes the roster, the charter, and the briefs.
    project directory you just wrote to. If it fails, fix the roster and re-run it —
    never report success on a roster you have not validated through the real script.
 
-9. **Report** the files written and which roles were installed. Note that
-   `swarm.sh up`/`down`/`attach` (spawning these roles) ships in a later issue.
+9. **Report** the files written and which roles were installed, and give me the next
+   command verbatim: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm.sh" up` — it starts
+   every peer and then hands the terminal to the orchestrator.
