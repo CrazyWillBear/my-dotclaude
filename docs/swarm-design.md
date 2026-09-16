@@ -234,8 +234,9 @@ a claude worker from the agent list. The **state** vocabulary is identical, so `
 liveness wait is unchanged — but **control is not**: column 2 is a PID, so a codex row is stopped
 with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no inbox a codex
 worker cannot escalate mid-run. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
-is a **group** kill — `kill -- -<pid>`: `spawn.sh` `setsid`s the wrapper into its own process
-group for exactly this, because killing the wrapper alone orphans codex onto the worktree and
+is a **group** kill — `kill -- -<pid>`: `spawn.sh` starts the wrapper under bash job control
+(`set -m`, a builtin — `setsid` is Linux-only and the kit runs on macOS too) so it leads its own
+process group, because killing the wrapper alone orphans codex onto the worktree and
 leaves no exit file, which reads as `failed` and frees the orchestrator to respawn on top of it.
 
 Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,

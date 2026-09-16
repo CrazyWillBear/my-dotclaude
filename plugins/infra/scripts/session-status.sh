@@ -219,8 +219,9 @@ for agent in agents:
 # The words go through the same state_of() the agent list does, deliberately: working ->
 # busy, completed -> done. /orchestrate's liveness loop waits on `$4 == "busy"`, so a
 # private spelling here would read as finished the moment the worker started and the run
-# would merge branches nothing had built yet. Column 2 is the PID — `kill` takes it the
-# way `claude stop` takes an id.
+# would merge branches nothing had built yet. Column 2 is the PID — and it is the WRAPPER's,
+# which leads its own process group, so a stop is `kill -- -<pid>`: a plain `kill` reaps the
+# wrapper and orphans codex onto the worktree.
 codex_root = os.path.join(os.environ.get("STATUS_CODEX_ROOT", ""), runid)
 if not (self_mode or peers_mode) and os.path.isdir(codex_root):
     for entry in sorted(os.listdir(codex_root)):

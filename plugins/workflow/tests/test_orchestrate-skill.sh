@@ -204,7 +204,12 @@ assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "re
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"
 # The recovery recipe is copy-pasted, so it has to handle BOTH backends: `claude stop`
 # cannot take a PID, and a codex row's column 2 is one.
-assert_matches "the recovery recipe branches on the backend column" "$BODY" "codex\).{0,40}kill"
+assert_matches "the recovery recipe branches on the backend column" "$BODY" 'codex\).*kill -- -'
+# With nothing busy, `read -r id kind` leaves both empty and the recipe falls through to
+# `claude stop ""`. And a recycled pid that no longer leads its own group means that group
+# is somebody else's — plausibly another run's worker wrapper, since those lead groups too.
+assert_matches "the stop is guarded on an empty id" "$BODY" '\[ -n "\$id" \] \|\| exit 1'
+assert_matches "a group kill confirms the pid still leads its group" "$BODY" "ps -o pgid= -p"
 assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
 assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
@@ -213,6 +218,34 @@ assert_matches "respawn once, escalate on the second" "$BODY" "[Rr]espawn once"
 # forever — observed live, so the wait is bounded and ends in an escalation.
 assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
 assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
+
+echo "test: the bounded wait really waits — a single-quoted bash -c body does not"
+# Found live: the body runs in a CHILD shell, where a plain `S=...` assignment in the
+# recipe above is not visible. $S and $RUNID expand to nothing, the command substitution
+# is empty, the `until` is satisfied on its first pass, and the wait that exists to catch
+# a stop that did not take returns 0 instantly. So run the SHIPPED line against a stub
+# that never stops reporting busy, with S and RUNID unexported exactly as the recipe
+# leaves them: it must burn its deadline instead of passing.
+WAIT_LINE="$(printf '%s\n' "$BODY" | grep -F 'timeout 60 bash -c' | head -1)"
+if [ -z "$WAIT_LINE" ]; then
+    no "no bounded-wait snippet found in the skill"
+else
+    STUB="$(mktemp -d)"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "orch-r1-issue-12 1234 codex busy"\n' >"$STUB/status.sh"
+    chmod +x "$STUB/status.sh"
+    (
+        S="$STUB/status.sh"
+        RUNID=r1
+        eval "$(printf '%s\n' "$WAIT_LINE" | sed 's/timeout 60/timeout 3/; s/<N>/12/')"
+    ) >/dev/null 2>&1
+    rc=$?
+    rm -rf "$STUB"
+    if [ "$rc" -eq 124 ]; then
+        ok "it waits for the deadline while the row stays busy"
+    else
+        no "the bounded wait returned $rc at once — \$S and \$RUNID do not reach the child shell"
+    fi
+fi
 assert_matches "and it escalates rather than respawning blindly" "$BODY" "do not respawn"
 assert_contains "the count comes from the run log" "$BODY" "run-log.sh"
 

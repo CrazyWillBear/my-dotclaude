@@ -523,8 +523,11 @@ PID, and `claude stop` and `claude attach` take a *session* id: a codex row is s
 child, so a bare kill of it reaps the wrapper, leaves codex running as an **orphan still writing
 the worktree**, and writes no exit file — which this table reads as `failed`, which clears the
 respawn gate below, which puts a second worker on a worktree the first never left. `spawn.sh`
-`setsid`s the wrapper for exactly this, so the recorded pid leads its own group and one kill
-reaches both: `kill -- -"$id"`, then `kill -9 -- -"$id"` if it outlives the bounded wait below. It also has no inbox, so it **cannot escalate mid-run** — an `escalate`
+starts the wrapper under bash job control for exactly this, so the recorded pid leads its own
+group and one kill reaches both: `kill -- -"$id"`, then `kill -9 -- -"$id"` if it outlives the
+bounded wait below.
+
+A codex worker also has no inbox, so it **cannot escalate mid-run** — an `escalate`
 reaches you only in its final message, after the process has already exited. Its reason for
 dying is in `stderr.log` beside the event log; nothing else records it.
 
@@ -546,8 +549,11 @@ S=~/.claude/kit/infra/scripts/session-status.sh
 # column 3 is the backend, and it decides the stop: a codex id is a PID, which
 # `claude stop` cannot take, and the kill has to be a GROUP kill (see above).
 read -r id kind < <("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2, $3}')
+[ -n "$id" ] || exit 1              # nothing busy: never fall through to `claude stop ""`
+# The codex pid is the wrapper and leads its own group. If it no longer does, it was
+# RECYCLED and that group belongs to someone else — plausibly another run's worker.
 case "$kind" in
-    codex) kill -- -"$id" ;;        # the group — the pid is the wrapper, codex is its child
+    codex) [ "$(ps -o pgid= -p "$id" | tr -d ' ')" = "$id" ] || exit 1; kill -- -"$id" ;;
     *)     claude stop "$id" ;;
 esac
 # verify: NO row for this issue may still be busy
@@ -570,8 +576,12 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
   bounded, then escalate — never spin**:
 
   ```bash
-  timeout 60 bash -c 'until [ -z "$("$S" "$RUNID" <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
+  S="$S" RUNID="$RUNID" timeout 60 bash -c 'until [ -z "$("$S" "$RUNID" <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
   ```
+
+  The `S=` `RUNID=` prefix is load-bearing: the body runs in a **child** shell, and a plain
+  assignment above is not exported. Without it both expand to nothing, the `until` is satisfied
+  on its first pass, and the wait passes instantly — which is a stop that did not take, missed.
 
   If that times out, **do not respawn**. The safety rule is unchanged — two processes on one
   worktree corrupts it — so tell the user instead, naming the id and the worktree, and let them

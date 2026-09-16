@@ -47,7 +47,8 @@ ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 ├── stderr.log          # codex's progress, and the ONLY place a failure's reason lands
 ├── last-message.txt    # -o: the final message, shaped by --output-schema
 ├── status-schema.json  # the worker's fixed-shape status report
-├── pid                 # alive => busy
+├── pid                 # alive => busy. The WRAPPER's pid, and its group leader:
+│                       #   stop it with `kill -- -<pid>` or codex is orphaned
 └── exit                # 0 => done, anything else => failed
 ```
 
