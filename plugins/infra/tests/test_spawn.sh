@@ -367,45 +367,66 @@ PATH="$CODEX_BIN:$PATH" STUB_CODEX_EXIT=3 CODEX_RUN_ROOT="$CODEX_ROOT" \
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_equals "the exit code is the one codex returned" "$(cat "$RUNDIR/exit" 2>/dev/null)" "3"
 
-echo "test: the recorded pid leads its own process group, so a stop can reach codex"
 # THE ORPHAN TRAP. The pid in the run dir is what /orchestrate's recovery kills, and the
 # process it names is the WRAPPER, not codex — codex is its child. Backgrounded with a
 # bare `&` the wrapper shares spawn.sh's process group, so the only safe target is the
 # wrapper alone: `kill $pid` reaps it, leaves codex running as an orphan still writing the
 # worktree, and writes no exit file — which session-status.sh reads as `failed`, clearing
 # the recovery gate for a respawn onto that same worktree. Two processes, one worktree,
-# corruption, reached by following the recovery recipe. So spawn.sh `setsid`s the wrapper:
-# the recorded pid leads its own group and `kill -- -$pid` reaches codex with it.
-rm -rf "$CODEX_ROOT"
-PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
-    RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
-for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$RUNDIR/pid" ] && break; sleep 0.2; done
-wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
-pgid="$(ps -o pgid= -p "$wpid" 2>/dev/null | tr -d ' ')"
-assert_equals "the recorded pid IS its group leader" "$pgid" "$wpid"
-if [ -n "$pgid" ] && [ "$pgid" = "$wpid" ]; then
+# corruption, reached by following the recovery recipe. So spawn.sh starts the wrapper
+# under job control: the recorded pid leads its own group and `kill -- -$pid` reaches
+# codex with it.
+#
+# Spawns a long-running worker under $2 as PATH, proves the recorded pid leads its own
+# group, then group-kills it and proves nothing survived. $1 labels the case.
+check_group() {
+    local label="$1" spath="$2" wpid pgid
+    rm -rf "$CODEX_ROOT"
+    PATH="$spath" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
+        RESOLVE_TIER_ROOT="$CFG_CODEX" \
+        bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$RUNDIR/pid" ] && break; sleep 0.2; done
+    wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
+    pgid="$(ps -o pgid= -p "$wpid" 2>/dev/null | tr -d ' ')"
+    # an empty wpid must not meet an empty pgid and read as a pass
+    if [ -z "$wpid" ] || [ "$pgid" != "$wpid" ]; then
+        # NEVER kill this group: it is the test runner's own, which is the whole finding.
+        no "$label: the recorded pid ('$wpid') does not lead its own group ('$pgid') — a group kill would take the caller down"
+        [ -n "$wpid" ] && kill "$wpid" 2>/dev/null
+        pkill -f "$CODEX_BIN/codex" 2>/dev/null
+        return
+    fi
+    ok "$label: the recorded pid IS its group leader"
     # wait for the stub to actually join the group, or "no orphan" passes on a group
     # codex had not reached yet
     for _ in 1 2 3 4 5 6 7 8 9 10; do
         [ "$(pgrep -g "$pgid" 2>/dev/null | wc -l)" -ge 2 ] && break; sleep 0.2
     done
-    assert_equals "codex runs inside that group, not beside it" \
+    assert_equals "$label: codex runs inside that group, not beside it" \
         "$([ "$(pgrep -g "$pgid" 2>/dev/null | wc -l)" -ge 2 ] && echo yes)" "yes"
     kill -- -"$pgid" 2>/dev/null
     for _ in 1 2 3 4 5 6 7 8 9 10; do [ -z "$(pgrep -g "$pgid" 2>/dev/null)" ] && break; sleep 0.2; done
     if [ -z "$(pgrep -g "$pgid" 2>/dev/null)" ]; then
-        ok "one group kill leaves no orphan behind"
+        ok "$label: one group kill leaves no orphan behind"
     else
-        no "survivors after kill -- -$pgid: $(pgrep -g "$pgid" | tr '\n' ' ')"
+        no "$label: survivors after kill -- -$pgid: $(pgrep -g "$pgid" | tr '\n' ' ')"
         pkill -9 -g "$pgid" 2>/dev/null
     fi
-else
-    # NEVER kill this group: it is the test runner's own, which is the whole finding.
-    no "codex shares a process group with its spawner — a group kill would take the caller down"
-    kill "$wpid" 2>/dev/null
-    pkill -f 'codexbin/codex' 2>/dev/null
-fi
+}
+
+echo "test: the recorded pid leads its own process group, so a stop can reach codex"
+check_group "group" "$CODEX_BIN:$PATH"
+
+echo "test: and it does so without setsid — macOS ships none, and the kit promises macOS"
+# `setsid` is util-linux, i.e. Linux-only, while README.md and AGENT_SETUP.md both promise
+# macOS / Linux / WSL. So the wrapper's group comes from bash's own job control (`set -m`),
+# a builtin, not from an external command. This shim fails the way a missing setsid would:
+# if spawn.sh reaches for it at all, no worker comes up and the group assertions go red.
+NOSETSID="$WORK/nosetsid"
+mkdir -p "$NOSETSID"
+printf '#!/usr/bin/env bash\necho "setsid: not found" >&2\nexit 127\n' >"$NOSETSID/setsid"
+chmod +x "$NOSETSID/setsid"
+check_group "no setsid" "$NOSETSID:$CODEX_BIN:$PATH"
 
 echo "test: the spawn prints the run dir and returns — it does not hold stdout open"
 # The codex path's stdout IS its return value (the run dir), so a caller reads it with
@@ -422,7 +443,10 @@ if [ "$((SECONDS - t0))" -lt 4 ]; then
 else
     no "the capture blocked $((SECONDS - t0))s — the worker inherited stdout"
 fi
-pkill -g "$(cat "$RUNDIR/pid" 2>/dev/null || echo 0)" 2>/dev/null
+# no `|| echo 0` fallback: pkill reads group 0 as its OWN group, so a run that wrote no
+# pid file — i.e. a red test — would SIGTERM the test runner instead of a worker.
+wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
+[ -n "$wpid" ] && kill -- -"$wpid" 2>/dev/null
 
 echo "test: codex is never a peer — a peer needs an inbox and codex has none"
 printf 'You are the swe-manager.\n' >"$WORK/pb.md"

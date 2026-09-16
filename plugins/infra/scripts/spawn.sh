@@ -44,7 +44,9 @@
 # You need it: `claude stop` and `claude attach` take that id — `Usage: claude stop
 # <id>` — and reject a session NAME outright. The name addresses SendMessage; the id
 # controls the process. A CODEX spawn instead backgrounds the process, prints its run
-# dir, and returns: column 2 is then a PID, which `claude stop` does not take (kill it).
+# dir, and returns: column 2 is then a PID, which `claude stop` does not take. It is the
+# WRAPPER's pid and its group leader, so stop it with a group kill — `kill -- -<pid>` —
+# which takes codex with it; a plain `kill` orphans codex onto the worktree.
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
@@ -428,25 +430,29 @@ SCHEMA
 # session-status.sh reads "pid alive" as busy, and a gap between the process ending and
 # the exit file appearing would read as a worker that died without a code.
 #
-# `setsid`, not a bare `&`, because THE RECORDED PID MUST BE KILLABLE. It names the
+# `set -m`, not a bare `&`, because THE RECORDED PID MUST BE KILLABLE. It names the
 # WRAPPER; codex is its child. `kill $pid` on its own reaps the wrapper, orphans codex
 # onto the worktree, and writes no exit file — which session-status.sh reads as `failed`,
 # clearing /orchestrate's respawn gate for a second worker on a worktree the orphan is
 # still writing. And a bare `&` leaves the wrapper in SPAWN.SH'S OWN process group, so
-# the obvious fix — kill the group — would take the orchestrator down with it. setsid
-# gives the wrapper its own group led by the recorded pid, so `kill -- -$pid` reaches
-# codex and nothing else. spawn.sh runs without job control, so setsid execs in place and
-# the pid it reports IS the group leader; test_spawn.sh checks that rather than trusting it.
+# the obvious fix — kill the group — would take the orchestrator down with it. Job control
+# puts a background job in a NEW group led by the pid `$!` reports, so `kill -- -$pid`
+# reaches codex and nothing else.
+#
+# `set -m` is a bash builtin and deliberately NOT `setsid`, which is util-linux: macOS
+# ships none, and README.md and AGENT_SETUP.md both promise macOS. A non-interactive
+# shell prints no job-control notification, and test_spawn.sh proves the group — with
+# setsid shimmed out — rather than trusting either claim.
 #
 # Its own stdout/stderr go to /dev/null: a background worker holding the caller's `$( )`
 # pipe open for its whole run turns this spawn into a blocking wait.
 # </dev/null because codex BLOCKS FOREVER on an open stdin.
-command -v setsid >/dev/null 2>&1 \
-    || die "setsid is required to spawn a codex worker in its own process group"
-setsid bash -c '
+set -m
+bash -c '
     rundir=$1; shift
     "$@" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     printf "%s\n" "$?" >"$rundir/exit"' _ "$RUNDIR" "${CMD[@]}" >/dev/null 2>&1 &
+set +m
 printf '%s\n' "$!" >"$RUNDIR/pid"
 printf '%s\n' "$RUNDIR"
 exit 0
