@@ -277,10 +277,10 @@ lines=$(wc -l <"$SKILL_FILE")
 if [ "$lines" -lt 900 ]; then ok "SKILL.md is $lines lines (was 1330)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
-for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self"; do
+for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh; do
     assert_contains "calls $s via ~/.claude/kit/infra" "$BODY" "bash ~/.claude/kit/infra/scripts/$s"
 done
-for s in session-status.sh check-inbound.sh resolve-tier.sh; do
+for s in session-status.sh check-inbound.sh resolve-tier.sh spawn.sh; do
     assert_not_contains "no plugin-root path to $s" "$BODY" '${CLAUDE_PLUGIN_ROOT}/scripts/'"$s"
 done
 assert_contains "fails loud without infra" "$BODY" "infra plugin not installed"

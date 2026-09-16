@@ -318,7 +318,7 @@ model can, and historically did, hallucinate.
 3. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**;
    `standard`/`complex` → a **session**:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" "$RUNID" <N> <tier> \
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH"
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
@@ -522,7 +522,7 @@ claude stop "$id"
 # verify: NO row for this issue may still be busy
 [ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" ...                     # same worktree, same branch
+bash ~/.claude/kit/infra/scripts/spawn.sh ...                         # same worktree, same branch
 ```
 
 **One issue can have several rows.** Every session a run ever started keeps its row (the list
@@ -672,8 +672,8 @@ with real tests:
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
 | `resolve-tier.sh` | tier → {model, effort} |
 
-`session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra** plugin and are
-always called at `~/.claude/kit/infra/scripts/`.
+`spawn.sh`, `session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra**
+plugin and are always called at `~/.claude/kit/infra/scripts/`.
 
 ---
 
