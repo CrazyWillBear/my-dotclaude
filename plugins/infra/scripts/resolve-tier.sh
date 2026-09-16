@@ -41,9 +41,9 @@ set -uo pipefail
 
 TIER="${1:-}"
 
-# The one hardcoded roster in the script — the fallback source of truth. A
-# missing/broken-config fallback is byte-identical to resolving `standard` from a
-# healthy shipped config (a test pins this lockstep).
+# The one hardcoded roster in the script — the fallback source of truth, INDEPENDENT of
+# whatever the shipped config's standard tier resolves to (see the header above): a config
+# rollout that changes standard's values never changes what a broken config falls back to.
 fallback() {
     printf 'WARN: model-tiers.json missing or invalid — falling back to standard tier defaults\n' >&2
     printf 'tier=standard\n'
