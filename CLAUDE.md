@@ -19,7 +19,7 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `plugins/infra/` — scripts-only shared layer (`spawn.sh`, `session-status.sh`,
   `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`). Its SessionStart hook links
   `~/.claude/kit/infra`; other plugins call infra only through that path, never by relative path.
-- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh brief`, briefs, charter).
+- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, briefs, charter).
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
