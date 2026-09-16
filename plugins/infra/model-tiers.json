@@ -1,17 +1,17 @@
 {
   "trivial": {
-    "planner":     { "backend": "claude", "model": "haiku",  "effort": "medium" },
-    "implementer": { "backend": "claude", "model": "haiku",  "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "sonnet", "effort": "high" }
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
   },
   "standard": {
-    "planner":     { "backend": "claude", "model": "sonnet", "effort": "high" },
-    "implementer": { "backend": "claude", "model": "sonnet", "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
+    "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
   },
   "complex": {
-    "planner":     { "backend": "claude", "model": "opus",   "effort": "xhigh" },
-    "implementer": { "backend": "claude", "model": "opus",   "effort": "high" },
-    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "xhigh" }
+    "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" }
   }
 }

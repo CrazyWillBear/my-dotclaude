@@ -348,6 +348,15 @@ assert_not_contains "a peer stays claude whatever the tier table says" \
         --charter "$WORK/pc.md" --model opus --effort high --orchestrator orch-main \
         --dry-run 2>/dev/null)" "codex"
 
+# Everything above pins the codex path against a roster written by this test. This one
+# pins the ROLLOUT: the shipped model-tiers.json must actually route a worker there, or
+# the whole backend is dead code nobody reaches.
+echo "test: the SHIPPED roster routes a worker through the codex path"
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
+      bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+assert_arg "shipped standard tier spawns codex" "$out" "codex"
+assert_arg "with the tier's codex model" "$out" "gpt-5.6-terra"
+
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"
 CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
