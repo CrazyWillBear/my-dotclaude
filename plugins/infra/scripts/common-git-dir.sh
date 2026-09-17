@@ -46,11 +46,12 @@ die() { echo "error: $*" >&2; exit 1; }
 # 2026-09-17: a bare GIT_DIR emitted another repository's roots at exit 0. spawn.sh and
 # worker-resume.sh inherit the orchestrator's environment, so a value leaking in from a
 # hook or an exporting shell is enough.
-# The config-from-environment names all OUTRANK local config, so any of them can answer the
-# `extensions.worktreeConfig` question below on behalf of a repo that has it enabled — masking
-# a refusal rather than steering the roots. git 2.55 knows six; all six are cleared here, and
-# a first pass that cleared only three left the refusal fully bypassable. Verified 2026-09-17,
-# each at exit 0 with the complete root array for a repo that should have been refused:
+# git 2.55 knows six config-from-environment names. All six are cleared, but for two
+# DIFFERENT reasons, and an earlier version of this comment wrongly gave all six the first
+# one. Only these three can answer the `extensions.worktreeConfig` question below on behalf
+# of a repo that has it enabled, masking a real refusal rather than steering the roots —
+# each reproduced 2026-09-17 at exit 0 with the complete root array for a repo that should
+# have been refused:
 #   * GIT_CONFIG_PARAMETERS — git's own transport for `-c`, and git SETS IT ITSELF for every
 #     alias and hook child. Running --roots from a `-c` alias bypassed the refusal with no
 #     attacker involved, which is exactly the "leaking in from a hook" case named above.
@@ -58,8 +59,11 @@ die() { echo "error: $*" >&2; exit 1; }
 #     `git config` call, so GIT_CONFIG=/dev/null silences it.
 #   * GIT_CONFIG_COUNT — clearing COUNT is what disarms KEY_n/VALUE_n, which git reads only
 #     while n < COUNT.
-# GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL/SYSTEM fail open the same way for a system- or
-# global-scope setting, so they go too.
+# GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and GIT_CONFIG_NOSYSTEM are cleared for tidiness, NOT
+# because they were ever shown to bypass anything — the parent commit's script still refused
+# at exit 1 under GIT_CONFIG_NOSYSTEM=1. They cannot mask this refusal, because git honors
+# extensions.worktreeConfig only from the repo's OWN config (see the --local read below), so
+# the value they could change is one git would ignore anyway.
 git_wt() {
     env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE \
         -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
@@ -184,7 +188,13 @@ fi
 # extension on itself (the shared config is not writable), but a repo that already uses it
 # is exposed, and `git sparse-checkout set` turns it on by itself. $OWN cannot be narrowed
 # further without losing HEAD/index, so refuse instead.
-if [ "$(git_wt config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
+# --local, not every scope: git honors this extension ONLY from the repo's own config.
+# Verified 2026-09-17 — with it set in global or system scope a planted $OWN/config.worktree
+# stayed unread, while the local control armed. Reading every scope therefore refused EVERY
+# worktree on a machine whose ~/.gitconfig happened to set it, for a setting git ignores, and
+# the remedy below names a repo-local unset that would not have helped. Narrowing does not
+# weaken the refusal: a genuine local `true` still reads `true` and still dies here.
+if [ "$(git_wt config --local --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
     die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE
   remedy: run the worker in a repo that does not use worktree-specific config, or unset it with
   \`git config --unset extensions.worktreeConfig\` AND delete the leftover config.worktree —

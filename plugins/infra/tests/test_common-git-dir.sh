@@ -129,6 +129,20 @@ assert_empty "and prints no roots" "$OUT"
 assert_contains "names the reason" "$ERR" "worktreeConfig"
 git -C "$WORK/linked" config --unset extensions.worktreeConfig
 
+echo "test: an extension set only in the USER'S ~/.gitconfig does not refuse an honest worktree"
+# git honors extensions.worktreeConfig only from the repo's OWN config, so a global one arms
+# nothing — but the check used to read every scope, which refused EVERY worktree on such a
+# machine behind a remedy (a repo-local unset) that could not have helped.
+FAKEHOME="$WORK/fakehome"
+mkdir -p "$FAKEHOME"
+printf '[extensions]\n\tworktreeConfig = true\n' >"$FAKEHOME/.gitconfig"
+OUT="$(HOME="$FAKEHOME" bash "$SCRIPT" --roots "$WORK/linked" 2>"$WORK/err")"
+RC=$?
+ERR="$(cat "$WORK/err")"
+assert_equals "extension only in ~/.gitconfig: exit 0" "$RC" "0"
+assert_contains "extension only in ~/.gitconfig: still the real repo's roots" "$OUT" \
+    "$(cd "$REPO/.git" && pwd -P)/objects"
+
 echo "test: --roots refuses a config.worktree ALREADY planted in the granted git dir"
 # The extension check is point-in-time. With the extension off, a worker can still write
 # $OWN/config.worktree today and have it arm the moment anyone runs `git sparse-checkout set`.
@@ -251,7 +265,12 @@ assert_equals "and the honest worktree still passes once restored" "$RC" "0"
 echo "test: an HONEST worktree with a relative back-pointer is accepted, not refused"
 # `git worktree add --relative-paths` writes one, and refusing it made every worktree in such
 # a repo permanently unspawnable. Skipped where git is too old to create the shape at all.
-if git -C "$REPO" worktree add --relative-paths -q "$WORK/relwt" -b relwt >/dev/null 2>&1; then
+# Decide on FLAG SUPPORT, not on the add's exit code: keying the skip on the add meant any
+# unrelated failure silently dropped the only coverage of the accept path.
+case "$(git worktree add -h 2>&1)" in *relative-paths*) HAVE_RELPATHS=yes ;; *) HAVE_RELPATHS=no ;; esac
+if [ "$HAVE_RELPATHS" = yes ]; then
+    git -C "$REPO" worktree add --relative-paths -q "$WORK/relwt" -b relwt \
+        || no "git supports --relative-paths but the worktree add failed"
     RELOWN="$(cd "$(git -C "$WORK/relwt" rev-parse --git-dir)" && pwd -P)"
     case "$(cat "$RELOWN/gitdir")" in
         /*) no "fixture is wrong: git wrote an ABSOLUTE back-pointer for --relative-paths" ;;
@@ -262,7 +281,7 @@ if git -C "$REPO" worktree add --relative-paths -q "$WORK/relwt" -b relwt >/dev/
     assert_contains "relative back-pointer: still the real repo's objects" "$OUT" \
         "$(cd "$REPO/.git" && pwd -P)/objects"
 else
-    echo "  SKIP: this git cannot create --relative-paths worktrees"
+    echo "  SKIP: this git has no --relative-paths flag"
 fi
 
 echo "test: --roots ignores every config-from-environment name, which outranks local config"

@@ -137,7 +137,8 @@ A NARROWED slice of the repo's **common** git dir goes in
 and a worker that cannot commit has nothing to hand back. `common-git-dir.sh --roots` builds it
 for both `spawn.sh` and `worker-resume.sh` — `objects`, `refs`, `logs` and the worktree's own
 git dir, and **never the shared `hooks/` or `config`**. It refuses **five** shapes: a worktree it
-cannot narrow; a repo with `extensions.worktreeConfig` enabled; a worktree that already carries a
+cannot narrow; a repo whose **own** config enables `extensions.worktreeConfig` (git honors it
+from no other scope, so that is the only one read); a worktree that already carries a
 planted `config.worktree`; a worktree whose `commondir` has been rewritten; and a worktree whose
 `.git` has been repointed or symlinked at another repo's git dir, which its own git dir's
 `gitdir` back-pointer contradicts — that back-pointer must name exactly `<worktree>/.git`,
