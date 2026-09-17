@@ -83,7 +83,10 @@ CONFIG="$PLUGIN_ROOT/model-tiers.json"
 # any bad config takes (one WARN + the hardcoded claude standard roster) rather than quietly
 # reverting to the shipped table — a typo should be loud, not invisible.
 if [ -z "${RESOLVE_TIER_ROOT:-}" ]; then
-    USER_CONFIG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/model-tiers.json"
+    # $HOME is NOT guaranteed: systemd units, `env -i` and some hook harnesses run without
+    # it, and an unbound expansion under `set -u` would abort with no roster at all —
+    # breaking the "always exits 0" contract both callers depend on (spawn.sh:181).
+    USER_CONFIG="${CLAUDE_CONFIG_DIR:-${HOME:-/nonexistent}/.claude}/model-tiers.json"
     [ -f "$USER_CONFIG" ] && CONFIG="$USER_CONFIG"
 fi
 

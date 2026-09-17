@@ -80,6 +80,28 @@ if [ "$OWN" = "$GITDIR" ]; then
   resume must be handed the SAME worktree its spawn used, or it runs with different roots."
 fi
 
+# $GITDIR came from `git rev-parse --git-common-dir` — EXACTLY the value that `commondir`,
+# a file inside the writable $OWN, redirects (gitrepository-layout(5)). So a worker that
+# rewrites it during its turn steers THIS script: the roots below would be built against a
+# different repository, and the next spawn or resume would hand that worker write access to
+# that repo's objects, refs and logs — the user's own checkout included. Reproduced
+# 2026-09-17: rewriting commondir moved every root except $OWN onto an unrelated repo, at
+# exit 0, with nothing on stderr.
+#
+# An honest linked worktree ALWAYS has its own git dir at <common>/worktrees/<name>, so
+# requiring that refuses the rewritten shape and nothing else. This closes the
+# roots-steering half of the commondir residual. The other half — git run by a human IN
+# that worktree still follows the rewritten commondir to a planted config — is not closed
+# by this and stays the accepted residual (docs/swarm-design.md § Roster).
+case "$OWN" in
+    "$GITDIR"/worktrees/*) ;;
+    *) die "this worktree's own git dir is not inside the common git dir it names, so commondir has been rewritten: $WORKTREE
+  its git dir:  $OWN
+  commondir says: $GITDIR
+  remedy: do not reuse this worktree — discard it. A worker that rewrote commondir was
+  trying to steer the sandbox at another repository." ;;
+esac
+
 # `config.worktree` lives INSIDE $OWN, and when extensions.worktreeConfig is enabled git
 # reads it in addition to the shared config — so core.sshCommand, core.hooksPath or
 # core.fsmonitor written there is host code execution the next time anyone runs git in
@@ -90,8 +112,9 @@ fi
 if [ "$(git -C "$WORKTREE" config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
     die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE
   remedy: run the worker in a repo that does not use worktree-specific config, or unset it with
-  \`git config --unset extensions.worktreeConfig\` if nothing needs it. Note that
-  \`git sparse-checkout set\` turns it back on by itself."
+  \`git config --unset extensions.worktreeConfig\` AND delete the leftover config.worktree —
+  unsetting alone leaves the file, which the next check refuses on its own. Note that
+  \`git sparse-checkout set\` turns the extension back on by itself."
 fi
 
 # The check above is POINT-IN-TIME and cannot be otherwise: it proves the extension is off NOW,
@@ -101,8 +124,10 @@ fi
 # it rather than grant a root that contains a loaded payload.
 if [ -e "$OWN/config.worktree" ]; then
     die "a config.worktree is already present in this worktree's git dir and would arm if extensions.worktreeConfig were ever enabled: $OWN/config.worktree
-  remedy: delete it if it was not put there deliberately, or run the worker in a different
-  worktree. This is a point-in-time check: it cannot see a file planted after the worker starts."
+  remedy: delete the file if it was not put there deliberately. On a RESUME that is the only
+  remedy — a resume must be handed the same worktree its spawn used, so \"use a different
+  worktree\" is not available there. This is a point-in-time check: it cannot see a file
+  planted after the worker starts."
 fi
 
 # objects + refs: where the commit and the branch tip land.

@@ -131,6 +131,23 @@ assert_empty "and prints no roots" "$OUT"
 assert_contains "names the planted file" "$ERR" "config.worktree"
 rm -f "$PLANTED"
 
+echo "test: --roots REFUSES a rewritten commondir, which would steer the roots elsewhere"
+# $GITDIR comes from `git rev-parse --git-common-dir`, which commondir redirects — so without
+# this guard a worker rewrites one file inside its own writable git dir and the roots point at
+# ANOTHER repository's objects/refs/logs. Reproduced 2026-09-17. The victim repo stands in for
+# the user's own checkout.
+git init -q "$WORK/victim"
+OWNDIR3="$(cd "$(git -C "$WORK/linked" rev-parse --git-dir)" && pwd -P)"
+cp "$OWNDIR3/commondir" "$WORK/commondir.bak"
+printf '%s\n' "$WORK/victim/.git" >"$OWNDIR3/commondir"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "and prints no roots — never a root set aimed at another repo" "$OUT"
+assert_contains "names the rewrite" "$ERR" "commondir has been rewritten"
+cp "$WORK/commondir.bak" "$OWNDIR3/commondir"
+run --roots "$WORK/linked"
+assert_equals "and an honest worktree still passes once restored" "$RC" "0"
+
 echo "test: --roots fails loud too, rather than printing an empty root list"
 run --roots "$WORK/no-such-dir-at-all"
 assert_equals "exits 1" "$RC" "1"

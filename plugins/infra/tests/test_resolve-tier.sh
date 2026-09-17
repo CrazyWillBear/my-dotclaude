@@ -59,6 +59,18 @@ SCRIPT="$PLUGIN_ROOT/scripts/resolve-tier.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# PINNED HERE, EXPORTED, BEFORE ANYTHING RUNS. The resolver consults
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/model-tiers.json, so a developer who uses that feature
+# would otherwise have their OWN table reach every run below that does not set
+# RESOLVE_TIER_ROOT — including the spliced cd-failure copy, which this file cannot pin at
+# the call site — and the suite would go red on their machine and nowhere else. Pinning at
+# each call site was tried and missed four of them; one export is the whole fix.
+export HOME="$WORK/home"
+mkdir -p "$HOME"
+NOUSERCFG="$WORK/nousercfg"
+mkdir -p "$NOUSERCFG"
+export CLAUDE_CONFIG_DIR="$NOUSERCFG"
+
 pass=0
 fail=0
 ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
@@ -77,12 +89,6 @@ WARN='WARN: model-tiers.json missing or invalid — falling back to standard tie
 
 # write_cfg <dir> — read a config heredoc from stdin into <dir>/model-tiers.json.
 write_cfg() { mkdir -p "$1"; cat > "$1/model-tiers.json"; }
-
-# A CLAUDE_CONFIG_DIR with no model-tiers.json in it. Every run below points at this, so the
-# shipped-table assertions cannot start reading the developer's OWN ~/.claude/model-tiers.json
-# and passing or failing by machine. The user-override tests opt out of it deliberately.
-NOUSERCFG="$WORK/nousercfg"
-mkdir -p "$NOUSERCFG"
 
 # run_tier <tier> [plugin_root] — run the real script and set OUT / ERR / RC.
 # With no plugin_root, run with RESOLVE_TIER_ROOT unset so the BASH_SOURCE
@@ -613,7 +619,9 @@ write_cfg "$USERCFG" <<'JSON'
 }
 JSON
 UOUT="$(CLAUDE_CONFIG_DIR="$USERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" standard 2>"$WORK/uerr")"
-assert_equals "user table: no WARN" "$(cat "$WORK/uerr")" ""
+# No "no WARN" assertion here: the shipped table is valid too, so it passes with the whole
+# feature reverted and proves nothing. The codex values below are what only the user table
+# can produce.
 assert_equals "user table: implementer routes to codex" "$(val "$UOUT" implementer_backend)" "codex"
 assert_equals "user table: implementer model is the user's" "$(val "$UOUT" implementer_model)" "gpt-5.6-terra"
 
@@ -644,6 +652,17 @@ assert_equals "seam wins: backend from RESOLVE_TIER_ROOT, not the user table" \
     "$(val "$SOUT" implementer_backend)" "claude"
 assert_equals "seam wins: model from RESOLVE_TIER_ROOT" "$(val "$SOUT" implementer_model)" "fable"
 
+echo "test: an UNSET HOME still resolves a roster — the always-exit-0 contract holds"
+# The user-table lookup expands $HOME. Under `set -u` an unbound expansion aborts the script
+# with no roster at all, and spawn.sh:181 explicitly relies on this never happening. systemd
+# units, `env -i` and some hook harnesses run without HOME.
+HOUT="$(env -u HOME -u CLAUDE_CONFIG_DIR -u RESOLVE_TIER_ROOT bash "$SCRIPT" standard 2>"$WORK/herr")"
+HRC=$?
+assert_equals "unset HOME: exit 0" "$HRC" "0"
+assert_equals "unset HOME: nothing but the roster on stderr" "$(cat "$WORK/herr")" ""
+assert_equals "unset HOME: ten key=value lines" "$(printf '%s\n' "$HOUT" | grep -c '=')" "10"
+assert_equals "unset HOME: resolves the shipped standard tier" "$(val "$HOUT" implementer_model)" "sonnet"
+
 echo "test: a MALFORMED user table is loud, not a silent revert to the shipped table"
 # A typo in your own table must not look like the shipped roster quietly winning.
 BADUSER="$WORK/baduser"
@@ -651,8 +670,11 @@ write_cfg "$BADUSER" <<'JSON'
 { "trivial": { "implementer": { "backend": "codex", "model": "haiku", "effort": "max" } } }
 JSON
 BOUT="$(CLAUDE_CONFIG_DIR="$BADUSER" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" standard 2>"$WORK/berr")"
+# The WARN is the whole assertion: with the lookup reverted the malformed table is never
+# read, the valid shipped table resolves cleanly, and no WARN fires. Asserting the roster is
+# "standard" on top of that proves nothing — the shipped standard tier resolves to the same
+# values, so it passes either way.
 assert_equals "bad user table: the exact WARN line" "$(cat "$WORK/berr")" "$WARN"
-assert_equals "bad user table: falls back to the standard roster" "$(val "$BOUT" tier)" "standard"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

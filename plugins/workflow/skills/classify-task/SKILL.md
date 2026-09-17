@@ -19,8 +19,11 @@ load-bearing — callers parse it — so emit it verbatim.
 
 ## Roster resolution
 
-The tier→`{model, effort, backend}` mapping lives in `~/.claude/kit/infra/model-tiers.json`, resolved by
-infra's helper — **not** copied here. To see any tier's roster, run:
+The tier→`{model, effort, backend}` mapping ships in `~/.claude/kit/infra/model-tiers.json` and is
+resolved by infra's helper — **not** copied here. A user table at
+`${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` overrides the shipped one when it exists, so
+the shipped file is not always what answers. Always ask the helper rather than reading either
+file. To see any tier's roster, run:
 
 ```
 bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>

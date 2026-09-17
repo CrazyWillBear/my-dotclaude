@@ -109,14 +109,20 @@ The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
   cannot narrow — including the main working tree of a repo that has linked worktrees, which is
   the user's own checkout (§ Codex backend). **What remains reachable:** the granted `$OWN`
   contains `commondir`, and per gitrepository-layout(5) that file redirects `$GIT_COMMON_DIR`.
-  **Reproduced 2026-09-17**: rewriting it pointed `git rev-parse --git-common-dir` at a
-  worker-controlled directory, and `core.sshCommand` and `core.hooksPath` were then read from a
-  `config` planted there — host code execution for anyone who runs git *in that worktree*. It
-  needs no extension enabled, and a file inside a granted directory root cannot be excluded, so
-  closing it would mean granting individual file paths instead (unverified whether codex supports
-  that). Accepted knowingly, like the network grant below, and narrower than the original bug:
-  the shared `hooks/` and `config` really are protected, and the automated merge runs
-  `git -C <base>`, never inside a worker's tree.
+  **Reproduced 2026-09-17**, in two facets, which are NOT in the same state:
+  - **Steering the roots — REFUSED.** `--roots` derives `$GITDIR` from
+    `git rev-parse --git-common-dir`, the very value `commondir` redirects, so a rewrite pointed
+    every root except `$OWN` at an unrelated repository at exit 0. A resume would then have
+    granted the worker write access to that repo's `objects`, `refs` and `logs` — including the
+    user's own checkout, whose branch tips it could rewrite. `--roots` now requires `$OWN` to sit
+    under `<common>/worktrees/`, which refuses exactly that shape.
+  - **Code execution — ACCEPTED.** Git run by a human inside that worktree still follows a
+    rewritten `commondir` and reads `core.sshCommand` / `core.hooksPath` from a planted `config`.
+    It needs no extension enabled, and a file inside a granted directory root cannot be excluded,
+    so closing it would mean granting individual file paths instead (unverified whether codex
+    supports that). Accepted knowingly, like the network grant below. The shared `hooks/` and
+    `config` really are protected, and the automated merge runs `git -C <base>`, never inside a
+    worker's tree — but note this is bounded by who runs git *there*, not by the worktree itself.
 - **The `--disallowedTools` gap — ACCEPTED, not closed.** The codex path carries no denylist
   equivalent, and the sandbox does not cover it: `gh` actions are network calls, not filesystem
   writes, so `-s workspace-write` constrains none of them, and with `approval_policy=never` plus
@@ -251,9 +257,12 @@ one-shot, so it maps onto `codex exec`:
   shared `hooks/` and never the shared `config`. It REFUSES a non-linked worktree outright (the
   main checkout's own `.git` cannot be narrowed) and refuses a repo with
   `extensions.worktreeConfig` enabled, where `config.worktree` would sit inside a granted root.
-  **Residual, accepted (§ Roster):** `commondir` also sits inside the granted `$OWN` and
-  redirects `$GIT_COMMON_DIR`; reproduced 2026-09-17 as host code execution for anyone running
-  git in that worktree. Worktrees isolate working *files*, not git: they all share one
+  It also refuses a worktree already carrying a planted `config.worktree`, and one whose
+  `commondir` has been rewritten — that rewrite steered the roots themselves onto another
+  repository until it was refused (§ Roster).
+  **Residual, accepted (§ Roster):** `commondir` still sits inside the granted `$OWN`, so git run
+  by a human in that worktree follows it to a planted `config`; reproduced 2026-09-17 as host
+  code execution. Worktrees isolate working *files*, not git: they all share one
   `.git`, and `hooks/` and `config` are things git EXECUTES, so granting the whole dir let a
   worker write `hooks/pre-commit` or set `core.sshCommand` and get host code execution the
   next time a sibling worker, the merge, or the user ran git there. Verified 2026-09-16 on
@@ -380,6 +389,7 @@ test. The perf plugin is already out of `setup-dev.sh`, `README.md` and `AGENT_S
    a plain-directory fallback otherwise, plus the charter's auto-memory rule and each
    brief's `--agent` name.)
 7. **codex**: the backend switch in infra. (Landed #90: `spawn.sh`'s `codex exec` worker path
-   and codex worker state in `session-status.sh`. `model-tiers.json` stays on claude until
-   #96 lands the orchestrator-side report ingest.)
+   and codex worker state in `session-status.sh`. The orchestrator-side ingest landed as
+   `worker-report.sh`. The shipped `model-tiers.json` stays claude and that is the end state,
+   not a hold — codex is opt-in per user, see § Roster.)
 8. **migrate** cogito, then wilcus-agents. (The perf plugin is already out of the installer.)

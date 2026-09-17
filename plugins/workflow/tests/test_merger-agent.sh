@@ -9,7 +9,8 @@
 #   2. Frontmatter pins name: merger, model: opus, and effort: xhigh.
 #      orchestrate's merger spawn passes no explicit model or effort, so this
 #      pin governs outright. The merger is never tier-routed: it is the single
-#      serial worker draining orchestrate's merge queue, and a bad conflict
+#      serial resolver of the fold's conflicted REMAINDER (not the whole queue —
+#      merge-fold.sh lands the conflict-free branches with no model), and a bad conflict
 #      resolution corrupts the base branch for every issue in the run — so it
 #      never gets a cheap model.
 #   3. The per-issue output line carries the MERGE COMMIT SHA. MERGE_SCHEMA

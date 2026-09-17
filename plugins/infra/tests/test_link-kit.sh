@@ -67,7 +67,10 @@ STUB
 chmod +x "$BIN/claude"
 SELF="$(PATH="$BIN:$PATH" CLAUDE_CODE_SESSION_ID=sess-abc bash "$LINK/scripts/session-status.sh" --self 2>"$WORK/err")"
 assert_equals "session-status.sh --self via link prints this session's name" "$SELF" "my-orchestrator"
-TIERS="$(CLAUDE_PLUGIN_ROOT="$WORK/other" bash "$LINK/scripts/resolve-tier.sh" complex 2>"$WORK/err")"
+# CLAUDE_CONFIG_DIR is pinned at a dir with no model-tiers.json: resolve-tier.sh consults the
+# user's table when RESOLVE_TIER_ROOT is unset, and this call deliberately leaves it unset, so
+# without the pin a developer's own table would decide what this assertion sees.
+TIERS="$(CLAUDE_PLUGIN_ROOT="$WORK/other" CLAUDE_CONFIG_DIR="$WORK/other" bash "$LINK/scripts/resolve-tier.sh" complex 2>"$WORK/err")"
 assert_contains "resolve-tier.sh via link resolves complex" "$TIERS" "tier=complex"
 assert_equals "resolve-tier.sh via link: no WARN" "$(cat "$WORK/err")" ""
 

@@ -136,10 +136,12 @@ One unit of work, you are present, nothing to schedule. This is what `/pipeline`
 
 **Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
 `Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
-`resolve-tier.sh` fails here. Today the shipped `model-tiers.json` is
-`backend: claude` in every cell, so its models are usable as-is: #90 built the codex path for
-the *session* lane's `spawn.sh` only and left the roster on claude until the orchestrator can
-read a codex worker's report. **If a cell does say `codex`, do not pass its model to `Agent`** —
+`resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is
+`backend: claude` in every cell, so its models are usable as-is — and that is the end state,
+not a hold: codex is opt-in per
+user through `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json`, so **a cell may well say `codex`
+on this machine even though the shipped table does not.** Resolve the roster and look; never
+assume the shipped values. **If a cell does say `codex`, do not pass its model to `Agent`** —
 substitute the claude-side roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet`
 (reviewer `opus`), complex `opus`.
 
