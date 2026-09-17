@@ -78,15 +78,21 @@ WARN='WARN: model-tiers.json missing or invalid — falling back to standard tie
 # write_cfg <dir> — read a config heredoc from stdin into <dir>/model-tiers.json.
 write_cfg() { mkdir -p "$1"; cat > "$1/model-tiers.json"; }
 
+# A CLAUDE_CONFIG_DIR with no model-tiers.json in it. Every run below points at this, so the
+# shipped-table assertions cannot start reading the developer's OWN ~/.claude/model-tiers.json
+# and passing or failing by machine. The user-override tests opt out of it deliberately.
+NOUSERCFG="$WORK/nousercfg"
+mkdir -p "$NOUSERCFG"
+
 # run_tier <tier> [plugin_root] — run the real script and set OUT / ERR / RC.
 # With no plugin_root, run with RESOLVE_TIER_ROOT unset so the BASH_SOURCE
 # fallback resolves the REAL shipped config.
 run_tier() {
     local tier="$1" root="${2-__REAL__}" errfile="$WORK/err"
     if [ "$root" = "__REAL__" ]; then
-        OUT="$(env -u RESOLVE_TIER_ROOT bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" "$tier" 2>"$errfile")"
     else
-        OUT="$(RESOLVE_TIER_ROOT="$root" bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" RESOLVE_TIER_ROOT="$root" bash "$SCRIPT" "$tier" 2>"$errfile")"
     fi
     RC=$?
     ERR="$(cat "$errfile")"
@@ -586,6 +592,67 @@ reviewer_effort=high
 reviewer_backend=claude"
 run_tier complex "$EMPTY"   # missing config → fallback, whatever tier was asked
 assert_equals "fallback output matches the pinned claude standard roster" "$OUT" "$EXPECTED_FALLBACK"
+
+# ---------------------------------------------------------------------------
+echo "test: a USER table at CLAUDE_CONFIG_DIR overrides the shipped one"
+# The point of the whole mechanism: the shipped table is claude so a fresh install works with no
+# codex CLI, and a person opts into codex for themselves without editing a plugin file that the
+# next kit update overwrites.
+USERCFG="$WORK/usercfg"
+write_cfg "$USERCFG" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "low" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
+  "standard": { "planner": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
+  "complex":  { "planner": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" } }
+}
+JSON
+UOUT="$(CLAUDE_CONFIG_DIR="$USERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" standard 2>"$WORK/uerr")"
+assert_equals "user table: no WARN" "$(cat "$WORK/uerr")" ""
+assert_equals "user table: implementer routes to codex" "$(val "$UOUT" implementer_backend)" "codex"
+assert_equals "user table: implementer model is the user's" "$(val "$UOUT" implementer_model)" "gpt-5.6-terra"
+
+echo "test: with no user table the SHIPPED table is used, and it is claude"
+run_tier standard
+assert_equals "shipped: no WARN" "$ERR" ""
+assert_equals "shipped: implementer stays claude" "$(val "$OUT" implementer_backend)" "claude"
+
+echo "test: RESOLVE_TIER_ROOT wins over a user table — the test seam stays authoritative"
+# Without this, every test that pins a specific table would silently read the developer's own
+# ~/.claude table instead, and the suite would pass or fail by machine.
+SEAM="$WORK/seamcfg"
+write_cfg "$SEAM" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+                "implementer": { "backend": "claude", "model": "haiku", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "sonnet", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "fable", "effort": "high" },
+                "implementer": { "backend": "claude", "model": "fable", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
+}
+JSON
+SOUT="$(CLAUDE_CONFIG_DIR="$USERCFG" RESOLVE_TIER_ROOT="$SEAM" bash "$SCRIPT" standard 2>/dev/null)"
+assert_equals "seam wins: backend from RESOLVE_TIER_ROOT, not the user table" \
+    "$(val "$SOUT" implementer_backend)" "claude"
+assert_equals "seam wins: model from RESOLVE_TIER_ROOT" "$(val "$SOUT" implementer_model)" "fable"
+
+echo "test: a MALFORMED user table is loud, not a silent revert to the shipped table"
+# A typo in your own table must not look like the shipped roster quietly winning.
+BADUSER="$WORK/baduser"
+write_cfg "$BADUSER" <<'JSON'
+{ "trivial": { "implementer": { "backend": "codex", "model": "haiku", "effort": "max" } } }
+JSON
+BOUT="$(CLAUDE_CONFIG_DIR="$BADUSER" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" standard 2>"$WORK/berr")"
+assert_equals "bad user table: the exact WARN line" "$(cat "$WORK/berr")" "$WARN"
+assert_equals "bad user table: falls back to the standard roster" "$(val "$BOUT" tier)" "standard"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

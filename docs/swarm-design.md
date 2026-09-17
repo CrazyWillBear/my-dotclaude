@@ -90,18 +90,33 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
-**Not yet shipped**, but no longer blocked. `model-tiers.json` is still `backend=claude` in
-every cell and `test_spawn.sh` pins that, so the flip stays a deliberate act rather than a drift.
-The ingest that used to block it is done — `infra/worker-report.sh` reads `last-message.txt` and
-returns the session lane's own one-line report, so a codex worker no longer reports into nothing.
-Both guardrail gaps recorded on the e2e gate (#96) are now settled:
+**The shipped table stays claude, and that is now the intended end state — not a hold.**
+`model-tiers.json` is `backend=claude` in every cell and `test_spawn.sh` pins it. The ingest that
+once blocked a flip is done (`infra/worker-report.sh` reads `last-message.txt` and returns the
+session lane's own one-line report), but the flip itself is no longer the goal: this kit installs
+on other people's machines, and a shipped codex default would make every worker fail for anyone
+without the codex CLI — `spawn.sh` has no preflight check for it. **Decided 2026-09-17: codex is
+opt-in per user**, through a user table at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` that
+overrides the shipped one. That reverses the "Ship the roster from § Roster" line in **#87**,
+which is closed and accepted — recorded here and on #96 rather than diverging silently.
 
-- **`writable_roots` — CLOSED.** It was the whole **common** git dir, so a worker could arm
-  `.git/hooks` or `.git/config` and get host code execution in every sibling worktree and in the
-  user's own checkout. `common-git-dir.sh --roots` now grants only `objects`, `refs`, `logs` and
-  the worktree's OWN git dir, and refuses outright any worktree it cannot narrow — including the
-  main working tree of a repo that has linked worktrees, which is the user's own checkout
-  (§ Codex backend).
+The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
+
+- **`writable_roots` — NARROWED, with a named residual. Not closed.** It was the whole **common**
+  git dir, so a worker could arm `.git/hooks` or `.git/config` and get host code execution in
+  every sibling worktree and in the user's own checkout. `common-git-dir.sh --roots` now grants
+  only `objects`, `refs`, `logs` and the worktree's OWN git dir, and refuses any worktree it
+  cannot narrow — including the main working tree of a repo that has linked worktrees, which is
+  the user's own checkout (§ Codex backend). **What remains reachable:** the granted `$OWN`
+  contains `commondir`, and per gitrepository-layout(5) that file redirects `$GIT_COMMON_DIR`.
+  **Reproduced 2026-09-17**: rewriting it pointed `git rev-parse --git-common-dir` at a
+  worker-controlled directory, and `core.sshCommand` and `core.hooksPath` were then read from a
+  `config` planted there — host code execution for anyone who runs git *in that worktree*. It
+  needs no extension enabled, and a file inside a granted directory root cannot be excluded, so
+  closing it would mean granting individual file paths instead (unverified whether codex supports
+  that). Accepted knowingly, like the network grant below, and narrower than the original bug:
+  the shared `hooks/` and `config` really are protected, and the automated merge runs
+  `git -C <base>`, never inside a worker's tree.
 - **The `--disallowedTools` gap — ACCEPTED, not closed.** The codex path carries no denylist
   equivalent, and the sandbox does not cover it: `gh` actions are network calls, not filesystem
   writes, so `-s workspace-write` constrains none of them, and with `approval_policy=never` plus
@@ -232,10 +247,13 @@ one-shot, so it maps onto `codex exec`:
   dir, since objects and refs are shared. Verified: with them listed the worker commits;
   without, it writes the file and reports it could not commit.
   **Narrowed, not the whole dir** (`infra/common-git-dir.sh --roots`, used by both `spawn.sh`
-  and `worker-resume.sh`): `objects`, `refs`, `logs` and the worktree's OWN git dir — never the shared
-  `hooks/` and never the shared `config`. It REFUSES a non-linked worktree outright
-  (the main checkout's own `.git` cannot be narrowed) and refuses a repo with
-  `extensions.worktreeConfig` enabled, where `config.worktree` would sit inside a granted root. Worktrees isolate working *files*, not git: they all share one
+  and `worker-resume.sh`): `objects`, `refs`, `logs` and the worktree's OWN git dir — never the
+  shared `hooks/` and never the shared `config`. It REFUSES a non-linked worktree outright (the
+  main checkout's own `.git` cannot be narrowed) and refuses a repo with
+  `extensions.worktreeConfig` enabled, where `config.worktree` would sit inside a granted root.
+  **Residual, accepted (§ Roster):** `commondir` also sits inside the granted `$OWN` and
+  redirects `$GIT_COMMON_DIR`; reproduced 2026-09-17 as host code execution for anyone running
+  git in that worktree. Worktrees isolate working *files*, not git: they all share one
   `.git`, and `hooks/` and `config` are things git EXECUTES, so granting the whole dir let a
   worker write `hooks/pre-commit` or set `core.sshCommand` and get host code execution the
   next time a sibling worker, the merge, or the user ran git there. Verified 2026-09-16 on

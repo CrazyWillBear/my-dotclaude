@@ -75,7 +75,9 @@ if [ "$OWN" = "$GITDIR" ]; then
     # a limitation, it is the point — every real worker runs in a linked worktree, and
     # handing back a silently WIDE root for the user's own checkout would be the worst
     # case of all. Fail loud, like every other refusal here.
-    die "a codex worker must run in a LINKED worktree; refusing to grant the whole common git dir for: $WORKTREE"
+    die "a codex worker must run in a LINKED worktree; refusing to grant the whole common git dir for: $WORKTREE
+  remedy: create one with \`git worktree add <path>\` and point the worker at that path. A
+  resume must be handed the SAME worktree its spawn used, or it runs with different roots."
 fi
 
 # `config.worktree` lives INSIDE $OWN, and when extensions.worktreeConfig is enabled git
@@ -86,7 +88,21 @@ fi
 # is exposed, and `git sparse-checkout set` turns it on by itself. $OWN cannot be narrowed
 # further without losing HEAD/index, so refuse instead.
 if [ "$(git -C "$WORKTREE" config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
-    die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE"
+    die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE
+  remedy: run the worker in a repo that does not use worktree-specific config, or unset it with
+  \`git config --unset extensions.worktreeConfig\` if nothing needs it. Note that
+  \`git sparse-checkout set\` turns it back on by itself."
+fi
+
+# The check above is POINT-IN-TIME and cannot be otherwise: it proves the extension is off NOW,
+# not that it stays off. $OWN is writable, so a worker can plant a DORMANT config.worktree that
+# arms the moment anyone enables the extension later — and `git sparse-checkout set` enables it
+# without being asked. A file that is already there is the half we can actually see, so refuse
+# it rather than grant a root that contains a loaded payload.
+if [ -e "$OWN/config.worktree" ]; then
+    die "a config.worktree is already present in this worktree's git dir and would arm if extensions.worktreeConfig were ever enabled: $OWN/config.worktree
+  remedy: delete it if it was not put there deliberately, or run the worker in a different
+  worktree. This is a point-in-time check: it cannot see a file planted after the worker starts."
 fi
 
 # objects + refs: where the commit and the branch tip land.

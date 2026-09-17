@@ -561,21 +561,21 @@ esac
 stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 [ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 
-# The codex path above is built, tested and ready; the SHIPPED roster is deliberately
-# NOT on it. The report ingest that used to block the flip now exists (worker-report.sh
-# reads last-message.txt and returns the lane's own report line), so the remaining hold
-# is ONE guardrail gap recorded on #96: the codex path carries no --disallowedTools
-# equivalent, so gh pr merge and gh issue close are reachable with only prose restraining
-# them. (The other gap is closed — writable_roots is now narrowed by common-git-dir.sh
-# --roots to objects/refs/logs plus the worktree's own git dir, never hooks or config, so
-# a worker can no longer arm a hook that runs in the user's own checkout.) That gap is
-# latent ONLY while this test holds. Flipping model-tiers.json before it lands trips it.
-echo "test: the SHIPPED roster still routes workers through claude — the flip is on hold"
+# The codex path above is built and tested; the SHIPPED roster deliberately stays claude, and
+# that is the INTENDED END STATE, not a hold (docs/swarm-design.md § Roster, decided 2026-09-17).
+# This kit installs on other people's machines: a shipped codex default makes every worker fail
+# for anyone without the codex CLI, and spawn.sh has no preflight check for it, so the failure
+# reads as a generic `failed` with no hint that codex is simply missing. Codex is opt-in per
+# user, through a table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json.
+#
+# CLAUDE_CONFIG_DIR is pinned at an empty dir for exactly that reason: without it this test
+# would read the developer's OWN user table and go red on any machine that opted into codex.
+echo "test: the SHIPPED roster routes workers through claude — codex is opt-in, not the default"
 for t in trivial standard complex; do
-    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
     assert_arg "shipped $t spawns claude" "$out" "--bg"
-    assert_not_contains "shipped $t is not on codex yet (needs #96's guardrails)" \
+    assert_not_contains "shipped $t does not route to codex by default" \
         "$out" "codex exec"
 done
 

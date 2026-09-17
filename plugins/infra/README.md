@@ -37,13 +37,22 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 
 ## Two backends, for the worker form only
 
-**Nothing routes to codex today.** `model-tiers.json` ships `backend: claude` in all nine
-cells. The report ingest that used to be missing now exists — `worker-report.sh`, below — but
-the flip stays held on ONE remaining guardrail gap recorded on #96: the codex path carries no
+**Nothing routes to codex by default, and that is deliberate.** `model-tiers.json` ships
+`backend: claude` in all nine cells, so a fresh install works with no codex CLI and no codex
+subscription — `spawn.sh` has no preflight check for the binary, so a shipped codex default would
+surface as a generic `failed` worker with no hint that codex is simply not installed.
+
+**Opting in is per user.** `resolve-tier.sh` reads, in order: `$RESOLVE_TIER_ROOT` (the test
+seam), then `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` if that file exists, then the
+shipped table. So writing your own table turns on the codex roster for you alone, and survives
+kit updates — the shipped file is overwritten on update, a user file is not. A user table that is
+malformed takes the same loud fallback any bad config takes (one WARN plus the claude standard
+roster) rather than quietly reverting to the shipped table.
+
+One guardrail gap recorded on #96 remains open and accepted: the codex path carries no
 `--disallowedTools` equivalent, so `gh pr merge` and `gh issue close` are reachable with only
-prose in the prompt restraining them. (The other gap is closed: `writable_roots` is no longer
-the whole **common** git dir — see [below](#two-backends-for-the-worker-form-only) — so a worker
-can no longer arm `.git/hooks` or `.git/config`.)
+prose in the prompt restraining them. The orchestrator keeps opening the single PR at the end, so
+a worker is never handed that capability by design.
 
 A worker whose tier's `implementer_backend` is `codex` runs `codex exec` in the background
 instead of `claude --bg` ([`docs/swarm-design.md` § Codex backend](../../docs/swarm-design.md)).
@@ -127,7 +136,15 @@ A NARROWED slice of the repo's **common** git dir goes in
 `sandbox_workspace_write.writable_roots`, because `-s workspace-write` keeps `.git` read-only
 and a worker that cannot commit has nothing to hand back. `common-git-dir.sh --roots` builds it
 for both `spawn.sh` and `worker-resume.sh` — `objects`, `refs`, `logs` and the worktree's own
-git dir, and **never the shared `hooks/` or `config`**.
+git dir, and **never the shared `hooks/` or `config`**. It refuses any worktree it cannot narrow,
+and refuses a repo with `extensions.worktreeConfig` enabled.
+
+**This narrows the escape; it does not close it.** `commondir` sits inside the granted `$OWN` and
+redirects `$GIT_COMMON_DIR` (gitrepository-layout(5)) — reproduced 2026-09-17: a rewritten
+`commondir` made git read `core.sshCommand` and `core.hooksPath` from a worker-planted `config`,
+which is host code execution for anyone running git in that worktree. A file inside a granted
+directory root cannot be excluded, so this is an accepted, logged residual rather than a fix —
+see `docs/swarm-design.md` § Roster.
 
 That exclusion is the point. Worktrees isolate working *files*, not git: every worktree and the
 user's own checkout share one `.git`, and `hooks/` and `config` are things git **executes**. With

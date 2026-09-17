@@ -89,19 +89,24 @@ case "$OUT" in
 esac
 
 echo "test: --roots REFUSES anything that is not a linked worktree"
-# The dangerous case is not the scratch repo below — it is the MAIN working tree of a repo
-# that HAS linked worktrees, i.e. the user's own checkout, where OWN == GITDIR too. Handing
-# back the whole shared .git there is the full hooks/config escape with nothing on stderr,
-# so both shapes must refuse. Every real worker runs in a linked worktree.
-run --roots "$REPO"
-assert_equals "a plain repo exits 1" "$RC" "1"
+# TWO DISTINCT SHAPES, which need TWO DISTINCT REPOS. $REPO grew a linked worktree at line 58,
+# so by here it is the MAIN-worktree case and cannot also stand in for a plain repo — running
+# the identical command twice under two labels proves only one of them. The main-worktree case
+# is the dangerous one: that is the user's own checkout, where OWN == GITDIR too, and handing
+# back the whole shared .git there is the full hooks/config escape with nothing on stderr.
+PLAIN="$WORK/plainrepo"
+mkdir -p "$PLAIN"
+git -C "$PLAIN" init -q
+run --roots "$PLAIN"
+assert_equals "a plain repo with no worktrees exits 1" "$RC" "1"
 assert_empty "and prints no roots" "$OUT"
 assert_contains "says a linked worktree is required" "$ERR" "LINKED worktree"
+assert_contains "and names a remedy, not just the reason" "$ERR" "git worktree add"
 
-# $REPO is the MAIN worktree now that a linked one hangs off it — the user's-checkout case.
 run --roots "$REPO"
-assert_equals "the main worktree of a multi-worktree repo exits 1" "$RC" "1"
+assert_equals "the MAIN worktree of a multi-worktree repo exits 1" "$RC" "1"
 assert_empty "and prints no roots either" "$OUT"
+assert_contains "same refusal for the user's own checkout shape" "$ERR" "LINKED worktree"
 
 echo "test: --roots refuses when extensions.worktreeConfig makes config.worktree writable"
 # config.worktree sits inside the worktree's OWN git dir, which IS granted, and git reads it
@@ -113,6 +118,18 @@ assert_equals "exits 1" "$RC" "1"
 assert_empty "and prints no roots" "$OUT"
 assert_contains "names the reason" "$ERR" "worktreeConfig"
 git -C "$WORK/linked" config --unset extensions.worktreeConfig
+
+echo "test: --roots refuses a config.worktree ALREADY planted in the granted git dir"
+# The extension check is point-in-time. With the extension off, a worker can still write
+# $OWN/config.worktree today and have it arm the moment anyone runs `git sparse-checkout set`.
+# Nothing removes it and a resume re-runs the same passing check, so refuse what we can see.
+PLANTED="$(cd "$(git -C "$WORK/linked" rev-parse --git-dir)" && pwd -P)/config.worktree"
+printf '[core]\n\tsshCommand = /tmp/pwned\n' >"$PLANTED"
+run --roots "$WORK/linked"
+assert_equals "exits 1 even though the extension is off" "$RC" "1"
+assert_empty "and prints no roots" "$OUT"
+assert_contains "names the planted file" "$ERR" "config.worktree"
+rm -f "$PLANTED"
 
 echo "test: --roots fails loud too, rather than printing an empty root list"
 run --roots "$WORK/no-such-dir-at-all"

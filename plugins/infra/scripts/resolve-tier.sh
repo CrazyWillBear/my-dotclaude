@@ -4,8 +4,10 @@
 #
 # Usage: bash resolve-tier.sh <tier>          # tier ∈ trivial | standard | complex
 #
-# Reads the roster table from:
-#   ${RESOLVE_TIER_ROOT}/model-tiers.json      (falls back to <script-dir>/..)
+# Reads the roster table from, in order:
+#   ${RESOLVE_TIER_ROOT}/model-tiers.json       test seam; when set, nothing else is consulted
+#   ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json   the USER's table, if the file exists
+#   <script-dir>/../model-tiers.json            the SHIPPED table (claude in every cell)
 #
 # Contract: prints EXACTLY ten key=value lines to stdout and ALWAYS exits 0 —
 #   tier=<tier>
@@ -69,6 +71,21 @@ if [ -z "$PLUGIN_ROOT" ]; then
     PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
+
+# A USER table wins over the shipped one. The shipped table is claude in every cell so a fresh
+# install works with no codex CLI; anyone who wants codex workers writes their own table instead
+# of editing a plugin file that the next kit update overwrites.
+#
+# Only when RESOLVE_TIER_ROOT is UNSET: that variable is the test seam and stays authoritative,
+# so a test asking for a specific table never silently reads the developer's real ~/.claude one.
+#
+# EXISTENCE is the whole test. A user table that is present but malformed takes the same fallback
+# any bad config takes (one WARN + the hardcoded claude standard roster) rather than quietly
+# reverting to the shipped table — a typo should be loud, not invisible.
+if [ -z "${RESOLVE_TIER_ROOT:-}" ]; then
+    USER_CONFIG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/model-tiers.json"
+    [ -f "$USER_CONFIG" ] && CONFIG="$USER_CONFIG"
+fi
 
 # cell <tier> <role> <field> — print the cell's string value, or nothing on any
 # miss. The whole config is read into one buffer and parsed structurally, so
