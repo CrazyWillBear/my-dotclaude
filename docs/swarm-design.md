@@ -90,14 +90,26 @@ gains a backend column:
 | standard | ~60% | — | codex terra | codex terra |
 | complex | ~10% | codex sol | codex sol | codex sol |
 
-**Not yet shipped.** `model-tiers.json` is still `backend=claude` in every cell. The ingest that
-used to block this is done — `infra/worker-report.sh` reads `last-message.txt` and returns the
-session lane's own one-line report, so a codex worker no longer reports into nothing. What still
-holds the flip is two guardrail gaps, both recorded on the e2e gate (#96): `writable_roots` is the
-whole **common** git dir, so a worker can arm `.git/hooks` or `.git/config` and get host code
-execution outside the sandbox; and the codex path carries no `--disallowedTools` equivalent, so
-`gh pr merge` and `gh issue close` stay reachable with only prose restraining them. Both are
-latent only while the table is claude — `test_spawn.sh` pins it until they land.
+**Not yet shipped**, but no longer blocked. `model-tiers.json` is still `backend=claude` in
+every cell and `test_spawn.sh` pins that, so the flip stays a deliberate act rather than a drift.
+The ingest that used to block it is done — `infra/worker-report.sh` reads `last-message.txt` and
+returns the session lane's own one-line report, so a codex worker no longer reports into nothing.
+Both guardrail gaps recorded on the e2e gate (#96) are now settled:
+
+- **`writable_roots` — CLOSED.** It was the whole **common** git dir, so a worker could arm
+  `.git/hooks` or `.git/config` and get host code execution in every sibling worktree and in the
+  user's own checkout. `common-git-dir.sh --roots` now grants only `objects`, `refs`, `logs` and
+  the worktree's OWN git dir, and refuses outright any worktree it cannot narrow — including the
+  main working tree of a repo that has linked worktrees, which is the user's own checkout
+  (§ Codex backend).
+- **The `--disallowedTools` gap — ACCEPTED, not closed.** The codex path carries no denylist
+  equivalent, and the sandbox does not cover it: `gh` actions are network calls, not filesystem
+  writes, so `-s workspace-write` constrains none of them, and with `approval_policy=never` plus
+  `network_access=true` a worker can reach `gh pr merge`, `gh issue close` and `git push` with
+  only its own prompt restraining it. **Decided 2026-09-16: the orchestrator keeps opening the
+  single PR at the end** — workers do not open their own — so what is exposed is a worker that
+  disobeys its prompt, not a capability the design hands it. Recorded here as a logged decision
+  rather than an unstated gap, the same way the network grant is.
 
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
@@ -220,8 +232,10 @@ one-shot, so it maps onto `codex exec`:
   dir, since objects and refs are shared. Verified: with them listed the worker commits;
   without, it writes the file and reports it could not commit.
   **Narrowed, not the whole dir** (`infra/common-git-dir.sh --roots`, used by both `spawn.sh`
-  and `worker-resume.sh`): `objects`, `refs`, `logs` and the worktree's OWN git dir — never
-  `hooks/` and never `config`. Worktrees isolate working *files*, not git: they all share one
+  and `worker-resume.sh`): `objects`, `refs`, `logs` and the worktree's OWN git dir — never the shared
+  `hooks/` and never the shared `config`. It REFUSES a non-linked worktree outright
+  (the main checkout's own `.git` cannot be narrowed) and refuses a repo with
+  `extensions.worktreeConfig` enabled, where `config.worktree` would sit inside a granted root. Worktrees isolate working *files*, not git: they all share one
   `.git`, and `hooks/` and `config` are things git EXECUTES, so granting the whole dir let a
   worker write `hooks/pre-commit` or set `core.sshCommand` and get host code execution the
   next time a sibling worker, the merge, or the user ran git there. Verified 2026-09-16 on

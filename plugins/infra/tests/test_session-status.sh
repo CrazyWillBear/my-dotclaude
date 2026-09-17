@@ -285,7 +285,17 @@ cat >"$CFG/model-tiers.json" <<'JSON'
                 "reviewer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "xhigh" } }
 }
 JSON
-REPO="$WORK/repo"; mkdir -p "$REPO"; git -C "$REPO" init -q 2>/dev/null
+# A LINKED worktree, because this drives a REAL spawn and `common-git-dir.sh --roots`
+# refuses anything it cannot narrow. A plain `git init` here makes spawn.sh exit 1, so the
+# run dir is never written and this test asserts against a worker that never launched.
+ORIGIN="$WORK/origin"; mkdir -p "$ORIGIN"; git -C "$ORIGIN" init -q 2>/dev/null
+git -C "$ORIGIN" config user.email t@t.t
+git -C "$ORIGIN" config user.name t
+printf 'x\n' >"$ORIGIN/f"
+git -C "$ORIGIN" add f
+git -C "$ORIGIN" commit -qm init
+REPO="$WORK/repo"
+git -C "$ORIGIN" worktree add -q -b wt7 "$REPO" >/dev/null 2>&1
 HOME="$FAKE_HOME" RESOLVE_TIER_ROOT="$CFG" \
     bash "$SPAWN" r7 31 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
 for _ in 1 2 3 4 5 6 7 8 9 10; do

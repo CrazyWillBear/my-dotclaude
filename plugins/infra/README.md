@@ -127,7 +127,7 @@ A NARROWED slice of the repo's **common** git dir goes in
 `sandbox_workspace_write.writable_roots`, because `-s workspace-write` keeps `.git` read-only
 and a worker that cannot commit has nothing to hand back. `common-git-dir.sh --roots` builds it
 for both `spawn.sh` and `worker-resume.sh` — `objects`, `refs`, `logs` and the worktree's own
-git dir, and **never `hooks/` or `config`**.
+git dir, and **never the shared `hooks/` or `config`**.
 
 That exclusion is the point. Worktrees isolate working *files*, not git: every worktree and the
 user's own checkout share one `.git`, and `hooks/` and `config` are things git **executes**. With

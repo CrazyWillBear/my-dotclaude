@@ -58,14 +58,19 @@ JSON
 export RESOLVE_TIER_ROOT="$CFG"
 
 # A real git worktree: the script resolves --git-common-dir for writable_roots.
+# A LINKED worktree — the shape every real worker runs in, and the only one
+# `common-git-dir.sh --roots` will grant roots for. A plain repo takes the refusal branch,
+# and before that branch existed it silently pinned the PRE-narrowing value here.
+ORIGIN="$WORK/origin"
+mkdir -p "$ORIGIN"
+git -C "$ORIGIN" init -q
+git -C "$ORIGIN" config user.email t@t.t
+git -C "$ORIGIN" config user.name t
+printf 'x\n' >"$ORIGIN/f"
+git -C "$ORIGIN" add f
+git -C "$ORIGIN" commit -qm init
 REPO="$WORK/repo"
-mkdir -p "$REPO"
-git -C "$REPO" init -q
-git -C "$REPO" config user.email t@t.t
-git -C "$REPO" config user.name t
-printf 'x\n' >"$REPO/f"
-git -C "$REPO" add f
-git -C "$REPO" commit -qm init
+git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
 
 pass=0
 fail=0
@@ -114,9 +119,12 @@ assert_arg "the NETWORK, whose loss is silent and fatal" \
 # Pinned by VALUE, not by substring: `writable_roots=[""]` contains the word too, and an
 # empty or textually divergent root is exactly how a resumed worker silently loses the
 # ability to commit. test_spawn.sh pins the spawn side the same way.
-EXPECT_GITDIR="$(cd "$REPO/.git" && pwd -P)"
-assert_arg "the common git dir, spelled exactly as the spawn spells it" \
-    "$OUT" "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR\"]"
+EXPECT_GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
+EXPECT_OWN="$(cd "$(git -C "$REPO" rev-parse --git-dir)" && pwd -P)"
+assert_arg "the NARROWED roots, spelled exactly as the spawn spells them" "$OUT" \
+    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR/objects\",\"$EXPECT_GITDIR/refs\",\"$EXPECT_GITDIR/logs\",\"$EXPECT_OWN\"]"
+assert_not_contains "the whole common git dir is never granted on resume either" "$OUT" \
+    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR\"]"
 assert_arg "the schema, so the report stays machine-readable" \
                                         "$OUT" "--output-schema"
 assert_contains "writes the report where worker-report.sh reads it" "$OUT" "last-message.txt"

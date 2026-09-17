@@ -88,14 +88,31 @@ case "$OUT" in
     *)            ok "the whole common dir is not granted" ;;
 esac
 
-echo "test: --roots on a PLAIN repo keeps the whole dir, because nothing there can be narrowed"
-# HEAD, index and COMMIT_EDITMSG sit directly in the common dir of a plain repo, so
-# excluding it would stop the worker committing at all. Workers always run in linked
-# worktrees; this branch exists so the script is honest about the repo it cannot protect,
-# rather than silently granting less than a commit needs.
+echo "test: --roots REFUSES anything that is not a linked worktree"
+# The dangerous case is not the scratch repo below — it is the MAIN working tree of a repo
+# that HAS linked worktrees, i.e. the user's own checkout, where OWN == GITDIR too. Handing
+# back the whole shared .git there is the full hooks/config escape with nothing on stderr,
+# so both shapes must refuse. Every real worker runs in a linked worktree.
 run --roots "$REPO"
-assert_equals "exit 0" "$RC" "0"
-assert_equals "the whole dir, explicitly" "$OUT" "[\"$CANON\"]"
+assert_equals "a plain repo exits 1" "$RC" "1"
+assert_empty "and prints no roots" "$OUT"
+assert_contains "says a linked worktree is required" "$ERR" "LINKED worktree"
+
+# $REPO is the MAIN worktree now that a linked one hangs off it — the user's-checkout case.
+run --roots "$REPO"
+assert_equals "the main worktree of a multi-worktree repo exits 1" "$RC" "1"
+assert_empty "and prints no roots either" "$OUT"
+
+echo "test: --roots refuses when extensions.worktreeConfig makes config.worktree writable"
+# config.worktree sits inside the worktree's OWN git dir, which IS granted, and git reads it
+# on top of the shared config when the extension is on — so core.sshCommand written there is
+# host code execution. `git sparse-checkout set` enables the extension on its own.
+git -C "$WORK/linked" config extensions.worktreeConfig true
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "and prints no roots" "$OUT"
+assert_contains "names the reason" "$ERR" "worktreeConfig"
+git -C "$WORK/linked" config --unset extensions.worktreeConfig
 
 echo "test: --roots fails loud too, rather than printing an empty root list"
 run --roots "$WORK/no-such-dir-at-all"

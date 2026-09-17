@@ -291,10 +291,23 @@ chmod +x "$CODEX_BIN/codex"
 
 # A REAL git worktree, because the writable root is resolved with
 # `git rev-parse --git-common-dir` and a fake path would make that assertion a fiction.
+# A LINKED worktree, because that is what every real orchestrate worker runs in and the
+# only shape `common-git-dir.sh --roots` grants roots for at all. A plain `git init` here
+# would take the refusal branch — and, before that branch existed, silently pinned the
+# PRE-narrowing value, so this file passed whether or not the narrowing was in place.
+ORIGIN="$WORK/origin"
+mkdir -p "$ORIGIN"
+git -C "$ORIGIN" init -q 2>/dev/null
+git -C "$ORIGIN" config user.email t@t.t
+git -C "$ORIGIN" config user.name t
+printf 'x\n' >"$ORIGIN/f"
+git -C "$ORIGIN" add f
+git -C "$ORIGIN" commit -qm init
 REPO="$WORK/repo"
-mkdir -p "$REPO"
-git -C "$REPO" init -q 2>/dev/null
-GITDIR="$(cd "$REPO/.git" && pwd -P)"
+git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
+GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
+OWNDIR="$(cd "$(git -C "$REPO" rev-parse --git-dir)" && pwd -P)"
+NARROWED="[\"$GITDIR/objects\",\"$GITDIR/refs\",\"$GITDIR/logs\",\"$OWNDIR\"]"
 CODEX_ROOT="$WORK/codexruns"
 RUNDIR="$CODEX_ROOT/r9/issue-12"
 
@@ -316,7 +329,12 @@ assert_arg "reasoning effort from the roster" "$out" "model_reasoning_effort=max
 assert_arg "never stops to ask" "$out" "approval_policy=never"
 assert_arg "sandbox mode" "$out" "-s"
 assert_arg "workspace-write" "$out" "workspace-write"
-assert_arg "the common git dir is writable, or the worker cannot commit" "$out" \
+# Pinned by VALUE through the CALLER, not just in common-git-dir.sh's own test: this is
+# the assertion that proves the narrowed set actually reaches codex's argv. The paired
+# not-contains is what makes it red — reverting spawn.sh to the whole common dir trips it.
+assert_arg "the NARROWED roots reach codex argv" "$out" \
+    "sandbox_workspace_write.writable_roots=$NARROWED"
+assert_not_contains "the whole common git dir is never granted" "$out" \
     "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
 # workspace-write turns the network OFF by default (verified on codex-cli 0.154), and
 # this worker's own prompt orders `gh issue view`, `gh issue comment` and `codex exec

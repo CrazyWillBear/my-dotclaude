@@ -29,6 +29,9 @@
 # Usage:
 #   bash common-git-dir.sh <worktree>            # the canonical common git dir
 #   bash common-git-dir.sh --roots <worktree>    # a TOML array for writable_roots
+#
+# `--roots` requires a LINKED worktree and REFUSES anything else, including the main
+# working tree of a repo that has them — see the branch below for why.
 # Exit: 0 with the value, or 1 with a reason on stderr and nothing on stdout.
 
 set -uo pipefail
@@ -64,15 +67,30 @@ OWN="$(cd "$OWN" 2>/dev/null && pwd -P)" \
     || die "could not resolve this worktree's own git dir for: $WORKTREE"
 
 if [ "$OWN" = "$GITDIR" ]; then
-    # A PLAIN repo: HEAD, index and COMMIT_EDITMSG sit directly in the common dir, so
-    # there is nothing to narrow — excluding it would stop the worker committing at all.
-    # Orchestrate workers always run in LINKED worktrees, which take the narrowed branch;
-    # this one exists so the script is honest about a repo it cannot protect.
-    printf '["%s"]\n' "$GITDIR"
-else
-    # objects + refs: where the commit and the branch tip land.
-    # logs:           reflog updates for those refs.
-    # $OWN:           this worktree's HEAD/index/COMMIT_EDITMSG.
-    # NOT hooks/, NOT config — the two things git executes.
-    printf '["%s/objects","%s/refs","%s/logs","%s"]\n' "$GITDIR" "$GITDIR" "$GITDIR" "$OWN"
+    # NOT a linked worktree. Two shapes land here: a plain repo, and the MAIN working tree
+    # of a repo that HAS linked worktrees — i.e. the user's own checkout, whose .git every
+    # sibling worktree shares. Both keep HEAD, index and COMMIT_EDITMSG directly in the
+    # common dir, so granting what a commit needs means granting hooks/ and config too:
+    # exactly the host-code-execution escape this script exists to close. Refusing is not
+    # a limitation, it is the point — every real worker runs in a linked worktree, and
+    # handing back a silently WIDE root for the user's own checkout would be the worst
+    # case of all. Fail loud, like every other refusal here.
+    die "a codex worker must run in a LINKED worktree; refusing to grant the whole common git dir for: $WORKTREE"
 fi
+
+# `config.worktree` lives INSIDE $OWN, and when extensions.worktreeConfig is enabled git
+# reads it in addition to the shared config — so core.sshCommand, core.hooksPath or
+# core.fsmonitor written there is host code execution the next time anyone runs git in
+# this worktree, which the merge step and the user both do. A worker cannot switch the
+# extension on itself (the shared config is not writable), but a repo that already uses it
+# is exposed, and `git sparse-checkout set` turns it on by itself. $OWN cannot be narrowed
+# further without losing HEAD/index, so refuse instead.
+if [ "$(git -C "$WORKTREE" config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
+    die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE"
+fi
+
+# objects + refs: where the commit and the branch tip land.
+# logs:           reflog updates for those refs.
+# $OWN:           this worktree's HEAD/index/COMMIT_EDITMSG.
+# Never the SHARED hooks/ or config — the two things git executes.
+printf '["%s/objects","%s/refs","%s/logs","%s"]\n' "$GITDIR" "$GITDIR" "$GITDIR" "$OWN"
