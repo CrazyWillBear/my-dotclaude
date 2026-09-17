@@ -46,7 +46,16 @@ die() { echo "error: $*" >&2; exit 1; }
 # 2026-09-17: a bare GIT_DIR emitted another repository's roots at exit 0. spawn.sh and
 # worker-resume.sh inherit the orchestrator's environment, so a value leaking in from a
 # hook or an exporting shell is enough.
-git_wt() { env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE git -C "$WORKTREE" "$@"; }
+# GIT_CONFIG_COUNT/KEY_n/VALUE_n are the documented environment equivalent of `-c`, so they
+# OUTRANK local config: with the family set, `config --get extensions.worktreeConfig` answered
+# `false` for a repo that had it enabled, and the refusal below was masked — the script emitted
+# roots at exit 0 for a repo it should have refused. Verified end to end 2026-09-17. Clearing
+# COUNT is what disarms KEY_n/VALUE_n, which git only reads while n < COUNT.
+git_wt() {
+    env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE \
+        -u GIT_CONFIG_COUNT -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM \
+        git -C "$WORKTREE" "$@"
+}
 
 MODE=dir
 if [ "${1:-}" = "--roots" ]; then MODE=roots; shift; fi
@@ -120,20 +129,38 @@ esac
 # aims at the other repo. Reproduced 2026-09-17 at exit 0 with nothing on stderr, three
 # ways: a rewritten .git, a symlinked .git, and a bare GIT_DIR (now stripped by git_wt).
 #
-# The back-pointer is the half a worker cannot forge. An honest <common>/worktrees/<name>
-# holds a `gitdir` file naming the .git that points back at THIS worktree. It lives in the
-# repo being aimed at, which is not a granted root, so a worker cannot bring it along.
+# The back-pointer is what a forged $OWN cannot carry with it. An honest
+# <common>/worktrees/<name> holds a `gitdir` file naming the .git that points back at THIS
+# worktree, and it lives in the repo being aimed at, which is not a granted root.
+#
+# It is NOT unforgeable in itself — $OWN is writable, so a worker can put anything in
+# $OWN/gitdir. What it cannot do is make that value name another worktree's path while
+# containment above still holds. That makes the COMPARISON load-bearing, so it has to be
+# exact. An earlier cut compared only `dirname`, which resolves a slashless string to `.` —
+# i.e. to whatever directory the CALLER happened to be standing in, and both callers run
+# --roots before their own `cd`. Verified 2026-09-17: `zzz not a path` passed at exit 0 from
+# inside the worktree, as did `<worktree>/anything` and `<worktree>/.git` with trailing
+# whitespace, because the `.git` component was never checked.
 BACKREF="$(cat "$OWN/gitdir" 2>/dev/null)"
 [ -n "$BACKREF" ] || die "this worktree's git dir carries no back-pointer, so it cannot be shown to belong to this worktree: $WORKTREE
   its git dir:  $OWN
   remedy: do not reuse this worktree — discard it. Every worktree \`git worktree add\` creates
   has a \`gitdir\` file; one without it was assembled by hand."
-BACK="$(cd "$(dirname "$BACKREF")" 2>/dev/null && pwd -P)" || BACK=""
-WTPATH="$(cd "$WORKTREE" 2>/dev/null && pwd -P)" || WTPATH=""
-if [ -z "$BACK" ] || [ "$BACK" != "$WTPATH" ]; then
-    die "this worktree's git dir points back at a DIFFERENT worktree, so .git has been repointed at another repository: $WORKTREE
+case "$BACKREF" in
+    /*) ;;
+    *) die "this worktree's git dir names a RELATIVE back-pointer, which would resolve against whatever directory the caller happened to be in: $WORKTREE
   its git dir:    $OWN
-  points back at: ${BACK:-<unresolvable>}
+  points back at: $BACKREF
+  remedy: do not reuse this worktree — discard it. git always writes an ABSOLUTE path here, so
+  a relative one was assembled by hand." ;;
+esac
+BACKDIR="$(cd "$(dirname "$BACKREF")" 2>/dev/null && pwd -P)" || BACKDIR=""
+WTPATH="$(cd "$WORKTREE" 2>/dev/null && pwd -P)" || WTPATH=""
+if [ -z "$BACKDIR" ] || [ "$BACKDIR" != "$WTPATH" ] || [ "$(basename "$BACKREF")" != ".git" ]; then
+    die "this worktree's git dir does not point back at this worktree's own .git, so .git has been repointed at another repository: $WORKTREE
+  its git dir:    $OWN
+  points back at: $BACKREF
+  expected:       $WTPATH/.git
   remedy: do not reuse this worktree — discard it. A worker that repointed .git was trying to
   steer the sandbox at another repository's objects, refs and logs."
 fi

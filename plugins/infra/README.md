@@ -140,8 +140,12 @@ git dir, and **never the shared `hooks/` or `config`**. It refuses **five** shap
 cannot narrow; a repo with `extensions.worktreeConfig` enabled; a worktree that already carries a
 planted `config.worktree`; a worktree whose `commondir` has been rewritten; and a worktree whose
 `.git` has been repointed or symlinked at another repo's git dir, which its own git dir's
-`gitdir` back-pointer contradicts. It also strips `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`
-before resolving, so a value in the caller's environment cannot steer it either.
+`gitdir` back-pointer contradicts — that back-pointer must be an absolute path naming exactly
+`<worktree>/.git`, and a missing, empty, relative or otherwise mismatched one is refused on the
+same grounds. It also strips `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and the `GIT_CONFIG_*`
+injection family before resolving, so a value in the caller's environment cannot steer it or
+mask a refusal — `GIT_CONFIG_COUNT` outranks local config and hid the `extensions.worktreeConfig`
+refusal until it was stripped.
 
 **This narrows the escape; it does not close it.** `commondir` sits inside the granted `$OWN` and
 redirects `$GIT_COMMON_DIR` (gitrepository-layout(5)). Reproduced 2026-09-17, in two facets:

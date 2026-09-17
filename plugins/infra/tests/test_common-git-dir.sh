@@ -207,6 +207,59 @@ case "$OUT" in
     *) ok "no victim path anywhere in the roots" ;;
 esac
 
+echo "test: --roots REFUSES a RELATIVE back-pointer, whatever directory it is called from"
+# $OWN is writable, so a worker can put anything in $OWN/gitdir. `dirname` of a slashless
+# string is `.`, which resolves to the CALLER'S cwd — and both callers run --roots before
+# their own `cd`, so the permissive case is the realistic one. This ran from inside the
+# worktree and passed at exit 0 until the absolute-path check landed.
+OWNDIR4="$(cd "$(git -C "$WORK/linked" rev-parse --git-dir)" && pwd -P)"
+cp "$OWNDIR4/gitdir" "$WORK/gitdir.bak"
+printf 'zzz not a path\n' >"$OWNDIR4/gitdir"
+OUT="$(cd "$WORK/linked" && bash "$SCRIPT" --roots "$WORK/linked" 2>"$WORK/err")"
+RC=$?
+ERR="$(cat "$WORK/err")"
+assert_equals "called FROM the worktree: exits 1" "$RC" "1"
+assert_empty "called FROM the worktree: prints no roots" "$OUT"
+assert_contains "names the relative back-pointer" "$ERR" "RELATIVE back-pointer"
+
+echo "test: --roots REFUSES a back-pointer naming the right directory but not .git"
+# Only the dirname used to be compared, so any basename passed.
+printf '%s/anything\n' "$WORK/linked" >"$OWNDIR4/gitdir"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "prints no roots" "$OUT"
+
+echo "test: --roots REFUSES a back-pointer with trailing whitespace after .git"
+printf '%s/.git   \n' "$WORK/linked" >"$OWNDIR4/gitdir"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "prints no roots" "$OUT"
+
+echo "test: --roots REFUSES a git dir carrying an EMPTY back-pointer"
+# Its own branch, its own message — previously unreachable by any assertion.
+: >"$OWNDIR4/gitdir"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "prints no roots" "$OUT"
+assert_contains "names the missing back-pointer" "$ERR" "carries no back-pointer"
+cp "$WORK/gitdir.bak" "$OWNDIR4/gitdir"
+run --roots "$WORK/linked"
+assert_equals "and the honest worktree still passes once restored" "$RC" "0"
+
+echo "test: --roots ignores the GIT_CONFIG_* family, which outranks local config"
+# GIT_CONFIG_COUNT/KEY_n/VALUE_n are the documented env equivalent of `-c`, so they masked
+# the extensions.worktreeConfig refusal entirely: rc=1 with a plain env, rc=0 with these set.
+git -C "$REPO" config extensions.worktreeConfig true
+run --roots "$WORK/linked"
+assert_equals "extension on, plain env: refused" "$RC" "1"
+OUT="$(env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=extensions.worktreeConfig GIT_CONFIG_VALUE_0=false \
+        bash "$SCRIPT" --roots "$WORK/linked" 2>"$WORK/err")"
+RC=$?
+ERR="$(cat "$WORK/err")"
+assert_equals "extension on, GIT_CONFIG_* set: still refused" "$RC" "1"
+assert_empty "and still prints no roots" "$OUT"
+git -C "$REPO" config --unset extensions.worktreeConfig
+
 echo "test: --roots fails loud too, rather than printing an empty root list"
 run --roots "$WORK/no-such-dir-at-all"
 assert_equals "exits 1" "$RC" "1"
