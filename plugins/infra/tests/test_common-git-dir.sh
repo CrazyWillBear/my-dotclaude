@@ -265,12 +265,17 @@ assert_equals "and the honest worktree still passes once restored" "$RC" "0"
 echo "test: an HONEST worktree with a relative back-pointer is accepted, not refused"
 # `git worktree add --relative-paths` writes one, and refusing it made every worktree in such
 # a repo permanently unspawnable. Skipped where git is too old to create the shape at all.
-# Decide on FLAG SUPPORT, not on the add's exit code: keying the skip on the add meant any
-# unrelated failure silently dropped the only coverage of the accept path.
-case "$(git worktree add -h 2>&1)" in *relative-paths*) HAVE_RELPATHS=yes ;; *) HAVE_RELPATHS=no ;; esac
-if [ "$HAVE_RELPATHS" = yes ]; then
-    git -C "$REPO" worktree add --relative-paths -q "$WORK/relwt" -b relwt \
-        || no "git supports --relative-paths but the worktree add failed"
+# ATTEMPT THE ADD; do not parse anything to decide whether to. Three successive versions of
+# this guard keyed on something that could be wrong while the suite stayed green: the add's
+# exit code, a `--relative-paths` match against git's `--[no-]relative-paths` spelling, and
+# `git worktree add -h` run outside a repo (a RUN_SETUP builtin prints no usage there, so the
+# key really answered "is cwd in a repo"). Each time three assertions vanished silently.
+#
+# Branching on the add itself ends that: a wrong string parse now costs nothing, because the
+# add is tried regardless. Only a REAL add failure can remove coverage, and that is either
+# loud (git has the flag) or a genuine old-git skip.
+if git -C "$REPO" worktree add --relative-paths -q "$WORK/relwt" -b relwt 2>"$WORK/relerr"; then
+    RELBLOCK=ran
     RELOWN="$(cd "$(git -C "$WORK/relwt" rev-parse --git-dir)" && pwd -P)"
     case "$(cat "$RELOWN/gitdir")" in
         /*) no "fixture is wrong: git wrote an ABSOLUTE back-pointer for --relative-paths" ;;
@@ -280,7 +285,11 @@ if [ "$HAVE_RELPATHS" = yes ]; then
     assert_equals "relative back-pointer: exit 0" "$RC" "0"
     assert_contains "relative back-pointer: still the real repo's objects" "$OUT" \
         "$(cd "$REPO/.git" && pwd -P)/objects"
+elif git -C "$REPO" worktree add -h 2>&1 | grep -q -- relative-paths; then
+    RELBLOCK=failed
+    no "git has --relative-paths but the worktree add failed: $(cat "$WORK/relerr")"
 else
+    RELBLOCK=skipped
     echo "  SKIP: this git has no --relative-paths flag"
 fi
 
@@ -347,6 +356,25 @@ run ""
 assert_equals "no argument exits 1" "$RC" "1"
 assert_empty "and prints no path" "$OUT"
 assert_contains "usage" "$ERR" "usage"
+
+# Every silent-coverage bug in this file looked identical from the outside: a block stopped
+# running, no assertion failed, and the suite stayed green — three times, in three disguises
+# (keyed on the add's exit code; matching `--relative-paths` against git's `--[no-]` spelling;
+# asking `git worktree add -h` outside a repo). A green run is not evidence that a test ran,
+# so the count is pinned. The relative-paths block is the one legitimately conditional part.
+#
+# It keys on RELBLOCK, which records what HAPPENED, not on a prediction of what should have.
+# The first version of this pin keyed on the flag-detection variable — the very thing the bug
+# corrupts — so when detection wrongly said "no flag" the pin lowered its own expectation to
+# match and passed. A tripwire derived from what it polices is not a tripwire.
+#
+# If you ADD assertions, update this number — that is the tripwire working, not a failure.
+EXPECTED=79
+[ "${RELBLOCK:-}" = ran ] && EXPECTED=82
+TOTAL=$((pass + fail))
+if [ "$TOTAL" -ne "$EXPECTED" ]; then
+    no "ran $TOTAL assertions, expected $EXPECTED — a block was silently skipped, or assertions were added without updating EXPECTED"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
