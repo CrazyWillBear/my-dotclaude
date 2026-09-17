@@ -31,12 +31,22 @@
 #   bash common-git-dir.sh --roots <worktree>    # a TOML array for writable_roots
 #
 # `--roots` requires a LINKED worktree and REFUSES anything else, including the main
-# working tree of a repo that has them — see the branch below for why.
+# working tree of a repo that has them — see the branch below for why. It answers for the
+# worktree PATH it is handed and nothing else: the git environment is stripped before every
+# resolution, and the worktree's back-pointer must agree that its git dir belongs to it.
 # Exit: 0 with the value, or 1 with a reason on stderr and nothing on stdout.
 
 set -uo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# Every git call here must answer for the worktree PATH we were handed. GIT_DIR,
+# GIT_COMMON_DIR and GIT_WORK_TREE all override what `-C <worktree>` would otherwise
+# resolve, and they steer this script with no filesystem write at all — verified
+# 2026-09-17: a bare GIT_DIR emitted another repository's roots at exit 0. spawn.sh and
+# worker-resume.sh inherit the orchestrator's environment, so a value leaking in from a
+# hook or an exporting shell is enough.
+git_wt() { env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE git -C "$WORKTREE" "$@"; }
 
 MODE=dir
 if [ "${1:-}" = "--roots" ]; then MODE=roots; shift; fi
@@ -45,7 +55,7 @@ WORKTREE="${1:-}"
 [ -n "$WORKTREE" ] || die "usage: common-git-dir.sh [--roots] <worktree>"
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 
-GITDIR="$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null)" \
+GITDIR="$(git_wt rev-parse --git-common-dir 2>/dev/null)" \
     || die "not a git worktree, so a codex worker could never commit: $WORKTREE"
 # `--git-common-dir` answers relative to the worktree for a plain repo (".git") and
 # absolute for a linked one, so normalise before resolving.
@@ -60,7 +70,7 @@ fi
 
 # The worktree's OWN git dir. For a linked worktree that is <common>/worktrees/<name>,
 # holding this worktree's HEAD, index and COMMIT_EDITMSG — all written by a commit.
-OWN="$(git -C "$WORKTREE" rev-parse --git-dir 2>/dev/null)" \
+OWN="$(git_wt rev-parse --git-dir 2>/dev/null)" \
     || die "cannot resolve the git dir for: $WORKTREE"
 case "$OWN" in /*) ;; *) OWN="$WORKTREE/$OWN" ;; esac
 OWN="$(cd "$OWN" 2>/dev/null && pwd -P)" \
@@ -102,6 +112,32 @@ case "$OWN" in
   trying to steer the sandbox at another repository." ;;
 esac
 
+# Containment above is NOT sufficient on its own, and an earlier version of this guard was
+# wrong to claim it was. $GITDIR and $OWN are BOTH resolved from $WORKTREE/.git — for a
+# linked worktree a regular FILE, sitting in the workspace root that `-s workspace-write`
+# makes writable by definition. Repointing that file at another repo's worktrees/<name>
+# moves BOTH sides of the comparison together, so containment still holds while every root
+# aims at the other repo. Reproduced 2026-09-17 at exit 0 with nothing on stderr, three
+# ways: a rewritten .git, a symlinked .git, and a bare GIT_DIR (now stripped by git_wt).
+#
+# The back-pointer is the half a worker cannot forge. An honest <common>/worktrees/<name>
+# holds a `gitdir` file naming the .git that points back at THIS worktree. It lives in the
+# repo being aimed at, which is not a granted root, so a worker cannot bring it along.
+BACKREF="$(cat "$OWN/gitdir" 2>/dev/null)"
+[ -n "$BACKREF" ] || die "this worktree's git dir carries no back-pointer, so it cannot be shown to belong to this worktree: $WORKTREE
+  its git dir:  $OWN
+  remedy: do not reuse this worktree — discard it. Every worktree \`git worktree add\` creates
+  has a \`gitdir\` file; one without it was assembled by hand."
+BACK="$(cd "$(dirname "$BACKREF")" 2>/dev/null && pwd -P)" || BACK=""
+WTPATH="$(cd "$WORKTREE" 2>/dev/null && pwd -P)" || WTPATH=""
+if [ -z "$BACK" ] || [ "$BACK" != "$WTPATH" ]; then
+    die "this worktree's git dir points back at a DIFFERENT worktree, so .git has been repointed at another repository: $WORKTREE
+  its git dir:    $OWN
+  points back at: ${BACK:-<unresolvable>}
+  remedy: do not reuse this worktree — discard it. A worker that repointed .git was trying to
+  steer the sandbox at another repository's objects, refs and logs."
+fi
+
 # `config.worktree` lives INSIDE $OWN, and when extensions.worktreeConfig is enabled git
 # reads it in addition to the shared config — so core.sshCommand, core.hooksPath or
 # core.fsmonitor written there is host code execution the next time anyone runs git in
@@ -109,7 +145,7 @@ esac
 # extension on itself (the shared config is not writable), but a repo that already uses it
 # is exposed, and `git sparse-checkout set` turns it on by itself. $OWN cannot be narrowed
 # further without losing HEAD/index, so refuse instead.
-if [ "$(git -C "$WORKTREE" config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
+if [ "$(git_wt config --bool --get extensions.worktreeConfig 2>/dev/null)" = "true" ]; then
     die "extensions.worktreeConfig is enabled, so a writable config.worktree would be host code execution: $WORKTREE
   remedy: run the worker in a repo that does not use worktree-specific config, or unset it with
   \`git config --unset extensions.worktreeConfig\` AND delete the leftover config.worktree —

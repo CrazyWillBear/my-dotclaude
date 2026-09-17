@@ -136,9 +136,12 @@ A NARROWED slice of the repo's **common** git dir goes in
 `sandbox_workspace_write.writable_roots`, because `-s workspace-write` keeps `.git` read-only
 and a worker that cannot commit has nothing to hand back. `common-git-dir.sh --roots` builds it
 for both `spawn.sh` and `worker-resume.sh` — `objects`, `refs`, `logs` and the worktree's own
-git dir, and **never the shared `hooks/` or `config`**. It refuses **four** shapes: a worktree it
+git dir, and **never the shared `hooks/` or `config`**. It refuses **five** shapes: a worktree it
 cannot narrow; a repo with `extensions.worktreeConfig` enabled; a worktree that already carries a
-planted `config.worktree`; and a worktree whose `commondir` has been rewritten.
+planted `config.worktree`; a worktree whose `commondir` has been rewritten; and a worktree whose
+`.git` has been repointed or symlinked at another repo's git dir, which its own git dir's
+`gitdir` back-pointer contradicts. It also strips `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE`
+before resolving, so a value in the caller's environment cannot steer it either.
 
 **This narrows the escape; it does not close it.** `commondir` sits inside the granted `$OWN` and
 redirects `$GIT_COMMON_DIR` (gitrepository-layout(5)). Reproduced 2026-09-17, in two facets:
@@ -147,7 +150,10 @@ redirects `$GIT_COMMON_DIR` (gitrepository-layout(5)). Reproduced 2026-09-17, in
   `git rev-parse --git-common-dir`, so a rewritten `commondir` pointed every root except `$OWN`
   at an *unrelated repository*, at exit 0 — a resume would have granted write access to that
   repo's `objects`, `refs` and `logs`, the user's own checkout included. `--roots` now requires
-  `$OWN` to live under `<common>/worktrees/`, which an honest linked worktree always does.
+  `$OWN` to live under `<common>/worktrees/`, which an honest linked worktree always does — and,
+  because that check alone compares two values that `$WORKTREE/.git` moves together, also that
+  `$OWN/gitdir` points back at the worktree it was handed. A repointed `.git`, a symlinked `.git`
+  and a bare `GIT_DIR` each reproduced the same escape past containment on 2026-09-17.
 - **Code execution — still ACCEPTED.** Git run by a *human* inside that worktree still follows a
   rewritten `commondir` and reads `core.sshCommand` / `core.hooksPath` from a planted `config`.
   A file inside a granted directory root cannot be excluded, so this half remains a logged

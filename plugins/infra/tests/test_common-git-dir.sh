@@ -36,6 +36,16 @@ run() {
     ERR="$(cat "$errf")"
 }
 
+# run() with one extra environment assignment. A stray GIT_DIR steers git's resolution as
+# surely as a rewritten file does, and both callers inherit the orchestrator's environment.
+run_env() {
+    local errf="$WORK/err" assign="$1"
+    shift
+    OUT="$(env "$assign" bash "$SCRIPT" "$@" 2>"$errf")"
+    RC=$?
+    ERR="$(cat "$errf")"
+}
+
 REPO="$WORK/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q
@@ -147,6 +157,55 @@ assert_contains "names the rewrite" "$ERR" "commondir has been rewritten"
 cp "$WORK/commondir.bak" "$OWNDIR3/commondir"
 run --roots "$WORK/linked"
 assert_equals "and an honest worktree still passes once restored" "$RC" "0"
+
+# A victim repo that HAS a linked worktree — the shape a repointed .git must aim at, and
+# what the user's own checkout looks like (this repo keeps worktrees under .claude/).
+VREPO="$WORK/vrepo"
+mkdir -p "$VREPO"
+git -C "$VREPO" init -q
+git -C "$VREPO" config user.email t@t.t
+git -C "$VREPO" config user.name t
+printf 'v\n' >"$VREPO/f"
+git -C "$VREPO" add f
+git -C "$VREPO" commit -qm init
+git -C "$VREPO" worktree add -q -b vwt "$WORK/vlinked" >/dev/null 2>&1
+VOWN="$(cd "$(git -C "$WORK/vlinked" rev-parse --git-dir)" && pwd -P)"
+cp "$WORK/linked/.git" "$WORK/dotgit.bak"
+
+echo "test: --roots REFUSES a .git repointed at another repo, which steers BOTH compared values"
+# Containment compares $GITDIR against $OWN, but both resolve from $WORKTREE/.git — a
+# regular file in the writable workspace root. Repointing it moves both sides together, so
+# containment alone still passed while every root aimed at the victim. Reproduced 2026-09-17.
+printf 'gitdir: %s\n' "$VOWN" >"$WORK/linked/.git"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "and prints no roots aimed at the victim" "$OUT"
+assert_contains "names the repointing" "$ERR" "repointed"
+cp "$WORK/dotgit.bak" "$WORK/linked/.git"
+
+echo "test: --roots REFUSES a .git replaced by a SYMLINK to another repo's git dir"
+# The same steer with no file content written at all — pwd -P canonicalises straight through.
+rm -f "$WORK/linked/.git"
+ln -s "$VOWN" "$WORK/linked/.git"
+run --roots "$WORK/linked"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "and prints no roots" "$OUT"
+assert_contains "names the repointing" "$ERR" "repointed"
+rm -f "$WORK/linked/.git"
+cp "$WORK/dotgit.bak" "$WORK/linked/.git"
+run --roots "$WORK/linked"
+assert_equals "and the honest worktree still passes once restored" "$RC" "0"
+
+echo "test: --roots ignores GIT_DIR in the environment, which steers git with no file write"
+# Needs no sandbox bypass and no write anywhere: spawn.sh and worker-resume.sh inherit the
+# orchestrator's environment, and worker-resume.sh re-runs --roots at resume time.
+run_env "GIT_DIR=$VOWN" --roots "$WORK/linked"
+assert_equals "exit 0 — answers for the worktree, not for what GIT_DIR names" "$RC" "0"
+assert_contains "roots stay on the real repo" "$OUT" "$(cd "$REPO/.git" && pwd -P)/objects"
+case "$OUT" in
+    *vrepo*) no "GIT_DIR steered the roots at the victim repo" ;;
+    *) ok "no victim path anywhere in the roots" ;;
+esac
 
 echo "test: --roots fails loud too, rather than printing an empty root list"
 run --roots "$WORK/no-such-dir-at-all"

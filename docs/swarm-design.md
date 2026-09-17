@@ -115,7 +115,12 @@ The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
     every root except `$OWN` at an unrelated repository at exit 0. A resume would then have
     granted the worker write access to that repo's `objects`, `refs` and `logs` — including the
     user's own checkout, whose branch tips it could rewrite. `--roots` now requires `$OWN` to sit
-    under `<common>/worktrees/`, which refuses exactly that shape.
+    under `<common>/worktrees/`, cross-checks that `$OWN/gitdir` points back at the worktree it
+    was handed, and strips `GIT_DIR`/`GIT_COMMON_DIR`/`GIT_WORK_TREE` before resolving anything.
+    Containment alone was NOT enough, and this doc claimed otherwise for a day: both values it
+    compares resolve from `$WORKTREE/.git`, so repointing that file, symlinking it, or setting
+    `GIT_DIR` moved both sides together and still emitted the victim's roots at exit 0
+    (reproduced 2026-09-17, all three shapes, then refused).
   - **Code execution — ACCEPTED.** Git run by a human inside that worktree still follows a
     rewritten `commondir` and reads `core.sshCommand` / `core.hooksPath` from a planted `config`.
     It needs no extension enabled, and a file inside a granted directory root cannot be excluded,
@@ -257,9 +262,10 @@ one-shot, so it maps onto `codex exec`:
   shared `hooks/` and never the shared `config`. It REFUSES a non-linked worktree outright (the
   main checkout's own `.git` cannot be narrowed) and refuses a repo with
   `extensions.worktreeConfig` enabled, where `config.worktree` would sit inside a granted root.
-  It also refuses a worktree already carrying a planted `config.worktree`, and one whose
-  `commondir` has been rewritten — that rewrite steered the roots themselves onto another
-  repository until it was refused (§ Roster).
+  It also refuses a worktree already carrying a planted `config.worktree`, one whose
+  `commondir` has been rewritten, and one whose `.git` has been repointed or symlinked at
+  another repo's git dir — each of those steered the roots themselves onto another repository
+  until it was refused (§ Roster).
   **Residual, accepted (§ Roster):** `commondir` still sits inside the granted `$OWN`, so git run
   by a human in that worktree follows it to a planted `config`; reproduced 2026-09-17 as host
   code execution. Worktrees isolate working *files*, not git: they all share one
