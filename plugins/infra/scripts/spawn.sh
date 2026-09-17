@@ -380,7 +380,7 @@ WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 
 # Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
 # no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
 # session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
-RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the

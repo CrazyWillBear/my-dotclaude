@@ -54,6 +54,18 @@ rl() { local repo="$1"; shift; (cd "$repo" && HOME="$GLOBAL_HOME" bash "$RUNLOG"
 r()  { rl "$WORK/repo" "$@"; }
 err() { cat "$WORK/err"; }
 
+# rl() with HOME removed entirely rather than pointed somewhere fake.
+rl_nohome() { local repo="$1"; shift; (cd "$repo" && env -u HOME bash "$RUNLOG" "$@") 2>"$WORK/err"; }
+
+echo "test: no HOME at all -> fails where it can say why, not on an unbound variable"
+# The per-repo keyed dir expands $HOME, and run-log.sh runs under `set -u`. That line sits
+# BEFORE the runid and event validation, so any invocation inside a repo reaches it.
+rl_nohome "$WORK/repo" append r1 scope '{"issues":[1]}'
+case "$(err)" in
+    *"unbound variable"*) no "no HOME: aborted on an unbound \$HOME" ;;
+    *) ok "no HOME: no unbound-variable abort" ;;
+esac
+
 # ---------------------------------------------------------------------------
 echo "test: append then replay round-trips, in order"
 r append run1 scope '{"issues":[12,13,14]}'

@@ -49,7 +49,7 @@ CHECK_UPDATE="$PLUGIN_ROOT/scripts/check-update.sh"
 # Throttle config + cache location
 # ---------------------------------------------------------------------------
 TTL="${NOTIFY_UPDATE_TTL_SECONDS:-86400}"   # ~24h default
-CACHE_DIR="${NOTIFY_UPDATE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/my-dotclaude}"
+CACHE_DIR="${NOTIFY_UPDATE_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/my-dotclaude}"
 CACHE_FILE="$CACHE_DIR/last-check.json"
 
 now="$(date +%s 2>/dev/null)" || now=""

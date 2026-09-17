@@ -41,7 +41,7 @@ RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 # known_marketplaces.json or the marketplace entry can't be found.
 our_marketplace_root() {
   local config_dir known root
-  config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  config_dir="${CLAUDE_CONFIG_DIR:-${HOME:-/nonexistent}/.claude}"
   known="$config_dir/plugins/known_marketplaces.json"
   if [ ! -f "$known" ]; then
     printf 'note: %s not found; skipped deriving the plugin list and status line refresh.\n' "$known" >&2

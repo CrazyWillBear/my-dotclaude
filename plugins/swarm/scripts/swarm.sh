@@ -60,7 +60,7 @@ command -v python3 >/dev/null 2>&1 || { echo "error: python3 not found" >&2; exi
 
 SWARM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROSTER_SH="$SWARM_DIR/roster.sh"
-INFRA="$HOME/.claude/kit/infra"
+INFRA="${HOME:-/nonexistent}/.claude/kit/infra"
 
 die() { echo "error: $*" >&2; exit 1; }
 

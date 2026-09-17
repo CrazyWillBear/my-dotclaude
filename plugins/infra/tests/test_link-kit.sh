@@ -39,6 +39,18 @@ run
 assert_equals "twice: exit 0" "$RC" "0"
 assert_equals "twice: same target" "$(readlink "$LINK")" "$ROOT_P"
 
+echo "test: no HOME at all -> fails where it can say why, not on an unbound variable"
+# systemd units, `env -i` and some hook harnesses run without HOME, and this hook runs
+# under `set -u`: a bare $HOME expansion aborts before any of its own handling runs.
+OUT="$(env -u HOME bash "$HOOK" 2>"$WORK/err")"
+RC=$?
+ERR="$(cat "$WORK/err")"
+assert_equals "no HOME: exits 1 rather than aborting" "$RC" "1"
+case "$ERR" in
+    *"unbound variable"*) no "no HOME: aborted on an unbound \$HOME" ;;
+    *) ok "no HOME: no unbound-variable abort" ;;
+esac
+
 echo "test: a stale link is repointed"
 mkdir -p "$WORK/other"
 ln -sfn "$WORK/other" "$LINK"

@@ -70,7 +70,7 @@ case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], 
 
 [ -f "$INFRA/session-status.sh" ] || die "missing infra sibling: $INFRA/session-status.sh"
 
-RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 # Fail now rather than after a 2-hour wait. No run dir means no codex worker was ever
 # spawned for this issue — a caller that reached here with a claude-backed worker is
 # asking the wrong question, and should be told so immediately.

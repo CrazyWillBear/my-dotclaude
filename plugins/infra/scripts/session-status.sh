@@ -98,7 +98,7 @@ done
 # nothing at all. test_session-status.sh pins the default against a real spawn.
 export STATUS_RUNID="$RUNID" STATUS_EXPECT="$EXPECT" \
        STATUS_PROJECT_DIR="$PROJECT_DIR" STATUS_PEERS="$PEERS" \
-       STATUS_CODEX_ROOT="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}"
+       STATUS_CODEX_ROOT="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}"
 
 python3 <<"PY"
 import json, os, subprocess, sys

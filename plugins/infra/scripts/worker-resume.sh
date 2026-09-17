@@ -61,7 +61,7 @@ case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], 
 [ -n "${ANSWER//[[:space:]]/}" ] || die "the answer is empty — resuming with nothing to say wastes the thread"
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
 
-RUNDIR="${CODEX_RUN_ROOT:-$HOME/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 [ -d "$RUNDIR" ] || die "no codex run dir for issue $ISSUE: $RUNDIR"
 [ -f "$RUNDIR/status-schema.json" ] || die "missing $RUNDIR/status-schema.json — cannot force the report shape"
 
