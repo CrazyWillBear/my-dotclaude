@@ -46,14 +46,24 @@ die() { echo "error: $*" >&2; exit 1; }
 # 2026-09-17: a bare GIT_DIR emitted another repository's roots at exit 0. spawn.sh and
 # worker-resume.sh inherit the orchestrator's environment, so a value leaking in from a
 # hook or an exporting shell is enough.
-# GIT_CONFIG_COUNT/KEY_n/VALUE_n are the documented environment equivalent of `-c`, so they
-# OUTRANK local config: with the family set, `config --get extensions.worktreeConfig` answered
-# `false` for a repo that had it enabled, and the refusal below was masked — the script emitted
-# roots at exit 0 for a repo it should have refused. Verified end to end 2026-09-17. Clearing
-# COUNT is what disarms KEY_n/VALUE_n, which git only reads while n < COUNT.
+# The config-from-environment names all OUTRANK local config, so any of them can answer the
+# `extensions.worktreeConfig` question below on behalf of a repo that has it enabled — masking
+# a refusal rather than steering the roots. git 2.55 knows six; all six are cleared here, and
+# a first pass that cleared only three left the refusal fully bypassable. Verified 2026-09-17,
+# each at exit 0 with the complete root array for a repo that should have been refused:
+#   * GIT_CONFIG_PARAMETERS — git's own transport for `-c`, and git SETS IT ITSELF for every
+#     alias and hook child. Running --roots from a `-c` alias bypassed the refusal with no
+#     attacker involved, which is exactly the "leaking in from a hook" case named above.
+#   * GIT_CONFIG — git-config(1): used as if passed to `--file`, and the check below IS a
+#     `git config` call, so GIT_CONFIG=/dev/null silences it.
+#   * GIT_CONFIG_COUNT — clearing COUNT is what disarms KEY_n/VALUE_n, which git reads only
+#     while n < COUNT.
+# GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL/SYSTEM fail open the same way for a system- or
+# global-scope setting, so they go too.
 git_wt() {
     env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE \
-        -u GIT_CONFIG_COUNT -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM \
+        -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT \
+        -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_CONFIG_NOSYSTEM \
         git -C "$WORKTREE" "$@"
 }
 
@@ -146,14 +156,16 @@ BACKREF="$(cat "$OWN/gitdir" 2>/dev/null)"
   its git dir:  $OWN
   remedy: do not reuse this worktree — discard it. Every worktree \`git worktree add\` creates
   has a \`gitdir\` file; one without it was assembled by hand."
-case "$BACKREF" in
-    /*) ;;
-    *) die "this worktree's git dir names a RELATIVE back-pointer, which would resolve against whatever directory the caller happened to be in: $WORKTREE
-  its git dir:    $OWN
-  points back at: $BACKREF
-  remedy: do not reuse this worktree — discard it. git always writes an ABSOLUTE path here, so
-  a relative one was assembled by hand." ;;
-esac
+# git DOES write a relative back-pointer: `git worktree add --relative-paths`, and any repo
+# with worktree.useRelativePaths set, produce one (verified 2026-09-17: `../../../../relwt/.git`).
+# Refusing those made every worktree in such a repo permanently unspawnable, with a remedy —
+# "discard it" — that could never help. Resolve it the way git does, against $OWN.
+#
+# That also keeps round 4's hole shut. The bug then was resolving against the CALLER'S cwd,
+# where `dirname` of a slashless string is `.`; anchoring to $OWN instead makes
+# `zzz not a path` resolve to $OWN/zzz not a path, whose dirname is $OWN and never the
+# worktree, no matter where --roots was invoked from.
+case "$BACKREF" in /*) ;; *) BACKREF="$OWN/$BACKREF" ;; esac
 BACKDIR="$(cd "$(dirname "$BACKREF")" 2>/dev/null && pwd -P)" || BACKDIR=""
 WTPATH="$(cd "$WORKTREE" 2>/dev/null && pwd -P)" || WTPATH=""
 if [ -z "$BACKDIR" ] || [ "$BACKDIR" != "$WTPATH" ] || [ "$(basename "$BACKREF")" != ".git" ]; then

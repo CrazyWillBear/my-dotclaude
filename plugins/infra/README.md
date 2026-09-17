@@ -140,12 +140,15 @@ git dir, and **never the shared `hooks/` or `config`**. It refuses **five** shap
 cannot narrow; a repo with `extensions.worktreeConfig` enabled; a worktree that already carries a
 planted `config.worktree`; a worktree whose `commondir` has been rewritten; and a worktree whose
 `.git` has been repointed or symlinked at another repo's git dir, which its own git dir's
-`gitdir` back-pointer contradicts — that back-pointer must be an absolute path naming exactly
-`<worktree>/.git`, and a missing, empty, relative or otherwise mismatched one is refused on the
-same grounds. It also strips `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and the `GIT_CONFIG_*`
-injection family before resolving, so a value in the caller's environment cannot steer it or
-mask a refusal — `GIT_CONFIG_COUNT` outranks local config and hid the `extensions.worktreeConfig`
-refusal until it was stripped.
+`gitdir` back-pointer contradicts — that back-pointer must name exactly `<worktree>/.git`,
+resolved against `$OWN` when it is relative (which is what git writes for a `--relative-paths`
+worktree), and a missing, empty or otherwise mismatched one is refused on the same grounds. It
+also clears `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_WORK_TREE` and **all six** config-from-environment
+names — `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_GLOBAL`,
+`GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM` — before resolving, so a value in the caller's
+environment cannot steer it or mask a refusal. Clearing only three of the six was not enough:
+`GIT_CONFIG_PARAMETERS`, which git sets itself for every alias and hook child, hid the
+`extensions.worktreeConfig` refusal at exit 0 with no attacker involved.
 
 **This narrows the escape; it does not close it.** `commondir` sits inside the granted `$OWN` and
 redirects `$GIT_COMMON_DIR` (gitrepository-layout(5)). Reproduced 2026-09-17, in two facets:

@@ -115,9 +115,13 @@ The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
     every root except `$OWN` at an unrelated repository at exit 0. A resume would then have
     granted the worker write access to that repo's `objects`, `refs` and `logs` — including the
     user's own checkout, whose branch tips it could rewrite. `--roots` now requires `$OWN` to sit
-    under `<common>/worktrees/`, cross-checks that `$OWN/gitdir` is an absolute path naming
-    exactly `<worktree>/.git`, and strips `GIT_DIR`/`GIT_COMMON_DIR`/`GIT_WORK_TREE` and the
-    `GIT_CONFIG_*` injection family before resolving anything. The back-pointer is not
+    under `<common>/worktrees/`, cross-checks that `$OWN/gitdir` names exactly
+    `<worktree>/.git` (resolved against `$OWN` when relative, as git itself does for
+    `--relative-paths` worktrees), and clears `GIT_DIR`/`GIT_COMMON_DIR`/`GIT_WORK_TREE` plus
+    all six config-from-environment names before resolving anything. Three of those six were
+    missed on the first pass, and `GIT_CONFIG_PARAMETERS` — which git sets ITSELF for alias and
+    hook children — masked the `extensions.worktreeConfig` refusal at exit 0 with no attacker
+    involved. The back-pointer is not
     unforgeable — `$OWN` is writable — so what carries the weight is that a worker cannot make
     it name another worktree while containment also holds; a looser comparison accepted junk
     outright (2026-09-17), and `GIT_CONFIG_COUNT` masked the `extensions.worktreeConfig`
