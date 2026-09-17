@@ -85,8 +85,9 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 
 # The SAME resolution the spawn used, from the same script — not a second copy. A resume
 # that resolved this differently would hand the worker a different writable root than its
-# spawn did, and the worker would not find out until it could not commit.
-GITDIR="$(bash "$INFRA/common-git-dir.sh" "$WORKTREE")" || exit 1
+# spawn did, and the worker would not find out until it could not commit. `--roots` is the
+# narrowed set: objects, refs, logs and this worktree's own git dir, never hooks/ or config.
+WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
 
 PROMPT="Your escalation was answered. Here is the answer:
 
@@ -108,7 +109,7 @@ CMD=(codex exec resume "$THREAD"
      -c "model_reasoning_effort=$EFFORT"
      -c "approval_policy=never"
      -c "sandbox_mode=workspace-write"
-     -c "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+     -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
      -c "sandbox_workspace_write.network_access=true"
      --json
      -o "$RUNDIR/last-message.txt"

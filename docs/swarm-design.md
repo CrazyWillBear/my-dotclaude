@@ -216,11 +216,21 @@ one-shot, so it maps onto `codex exec`:
   knowingly — claude workers already run with full network — and codex 0.154 offers no
   domain allowlist to narrow it.
 - **Commits.** Workspace-write keeps `.git` read-only, so a worker that must commit needs
-  `-c 'sandbox_workspace_write.writable_roots=["<git dir>"]'`. For a linked worktree that is
-  the main repo's common git dir, since objects and refs live there. Verified: with the root
-  listed the worker commits; without it, it writes the file and reports it could not commit.
-  `danger-full-access` also works and is the fallback, with the same containment claude
-  workers already have (worktree isolation plus the denylist; Bash was never fenced).
+  writable roots inside it. For a linked worktree those live in the MAIN repo's common git
+  dir, since objects and refs are shared. Verified: with them listed the worker commits;
+  without, it writes the file and reports it could not commit.
+  **Narrowed, not the whole dir** (`infra/common-git-dir.sh --roots`, used by both `spawn.sh`
+  and `worker-resume.sh`): `objects`, `refs`, `logs` and the worktree's OWN git dir — never
+  `hooks/` and never `config`. Worktrees isolate working *files*, not git: they all share one
+  `.git`, and `hooks/` and `config` are things git EXECUTES, so granting the whole dir let a
+  worker write `hooks/pre-commit` or set `core.sshCommand` and get host code execution the
+  next time a sibling worker, the merge, or the user ran git there. Verified 2026-09-16 on
+  codex-cli 0.154, ground-truthed from OUTSIDE the sandbox on a real `~/code` path: commits
+  still land, `.git/hooks` and paths outside the project are blocked. **Test on a real path,
+  never under `/tmp`** — workspace-write allows the system temp dir by default, so a probe
+  living there reports an escape that is really just `/tmp`.
+  `danger-full-access` also works and is the fallback, but it gives up exactly this
+  containment, so it is a deliberate downgrade rather than an equivalent.
 - **Output.** stdout gets the final message; `-o` writes it to a file; `--output-schema`
   forces a JSON final answer, which is the worker's fixed-shape status report. `--json`
   streams one event per line: `thread.started` (with the thread id), `item.started` /

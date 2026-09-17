@@ -1,29 +1,45 @@
 #!/usr/bin/env bash
 #
-# common-git-dir.sh — print a worktree's CANONICAL common git dir, or die loudly.
+# common-git-dir.sh — a worktree's CANONICAL common git dir, and the narrowed set of
+# writable roots a codex worker needs inside it.
 #
 # `-s workspace-write` keeps `.git` READ-ONLY, and for a LINKED worktree the objects and
-# refs live in the MAIN repo's common git dir. Without that path in
+# refs live in the MAIN repo's common git dir. Without those paths in
 # `sandbox_workspace_write.writable_roots`, a codex worker does the entire issue and only
 # then discovers it cannot commit — reporting that fact in its final message, after the
 # work is done and unsaved.
 #
-# This is ONE script rather than a copy in each caller because spawn.sh and
-# worker-resume.sh must produce the IDENTICAL value. A resume that resolved it even
-# slightly differently — skipping `pwd -P`, or not dying when the `cd` fails and passing
-# `writable_roots=[""]` — would hand the resumed worker a different writable root than the
-# spawn gave it, and the failure is silent until the worker cannot commit.
+# WHY NARROWED, not the whole common dir. That dir also holds `hooks/` and `config`, which
+# git EXECUTES: a worker that writes `hooks/pre-commit`, or sets `core.sshCommand` in
+# `config`, gets code execution on the host the next time ANYONE runs git in that repo —
+# another worker, the merge, or the user in their own checkout. Worktrees isolate working
+# FILES; they all share one `.git`. Granting the whole dir is what made that reachable.
 #
-# Usage:  bash common-git-dir.sh <worktree>
-# Output: the absolute, symlink-resolved path on stdout.
-# Exit:   0 with the path, or 1 with a reason on stderr and nothing on stdout.
+# Verified on codex-cli 0.154 (2026-09-16), ground-truthed from outside the sandbox on a
+# real ~/code path (NOT under /tmp, which workspace-write allows by default and which
+# silently voids this kind of test):
+#   * with roots narrowed to the set below, a commit still succeeds;
+#   * `.git/hooks/pre-commit` and a canary outside the project are BLOCKED.
+#
+# This is ONE script rather than a copy in each caller because spawn.sh and
+# worker-resume.sh must produce the IDENTICAL value: a resume that resolved it even
+# slightly differently would hand the worker a different writable root than the spawn did,
+# and the failure is silent until the worker cannot commit.
+#
+# Usage:
+#   bash common-git-dir.sh <worktree>            # the canonical common git dir
+#   bash common-git-dir.sh --roots <worktree>    # a TOML array for writable_roots
+# Exit: 0 with the value, or 1 with a reason on stderr and nothing on stdout.
 
 set -uo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
+MODE=dir
+if [ "${1:-}" = "--roots" ]; then MODE=roots; shift; fi
+
 WORKTREE="${1:-}"
-[ -n "$WORKTREE" ] || die "usage: common-git-dir.sh <worktree>"
+[ -n "$WORKTREE" ] || die "usage: common-git-dir.sh [--roots] <worktree>"
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 
 GITDIR="$(git -C "$WORKTREE" rev-parse --git-common-dir 2>/dev/null)" \
@@ -34,4 +50,29 @@ case "$GITDIR" in /*) ;; *) GITDIR="$WORKTREE/$GITDIR" ;; esac
 GITDIR="$(cd "$GITDIR" 2>/dev/null && pwd -P)" \
     || die "could not resolve the repo's common git dir for: $WORKTREE"
 
-printf '%s\n' "$GITDIR"
+if [ "$MODE" = dir ]; then
+    printf '%s\n' "$GITDIR"
+    exit 0
+fi
+
+# The worktree's OWN git dir. For a linked worktree that is <common>/worktrees/<name>,
+# holding this worktree's HEAD, index and COMMIT_EDITMSG — all written by a commit.
+OWN="$(git -C "$WORKTREE" rev-parse --git-dir 2>/dev/null)" \
+    || die "cannot resolve the git dir for: $WORKTREE"
+case "$OWN" in /*) ;; *) OWN="$WORKTREE/$OWN" ;; esac
+OWN="$(cd "$OWN" 2>/dev/null && pwd -P)" \
+    || die "could not resolve this worktree's own git dir for: $WORKTREE"
+
+if [ "$OWN" = "$GITDIR" ]; then
+    # A PLAIN repo: HEAD, index and COMMIT_EDITMSG sit directly in the common dir, so
+    # there is nothing to narrow — excluding it would stop the worker committing at all.
+    # Orchestrate workers always run in LINKED worktrees, which take the narrowed branch;
+    # this one exists so the script is honest about a repo it cannot protect.
+    printf '["%s"]\n' "$GITDIR"
+else
+    # objects + refs: where the commit and the branch tip land.
+    # logs:           reflog updates for those refs.
+    # $OWN:           this worktree's HEAD/index/COMMIT_EDITMSG.
+    # NOT hooks/, NOT config — the two things git executes.
+    printf '["%s/objects","%s/refs","%s/logs","%s"]\n' "$GITDIR" "$GITDIR" "$GITDIR" "$OWN"
+fi

@@ -546,11 +546,12 @@ stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 # The codex path above is built, tested and ready; the SHIPPED roster is deliberately
 # NOT on it. The report ingest that used to block the flip now exists (worker-report.sh
 # reads last-message.txt and returns the lane's own report line), so the remaining hold
-# is the two guardrail gaps recorded on #96: writable_roots is the whole COMMON git dir,
-# which lets a worker arm .git/hooks or .git/config and get host code execution outside
-# the sandbox; and the codex path carries no --disallowedTools equivalent, so gh pr merge
-# and gh issue close are reachable with only prose restraining them. Both are latent
-# ONLY while this test holds. Flipping model-tiers.json before they land trips it.
+# is ONE guardrail gap recorded on #96: the codex path carries no --disallowedTools
+# equivalent, so gh pr merge and gh issue close are reachable with only prose restraining
+# them. (The other gap is closed — writable_roots is now narrowed by common-git-dir.sh
+# --roots to objects/refs/logs plus the worktree's own git dir, never hooks or config, so
+# a worker can no longer arm a hook that runs in the user's own checkout.) That gap is
+# latent ONLY while this test holds. Flipping model-tiers.json before it lands trips it.
 echo "test: the SHIPPED roster still routes workers through claude — the flip is on hold"
 for t in trivial standard complex; do
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" env -u RESOLVE_TIER_ROOT \

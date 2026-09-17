@@ -39,10 +39,11 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 
 **Nothing routes to codex today.** `model-tiers.json` ships `backend: claude` in all nine
 cells. The report ingest that used to be missing now exists — `worker-report.sh`, below — but
-the flip stays held on two guardrail gaps recorded on #96: `writable_roots` is the whole
-**common** git dir (so a worker can arm `.git/hooks` or `.git/config`), and the codex path
-carries no `--disallowedTools` equivalent (so `gh pr merge` and `gh issue close` are reachable,
-restrained only by prose in its prompt).
+the flip stays held on ONE remaining guardrail gap recorded on #96: the codex path carries no
+`--disallowedTools` equivalent, so `gh pr merge` and `gh issue close` are reachable with only
+prose in the prompt restraining them. (The other gap is closed: `writable_roots` is no longer
+the whole **common** git dir — see [below](#two-backends-for-the-worker-form-only) — so a worker
+can no longer arm `.git/hooks` or `.git/config`.)
 
 A worker whose tier's `implementer_backend` is `codex` runs `codex exec` in the background
 instead of `claude --bg` ([`docs/swarm-design.md` § Codex backend](../../docs/swarm-design.md)).
@@ -122,9 +123,20 @@ Do not hand-assemble that resume. Two traps, both verified on codex-cli 0.154 ra
   `-c`, so the sandbox goes through `-c` and the resume must be launched **from the worktree**.
   `-m` is not optional either: a resumed thread otherwise falls back to the config default model.
 
-The repo's **common** git dir goes in `sandbox_workspace_write.writable_roots`, because
-`-s workspace-write` keeps `.git` read-only and a worker that cannot commit has nothing to
-hand back. A **peer is never codex** — a peer needs an inbox and codex has none.
+A NARROWED slice of the repo's **common** git dir goes in
+`sandbox_workspace_write.writable_roots`, because `-s workspace-write` keeps `.git` read-only
+and a worker that cannot commit has nothing to hand back. `common-git-dir.sh --roots` builds it
+for both `spawn.sh` and `worker-resume.sh` — `objects`, `refs`, `logs` and the worktree's own
+git dir, and **never `hooks/` or `config`**.
+
+That exclusion is the point. Worktrees isolate working *files*, not git: every worktree and the
+user's own checkout share one `.git`, and `hooks/` and `config` are things git **executes**. With
+the whole dir granted, a worker could write `hooks/pre-commit` or set `core.sshCommand`, and it
+would run the next time anyone — a sibling worker, the merge, or the user — ran git in that repo.
+Verified on codex-cli 0.154, ground-truthed from outside the sandbox on a real `~/code` path
+(**not** under `/tmp`, which workspace-write allows by default and which silently voids such a
+test): with these roots a commit still lands, and `.git/hooks` and paths outside the project are
+blocked. A **peer is never codex** — a peer needs an inbox and codex has none.
 
 A peer's `--name` **is** its stable address: rotation stops the process and respawns under the
 same name, so there is no run prefix. `--charter`'s text is appended to the system prompt (the CLI

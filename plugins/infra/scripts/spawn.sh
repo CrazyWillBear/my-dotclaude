@@ -372,8 +372,10 @@ if [ "$BACKEND" = codex ]; then
 # instead: a worker that cannot commit has nothing to hand back.
 # One script, not two copies: worker-resume.sh needs the IDENTICAL value, and a resume
 # that computes it even slightly differently hands the worker a different writable root
-# than its spawn did. It prints the canonical path or dies loudly.
-GITDIR="$(bash "$INFRA/common-git-dir.sh" "$WORKTREE")" || exit 1
+# than its spawn did. `--roots` prints the NARROWED set — objects, refs, logs and this
+# worktree's own git dir, but NOT hooks/ or config, the two things git executes — or dies
+# loudly. See common-git-dir.sh for why the whole common dir is not granted.
+WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
 
 # Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
 # no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
@@ -395,7 +397,7 @@ CMD=(codex exec
      -c "model_reasoning_effort=$EFFORT"
      -c "approval_policy=never"
      -s workspace-write
-     -c "sandbox_workspace_write.writable_roots=[\"$GITDIR\"]"
+     -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
      -c "sandbox_workspace_write.network_access=true"
      --json
      -o "$RUNDIR/last-message.txt"

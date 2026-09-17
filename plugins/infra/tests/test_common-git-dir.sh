@@ -60,6 +60,49 @@ run "$WORK/linked"
 assert_equals "exit 0" "$RC" "0"
 assert_equals "the MAIN repo's .git" "$OUT" "$(cd "$REPO/.git" && pwd -P)"
 
+CANON="$(cd "$REPO/.git" && pwd -P)"
+
+echo "test: --roots narrows a LINKED worktree to what a commit touches, never hooks or config"
+# This is the branch EVERY real worker takes, and the one that closes the escape. Granting
+# the whole common dir made .git/hooks and .git/config writable, and git EXECUTES both: a
+# hook written by one worker then runs in every sibling worktree and in the user's own
+# checkout. Verified on codex-cli 0.154, ground-truthed from outside the sandbox on a real
+# ~/code path — with these roots a commit still lands and .git/hooks is blocked.
+OWNDIR="$(cd "$(git -C "$WORK/linked" rev-parse --git-dir)" && pwd -P)"
+run --roots "$WORK/linked"
+assert_equals "exit 0" "$RC" "0"
+assert_equals "exactly the four roots a commit touches" "$OUT" \
+    "[\"$CANON/objects\",\"$CANON/refs\",\"$CANON/logs\",\"$OWNDIR\"]"
+case "$OUT" in
+    *hooks*) no "hooks/ is writable — the host-code-execution escape is open again" ;;
+    *)       ok "hooks/ is never granted" ;;
+esac
+case "$OUT" in
+    *config*) no "config is writable — core.sshCommand is reachable again" ;;
+    *)        ok "config is never granted" ;;
+esac
+# The whole dir would appear as a bare "<canon>" element; narrowed roots only ever carry
+# "<canon>/something", so this catches a silent revert to granting everything.
+case "$OUT" in
+    *\"$CANON\"*) no "the WHOLE common dir is granted — narrowing is defeated" ;;
+    *)            ok "the whole common dir is not granted" ;;
+esac
+
+echo "test: --roots on a PLAIN repo keeps the whole dir, because nothing there can be narrowed"
+# HEAD, index and COMMIT_EDITMSG sit directly in the common dir of a plain repo, so
+# excluding it would stop the worker committing at all. Workers always run in linked
+# worktrees; this branch exists so the script is honest about the repo it cannot protect,
+# rather than silently granting less than a commit needs.
+run --roots "$REPO"
+assert_equals "exit 0" "$RC" "0"
+assert_equals "the whole dir, explicitly" "$OUT" "[\"$CANON\"]"
+
+echo "test: --roots fails loud too, rather than printing an empty root list"
+run --roots "$WORK/no-such-dir-at-all"
+assert_equals "exits 1" "$RC" "1"
+assert_empty "and prints no roots" "$OUT"
+assert_contains "names it" "$ERR" "does not exist"
+
 echo "test: symlinks are resolved, so the spawn and a later resume agree textually"
 ln -s "$REPO" "$WORK/link-to-repo"
 run "$WORK/link-to-repo"
