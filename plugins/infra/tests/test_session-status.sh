@@ -294,6 +294,11 @@ git -C "$ORIGIN" config user.name t
 printf 'x\n' >"$ORIGIN/f"
 git -C "$ORIGIN" add f
 git -C "$ORIGIN" commit -qm init
+# spawn.sh resolves the base branch to a SHA before launching (so a worker cannot move the
+# ref its own review diffs against), and dies if it cannot — so this real spawn needs the
+# `base` it is passed to actually exist, or no run dir is written and the assertion below
+# would be testing a worker that never launched.
+git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt7 "$REPO" >/dev/null 2>&1
 HOME="$FAKE_HOME" RESOLVE_TIER_ROOT="$CFG" \

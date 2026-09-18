@@ -49,7 +49,7 @@ cat >"$CFG/model-tiers.json" <<'JSON'
                 "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
   "standard": { "planner": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" },
                 "implementer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
-                "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
+                "reviewer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" } },
   "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
                 "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
                 "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
@@ -69,6 +69,10 @@ git -C "$ORIGIN" config user.name t
 printf 'x\n' >"$ORIGIN/f"
 git -C "$ORIGIN" add f
 git -C "$ORIGIN" commit -qm init
+# A real `base` branch: the script resolves the base to a SHA before reviewing (a base
+# resolved by NAME could be moved by the worker, emptying its own diff), so the fixture
+# needs a base that actually exists rather than a placeholder string.
+git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
 
@@ -162,8 +166,17 @@ cat >"$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
 if [ "${2:-}" = review ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
-    printf 'src/f:1 — medium — a finding\n'
-    printf 'COUNTS: %s\n' "${STUB_REVIEW_COUNTS:-0 high, 1 medium, 0 low}"
+    # The real reviewer writes its schema'd final message to -o, like any codex turn.
+    rout=""
+    for a in "$@"; do
+        [ -n "${take:-}" ] && { rout="$a"; take=""; }
+        [ "$a" = -o ] && take=1
+    done
+    # NOT ${STUB_REVIEW_JSON:-{...}}: a `}` inside the default closes the expansion early
+    # and the rest lands as literal text, which silently appends a stray brace to the JSON.
+    rj="${STUB_REVIEW_JSON:-}"
+    [ -n "$rj" ] || rj='{"high":0,"medium":1,"low":0,"findings":"src/f:1 a finding"}'
+    [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
     exit "${STUB_REVIEW_EXIT:-0}"
 fi
 pwd >"$STUB_CWD"
@@ -279,21 +292,31 @@ echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own 
 rm -f "$WORK/review-argv" "$WORK/gh-argv"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
-    STUB_REVIEW_COUNTS='2 high, 0 medium, 1 low' \
-    run r1 86 standard "$REPO" --answer "x" --base main --round 4
+    STUB_REVIEW_JSON='{"high":2,"medium":0,"low":1,"findings":"src/f:1 a finding"}' \
+    run r1 86 standard "$REPO" --answer "x" --base base --round 4
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
-assert_contains "against the base it was given" "$(cat "$WORK/review-argv" 2>/dev/null)" "main"
-assert_contains "at the tier's reviewer model" "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
+# A SHA, not the branch name it was given: a name could be moved by the worker.
+assert_not_contains "the base is NOT passed as a branch name" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "--base
+main"
+assert_contains "but as a resolved sha" "$(cat "$WORK/review-argv" 2>/dev/null)" \
+    "$(git -C "$REPO" rev-parse --verify base^{commit})"
+assert_contains "at the tier's REVIEWER model, not the implementer's" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-sol"
+assert_not_contains "never the implementer's" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
 
 echo "test: the reviewer's findings are posted as the round's issue comment"
 assert_contains "gh issue comment was called" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
 assert_contains "on the right issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "86"
 assert_contains "carrying the round number it was given" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
     "**Review round 4**"
-assert_contains "and the reviewer's own text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a finding"
+assert_contains "and the reviewer's own findings text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a finding"
+assert_contains "with the counts in the heading" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
+    "2 high, 0 medium, 1 low"
 
 echo "test: a FAILED review leaves no verdict behind — the run fails CLOSED"
 # The sharp one. A reviewer that dies must not leave a half-written review.txt: a COUNTS
@@ -303,11 +326,11 @@ rm -f "$WORK/review-argv"
 mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":87,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     STUB_REVIEW_EXIT=3 \
-    run r1 87 standard "$REPO" --answer "x" --base main
+    run r1 87 standard "$REPO" --answer "x" --base base
 assert_equals "exit 1 — we do not know if the branch is clean" "$RC" "1"
 assert_empty "nothing on stdout the lane could act on" "$OUT"
 assert_contains "says no review was recorded" "$ERR" "no independent review"
-if [ -f "$CODEX_ROOT/r1/issue-87/review.txt" ]; then
+if [ -f "$CODEX_ROOT/r1/issue-87/review.json" ]; then
     no "a failed review left review.txt behind"
 else
     ok "the failed review's output was deleted, not left to be misread"
@@ -319,11 +342,34 @@ echo "test: a worker that grades itself anyway is ignored, not believed"
 rm -f "$WORK/review-argv"
 mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":88,"status":"built","round":0,"head":"abc1234","review":"0 high, 0 medium, 0 low","note":""}' \
-    STUB_REVIEW_COUNTS='3 high, 0 medium, 0 low' \
-    run r1 88 standard "$REPO" --answer "x" --base main
+    STUB_REVIEW_JSON='{"high":3,"medium":0,"low":0,"findings":"src/f:1 a finding"}' \
+    run r1 88 standard "$REPO" --answer "x" --base base
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the reviewer's verdict won" "$OUT" "review=3 high, 0 medium, 0 low"
 assert_not_contains "the worker's self-grade did not" "$OUT" "0 high, 0 medium, 0 low"
+
+echo "test: a resume that ESCALATES again is not reviewed — nothing was built to review"
+# The reviewer is gated on the REPORTED STATUS, not just the exit code: a worker that
+# escalates or fails also exits 0. Reviewing one of those posts a "**Review round**"
+# comment on a half-built branch, and the orchestrate lane counts those comments as the
+# run's cycles — so an escalation would silently spend a fix round it never used.
+rm -f "$WORK/review-argv" "$WORK/gh-argv"
+mkrun 89 '{"issue":89,"status":"escalate","round":0,"head":"","review":"","note":"first q"}'
+STUB_REPORT='{"issue":89,"status":"escalate","round":0,"head":"","review":"","note":"still stuck"}' \
+    run r1 89 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0 — an escalation is still a report" "$RC" "0"
+assert_contains "it comes back as the question" "$OUT" "issue 89 escalate still stuck"
+assert_empty "no reviewer ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
+assert_empty "and no review comment was posted" "$(cat "$WORK/gh-argv" 2>/dev/null)"
+
+echo "test: a resume that FAILS is not reviewed either"
+rm -f "$WORK/review-argv" "$WORK/gh-argv"
+mkrun 90 '{"issue":90,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":90,"status":"failed","round":0,"head":"","review":"","note":"the base moved"}' \
+    run r1 90 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0 — a failure is a report" "$RC" "0"
+assert_contains "reported as failed" "$OUT" "issue 90 failed"
+assert_empty "no reviewer ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
 
 echo "test: --base is REQUIRED — a resume that skipped the review would land unreviewed"
 # $SCRIPT directly, bypassing run()'s injected default.

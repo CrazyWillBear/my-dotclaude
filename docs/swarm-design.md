@@ -321,6 +321,24 @@ one-shot, so it maps onto `codex exec`:
   worker now reports `review: ""`, the reviewer's output file is the only verdict, and
   `worker-report.sh` refuses a `built`/`fixed` report that has none.
 
+  Three things about that command were verified against codex-cli 0.155.0 and are pinned by
+  `test_review-cmd.sh`, because the first version of this fix shipped an argv the CLI rejects
+  outright — the reviewer died on every run and every codex build failed closed:
+  **no `-C`** (it is a top-level `codex exec` flag only; the callers `cd` instead),
+  **no trailing prompt** (`--base` and `[PROMPT]` are mutually exclusive, so the verdict's shape
+  is requested with `--output-schema` — ❓ that codex honours a schema on a *review* turn is still
+  unverified, and deliberately fails closed if it does not), and
+  **`--base` takes a resolved SHA, not a branch name**. That last one is a second door onto the
+  same bug: `refs/` is a granted writable root, so a worker could `git branch -f <base> HEAD`,
+  empty its own diff, and collect a clean verdict from an honest reviewer. `spawn.sh` resolves
+  the base to a commit *before* the worker starts.
+
+  The reviewer's sandbox is pinned to `read-only` rather than inherited: `exec review` takes no
+  `-s`, and a user whose config defaults to `danger-full-access` would otherwise have a model
+  reading worker-authored, injectable content run on the host with `approval_policy=never`.
+  The reviewer runs only when the worker REPORTED `built` or `fixed` — `escalate` and `failed`
+  exit 0 too, and reviewing those posts a `Review round` comment the lane counts as a cycle.
+
   `review-cmd.sh` passes the roster's **reviewer** cell as `-m`, so the review runs at the tier's
   reviewer model instead of whatever the user's codex config defaults to — the same silent
   wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
@@ -342,7 +360,10 @@ leaves no exit file, which reads as `failed` and frees the orchestrator to respa
 
 Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
 `stderr.log` (the only place a failed worker's reason lands), `last-message.txt`,
-`status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
+`status-schema.json`, `review-schema.json`, `review.json` (the independent reviewer's verdict —
+the ONLY source of the finding counts), `review-stderr.log` (why it did not run, quoted back
+when worker-report.sh refuses the run), `pid` and `exit` — which is written LAST, after the
+review, so a run that reads terminal always has its verdict on disk. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
 `/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
 also swaps two steps: a sibling `codex exec review --base` replaces the `my-review` subagent —

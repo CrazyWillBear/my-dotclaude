@@ -166,26 +166,29 @@ def read(name):
 raw = read("last-message.txt")
 
 def independent_review():
-    # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.txt is written
-    # by the sibling `codex exec review` process spawn.sh/worker-resume.sh run AFTER the
-    # worker exits; the worker cannot write it and is told to report an empty `review`.
+    # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.json is the
+    # schema'd final message of the sibling `codex exec review` process that
+    # spawn.sh/worker-resume.sh run AFTER the worker exits; the worker cannot write it and
+    # is told to report an empty `review`.
     #
     # This is the fix for what #96's e2e gate caught: the worker used to run the review
     # itself, that nested call could never start inside its sandbox, and it filled the
     # required field with its own opinion of its own diff — reporting a clean independent
-    # review that had never run. Reading the count from the reviewer's own output makes
+    # review that had never run. Taking the counts from the reviewer's own output makes
     # that substitution impossible rather than merely discouraged.
     #
-    # Only the LAST COUNTS line counts: the reviewer's prose may quote the format it was
-    # asked for (its instructions contain it verbatim) before emitting the real one.
-    txt = read("review.txt")
-    if not txt:
+    # Anything that is not this exact shape returns "" and the run is REFUSED. That
+    # deliberately includes the case where codex turns out not to honour --output-schema on
+    # a review turn (review-cmd.sh § UNVERIFIED): the run cannot land, which is the safe
+    # direction, rather than landing on a verdict nobody produced.
+    raw_review = read("review.json")
+    if not raw_review:
         return ""
-    hits = re.findall(r"^COUNTS:\s*([0-9]+) high, ([0-9]+) medium, ([0-9]+) low\s*$",
-                      txt, re.M)
-    if not hits:
+    try:
+        v = json.loads(raw_review)
+        return "%d high, %d medium, %d low" % (int(v["high"]), int(v["medium"]), int(v["low"]))
+    except (ValueError, TypeError, KeyError):
         return ""
-    return "%s high, %s medium, %s low" % hits[-1]
 
 if not raw:
     # No report at all. If codex exited non-zero this is the expected shape of a crash,
@@ -257,9 +260,14 @@ if status in ("built", "fixed"):
     # exit 1, never a cheerful default.
     review = independent_review()
     if not review:
+        # The reason lives in review-stderr.log — the reviewer's own output, the
+        # containment tripwire's refusal, or a schema the turn did not honour. Without it
+        # this error says only that something went wrong, for every one of those causes.
+        why = flat(read("review-stderr.log")[-300:]) if read("review-stderr.log") else \
+            "no reviewer output recorded"
         print("error: issue %d reported %s but no independent review was recorded in "
-              "review.txt — a review that did not run is not a clean one" % (issue, status),
-              file=sys.stderr)
+              "review.json — a review that did not run is not a clean one: %s"
+              % (issue, status, why), file=sys.stderr)
         sys.exit(1)
     if status == "fixed":
         try:

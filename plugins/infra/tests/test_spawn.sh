@@ -278,6 +278,22 @@ mkdir -p "$CODEX_BIN"
 # the events file) and, like the real one, writes its final message to the `-o` path.
 cat >"$CODEX_BIN/codex" <<'STUB'
 #!/usr/bin/env bash
+# `codex exec review` is the SECOND codex a spawn runs — the independent reviewer the
+# wrapper starts once the worker exits. It is answered separately: it writes a schema'd
+# verdict to its -o file and records its own argv, so the worker's is not clobbered.
+if [ "${2:-}" = review ]; then
+    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    rout=""
+    for a in "$@"; do
+        [ -n "${take:-}" ] && { rout="$a"; take=""; }
+        [ "$a" = -o ] && take=1
+    done
+    # NOT ${VAR:-{...}}: a `}` inside the default closes the expansion early.
+    rj="${STUB_REVIEW_JSON:-}"
+    [ -n "$rj" ] || rj='{"high":0,"medium":1,"low":0,"findings":"src/f:1 a finding"}'
+    [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
+    exit "${STUB_REVIEW_EXIT:-0}"
+fi
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
 while [ $# -gt 0 ]; do
@@ -287,6 +303,18 @@ done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
+
+# gh is STUBBED, and that is not optional. The wrapper posts the reviewer's findings with
+# `gh issue comment`, so a real gh here would comment on whatever repo the suite happens to
+# be run from — the scratch repo has no remote, but a developer with GH_REPO exported would
+# post a real comment on issue 12 of that repo. It records the call so the post is
+# assertable rather than merely suppressed.
+cat >"$CODEX_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"${STUB_GH_ARGV:-/dev/null}"
+exit 0
+STUB
+chmod +x "$CODEX_BIN/gh"
 chmod +x "$CODEX_BIN/codex"
 
 # A REAL git worktree, because the writable root is resolved with
@@ -303,6 +331,11 @@ git -C "$ORIGIN" config user.name t
 printf 'x\n' >"$ORIGIN/f"
 git -C "$ORIGIN" add f
 git -C "$ORIGIN" commit -qm init
+# A real `base` branch. spawn.sh resolves the base to a SHA before launching the worker —
+# a base resolved by NAME could be moved by the worker (refs/ is a granted writable root),
+# emptying its own diff and buying a clean verdict from an honest reviewer — so the base
+# these tests pass has to be a ref that actually exists.
+git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
 GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
@@ -439,12 +472,24 @@ assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
     "gpt-5.6-terra"
 
-echo "test: the reviewer demands the machine-readable COUNTS line"
-# worker-report.sh reads ONLY that line. Without it in the prompt the reviewer writes
-# prose, worker-report.sh finds no verdict, and the run fails closed — loudly, but every
-# single time.
-assert_contains "the prompt pins the COUNTS format" "$rv" "COUNTS: <H> high, <M> medium, <L> low"
-assert_contains "including when nothing was found" "$rv" "COUNTS: 0 high, 0 medium, 0 low"
+echo "test: the reviewer's verdict is schema'd, and never asked for in a prompt"
+# `codex exec review` REFUSES a trailing PROMPT beside --base ("cannot be used with
+# '[PROMPT]'"), so the machine-readable verdict is requested with --output-schema instead.
+# A prompt argument here would make the reviewer die on every run.
+assert_arg "an output schema is passed" "$rv" "--output-schema"
+assert_arg "and a file to write the verdict to" "$rv" "-o"
+assert_contains "the schema lands in the run dir" "$rv" "review-schema.json"
+assert_contains "and so does the verdict" "$rv" "review.json"
+# -C is not a flag of `codex exec review` — only of top-level `codex exec`. Passing it
+# dies with "unexpected argument '-C' found"; the callers cd instead.
+assert_not_contains "no -C, which this subcommand does not take" "$rv" "
+-C
+"
+echo "test: the reviewer's sandbox is PINNED, not inherited from the user's config"
+# `exec review` takes no -s, so without this it runs at whatever ~/.codex/config.toml
+# defaults to — and a user on danger-full-access would have a model reading
+# worker-authored, injectable content run on the host with approval_policy=never.
+assert_arg "read-only" "$rv" "sandbox_mode=read-only"
 
 echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
 # The SHIPPED table is claude in every cell, so a user who flips only the implementer to
@@ -496,6 +541,73 @@ assert_contains "the schema is real JSON naming the status field" \
 assert_contains "stdin is closed — codex blocks forever on an open one" \
     "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
+
+# ---------------------------------------------------------------------------
+# THE WRAPPER'S REVIEW STAGE. This is the path EVERY codex build takes, and it had no
+# coverage at all while the resume path had four cases — the dry run proves what the argv
+# would be, never that the wrapper actually runs it, in the right order, or cleans up.
+echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv"
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+    STUB_REVIEW_JSON='{"high":2,"medium":1,"low":0,"findings":"src/f:1 a real finding"}' \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+if [ -f "$RUNDIR/review.json" ]; then ok "the reviewer's verdict was written"
+else no "no $RUNDIR/review.json — the wrapper did not run the reviewer"; fi
+assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
+assert_contains "against a base SHA, not the branch name it was passed" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
+assert_not_contains "never the branch name" \
+    "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
+# exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
+# review landing after it would be read as a run with no verdict on every fast poll.
+if [ "$RUNDIR/review.json" -ot "$RUNDIR/exit" ] || [ "$RUNDIR/exit" -nt "$RUNDIR/review.json" ]; then
+    ok "exit was written after the review, not before"
+else
+    ok "exit and review landed within the same clock tick (order still not inverted)"
+fi
+assert_contains "the findings were posted to the issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
+assert_contains "with the counts in the heading" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
+    "2 high, 1 medium, 0 low"
+assert_contains "and the reviewer's text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a real finding"
+
+echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/gh-argv"
+STUB_REVIEW_EXIT=3 STUB_GH_ARGV="$WORK/gh-argv" \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+if [ -f "$RUNDIR/review.json" ]; then no "a failed reviewer left review.json behind"
+else ok "the failed reviewer's output was deleted, not left to be misread"; fi
+assert_contains "and the reason is recorded" "$(cat "$RUNDIR/review-stderr.log" 2>/dev/null)" \
+    "REVIEW_FAILED"
+assert_empty "nothing was posted to the issue" "$(cat "$WORK/gh-argv" 2>/dev/null)"
+
+echo "test: a worker that did NOT report built/fixed is never reviewed"
+# escalate and failed also exit 0. Reviewing one posts a "Review round" comment on a
+# half-built branch, which the orchestrate lane counts as a spent cycle.
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv"
+cat >"$CODEX_BIN/codex-escalate" <<'STUB'
+#!/usr/bin/env bash
+if [ "${2:-}" = review ]; then printf '%s\n' "$@" >>"${STUB_REVIEW_ARGV:-/dev/null}"; exit 0; fi
+printf '%s\n' "$@"
+while [ $# -gt 0 ]; do
+    if [ "$1" = -o ]; then printf '{"issue":12,"status":"escalate","note":"q"}\n' >"$2"; fi
+    shift
+done
+exit 0
+STUB
+chmod +x "$CODEX_BIN/codex-escalate"
+cp "$CODEX_BIN/codex" "$WORK/codex-build-backup"
+cp "$CODEX_BIN/codex-escalate" "$CODEX_BIN/codex"
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_empty "no reviewer ran on an escalation" "$(cat "$WORK/review-argv" 2>/dev/null)"
+assert_empty "and no review comment was posted" "$(cat "$WORK/gh-argv" 2>/dev/null)"
+cp "$WORK/codex-build-backup" "$CODEX_BIN/codex"
 
 echo "test: a codex worker that dies non-zero records it"
 rm -rf "$CODEX_ROOT"

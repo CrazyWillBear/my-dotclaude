@@ -295,7 +295,18 @@ if [ "$BACKEND" = codex ]; then
    or the same shape with \"status\": \"failed\" and the reason in \"note\"."
 else
     REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
-   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment"
+   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
+   in exactly this shape (the \"Review round N\" heading is the run's cycle counter;
+   nothing else records how many rounds this issue has had):
+
+      **Review round 1** — 1 high, 2 medium, 3 low
+
+      - **high** \`path/file.py:42\` — one line, what is wrong and why it matters.
+      - **medium** \`path/test_file.py\` — one line.
+
+   Lows are listed, not fixed. Keep every line short: this comment is read by every
+   future run that touches this issue. Do NOT fix what the review finds:
+   a fresh session does that, so nobody is defending their own code."
     REPORT_STEP="7. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
    MUST use the SendMessage tool, addressed to \"$ORCH\", with exactly:
       issue $ISSUE built head=<sha> review=<H high, M medium, L low>
@@ -306,7 +317,9 @@ Never merge, never open a PR, never close or edit the issue. If you are stuck on
 something only a human can answer, SendMessage \"$ORCH\" with \"issue $ISSUE escalate
 <question>\" and wait."
     FIX_REVIEW_STEP="4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
-   review, then POST its findings YOURSELF"
+   review, then POST its findings YOURSELF as the next \"**Review round**\" comment, in
+   the same shape as the previous one, incrementing the round number. The reviewer
+   POSTS NOTHING itself, and that comment is the run's cycle counter."
     FIX_REPORT_STEP="5. REPORT, THEN STOP — plain output is invisible. SendMessage to \"$ORCH\":
       issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
    or \"issue $ISSUE failed <one short line why>\"."
@@ -337,17 +350,6 @@ ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --c
    mock is the drift this whole loop exists to catch.
 5. Run the project's done-check. It must be green.
 $REVIEW_STEP
-   in exactly this shape (the "Review round N" heading is the run's cycle counter;
-   nothing else records how many rounds this issue has had):
-
-      **Review round 1** — 1 high, 2 medium, 3 low
-
-      - **high** \`path/file.py:42\` — one line, what is wrong and why it matters.
-      - **medium** \`path/test_file.py\` — one line.
-
-   Lows are listed, not fixed. Keep every line short: this comment is read by every
-   future run that touches this issue. Do NOT fix what the review finds:
-   a fresh session does that, so nobody is defending their own code.
 $REPORT_STEP
 
 Never merge, never open a PR, never close or edit the issue.
@@ -364,9 +366,7 @@ Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
    highs and mediums; lows are listed, not fixed.
 2. Fix them, TDD-first, committing after every green sub-step.
 3. Run the project's done-check. It must be green.
-$FIX_REVIEW_STEP as the next "**Review round**" comment, in
-   the same shape as the previous one, incrementing the round number. The reviewer
-   POSTS NOTHING itself, and that comment is the run's cycle counter.
+$FIX_REVIEW_STEP
 $FIX_REPORT_STEP
 
 Never merge, never open a PR, never close or edit the issue.
@@ -434,7 +434,17 @@ CMD=(codex exec
 # worker-resume.sh must run the IDENTICAL reviewer, and a second copy that drifted would
 # still produce a confident, well-formatted verdict at the wrong model.
 [ -f "$INFRA/review-cmd.sh" ] || die "missing infra sibling: $INFRA/review-cmd.sh"
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$WORKTREE" "$BASE")" || exit 1
+
+# THE BASE IS PINNED TO A COMMIT, HERE, BEFORE THE WORKER RUNS. `refs/` is one of the
+# writable roots the worker is granted, so a worker that ran `git branch -f $BASE HEAD`
+# would empty its own diff and an honest reviewer would return a clean verdict on it —
+# the same "graded its own work" outcome as the self-review, reached through git instead.
+# A SHA resolved before the worker starts cannot be moved by anything the worker does.
+BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
+    || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
+
+REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
+    "$RUNDIR/review-schema.json" "$RUNDIR/review.json")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
@@ -466,12 +476,15 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # reads as `failed`, inventing a failure for a worker that is merely still launching.
 # With it gone the same window has no pid at all, which is the launch-window case that
 # already reads `busy` — the safe direction, and the one this script argues for elsewhere.
-# `review.txt` goes with them, and for the sharpest version of the same reason: it is now
+# `review.json` goes with them, and for the sharpest version of the same reason: it is now
 # the ONLY source of the finding counts, and worker-report.sh reads it the moment `exit`
 # appears. A fix round that left the previous round's review in place would be handed the
 # verdict on the code it was spawned to CHANGE — a stale "0 high" sending a branch whose
-# fixes were never looked at straight to the merge queue.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/review.txt"
+# fixes were never looked at straight to the merge queue. review-stderr.log goes too: the
+# missing-review error quotes its tail, and a stale one would explain this run's refusal
+# with the previous round's reason.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" \
+      "$RUNDIR/review.json" "$RUNDIR/review-stderr.log"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -492,6 +505,25 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot 
     "note":   { "type": "string" }
   },
   "required": ["issue", "status", "round", "head", "review", "note"],
+  "additionalProperties": false
+}
+SCHEMA
+
+# THE REVIEWER's schema. `codex exec review` refuses a trailing PROMPT alongside `--base`
+# ("cannot be used with '[PROMPT]'"), so the verdict cannot be asked for in prose — this
+# is how it is asked for instead, and `findings` is what the fix round actually works from.
+# If codex does not honour a schema on a review turn, this file simply will not parse and
+# worker-report.sh refuses the run: loud, not silently clean (review-cmd.sh § UNVERIFIED).
+cat >"$RUNDIR/review-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot write $RUNDIR/review-schema.json"; }
+{
+  "type": "object",
+  "properties": {
+    "high":     { "type": "integer" },
+    "medium":   { "type": "integer" },
+    "low":      { "type": "integer" },
+    "findings": { "type": "string" }
+  },
+  "required": ["high", "medium", "low", "findings"],
   "additionalProperties": false
 }
 SCHEMA
@@ -541,27 +573,55 @@ SCHEMA
 # fix round its detail, not its correctness.
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; round=$4; shift 4
+    rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; shift 5
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     review=("$@")
     "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     rc=$?
-    if [ "$rc" -eq 0 ] && [ "${#review[@]}" -gt 0 ]; then
-        if (cd "$worktree" && "${review[@]}") \
-                >"$rundir/review.txt" 2>"$rundir/review-stderr.log" </dev/null; then
-            (cd "$worktree" && gh issue comment "$issue" \
-                --body "$(printf "**Review round %s**\n\n" "$round"; cat "$rundir/review.txt")") \
-                >/dev/null 2>>"$rundir/review-stderr.log" \
-                || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
+    # Anything the worker may have left at the reviewer path is gone before the reviewer
+    # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
+    # could reach, and a planted verdict must never outlive the worker that planted it.
+    rm -f "$rundir/review.json"
+    # Reviewed only when the worker SAYS it built or fixed something. `escalate` and
+    # `failed` also exit 0, and reviewing those posts a "Review round" comment on a
+    # half-built branch — which the orchestrate lane counts as a spent cycle.
+    built=""
+    grep -q "\"status\"[[:space:]]*:[[:space:]]*\"\\(built\\|fixed\\)\"" \
+        "$rundir/last-message.txt" 2>/dev/null && built=1
+    if [ "$rc" -eq 0 ] && [ -n "$built" ] && [ "${#review[@]}" -gt 0 ]; then
+        # TRIPWIRE. The worker could rewrite $OWN/commondir (the accepted residual in
+        # common-git-dir.sh) to point git at a config it controls. The reviewer and the gh
+        # call below are the FIRST host processes to run git in that worktree afterwards,
+        # unattended — `core.fsmonitor` in a planted config fires on the reviewers first
+        # `git diff`. Re-running --roots re-checks the containment and refuses a worktree
+        # that no longer passes, before any git runs there.
+        if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
+            if (cd "$worktree" && "${review[@]}") \
+                    >>"$rundir/review-stderr.log" 2>&1 </dev/null; then
+                body="$(REVIEW_JSON="$rundir/review.json" REVIEW_ROUND="$round" python3 -c "
+import json, os
+r = json.load(open(os.environ[\"REVIEW_JSON\"]))
+print(\"**Review round %s** — %d high, %d medium, %d low\n\" % (
+    os.environ[\"REVIEW_ROUND\"], r[\"high\"], r[\"medium\"], r[\"low\"]))
+print(r[\"findings\"])" 2>>"$rundir/review-stderr.log")" \
+                    && (cd "$worktree" && gh issue comment "$issue" --body "$body") \
+                        >/dev/null 2>>"$rundir/review-stderr.log" </dev/null \
+                    || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
+            else
+                printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
+                rm -f "$rundir/review.json"
+            fi
         else
-            printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
-            rm -f "$rundir/review.txt"
+            printf "REVIEW_SKIPPED containment check refused the worktree\n" \
+                >>"$rundir/review-stderr.log"
+            rm -f "$rundir/review.json"
         fi
     fi
     printf "%s\n" "$rc" >"$rundir/exit"' \
-    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
+    "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
 printf '%s\n' "$!" >"$RUNDIR/pid"

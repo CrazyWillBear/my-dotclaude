@@ -8,13 +8,16 @@
 # sandbox, so it substituted its own judgement and reported a clean independent review that
 # had never happened. The reviewer is now a sibling process, and the two things that make
 # that trustworthy are both decided here — WHICH MODEL reviews (the tier's reviewer cell,
-# not the implementer's), and the COUNTS line that makes the verdict machine-readable
-# instead of prose someone has to interpret.
+# not the implementer's), and WHAT IT DIFFS AGAINST (a base pinned to a SHA before the
+# worker ran, since a base named by branch could be moved by the worker itself).
 #
-# THE CENTRAL MECHANISM is that every argument stays SINGLE-LINE. The output is one
-# argument per line and the callers read it back that way, so a newline smuggled into the
-# prompt would split one argument into two and hand codex a truncated prompt with the rest
-# as a stray positional. That is asserted directly rather than assumed.
+# THE CENTRAL MECHANISM is that this argv actually parses. The first version of this fix
+# shipped a command the installed CLI rejects outright — `-C` is not a flag of
+# `codex exec review`, and `--base` cannot be combined with a trailing PROMPT — so the
+# reviewer died on every run and every codex build failed closed. A stub cannot catch that,
+# which is why the shape is pinned here against what was verified on codex-cli 0.155.0.
+# Every argument also stays SINGLE-LINE: the callers read the output back one argument per
+# line, so a newline would split one into two and hand codex a stray positional.
 #
 # Run: bash plugins/infra/tests/test_review-cmd.sh   (non-zero if any fail)
 
@@ -68,69 +71,94 @@ run() {
 }
 
 # ---------------------------------------------------------------------------
-echo "test: it builds a codex exec review against the base branch"
-run standard /tmp/wt main
+# Every case passes a SHA: review-cmd.sh refuses anything that is not one, because a base
+# resolved by NAME could be moved by the worker (refs/ is a granted writable root),
+# emptying its own diff and buying a clean verdict from an honest reviewer.
+SHA=0123456789abcdef0123456789abcdef01234567
+SCHEMA=/tmp/rundir/review-schema.json
+OUTF=/tmp/rundir/review.json
+
+echo "test: it builds a codex exec review against the base COMMIT"
+run standard "$SHA" "$SCHEMA" "$OUTF"
 assert_equals "exit 0" "$RC" "0"
-assert_arg "codex"        "$OUT" "codex"
-assert_arg "exec"         "$OUT" "exec"
-assert_arg "review"       "$OUT" "review"
-assert_arg "--base"       "$OUT" "--base"
-assert_arg "the base branch by value" "$OUT" "main"
-assert_arg "-C the worktree"          "$OUT" "/tmp/wt"
-assert_arg "no approval prompts"      "$OUT" "approval_policy=never"
-# Without the network the reviewer cannot reach the model at all, and workspace-write is
-# OFFLINE by default — the same silent-and-fatal loss the worker's own spawn guards.
-assert_arg "the network, whose loss is silent and fatal" "$OUT" \
-    "sandbox_workspace_write.network_access=true"
+assert_arg "codex"   "$OUT" "codex"
+assert_arg "exec"    "$OUT" "exec"
+assert_arg "review"  "$OUT" "review"
+assert_arg "--base"  "$OUT" "--base"
+assert_arg "the base by value, as a sha" "$OUT" "$SHA"
+assert_arg "no approval prompts"         "$OUT" "approval_policy=never"
+
+echo "test: -C is NEVER passed — codex exec review does not take it"
+# Verified against codex-cli 0.155.0: `-C` there dies with "unexpected argument '-C'
+# found". It is a top-level `codex exec` flag only. Both callers cd into the worktree
+# instead, which is what scopes the review.
+assert_not_contains "no -C" "$(printf '%s\n' "$OUT" | grep -Fx -- '-C')" "-C"
+
+echo "test: NO trailing prompt — --base and [PROMPT] are mutually exclusive"
+# Also verified on 0.155.0: "the argument '--base <BRANCH>' cannot be used with
+# '[PROMPT]'". A prompt here would make the reviewer die on every single run, which is
+# how the first attempt at this fix shipped broken.
+assert_arg "the verdict's shape is asked for with a schema" "$OUT" "--output-schema"
+assert_arg "the schema file"                                "$OUT" "$SCHEMA"
+assert_arg "and a file for the verdict"                     "$OUT" "-o"
+assert_arg "the out file"                                   "$OUT" "$OUTF"
+assert_not_contains "nothing that looks like a prose instruction" "$OUT" "print exactly"
+
+echo "test: the sandbox is PINNED read-only, not inherited from the user's config"
+# `exec review` takes no -s, so without this the reviewer runs at whatever
+# ~/.codex/config.toml defaults to. A user configured with danger-full-access would have a
+# model reading worker-authored, injectable content run on the HOST with approvals off.
+assert_arg "read-only" "$OUT" "sandbox_mode=read-only"
 
 echo "test: it reviews at the tier's REVIEWER model, never the implementer's"
-# THE POINT OF THE REVIEWER COLUMN. standard's implementer is terra and its reviewer is
-# sol here, precisely so a builder that echoed the implementer's model would be caught.
-assert_arg "-m" "$OUT" "-m"
-assert_arg "the reviewer's model" "$OUT" "gpt-5.6-sol"
+# THE POINT OF THE REVIEWER COLUMN. standard's implementer is terra and its reviewer sol
+# here, precisely so a builder that echoed the implementer's model would be caught.
+assert_arg "-m"                    "$OUT" "-m"
+assert_arg "the reviewer's model"  "$OUT" "gpt-5.6-sol"
 assert_not_contains "and not the implementer's" "$OUT" "gpt-5.6-terra"
 
-run trivial /tmp/wt main
+run trivial "$SHA" "$SCHEMA" "$OUTF"
 assert_arg "trivial reviews at ITS reviewer cell" "$OUT" "gpt-5.6-terra"
-assert_not_contains "not its luna implementer" "$OUT" "gpt-5.6-luna"
+assert_not_contains "not its luna implementer"    "$OUT" "gpt-5.6-luna"
 
 echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
 # Every cell of the SHIPPED table is claude, so a user who flips only the implementer to
 # codex lands here. Passing opus would make the review die on a model codex does not have,
-# leaving no review.txt — which worker-report.sh refuses, turning a wrong-model review
+# leaving no review.json — which worker-report.sh refuses, turning a wrong-model review
 # into a run that cannot land at all.
-run complex /tmp/wt main
+run complex "$SHA" "$SCHEMA" "$OUTF"
 assert_equals "exit 0 — it still builds a reviewer" "$RC" "0"
 assert_arg "still a review" "$OUT" "review"
 assert_not_contains "but never hands codex a claude model" "$OUT" "opus"
-assert_not_contains "and no -m at all" "$OUT" "-m"
+assert_not_contains "and no -m at all" "$(printf '%s\n' "$OUT" | grep -Fx -- '-m')" "-m"
 
-echo "test: the prompt pins the COUNTS line worker-report.sh reads"
-# worker-report.sh parses ONLY that line. Without it the reviewer writes prose, no verdict
-# is found, and every run fails closed — loudly, but every single time. These two strings
-# and that regex are one contract.
-run standard /tmp/wt main
-assert_contains "the exact format" "$OUT" "COUNTS: <H> high, <M> medium, <L> low"
-assert_contains "including the nothing-found case" "$OUT" "COUNTS: 0 high, 0 medium, 0 low"
-assert_contains "and says it must be last" "$OUT" "LAST line"
+echo "test: a BRANCH NAME is refused — only a resolved sha closes the movable-base hole"
+# The whole point of pinning. If this accepted "main", a worker could `git branch -f main
+# HEAD` and the reviewer would diff nothing.
+run standard main "$SCHEMA" "$OUTF"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "nothing on stdout" "$OUT" ""
+assert_contains "says it wants a sha" "$ERR" "resolved SHA"
+
+run standard abc123 "$SCHEMA" "$OUTF"
+assert_equals "a too-short sha is refused too" "$RC" "1"
+assert_contains "says why" "$ERR" "too short"
 
 echo "test: EVERY argument is single-line — the callers read one argument per line"
-# The whole encoding rests on this. A newline anywhere in the prompt would silently split
-# one argument into two, and codex would get a truncated prompt plus a stray positional.
-run standard /tmp/wt main
+# The whole encoding rests on this. A newline anywhere would silently split one argument
+# into two, and codex would get a stray positional.
+run standard "$SHA" "$SCHEMA" "$OUTF"
 NLINES="$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
-# codex, exec, review, -C, <wt>, --base, <b>, -c, <k=v>, -c, <k=v>, -m, <model>, <prompt>
-assert_equals "the argument count is exactly what was built" "$NLINES" "14"
-assert_equals "the prompt is the LAST argument" \
-    "$(printf '%s\n' "$OUT" | tail -1 | cut -c1-6)" "Review"
+# codex, exec, review, --base, <sha>, -c, <k=v>, -c, <k=v>, --output-schema, <f>, -o, <f>, -m, <model>
+assert_equals "the argument count is exactly what was built" "$NLINES" "15"
 
 echo "test: usage errors fail loudly, with nothing on stdout to misread as a command"
 run
 assert_equals "no args exits 1" "$RC" "1"
 assert_equals "nothing on stdout" "$OUT" ""
 assert_contains "usage" "$ERR" "usage"
-run standard /tmp/wt
-assert_equals "a missing base exits 1" "$RC" "1"
+run standard "$SHA"
+assert_equals "a missing schema/out exits 1" "$RC" "1"
 assert_equals "nothing on stdout" "$OUT" ""
 
 # ---------------------------------------------------------------------------

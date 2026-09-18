@@ -64,10 +64,23 @@ ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 ├── stderr.log          # codex's progress, and the ONLY place a failure's reason lands
 ├── last-message.txt    # -o: the final message, shaped by --output-schema
 ├── status-schema.json  # the worker's fixed-shape status report
+├── review-schema.json  # the INDEPENDENT reviewer's fixed-shape verdict
+├── review.json         # that verdict. The ONLY source of the finding counts — the
+│                       #   worker cannot write it, and no review.json means the run
+│                       #   is REFUSED rather than read as clean
+├── review-stderr.log   # why the reviewer did not run; quoted back on that refusal
 ├── pid                 # alive => busy. The WRAPPER's pid, and its group leader:
 │                       #   stop it with `kill -- -<pid>` or codex is orphaned
-└── exit                # 0 => done, anything else => failed
+└── exit                # 0 => done, anything else => failed. Written LAST, after the
+                        #   review, so a terminal run always has its verdict on disk
 ```
+
+The reviewer is a SIBLING process, not something the worker runs. A worker told to review
+its own diff cannot: a nested `codex exec` dies inside its sandbox (`~/.codex` is not a
+writable root), and the one that did substituted its own assessment and reported it as an
+independent review (#96). It now runs after the worker exits, against a base pinned to a
+SHA before the worker started — `refs/` is writable, so a base named by branch could be
+moved by the worker to empty its own diff.
 
 `session-status.sh <runid>` reports those alongside the claude sessions, in the same
 vocabulary, with the PID in column 2. The spawn returns immediately and prints the run dir.

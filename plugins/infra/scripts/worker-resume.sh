@@ -165,10 +165,46 @@ fi
 # stderr.log goes too: it is appended to below, and the no-report failure path reports its
 # tail as the reason — so a resume that dies quietly would otherwise be reported with the
 # reason from a turn that ran hours ago, at the exact moment a human is reading it.
-# review.txt goes too, and for the sharpest version of the same reason: it is the only
+# THE REVIEWER IS BUILT BEFORE ANYTHING IS DESTROYED. review-cmd.sh can fail — a missing
+# sibling, an unresolvable base — and doing that after the turn has run would exit before
+# the exit file is written, leaving the run dir holding a dead pid and no exit code, which
+# session-status.sh reads as `failed`: the answered escalation spent for nothing.
+[ -f "$INFRA/review-cmd.sh" ] || die "missing infra sibling: $INFRA/review-cmd.sh"
+# A SHA, resolved before the resumed worker runs, for the same reason spawn.sh pins one:
+# `refs/` is a writable root, so a base resolved by NAME afterwards could be moved to HEAD
+# by the worker, emptying its own diff and buying an honest clean verdict.
+BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
+    || die "cannot resolve base '$BASE' to a commit in $WORKTREE"
+REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
+    "$RUNDIR/review-schema.json" "$RUNDIR/review.json")" || exit 1
+REVIEW_CMD=()
+while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
+$REVIEW_ARGV
+EOF
+
+# review.json goes too, and for the sharpest version of the same reason: it is the only
 # source of the finding counts, so the previous turn's review left in place would be read
-# as this turn's verdict on code the resumed worker has since changed.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/review.txt"
+# as this turn's verdict on code the resumed worker has since changed. review-stderr.log
+# with it — the missing-review error quotes its tail, and a stale one would explain this
+# turn's refusal with the last one's reason.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
+      "$RUNDIR/review.json" "$RUNDIR/review-stderr.log"
+
+# The reviewer's schema, identical to the one spawn.sh writes: `codex exec review` refuses
+# a trailing PROMPT next to `--base`, so the verdict's shape is requested this way.
+cat >"$RUNDIR/review-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/review-schema.json"
+{
+  "type": "object",
+  "properties": {
+    "high":     { "type": "integer" },
+    "medium":   { "type": "integer" },
+    "low":      { "type": "integer" },
+    "findings": { "type": "string" }
+  },
+  "required": ["high", "medium", "low", "findings"],
+  "additionalProperties": false
+}
+SCHEMA
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
@@ -184,21 +220,35 @@ CODE=$?
 #
 # FAIL CLOSED: a failed review leaves NO review.txt, so the run is refused rather than
 # merged on a verdict nobody produced.
-if [ "$CODE" -eq 0 ]; then
-    REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$WORKTREE" "$BASE")" || exit 1
-    REVIEW_CMD=()
-    while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
-$REVIEW_ARGV
-EOF
-    if ( cd "$WORKTREE" && "${REVIEW_CMD[@]}" ) \
-            >"$RUNDIR/review.txt" 2>>"$RUNDIR/stderr.log" </dev/null; then
-        ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
-            --body "$(printf '**Review round %s**\n\n' "$ROUND"; cat "$RUNDIR/review.txt")" ) \
-            >/dev/null 2>>"$RUNDIR/stderr.log" \
-            || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/stderr.log"
+# Reviewed only when the resumed turn SAYS it built or fixed something. A worker that
+# escalated again, or failed, also exits 0 — reviewing that posts a "Review round" comment
+# on a half-built branch, which the orchestrate lane counts as a spent cycle.
+if [ "$CODE" -eq 0 ] \
+   && grep -q '"status"[[:space:]]*:[[:space:]]*"\(built\|fixed\)"' \
+        "$RUNDIR/last-message.txt" 2>/dev/null; then
+    # TRIPWIRE, as in spawn.sh: the reviewer and the gh call are the first host processes
+    # to run git in this worktree after a worker that could have rewritten $OWN/commondir.
+    if bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" \
+            >/dev/null 2>>"$RUNDIR/review-stderr.log"; then
+        if ( cd "$WORKTREE" && "${REVIEW_CMD[@]}" ) \
+                >>"$RUNDIR/review-stderr.log" 2>&1 </dev/null; then
+            BODY="$(REVIEW_JSON="$RUNDIR/review.json" REVIEW_ROUND="$ROUND" python3 -c '
+import json, os
+r = json.load(open(os.environ["REVIEW_JSON"]))
+print("**Review round %s** — %d high, %d medium, %d low\n"
+      % (os.environ["REVIEW_ROUND"], r["high"], r["medium"], r["low"]))
+print(r["findings"])' 2>>"$RUNDIR/review-stderr.log")" \
+                && ( cd "$WORKTREE" && gh issue comment "$ISSUE" --body "$BODY" ) \
+                    >/dev/null 2>>"$RUNDIR/review-stderr.log" </dev/null \
+                || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
+        else
+            printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"
+            rm -f "$RUNDIR/review.json"
+        fi
     else
-        printf 'REVIEW_FAILED\n' >>"$RUNDIR/stderr.log"
-        rm -f "$RUNDIR/review.txt"
+        printf 'REVIEW_SKIPPED containment check refused the worktree\n' \
+            >>"$RUNDIR/review-stderr.log"
+        rm -f "$RUNDIR/review.json"
     fi
 fi
 
