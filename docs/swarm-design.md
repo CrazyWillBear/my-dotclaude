@@ -308,7 +308,20 @@ one-shot, so it maps onto `codex exec`:
 - **Review.** `codex exec review --base <branch>` is a working reviewer: it read the diff and
   returned priority-graded findings with file and line. It fills the reviewer slot for
   codex-routed tiers; `my-review` stays the reviewer for claude-routed ones.
-  `spawn.sh` passes the roster's **reviewer** cell to it as `-m`, so the review runs at the tier's
+
+  **It runs as a SIBLING of the worker, never inside it** (`review-cmd.sh`, invoked by
+  `spawn.sh`'s wrapper and by `worker-resume.sh`). The worker was originally told to run its own
+  review, and #96's e2e gate caught what that actually did: a nested `codex exec` cannot
+  initialise inside the worker's own sandbox — `failed to initialize in-process app-server
+  client: Read-only file system (os error 30)`, because `~/.codex` is not among its
+  `writable_roots` — and the worker, holding a required `review` field, filled it with its own
+  assessment of its own diff and reported a clean independent review that never ran. Nothing
+  downstream could tell the difference. A sibling process fixes both halves: it is inside
+  nobody's sandbox, and the verdict never passes through the thing that wrote the code. The
+  worker now reports `review: ""`, the reviewer's output file is the only verdict, and
+  `worker-report.sh` refuses a `built`/`fixed` report that has none.
+
+  `review-cmd.sh` passes the roster's **reviewer** cell as `-m`, so the review runs at the tier's
   reviewer model instead of whatever the user's codex config defaults to — the same silent
   wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
   codex-backed**: a claude reviewer names `opus` or `sonnet`, which codex does not have, so that
@@ -332,8 +345,9 @@ Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `
 `status-schema.json`, `pid` and `exit`. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
 `/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
-also swaps two steps: `codex exec review --base` replaces the `my-review` subagent, and the
-schema'd final message replaces `SendMessage`, which codex does not have.
+also swaps two steps: a sibling `codex exec review --base` replaces the `my-review` subagent —
+run for the worker rather than by it, see § Review — and the schema'd final message replaces
+`SendMessage`, which codex does not have.
 
 ## Rotation
 

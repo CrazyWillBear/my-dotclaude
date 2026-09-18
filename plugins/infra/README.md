@@ -127,11 +127,18 @@ thread — which `worker-resume.sh` does:
 
 ```bash
 bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktree> \
+     --base <base-branch> \
      --answer "the retry budget is per-request"        # or --answer-file FILE
+     # --round N  numbers the review comment this posts (default 1)
 ```
 
+`--base` is required: the resumed turn ends with an independent review, and without a base
+branch there is nothing to review against — a resume that quietly skipped it would land an
+unreviewed branch wearing the same report shape as a reviewed one.
+
 It resolves the tier's model, reads the thread id out of the run dir's `events.jsonl`, resumes
-with the full flag set below, records the new exit code, and then hands rendering to
+with the full flag set below, records the new exit code, runs the independent reviewer, and then
+hands rendering to
 `worker-report.sh` — so a resumed turn prints the same one-line report as a first one, and there
 is only ever one copy of the report-rendering rules. `--dry-run` prints the command one argument
 per line.

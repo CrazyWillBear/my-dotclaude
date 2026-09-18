@@ -9,8 +9,16 @@
 # resuming, and the worker continues with everything it had rather than restarting.
 #
 # Usage:
-#   bash worker-resume.sh <runid> <issue> <tier> <worktree> --answer TEXT [--dry-run]
-#   bash worker-resume.sh <runid> <issue> <tier> <worktree> --answer-file FILE [--dry-run]
+#   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
+#        [--round N] [--dry-run]
+#   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer-file FILE \
+#        [--round N] [--dry-run]
+#
+#     --base BRANCH  REQUIRED. What the post-resume review diffs against. The resumed
+#                    worker does not review itself (§ the reviewer, below), so without
+#                    this there is nothing to review against and the run would be landed
+#                    unreviewed.
+#     --round N      the round number quoted in the review comment this posts (default 1)
 #
 # Output: the resumed turn's report, in the same one line the lane already parses —
 # this script hands rendering to worker-report.sh rather than keeping a second copy of
@@ -39,6 +47,8 @@ shift 4 2>/dev/null || true
 ANSWER=""
 ANSWER_SET=0
 DRY=""
+BASE=""
+ROUND=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,13 +57,25 @@ while [ $# -gt 0 ]; do
         --answer-file) [ $# -ge 2 ] || die "--answer-file needs a path"
                        [ -f "$2" ] || die "no such answer file: $2"
                        ANSWER="$(cat "$2")"; ANSWER_SET=1; shift 2 ;;
+        --base)        [ $# -ge 2 ] || die "--base needs a value"
+                       BASE="$2"; shift 2 ;;
+        --round)       [ $# -ge 2 ] || die "--round needs a value"
+                       ROUND="$2"; shift 2 ;;
         --dry-run)     DRY=1; shift ;;
         *)             die "unknown flag $1" ;;
     esac
 done
 
-[ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] \
-    || die "usage: worker-resume.sh <runid> <issue> <tier> <worktree> --answer TEXT [--dry-run]"
+USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--round N] [--dry-run]"
+[ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
+# --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
+# independent review (below) and `codex exec review --base` cannot run without one —
+# and a resume that quietly skipped the review would land an unreviewed branch wearing
+# the same report shape as a reviewed one, which is the exact failure #96 caught.
+# Guessing a base here (`main`, the current branch) would be the same silence with extra
+# steps: wrong on any repo whose default differs, and undetectable when it is.
+[ -n "$BASE" ] || die "--base BRANCH is required — the post-resume review cannot run without it"
+case "$ROUND" in ''|*[!0-9]*) die "--round must be a number, got '$ROUND'" ;; esac
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 # Same guard as spawn.sh, worker-report.sh and run-log.sh: it is joined into a path.
 case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
@@ -96,10 +118,15 @@ $ANSWER
 Continue the issue from exactly where you stopped — you still have your full context, so
 do not start over and do not re-read what you already read.
 
+Do NOT review your own diff and do NOT run \`codex exec review\` — a nested codex
+invocation cannot start inside your sandbox, and your own opinion of your own work is not
+a review. An independent reviewer runs automatically once you exit.
+
 When you are done, REPORT, THEN STOP. Your FINAL MESSAGE is the report and it must be
 JSON matching the output schema you were launched with. Every field is required; send \"\"
-or 0 for the ones that do not apply:
-   {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
+or 0 for the ones that do not apply — \"review\" is one of those, since you did not
+review:
+   {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
 Use \"status\": \"failed\" with the reason in \"note\" if you could not finish. If you are
 STILL blocked on something only a human can answer, use \"status\": \"escalate\" again with
 the new question in \"note\" — do not guess."
@@ -138,7 +165,10 @@ fi
 # stderr.log goes too: it is appended to below, and the no-report failure path reports its
 # tail as the reason — so a resume that dies quietly would otherwise be reported with the
 # reason from a turn that ran hours ago, at the exact moment a human is reading it.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log"
+# review.txt goes too, and for the sharpest version of the same reason: it is the only
+# source of the finding counts, so the previous turn's review left in place would be read
+# as this turn's verdict on code the resumed worker has since changed.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/review.txt"
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
@@ -146,6 +176,32 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log"
 # script. </dev/null because codex blocks forever on an open stdin.
 ( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
+
+# THE INDEPENDENT REVIEWER, exactly as spawn.sh runs it and from the same builder — a
+# resumed worker's branch is as unreviewed as a freshly built one, and worker-report.sh
+# below refuses a built/fixed report with no review.txt. ORDER: before the exit file,
+# which is what makes the run terminal and readable.
+#
+# FAIL CLOSED: a failed review leaves NO review.txt, so the run is refused rather than
+# merged on a verdict nobody produced.
+if [ "$CODE" -eq 0 ]; then
+    REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$WORKTREE" "$BASE")" || exit 1
+    REVIEW_CMD=()
+    while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
+$REVIEW_ARGV
+EOF
+    if ( cd "$WORKTREE" && "${REVIEW_CMD[@]}" ) \
+            >"$RUNDIR/review.txt" 2>>"$RUNDIR/stderr.log" </dev/null; then
+        ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
+            --body "$(printf '**Review round %s**\n\n' "$ROUND"; cat "$RUNDIR/review.txt")" ) \
+            >/dev/null 2>>"$RUNDIR/stderr.log" \
+            || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/stderr.log"
+    else
+        printf 'REVIEW_FAILED\n' >>"$RUNDIR/stderr.log"
+        rm -f "$RUNDIR/review.txt"
+    fi
+fi
+
 printf '%s\n' "$CODE" >"$RUNDIR/exit"
 
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the

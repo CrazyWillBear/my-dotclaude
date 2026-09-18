@@ -165,6 +165,28 @@ def read(name):
 
 raw = read("last-message.txt")
 
+def independent_review():
+    # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.txt is written
+    # by the sibling `codex exec review` process spawn.sh/worker-resume.sh run AFTER the
+    # worker exits; the worker cannot write it and is told to report an empty `review`.
+    #
+    # This is the fix for what #96's e2e gate caught: the worker used to run the review
+    # itself, that nested call could never start inside its sandbox, and it filled the
+    # required field with its own opinion of its own diff — reporting a clean independent
+    # review that had never run. Reading the count from the reviewer's own output makes
+    # that substitution impossible rather than merely discouraged.
+    #
+    # Only the LAST COUNTS line counts: the reviewer's prose may quote the format it was
+    # asked for (its instructions contain it verbatim) before emitting the real one.
+    txt = read("review.txt")
+    if not txt:
+        return ""
+    hits = re.findall(r"^COUNTS:\s*([0-9]+) high, ([0-9]+) medium, ([0-9]+) low\s*$",
+                      txt, re.M)
+    if not hits:
+        return ""
+    return "%s high, %s medium, %s low" % hits[-1]
+
 if not raw:
     # No report at all. If codex exited non-zero this is the expected shape of a crash,
     # and the run is still reportable: `failed` plus whatever stderr caught. If it exited
@@ -209,28 +231,34 @@ if status in ("built", "fixed"):
     if not head:
         print("error: issue %d reported %s with no head sha" % (issue, status), file=sys.stderr)
         sys.exit(1)
-    # An ABSENT review is not a CLEAN review. The worker's prompt tells it to send "" for
-    # fields that do not apply, so a review step that never ran arrives here as "" —
-    # and defaulting that to "0 high, 0 medium, 0 low" would INVENT the single fact that
-    # decides whether the issue takes another fix round or goes straight to the merge
-    # queue. Same reasoning as the empty head above: unknown is exit 1, never a cheerful
-    # default.
-    if not review:
-        print("error: issue %d reported %s with an empty review — a review that did not "
-              "run is not a clean one" % (issue, status), file=sys.stderr)
-        sys.exit(1)
-    # Both fields are worker-controlled and land in a SPACE-DELIMITED line the orchestrator
-    # parses positionally, so a head carrying its own " review=..." could smuggle a second,
+    # `head` is worker-controlled and lands in a SPACE-DELIMITED line the orchestrator
+    # parses positionally, so one carrying its own " review=..." could smuggle a second,
     # cleaner review into the report. The worker is told to read the issue's comments, which
     # anyone can write, so this is an untrusted-input path and not a hypothetical.
+    # VALIDATED BEFORE THE REVIEW IS LOOKED UP: the worker's own report has to be coherent
+    # before the reviewer's verdict on it means anything, and a run that fails both should
+    # name the defect the worker is actually responsible for.
     if not re.match(r"^[0-9a-f]{7,40}$", head):
         print("error: issue %d reported a head that is not a sha: %r" % (issue, head),
               file=sys.stderr)
         sys.exit(1)
-    # [0-9], not \d: \d is Unicode-aware in Python 3, so "٣ high, ٠ medium, ٠ low" would pass
-    # a shape check the head's own [0-9a-f] would refuse. Keep the two validators consistent.
-    if not re.match(r"^[0-9]+ high, [0-9]+ medium, [0-9]+ low$", review):
-        print("error: issue %d reported a review in an unreadable shape: %r" % (issue, review),
+    # A worker that filled in `review` disobeyed its prompt — it is told to send "" — and
+    # the value is DISCARDED rather than trusted, because a worker grading its own diff is
+    # the failure this whole path exists to prevent. Say so on stderr: it means the prompt
+    # and the worker have drifted, which is worth seeing even though it changes nothing.
+    if review:
+        print("warning: issue %d reported its own review %r — discarded; the independent "
+              "reviewer's verdict is the only one used" % (issue, review), file=sys.stderr)
+    # An ABSENT review is not a CLEAN review. review.txt is missing when the reviewer never
+    # ran or failed (both callers DELETE a failed one), and unparseable when it ran but
+    # never emitted its COUNTS line. Defaulting either to "0 high, 0 medium, 0 low" would
+    # INVENT the single fact that decides whether the issue takes another fix round or goes
+    # straight to the merge queue. Same reasoning as the empty head above: unknown is
+    # exit 1, never a cheerful default.
+    review = independent_review()
+    if not review:
+        print("error: issue %d reported %s but no independent review was recorded in "
+              "review.txt — a review that did not run is not a clean one" % (issue, status),
               file=sys.stderr)
         sys.exit(1)
     if status == "fixed":

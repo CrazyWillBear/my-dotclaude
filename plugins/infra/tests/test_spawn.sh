@@ -362,7 +362,10 @@ assert_contains "says outright it has no SendMessage tool" "$out" "NO SendMessag
 assert_not_contains "and is never told to use one" "$out" "MUST use the SendMessage tool"
 assert_contains "its final message is the report" "$out" "output schema"
 assert_contains "fixed-shape JSON status" "$out" '"status": "built"'
-assert_contains "reviews with codex exec review" "$out" "codex exec review --base base"
+assert_contains "reports an EMPTY review — it did not review" "$out" '"review": ""'
+assert_contains "and is told not to review itself" "$out" "Do NOT review your own diff"
+assert_contains "naming the nested-sandbox reason" "$out" "nested codex
+   invocation cannot start inside your sandbox"
 
 echo "test: a codex dry run leaves no run dir behind"
 # session-status.sh reads a run dir with a pid file as a live worker, and one without a
@@ -407,32 +410,47 @@ assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
 assert_not_contains "but is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
 
-echo "test: the review step runs at the tier's REVIEWER model, not the implementer's"
-# resolve-tier.sh has always emitted the reviewer column and NOTHING read it, so
-# `codex exec review` ran at whatever the user's codex config defaults to — the same
-# silent wrong-model trap the run's own -m guards against. TRIVIAL is the sharp case:
-# its implementer is luna and its reviewer is terra, so a review step that merely echoed
-# the run's own model would say luna here. That is what tells the two columns apart.
+echo "test: a SIBLING reviewer is spawned, at the tier's REVIEWER model"
+# THE FIX FOR WHAT #96's GATE CAUGHT. The worker used to run `codex exec review` itself,
+# from inside its own sandbox, where that call can never start ("Read-only file system") —
+# and it then reported its own opinion of its own diff as the independent verdict. The
+# reviewer is now its own top-level process, printed after the --REVIEW-- marker.
+#
+# TRIVIAL is the sharp case for the MODEL: its implementer is luna and its reviewer terra,
+# so a reviewer that merely echoed the run's model would say luna here. That is what tells
+# the two columns apart.
 out_tv=$(codex_dry r9 12 trivial "$REPO" base)
 assert_arg "the RUN is still at the implementer's model" "$out_tv" "gpt-5.6-luna"
-assert_contains "but the REVIEW is at the reviewer's" "$out_tv" \
-    "codex exec review --base base -m gpt-5.6-terra"
+assert_contains "a reviewer argv follows the marker" "$out_tv" "--REVIEW--"
+review_argv() { printf '%s\n' "$1" | sed -n '/^--REVIEW--$/,$p'; }
+rv=$(review_argv "$out_tv")
+assert_contains "the reviewer is codex exec review" "$rv" "review"
+assert_contains "against the base branch" "$rv" "--base"
+assert_arg "at the REVIEWER's model, not the implementer's" "$rv" "gpt-5.6-terra"
+assert_not_contains "and never at the implementer's" "$rv" "gpt-5.6-luna"
 assert_contains "complex reviews at ITS reviewer model" \
-    "$(codex_dry r9 12 complex "$REPO" base)" "codex exec review --base base -m gpt-5.6-sol"
+    "$(review_argv "$(codex_dry r9 12 complex "$REPO" base)")" "gpt-5.6-sol"
 
-echo "test: the FIX round's re-review carries the reviewer model too"
-# A SEPARATE string in spawn.sh. Missing it would leave every fix round reviewing at
-# codex's default while the build round looked correct — and the fix round's findings are
-# the ones that decide whether the issue reaches the merge queue.
-assert_contains "the re-review names the reviewer model" \
-    "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)" \
-    "codex exec review --base base -m gpt-5.6-terra"
+echo "test: the FIX round gets the same sibling reviewer"
+# A fix round's findings are the ones that decide whether the issue reaches the merge
+# queue, so a fix round that shipped without a reviewer would be the same silent hole one
+# stage later.
+assert_arg "the re-review names the reviewer model" \
+    "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
+    "gpt-5.6-terra"
+
+echo "test: the reviewer demands the machine-readable COUNTS line"
+# worker-report.sh reads ONLY that line. Without it in the prompt the reviewer writes
+# prose, worker-report.sh finds no verdict, and the run fails closed — loudly, but every
+# single time.
+assert_contains "the prompt pins the COUNTS format" "$rv" "COUNTS: <H> high, <M> medium, <L> low"
+assert_contains "including when nothing was found" "$rv" "COUNTS: 0 high, 0 medium, 0 low"
 
 echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
 # The SHIPPED table is claude in every cell, so a user who flips only the implementer to
 # codex lands exactly here. Passing that cell's model would make `codex exec review` die
-# on a model codex does not have; the worker would then report an EMPTY review, which
-# worker-report.sh refuses outright — turning a wrong-model review into no review at all.
+# on a model codex does not have, leaving NO review.txt — which worker-report.sh refuses
+# outright, turning a wrong-model review into a run that cannot land at all.
 CFG_MIXED="$WORK/cfg-mixed"
 mkdir -p "$CFG_MIXED"
 cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
@@ -456,8 +474,10 @@ cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
 JSON
 out_mx=$(CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_MIXED" \
     bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>"$WORK/err")
-assert_contains "it still reviews" "$out_mx" "codex exec review --base base"
+assert_contains "it still spawns a reviewer" "$out_mx" "--REVIEW--"
+assert_contains "still against the base branch" "$(review_argv "$out_mx")" "--base"
 assert_not_contains "but never hands codex a claude model" "$out_mx" "-m opus"
+assert_not_contains "nor any other claude model" "$(review_argv "$out_mx")" "sonnet"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 rm -rf "$CODEX_ROOT"

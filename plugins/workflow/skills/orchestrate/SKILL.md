@@ -485,7 +485,8 @@ delivered by resuming its thread, so it picks up where it stopped rather than re
 the question to Will, then send his answer back with:
 
 ```bash
-bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --answer "..."
+bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> \
+     --base "$BASE" --answer "..."
 ```
 
 It prints the resumed turn's report in the same one line as any other worker, so handling is

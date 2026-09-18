@@ -95,8 +95,13 @@ mkrun() {
     printf '%s' "${2:-}" >"$d/last-message.txt"
 }
 
+# --base is REQUIRED by the script (the post-resume review diffs against it), and every
+# case below except the one that asserts the requirement itself is about something else.
+# Injecting a default keeps those cases about what they are testing; the requirement gets
+# its own test, which calls $SCRIPT directly to bypass this.
 run() {
     local errf="$WORK/err"
+    case " $* " in *" --base "*) ;; *) set -- "$@" --base base ;; esac
     OUT="$(timeout 60 bash "$SCRIPT" "$@" 2>"$errf")"
     RC=$?
     ERR="$(cat "$errf")"
@@ -149,8 +154,18 @@ assert_contains "carries the file's text" "$OUT" "multi-line answer"
 echo "test: a real resume records the new exit code and reports through worker-report.sh"
 # The stub writes the NEW report, so a pass here proves rendering is delegated rather
 # than reimplemented — and that the stale previous report was cleared first.
+# `codex exec review` is the SECOND codex the script runs — the independent reviewer that
+# replaced the worker's own review step. It is answered separately: it takes no -o, writes
+# its verdict to STDOUT, and must not clobber the resume's recorded argv (its own goes to
+# STUB_REVIEW_ARGV, which the reviewer test below reads).
 cat >"$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
+if [ "${2:-}" = review ]; then
+    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    printf 'src/f:1 — medium — a finding\n'
+    printf 'COUNTS: %s\n' "${STUB_REVIEW_COUNTS:-0 high, 1 medium, 0 low}"
+    exit "${STUB_REVIEW_EXIT:-0}"
+fi
 pwd >"$STUB_CWD"
 printf '%s\n' "$@" >"$STUB_ARGV"
 out=""
@@ -159,7 +174,16 @@ while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
+
+# gh is STUBBED, not permitted to be real: the reviewer's findings are posted to the issue
+# as the "Review round" comment, and a test that reached the real gh would comment on
+# whatever repo the suite happens to run in. It records the call so the post is assertable.
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"${STUB_GH_ARGV:-/dev/null}"\nexit 0\n' \
+    >"$BIN/gh"
+chmod +x "$BIN/gh"
+
 export STUB_CWD="$WORK/cwd" STUB_ARGV="$WORK/argv"
+export STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv"
 mkrun 81 '{"issue":81,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
 STUB_REPORT='{"issue":81,"status":"built","round":0,"head":"9c2b4d1","review":"0 high, 1 medium, 0 low","note":""}' \
     run r1 81 standard "$REPO" --answer "per-request"
@@ -245,6 +269,69 @@ assert_contains "names it" "$ERR" "no such worktree"
 run r1 80 standard "$REPO" --answer "x" --bogus
 assert_equals "unknown flag exits 1" "$RC" "1"
 assert_contains "names it" "$ERR" "unknown flag"
+
+# ---------------------------------------------------------------------------
+# THE INDEPENDENT REVIEWER. A resumed worker's branch is as unreviewed as a freshly built
+# one, and this script used to end by asking the WORKER for a review count it produced by
+# reviewing itself (#96). These assert the replacement: a sibling reviewer, its verdict
+# taken from its own output, and a run that cannot land when it did not run.
+echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own review"
+rm -f "$WORK/review-argv" "$WORK/gh-argv"
+mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_COUNTS='2 high, 0 medium, 1 low' \
+    run r1 86 standard "$REPO" --answer "x" --base main --round 4
+assert_equals "exit 0" "$RC" "0"
+assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
+    "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
+assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
+assert_contains "against the base it was given" "$(cat "$WORK/review-argv" 2>/dev/null)" "main"
+assert_contains "at the tier's reviewer model" "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
+
+echo "test: the reviewer's findings are posted as the round's issue comment"
+assert_contains "gh issue comment was called" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
+assert_contains "on the right issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "86"
+assert_contains "carrying the round number it was given" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
+    "**Review round 4**"
+assert_contains "and the reviewer's own text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a finding"
+
+echo "test: a FAILED review leaves no verdict behind — the run fails CLOSED"
+# The sharp one. A reviewer that dies must not leave a half-written review.txt: a COUNTS
+# line from the middle of an aborted run would be read as a real verdict, which is the
+# same class of invented-fact the self-review was.
+rm -f "$WORK/review-argv"
+mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":87,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_EXIT=3 \
+    run r1 87 standard "$REPO" --answer "x" --base main
+assert_equals "exit 1 — we do not know if the branch is clean" "$RC" "1"
+assert_empty "nothing on stdout the lane could act on" "$OUT"
+assert_contains "says no review was recorded" "$ERR" "no independent review"
+if [ -f "$CODEX_ROOT/r1/issue-87/review.txt" ]; then
+    no "a failed review left review.txt behind"
+else
+    ok "the failed review's output was deleted, not left to be misread"
+fi
+
+echo "test: a worker that grades itself anyway is ignored, not believed"
+# The worker is told to send "". One that sends a verdict regardless is the exact shape of
+# the bug: its claim must never reach the report line.
+rm -f "$WORK/review-argv"
+mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":88,"status":"built","round":0,"head":"abc1234","review":"0 high, 0 medium, 0 low","note":""}' \
+    STUB_REVIEW_COUNTS='3 high, 0 medium, 0 low' \
+    run r1 88 standard "$REPO" --answer "x" --base main
+assert_equals "exit 0" "$RC" "0"
+assert_contains "the reviewer's verdict won" "$OUT" "review=3 high, 0 medium, 0 low"
+assert_not_contains "the worker's self-grade did not" "$OUT" "0 high, 0 medium, 0 low"
+
+echo "test: --base is REQUIRED — a resume that skipped the review would land unreviewed"
+# $SCRIPT directly, bypassing run()'s injected default.
+ERRF="$WORK/err-nobase"
+OUT="$(timeout 60 bash "$SCRIPT" r1 80 standard "$REPO" --answer "x" --dry-run 2>"$ERRF")"
+RC=$?
+assert_equals "exits 1" "$RC" "1"
+assert_contains "says why" "$(cat "$ERRF")" "--base"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

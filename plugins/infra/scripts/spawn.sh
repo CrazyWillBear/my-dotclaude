@@ -190,24 +190,9 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
 
-# The REVIEWER cell of the same roster, for the worker's OWN review step below.
-# `codex exec review` takes -m like any other codex invocation, and without it the review
-# runs on whatever the user's codex config defaults to rather than the tier's reviewer —
-# the same silent-wrong-model trap the run's own -m guards against further down. These
-# three lines have always been emitted by resolve-tier.sh; nothing read them until now.
-#
-# Only a CODEX reviewer cell can name a model this command understands. A claude-backed
-# reviewer — which is every cell in the SHIPPED table — names opus or sonnet, models codex
-# does not have, so passing one would make the review fail outright. That pairing leaves
-# the flag off and takes codex's default instead: a review at the wrong model is worse
-# than the tier asked for, but a review that errors out is no review at all, and the
-# worker would report an empty one that worker-report.sh then refuses.
-REVIEWER_MODEL="$(printf '%s\n' "$ROSTER" | sed -n 's/^reviewer_model=//p' | head -1)"
-REVIEWER_BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^reviewer_backend=//p' | head -1)"
-REVIEW_M=""
-if [ "$REVIEWER_BACKEND" = codex ] && [ -n "$REVIEWER_MODEL" ]; then
-    REVIEW_M=" -m $REVIEWER_MODEL"
-fi
+# The reviewer cell is resolved by review-cmd.sh, at the point the reviewer is built —
+# not here. It used to be read here to interpolate `-m` into the worker's own review
+# step, and that step is gone (§ CODEX below): the worker no longer reviews anything.
 
 NAME="orch-$RUNID-issue-$ISSUE"
 BRANCH="issue-$ISSUE"
@@ -275,21 +260,38 @@ fi
 # forces the shape), and `codex exec review --base` is its reviewer
 # (docs/swarm-design.md § Codex backend).
 if [ "$BACKEND" = codex ]; then
-    REVIEW_STEP="6. Review your own diff: \`codex exec review --base $BASE$REVIEW_M\`. It returns
-   priority-graded findings with file and line. YOU post them as a comment"
+    # DO NOT tell the worker to review itself. It was told exactly that until #96's e2e
+    # gate caught what happens: `codex exec review` NESTED inside this worker's own
+    # sandbox always fails ("failed to initialize in-process app-server client: Read-only
+    # file system") because ~/.codex is not among its writable_roots — and the worker,
+    # holding a required `review` field it had to fill, substituted its OWN judgement of
+    # its OWN diff and reported "0 high, 0 medium, 0 low" as though the independent
+    # reviewer had run. Nothing downstream could tell the difference.
+    #
+    # The review now runs as a SIBLING process after this worker exits (REVIEW_CMD
+    # below), which fixes both halves: a top-level codex invocation is not inside anyone's
+    # sandbox, and the verdict never passes through the thing that wrote the code. The
+    # worker therefore reports an EMPTY review — worker-report.sh takes the counts from
+    # the reviewer's own output file and ignores this field entirely.
+    REVIEW_STEP="6. Do NOT review your own diff, and do NOT run \`codex exec review\` — a nested codex
+   invocation cannot start inside your sandbox, and your own opinion of your own work is
+   not a review. An INDEPENDENT reviewer runs automatically once you exit and posts the
+   \"**Review round**\" comment itself. Skip straight to reporting"
     REPORT_STEP="7. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
    Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
    were launched with. EVERY field is required — send \"\" or 0 for the ones that do
-   not apply:
-      {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
+   not apply. \"review\" is one of those: you did not review, so send \"\" and never a
+   count you made up:
+      {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
    or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
    on something only a human can answer? \"status\": \"escalate\", question in \"note\"."
-    FIX_REVIEW_STEP="4. Re-review the delta: \`codex exec review --base $BASE$REVIEW_M\`, then POST its findings
-   YOURSELF"
+    FIX_REVIEW_STEP="4. Do NOT re-review the delta yourself. The independent reviewer runs again after
+   you exit and posts the next round's comment"
     FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
    report, as JSON matching the output schema you were launched with. Every field is
-   required; send \"\" for any that does not apply:
-      {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
+   required; send \"\" for any that does not apply, \"review\" included — the reviewer
+   fills that in, not you:
+      {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
    or the same shape with \"status\": \"failed\" and the reason in \"note\"."
 else
     REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
@@ -423,8 +425,29 @@ CMD=(codex exec
      --output-schema "$RUNDIR/status-schema.json"
      "$TASK")
 
+# THE INDEPENDENT REVIEWER. A SIBLING of the worker, never its child: the wrapper below
+# runs it only after the worker's process has exited, so it starts on the host with a
+# normal filesystem instead of inside the worker's read-only sandbox — which is the whole
+# reason the worker's own review step could never work (#96).
+#
+# Built by review-cmd.sh, not here, for the reason common-git-dir.sh --roots is shared:
+# worker-resume.sh must run the IDENTICAL reviewer, and a second copy that drifted would
+# still produce a confident, well-formatted verdict at the wrong model.
+[ -f "$INFRA/review-cmd.sh" ] || die "missing infra sibling: $INFRA/review-cmd.sh"
+REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$WORKTREE" "$BASE")" || exit 1
+REVIEW_CMD=()
+while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
+$REVIEW_ARGV
+EOF
+[ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
+
+# One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review
+# is now half of what a codex spawn DOES, so a dry run that showed only the worker would
+# stop proving what this script runs.
 if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
+    printf '%s\n' --REVIEW--
+    printf '%s\n' "${REVIEW_CMD[@]}"
     exit 0
 fi
 
@@ -443,7 +466,12 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # reads as `failed`, inventing a failure for a worker that is merely still launching.
 # With it gone the same window has no pid at all, which is the launch-window case that
 # already reads `busy` — the safe direction, and the one this script argues for elsewhere.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid"
+# `review.txt` goes with them, and for the sharpest version of the same reason: it is now
+# the ONLY source of the finding counts, and worker-report.sh reads it the moment `exit`
+# appears. A fix round that left the previous round's review in place would be handed the
+# verdict on the code it was spawned to CHANGE — a stale "0 high" sending a branch whose
+# fixes were never looked at straight to the merge queue.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/review.txt"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -489,11 +517,52 @@ SCHEMA
 # Its own stdout/stderr go to /dev/null: a background worker holding the caller's `$( )`
 # pipe open for its whole run turns this spawn into a blocking wait.
 # </dev/null because codex BLOCKS FOREVER on an open stdin.
+#
+# The wrapper runs TWO processes in sequence: the worker, then the independent reviewer.
+# ORDER IS THE CONTRACT. `exit` is what session-status.sh calls terminal and what makes
+# worker-report.sh read the run, so it is written LAST — after the review has landed.
+# Writing it between the two would hand the orchestrator a report whose review file does
+# not exist yet, which worker-report.sh correctly refuses, turning every healthy run into
+# a failure.
+#
+# The review runs only when the worker exited 0. A crashed worker has no branch worth
+# reviewing, and `exit` still carries its real code.
+#
+# FAIL CLOSED: if the reviewer itself fails, its half-written output is DELETED rather
+# than left behind. worker-report.sh reads a missing review.txt as "no review happened"
+# and refuses the run — which is the whole point of this change. A truncated review left
+# in place could carry a COUNTS line from the middle of an aborted run.
+#
+# `gh issue comment` posts the reviewer's findings verbatim, from the worktree so gh
+# resolves the repo. This keeps the issue thread as the coordination medium exactly as
+# before — the fix-round worker still reads the latest "**Review round**" comment and
+# cannot tell that a different process wrote it. A failed POST is recorded but does not
+# fail the run: the counts still reached worker-report.sh, and a lost comment costs the
+# fix round its detail, not its correctness.
 set -m
 bash -c '
-    rundir=$1; shift
-    "$@" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
-    printf "%s\n" "$?" >"$rundir/exit"' _ "$RUNDIR" "${CMD[@]}" >/dev/null 2>&1 &
+    rundir=$1; worktree=$2; issue=$3; round=$4; shift 4
+    worker=()
+    while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
+    [ $# -eq 0 ] || shift
+    review=("$@")
+    "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "${#review[@]}" -gt 0 ]; then
+        if (cd "$worktree" && "${review[@]}") \
+                >"$rundir/review.txt" 2>"$rundir/review-stderr.log" </dev/null; then
+            (cd "$worktree" && gh issue comment "$issue" \
+                --body "$(printf "**Review round %s**\n\n" "$round"; cat "$rundir/review.txt")") \
+                >/dev/null 2>>"$rundir/review-stderr.log" \
+                || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
+        else
+            printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
+            rm -f "$rundir/review.txt"
+        fi
+    fi
+    printf "%s\n" "$rc" >"$rundir/exit"' \
+    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    >/dev/null 2>&1 &
 set +m
 printf '%s\n' "$!" >"$RUNDIR/pid"
 printf '%s\n' "$RUNDIR"

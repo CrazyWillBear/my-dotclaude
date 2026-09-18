@@ -61,6 +61,20 @@ mkrun() {
     [ $# -lt 5 ] || printf '%s' "$5" >"$d/last-message.txt"
 }
 
+# mkreview <runid> <issue> <body> — the INDEPENDENT reviewer's output file, written by the
+# sibling `codex exec review` process, never by the worker. A built/fixed report without
+# one is refused, so almost every fixture below needs it: that refusal IS the fix for the
+# self-review substitution #96's gate caught.
+mkreview() {
+    local d="$CODEX_ROOT/$1/issue-$2"
+    mkdir -p "$d"
+    printf '%s\n' "$3" >"$d/review.txt"
+}
+
+# The shape the reviewer is prompted to end on. Kept as one helper so a change to
+# review-cmd.sh's wording has exactly one place to land here.
+counts() { printf 'COUNTS: %s\n' "$1"; }
+
 run() {   # run <args...> -> OUT/ERR/RC
     local errf="$WORK/err"
     OUT="$(timeout 60 bash "$SCRIPT" "$@" 2>"$errf")"
@@ -71,7 +85,8 @@ run() {   # run <args...> -> OUT/ERR/RC
 # ---------------------------------------------------------------------------
 echo "test: a built report becomes the line the session lane already parses"
 mkrun r1 41 "$(dead)" 0 \
-  '{"issue":41,"status":"built","round":0,"head":"abc1234","review":"1 high, 2 medium, 3 low","note":""}'
+  '{"issue":41,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
+mkreview r1 41 "$(counts '1 high, 2 medium, 3 low')"
 run r1 41 --interval 1 --timeout 20
 assert_equals "exit 0" "$RC" "0"
 assert_equals "the exact report line" "$OUT" \
@@ -79,7 +94,8 @@ assert_equals "the exact report line" "$OUT" \
 
 echo "test: a fix round carries its round number, so the orchestrator knows which landed"
 mkrun r1 42 "$(dead)" 0 \
-  '{"issue":42,"status":"fixed","round":3,"head":"def5678","review":"0 high, 1 medium, 0 low","note":""}'
+  '{"issue":42,"status":"fixed","round":3,"head":"def5678","review":"","note":""}'
+mkreview r1 42 "$(counts '0 high, 1 medium, 0 low')"
 run r1 42 --interval 1 --timeout 20
 assert_equals "exit 0" "$RC" "0"
 assert_equals "fixed line with round" "$OUT" \
@@ -120,8 +136,9 @@ sleep 300 & LIVE_PID=$!
 printf '%s\n' "$LIVE_PID" >"$LIVEDIR/pid"
 (
     sleep 3
-    printf '%s' '{"issue":50,"status":"built","round":0,"head":"7e1a9f0","review":"0 high, 0 medium, 0 low","note":""}' \
+    printf '%s' '{"issue":50,"status":"built","round":0,"head":"7e1a9f0","review":"","note":""}' \
         >"$LIVEDIR/last-message.txt"
+    printf 'COUNTS: 0 high, 0 medium, 0 low\n' >"$LIVEDIR/review.txt"
     kill "$LIVE_PID" 2>/dev/null
     printf '0\n' >"$LIVEDIR/exit"
 ) &
@@ -145,7 +162,8 @@ else no "returned after ${elapsed}s — it did not wait for the worker"; fi
 echo "test: --any reports the terminal worker while another is still busy"
 mkrun r5 80 - -          # no pid yet: the launch window, which reads busy
 mkrun r5 81 "$(dead)" 0 \
-  '{"issue":81,"status":"built","round":0,"head":"c0ffee1","review":"0 high, 1 medium, 0 low","note":""}'
+  '{"issue":81,"status":"built","round":0,"head":"c0ffee1","review":"","note":""}'
+mkreview r5 81 "$(counts '0 high, 1 medium, 0 low')"
 run --any r5 80 81 --interval 1 --timeout 20
 assert_equals "exit 0" "$RC" "0"
 assert_equals "it reported the one that finished, not the one still going" "$OUT" \
@@ -177,8 +195,9 @@ SLOW_PID="$(cat "$CODEX_ROOT/r7/issue-100/pid")"
 FAST_PID="$(cat "$CODEX_ROOT/r7/issue-101/pid")"
 (
     sleep 3
-    printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"0 high, 0 medium, 0 low","note":""}' \
+    printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"","note":""}' \
         >"$CODEX_ROOT/r7/issue-101/last-message.txt"
+    printf 'COUNTS: 0 high, 0 medium, 0 low\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
     kill "$FAST_PID" 2>/dev/null
     printf '0\n' >"$CODEX_ROOT/r7/issue-101/exit"
 ) &
@@ -249,22 +268,63 @@ assert_contains "says why" "$ERR" "no head sha"
 
 echo "test: fixed with no round is refused — the cycle counter would be unreadable"
 mkrun r3 64 "$(dead)" 0 \
-  '{"issue":64,"status":"fixed","round":0,"head":"aaa1112","review":"0 high, 0 medium, 0 low","note":""}'
+  '{"issue":64,"status":"fixed","round":0,"head":"aaa1112","review":"","note":""}'
+mkreview r3 64 "$(counts '0 high, 0 medium, 0 low')"
 run r3 64 --interval 1 --timeout 20
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "says why" "$ERR" "no round"
 
-echo "test: an EMPTY review is refused — a review that did not run is not a clean one"
-# The worker's prompt tells it to send "" for fields that do not apply, and the schema
-# accepts it. Defaulting that to "0 high, 0 medium, 0 low" would invent the one fact that
-# decides between another fix round and the merge queue.
+echo "test: NO review.txt is refused — a review that did not run is not a clean one"
+# The reviewer runs as a sibling process and BOTH callers delete its output if it failed,
+# so a missing review.txt is exactly what "the review did not happen" looks like on disk.
+# Defaulting that to "0 high, 0 medium, 0 low" would invent the one fact that decides
+# between another fix round and the merge queue — which is how the self-review the e2e
+# gate caught went undetected.
 mkrun r3 66 "$(dead)" 0 \
   '{"issue":66,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
 run r3 66 --interval 1 --timeout 20
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
-assert_contains "says a missing review is not a clean one" "$ERR" "empty review"
+assert_contains "says a missing review is not a clean one" "$ERR" "no independent review"
+
+echo "test: a self-review CANNOT stand in for a missing reviewer — THE #96 BUG, exactly"
+# THE REGRESSION TEST THAT MATTERS MOST. This is the precise shape of what the e2e gate
+# caught: the sibling reviewer never produced a verdict (no review.txt), and the worker
+# offered its own assessment of its own diff instead. Every other case here has a real
+# review.txt, so a fallback to the worker's field would pass all of them and only show up
+# HERE — which is the one place it would actually be used, and the one place it must not
+# be. Refusing costs a run; believing it merges unreviewed code.
+mkrun r3 71 "$(dead)" 0 \
+  '{"issue":71,"status":"built","round":0,"head":"abc1234","review":"0 high, 0 medium, 0 low","note":""}'
+run r3 71 --interval 1 --timeout 20
+assert_equals "exit 1" "$RC" "1"
+assert_empty "nothing on stdout the lane could merge on" "$OUT"
+assert_contains "says no independent review was recorded" "$ERR" "no independent review"
+assert_not_contains "and never emits the worker's own count" "$OUT" "0 high, 0 medium, 0 low"
+
+echo "test: a review.txt with NO COUNTS line is refused — prose is not a verdict"
+# The reviewer ran and wrote something, but never emitted the one line it was told to end
+# on. Scraping a number out of the prose is how a "0 high" gets invented from a sentence.
+mkrun r3 69 "$(dead)" 0 \
+  '{"issue":69,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
+mkreview r3 69 "Looks good overall. I found nothing serious in this diff."
+run r3 69 --interval 1 --timeout 20
+assert_equals "exit 1" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "says no review was recorded" "$ERR" "no independent review"
+
+echo "test: the LAST COUNTS line wins — the reviewer quotes its own instructions"
+# review-cmd.sh's prompt contains the COUNTS format verbatim, so a reviewer that echoes
+# its instructions back before working would put a decoy earlier in the file.
+mkrun r3 70 "$(dead)" 0 \
+  '{"issue":70,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
+mkreview r3 70 "I was asked to end with COUNTS: 0 high, 0 medium, 0 low
+src/a.py:12 — high — unchecked index
+COUNTS: 1 high, 0 medium, 0 low"
+run r3 70 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_contains "took the real verdict, not the decoy" "$OUT" "review=1 high, 0 medium, 0 low"
 
 echo "test: a head that is not a sha is refused, so it cannot smuggle a second review="
 # head and review are worker-controlled and land in a SPACE-DELIMITED line the orchestrator
@@ -277,13 +337,21 @@ assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "says the head is not a sha" "$ERR" "not a sha"
 
-echo "test: a review in an unreadable shape is refused rather than passed through"
+echo "test: a SELF-REPORTED review is discarded — the worker never grades its own diff"
+# THE REGRESSION TEST FOR #96's FINDING. The worker is told to send "" and this one sends
+# a verdict anyway — which is exactly what the old self-reviewing worker did when its
+# nested `codex exec review` could not start. Its claim must not reach the report line;
+# the reviewer's file is the only verdict, and the drift is called out on stderr.
 mkrun r3 68 "$(dead)" 0 \
-  '{"issue":68,"status":"built","round":0,"head":"abc1234","review":"looks fine to me","note":""}'
+  '{"issue":68,"status":"built","round":0,"head":"abc1234","review":"0 high, 0 medium, 0 low","note":""}'
+mkreview r3 68 "$(counts '2 high, 1 medium, 0 low')"
 run r3 68 --interval 1 --timeout 20
-assert_equals "exit 1" "$RC" "1"
-assert_empty "nothing on stdout" "$OUT"
-assert_contains "says the shape is unreadable" "$ERR" "unreadable shape"
+assert_equals "exit 0" "$RC" "0"
+assert_contains "the REVIEWER's verdict is the one reported" "$OUT" \
+    "issue 68 built head=abc1234 review=2 high, 1 medium, 0 low"
+case "$OUT" in *"0 high, 0 medium, 0 low"*) no "the worker's own review leaked into the report" ;;
+                *) ok "the worker's own review did not leak into the report" ;; esac
+assert_contains "and the drift is reported" "$ERR" "discarded"
 
 echo "test: an unknown status is refused rather than guessed at"
 mkrun r3 65 "$(dead)" 0 \
