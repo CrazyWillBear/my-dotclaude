@@ -407,6 +407,58 @@ assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
 assert_not_contains "but is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
 
+echo "test: the review step runs at the tier's REVIEWER model, not the implementer's"
+# resolve-tier.sh has always emitted the reviewer column and NOTHING read it, so
+# `codex exec review` ran at whatever the user's codex config defaults to — the same
+# silent wrong-model trap the run's own -m guards against. TRIVIAL is the sharp case:
+# its implementer is luna and its reviewer is terra, so a review step that merely echoed
+# the run's own model would say luna here. That is what tells the two columns apart.
+out_tv=$(codex_dry r9 12 trivial "$REPO" base)
+assert_arg "the RUN is still at the implementer's model" "$out_tv" "gpt-5.6-luna"
+assert_contains "but the REVIEW is at the reviewer's" "$out_tv" \
+    "codex exec review --base base -m gpt-5.6-terra"
+assert_contains "complex reviews at ITS reviewer model" \
+    "$(codex_dry r9 12 complex "$REPO" base)" "codex exec review --base base -m gpt-5.6-sol"
+
+echo "test: the FIX round's re-review carries the reviewer model too"
+# A SEPARATE string in spawn.sh. Missing it would leave every fix round reviewing at
+# codex's default while the build round looked correct — and the fix round's findings are
+# the ones that decide whether the issue reaches the merge queue.
+assert_contains "the re-review names the reviewer model" \
+    "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)" \
+    "codex exec review --base base -m gpt-5.6-terra"
+
+echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
+# The SHIPPED table is claude in every cell, so a user who flips only the implementer to
+# codex lands exactly here. Passing that cell's model would make `codex exec review` die
+# on a model codex does not have; the worker would then report an EMPTY review, which
+# worker-report.sh refuses outright — turning a wrong-model review into no review at all.
+CFG_MIXED="$WORK/cfg-mixed"
+mkdir -p "$CFG_MIXED"
+cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
+    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "high" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "high" }
+  },
+  "complex": {
+    "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "xhigh" }
+  }
+}
+JSON
+out_mx=$(CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_MIXED" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>"$WORK/err")
+assert_contains "it still reviews" "$out_mx" "codex exec review --base base"
+assert_not_contains "but never hands codex a claude model" "$out_mx" "-m opus"
+
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \

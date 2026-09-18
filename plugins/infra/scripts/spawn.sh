@@ -190,6 +190,25 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
 
+# The REVIEWER cell of the same roster, for the worker's OWN review step below.
+# `codex exec review` takes -m like any other codex invocation, and without it the review
+# runs on whatever the user's codex config defaults to rather than the tier's reviewer —
+# the same silent-wrong-model trap the run's own -m guards against further down. These
+# three lines have always been emitted by resolve-tier.sh; nothing read them until now.
+#
+# Only a CODEX reviewer cell can name a model this command understands. A claude-backed
+# reviewer — which is every cell in the SHIPPED table — names opus or sonnet, models codex
+# does not have, so passing one would make the review fail outright. That pairing leaves
+# the flag off and takes codex's default instead: a review at the wrong model is worse
+# than the tier asked for, but a review that errors out is no review at all, and the
+# worker would report an empty one that worker-report.sh then refuses.
+REVIEWER_MODEL="$(printf '%s\n' "$ROSTER" | sed -n 's/^reviewer_model=//p' | head -1)"
+REVIEWER_BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^reviewer_backend=//p' | head -1)"
+REVIEW_M=""
+if [ "$REVIEWER_BACKEND" = codex ] && [ -n "$REVIEWER_MODEL" ]; then
+    REVIEW_M=" -m $REVIEWER_MODEL"
+fi
+
 NAME="orch-$RUNID-issue-$ISSUE"
 BRANCH="issue-$ISSUE"
 fi
@@ -256,7 +275,7 @@ fi
 # forces the shape), and `codex exec review --base` is its reviewer
 # (docs/swarm-design.md § Codex backend).
 if [ "$BACKEND" = codex ]; then
-    REVIEW_STEP="6. Review your own diff: \`codex exec review --base $BASE\`. It returns
+    REVIEW_STEP="6. Review your own diff: \`codex exec review --base $BASE$REVIEW_M\`. It returns
    priority-graded findings with file and line. YOU post them as a comment"
     REPORT_STEP="7. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
    Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
@@ -265,7 +284,7 @@ if [ "$BACKEND" = codex ]; then
       {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"<H high, M medium, L low>\", \"note\": \"\"}
    or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
    on something only a human can answer? \"status\": \"escalate\", question in \"note\"."
-    FIX_REVIEW_STEP="4. Re-review the delta: \`codex exec review --base $BASE\`, then POST its findings
+    FIX_REVIEW_STEP="4. Re-review the delta: \`codex exec review --base $BASE$REVIEW_M\`, then POST its findings
    YOURSELF"
     FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
    report, as JSON matching the output schema you were launched with. Every field is

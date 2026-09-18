@@ -308,6 +308,11 @@ one-shot, so it maps onto `codex exec`:
 - **Review.** `codex exec review --base <branch>` is a working reviewer: it read the diff and
   returned priority-graded findings with file and line. It fills the reviewer slot for
   codex-routed tiers; `my-review` stays the reviewer for claude-routed ones.
+  `spawn.sh` passes the roster's **reviewer** cell to it as `-m`, so the review runs at the tier's
+  reviewer model instead of whatever the user's codex config defaults to — the same silent
+  wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
+  codex-backed**: a claude reviewer names `opus` or `sonnet`, which codex does not have, so that
+  pairing leaves the flag off and takes codex's default rather than failing the review outright.
 - **No inbox.** `codex queue` only feeds a running session's next turn. Codex is never a peer.
 
 `infra/spawn.sh` switches on the tier's backend and writes a pid file and an exit-code file
