@@ -15,6 +15,9 @@
 #   * a torn line is counted, never silently dropped
 #   * replay/state on a run that was never logged fails loud
 #   * the log is keyed per repo, beside the handoffs — two repos never collide
+#   * the keyed dir matches the context plugin's save-handoff.sh independently —
+#     no cross-plugin call (a marketplace install cannot address a sibling plugin
+#     by relative path; see docs/swarm-design.md § Plugin split)
 #
 # Run: bash plugins/workflow/tests/test_run-log.sh   (non-zero if any fail)
 
@@ -50,6 +53,18 @@ mkrepo "$WORK/other"
 rl() { local repo="$1"; shift; (cd "$repo" && HOME="$GLOBAL_HOME" bash "$RUNLOG" "$@") 2>"$WORK/err"; }
 r()  { rl "$WORK/repo" "$@"; }
 err() { cat "$WORK/err"; }
+
+# rl() with HOME removed entirely rather than pointed somewhere fake.
+rl_nohome() { local repo="$1"; shift; (cd "$repo" && env -u HOME bash "$RUNLOG" "$@") 2>"$WORK/err"; }
+
+echo "test: no HOME at all -> fails where it can say why, not on an unbound variable"
+# The per-repo keyed dir expands $HOME, and run-log.sh runs under `set -u`. That line sits
+# BEFORE the runid and event validation, so any invocation inside a repo reaches it.
+rl_nohome "$WORK/repo" append r1 scope '{"issues":[1]}'
+case "$(err)" in
+    *"unbound variable"*) no "no HOME: aborted on an unbound \$HOME" ;;
+    *) ok "no HOME: no unbound-variable abort" ;;
+esac
 
 # ---------------------------------------------------------------------------
 echo "test: append then replay round-trips, in order"
@@ -144,6 +159,52 @@ echo "test: outside a git repo it fails loud rather than writing somewhere rando
 (cd "$WORK" && HOME="$GLOBAL_HOME" bash "$RUNLOG" append run1 scope) >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "says why" "$(err)" "keyed per repo"
+
+# ---------------------------------------------------------------------------
+echo "test: no cross-plugin call — run-log.sh never shells out to save-handoff.sh"
+assert_not_contains "run-log.sh source has no save-handoff.sh invocation (prose mentions are fine)" \
+    "$(cat "$RUNLOG")" '/save-handoff.sh"'
+
+echo "test: run-log.sh's keyed dir matches the context plugin's save-handoff.sh --print-dir (one keying scheme, not two)"
+CONTEXT_SAVE="$PLUGIN_ROOT/../context/scripts/save-handoff.sh"
+if [ -f "$CONTEXT_SAVE" ]; then ok "context plugin's save-handoff.sh exists"; else no "context plugin's save-handoff.sh exists (missing: $CONTEXT_SAVE)"; fi
+expected_dir="$(HOME="$GLOBAL_HOME" CLAUDE_PROJECT_DIR="$WORK/repo" bash "$CONTEXT_SAVE" --print-dir)"
+got_dir="$(dirname "$(dirname "$(r path run1)")")"
+assert_equals "run-log and save-handoff key the same repo identically" "$got_dir" "$expected_dir"
+
+echo "test: keying still works with sha1sum absent from PATH (not present on macOS by default)"
+NOSHA_BIN="$WORK/nosha-bin"
+mkdir -p "$NOSHA_BIN"
+for bin in git python3; do
+    p="$(command -v "$bin" 2>/dev/null)" && ln -sf "$p" "$NOSHA_BIN/$bin"
+done
+BASH_BIN="$(command -v bash)"
+nosha_dir="$(cd "$WORK/repo" && HOME="$GLOBAL_HOME" PATH="$NOSHA_BIN" "$BASH_BIN" "$RUNLOG" path run1 2>"$WORK/err")"
+assert_equals "same keyed dir with sha1sum missing from PATH" "$nosha_dir" "$(r path run1)"
+
+echo "test: run-log.sh does not depend on the sha1sum binary"
+assert_not_contains "no sha1sum invocation in source" "$(cat "$RUNLOG")" "sha1sum"
+
+echo "test: a failing key computation dies loud instead of collapsing to the unkeyed dir"
+FAILPY_BIN="$WORK/failpy-bin"
+mkdir -p "$FAILPY_BIN"
+REAL_PYTHON3="$(command -v python3)"
+REAL_GIT="$(command -v git)"
+ln -sf "$REAL_GIT" "$FAILPY_BIN/git"
+cat >"$FAILPY_BIN/python3" <<EOF
+#!$BASH_BIN
+if [ "\$1" = "-c" ]; then
+    echo "simulated key-computation failure" >&2
+    exit 1
+fi
+exec "$REAL_PYTHON3" "\$@"
+EOF
+chmod +x "$FAILPY_BIN/python3"
+out=$(cd "$WORK/repo" && HOME="$GLOBAL_HOME" PATH="$FAILPY_BIN" "$BASH_BIN" "$RUNLOG" path run1 2>"$WORK/err")
+rc=$?
+assert_equals "exits 1 rather than printing a collapsed path" "$rc" "1"
+assert_equals "prints nothing on stdout" "$out" ""
+assert_contains "says the key computation failed" "$(cat "$WORK/err")" "key"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

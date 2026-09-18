@@ -14,12 +14,13 @@ contradictions and omissions. Read-only — nothing is edited.
 
 Run this in a Bash block. The key is sha1 of the canonical `--git-common-dir` — identical
 from the primary checkout and every linked worktree, so the stash survives EnterWorktree
-(the hook keys the same way):
+(the hook keys the same way, via python hashlib — not `sha1sum`, which isn't on macOS by
+default):
 
 ```bash
 gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
 if [ -n "$gcd" ]; then root="$(cd "$gcd" && pwd -P)"; else root="$(pwd)"; fi
-key="$(printf %s "$root" | sha1sum | cut -c1-16)"
+key="$(python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16])' "$root")"
 stash="${TMPDIR:-/tmp}/verify-plan-session-$key.path"
 log="$([ -s "$stash" ] && cat "$stash" | tr -d '\n')"
 # Stale-path fallback: entering a worktree moves the transcript to another
@@ -105,6 +106,8 @@ structured prompt makes the subagent read the log in tiny chunks and crawl — ~
 > earlier ones. Report any contradictions or omissions, read-only. Lead with
 > `VERDICT: ALIGNED` or `VERDICT: MISMATCHES (n)`.
 
-## Step 5 — Relay the report
+## Step 5 — Report the verdict
 
-Relay the subagent's output verbatim to the user. Do not summarize, filter, or editorialize.
+Lead with the subagent's verdict line. Then give the mismatches, if any, one bullet each
+(what the target says, what the session decided). Drop the confirmations of what matched
+unless the user asks. Do not soften or reinterpret a mismatch.

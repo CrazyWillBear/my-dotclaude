@@ -43,6 +43,11 @@ available — if `personal-tools:my-review` is **not** in your available agents,
 the missing piece ("personal-tools plugin not installed: my-review agent unavailable") and **stop**.
 Do not substitute another reviewer.
 
+Both lanes also need the **`infra`** plugin: `session-status.sh`, `check-inbound.sh` and
+`resolve-tier.sh` live there and are called at `~/.claude/kit/infra/scripts/` (a symlink its
+SessionStart hook writes). If `~/.claude/kit/infra` is missing, **fail loud**
+("infra plugin not installed: ~/.claude/kit/infra missing") and **stop**.
+
 The **session lane** additionally needs the `claude` CLI on `PATH` (it spawns real sessions).
 `session-status.sh` fails loud if it is missing; do not paper over that by falling back to
 subagents — the lanes are not interchangeable, and silently building a 20-slice PRD in one
@@ -59,7 +64,7 @@ entire promise is that it runs unattended. Observed on a real run, not inferred.
 **Run the check — do not eyeball it:**
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/check-inbound.sh"
+bash ~/.claude/kit/infra/scripts/check-inbound.sh
 ```
 
 | exit | meaning | what to do |
@@ -129,8 +134,19 @@ on a confirmation you already gave; the announcement *is* the veto window:
 
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
+**Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
+`Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
+`resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is
+`backend: claude` in every cell, so its models are usable as-is — and that is the end state,
+not a hold: codex is opt-in per
+user through `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json`, so **a cell may well say `codex`
+on this machine even though the shipped table does not.** Resolve the roster and look; never
+assume the shipped values. **If a cell does say `codex`, do not pass its model to `Agent`** —
+substitute the claude-side roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet`
+(reviewer `opus`), complex `opus`.
+
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
-   resolve its roster with `bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>`. **Never
+   resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
    prompt to confirm or override a tier.** Auto-accept and say what you got.
 2. **Worktree** — `EnterWorktree(name: "adhoc-<slug>")` unless you are already in a linked worktree.
 3. **Plan (complex only)** — spawn `workflow:planner` at the tier's planner roster. Trivial and
@@ -271,7 +287,7 @@ run.
 **Then resolve the run's own address, once:**
 
 ```bash
-ORCH="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" --self)"
+ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"
 ```
 
 That is the name every worker will `SendMessage`. Resolve it **here and pass it to every spawn**
@@ -313,7 +329,7 @@ model can, and historically did, hallucinate.
 3. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**;
    `standard`/`complex` → a **session**:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" "$RUNID" <N> <tier> \
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH"
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
@@ -332,6 +348,36 @@ drift the whole `/to-prd`→`/to-issues`→`/orchestrate` chain exists to catch,
 never reads the implementer contract would never declare one.
 
 **Then wait.** Do not poll. The next thing that happens is a message.
+
+**Unless the worker is codex-backed — then there is no message.** A `codex exec` worker is a
+process, not a session: no inbox, no `SendMessage`. For a worker whose tier's backend is `codex`,
+skip the subscribe and make one blocking call instead:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh "$RUNID" <N>
+```
+
+It returns the **same one-line report** — `built`, `fixed`, `failed`, `escalate` — so every branch
+below is unchanged. **Exit 0 means that line is a real result; exit 1 means it could not tell what
+happened** (a timeout, or a worker that finished without a readable report) and prints nothing.
+Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
+so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
+
+**With more than one codex worker in flight, wait on the SET, not on one of them:**
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh --any "$RUNID" <N> <N> ...
+```
+
+The single-issue form blocks on the issue you name, so a fast worker queued behind a slow one
+cannot free its admission slot until the slow one finishes. The **builds** stay parallel either
+way — it is the SCHEDULING that serialises. `--any` returns the first of those workers to reach a
+terminal state, in the same one line, with the same exit-0 / exit-1 split.
+
+**Pass the issues still in flight, and drop each one as it reports.** A worker that already
+reported stays terminal forever, so leaving it in the set hands you its report a second time
+instead of waiting for the next worker — and the run would admit new work against an outcome it
+already spent.
 
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
@@ -360,67 +406,16 @@ never by a field you keep. See [The bus](#the-bus).
 
 # Spawn protocol
 
-`spawn.sh` owns the flags, and its test pins every one of them. The two that are not obvious:
-
-- **`--permission-mode bypassPermissions`** — an unattended session in `manual` or `acceptEdits`
-  **deadlocks on its first prompt** with nobody there to answer. This was observed, not assumed.
-- **`--disallowedTools`** — `git merge`, `git worktree`, `gh pr`, `gh issue close`, `gh issue edit`.
-  Every **irreversible, outward-facing** write stays on the main thread (#77: a close fired from a
-  low-context subagent was killed by a safety classifier — *correctly*, because that agent could not
-  explain the issue it was closing). **`git push` and `gh issue comment` are deliberately allowed**:
-  a comment is additive, never destructive, and the issue thread is the bus.
-
-  **Known limit, accepted:** `--add-dir` fences the **file tools**, not Bash. The containment here
-  is the denylist plus worktree isolation — it is not a sandbox.
-
-**Every spawn prompt must tell the session to report with `SendMessage`.** A session's plain text
-output is **invisible** to every other agent — a probe session, asked a question, printed its answer
-into its own transcript where nobody could see it. Miss this line and the orchestrator waits
-forever. `spawn.sh` writes it into every prompt; if you ever hand-roll a spawn, write it yourself.
-
-**The orchestrator's address** comes from `bash session-status.sh --self`, which matches
-`$CLAUDE_CODE_SESSION_ID` against the agent list. `spawn.sh` resolves it automatically and **fails
-loud** if it cannot — a worker that cannot name its orchestrator reports into the void.
+`spawn.sh` owns the flags — `bypassPermissions`, the write denylist, the invisible-output trap —
+and its test pins every one of them; see [infra's README](../../../infra/README.md#spawn-protocol).
 
 ---
 
 # The bus
 
-**The issue thread is the coordination medium.** Each agent reads the issue and its comments, does
-its job, and appends its own. **Findings are never handed through the orchestrator.** This makes
-"manage, don't track" structural instead of a rule somebody has to remember.
-
-What goes where:
-
-| carries | where |
-|---|---|
-| review findings, decisions, notes a future reader needs | **the issue** — it cannot be regenerated |
-| the context map, worktree paths, scratch | **local files** — regenerable, and free to delete |
-
-A file index posted to an issue is **permanent garbage** that every future run pays to read.
-`scope-graph.sh` pulls comments into the graph, so everything on the issue is context forever.
-
-## The comment contract
-
-**Brevity is a correctness property here, not a style preference.** A verbose review comment
-poisons every subsequent run's context — including runs a year from now.
-
-````
-**Review round 1** — 1 high, 2 medium, 3 low
-
-- **high** `src/billing/retry.py:42` — retry loop can re-submit a charge; no idempotency
-  key on the second attempt.
-- **medium** `tests/test_retry.py` — this test passes with the implementation stubbed.
-````
-
-Plus, rarely, a **note** comment for something a future reader genuinely needs — a constraint
-discovered mid-build, an approach ruled out and why. Not a progress log.
-
-The build session's first comment is one line: `Tackled #N on branch issue-N`, plus anything of
-note.
-
-**`**Review round N**` is the counter.** The number of those comments on an issue *is* how many
-review cycles it has had. Nothing stores it; nothing can disagree with it.
+The issue thread is the coordination medium: each agent reads it, does its job, and appends its
+own comment, so findings never pass through the orchestrator; see [infra's
+README](../../../infra/README.md#the-bus) for the comment contract and the review-round format.
 
 ---
 
@@ -471,87 +466,10 @@ The reasoning:
 
 # Liveness
 
-**Subscribe, don't poll.** At spawn, `SendMessage` to the worker with `notify_when_idle: true` and
-**no message**. That is a pure subscription: it costs the worker nothing, and it fires **once**,
-when the session goes idle or exits. The tool contract says explicitly never to poll `ListAgents`
-or send "are you done?" messages — a polled worker pays for every poll out of its own context.
-
-**For state, use the script:**
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh" "$RUNID" <expected issue numbers>
-```
-
-**Expect only the issues that actually have a session.** `tier:trivial` issues are built by an
-orchestrator-spawned subagent, so naming one here reports it `gone` — which the recovery rules
-read as "it never came up" and answer with a respawn of work that is already running.
-
-One line per session — `<name> <id> <kind> <state>`:
-
-| state | means |
-|---|---|
-| `busy` | working |
-| `idle` | finished its turn — pair with the issue's comments to see what it did |
-| `blocked` | a **permission wedge**: it is asking for something and nobody is there |
-| `done` | reported itself finished |
-| `stopped` | killed by `claude stop` — what a respawn waits for, and not the same as `gone` |
-| `gone` | expected but not listed — it never came up, or it exited |
-
-**Never parse `claude logs`.** It is a raw ANSI screen dump — cursor moves and spinner frames, not
-a transcript.
-
-## Recovery
-
-**Commit after every green sub-step.** This is the *recovery mechanism*, not hygiene: it caps the
-loss from a kill at one sub-step, which is what makes killing on **suspicion** affordable — and
-that, in turn, is what resolves the otherwise-unresolvable "is it busy or is it wedged?" judgment
-call. You do not have to be right; you have to be cheap to be wrong.
-
-**`stop` → verify stopped → respawn.**
-
-```bash
-S="${CLAUDE_PLUGIN_ROOT}/scripts/session-status.sh"
-# the id — column 2 — NOT the name. `claude stop <name>` fails: "No job matching …"
-id=$("$S" "$RUNID" <N> | awk '$4 == "busy" {print $2}')
-claude stop "$id"
-# verify: NO row for this issue may still be busy
-[ -z "$("$S" "$RUNID" <N> | awk '$4 == "busy"')" ] || exit 1
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/spawn.sh" ...                     # same worktree, same branch
-```
-
-**One issue can have several rows.** Every session a run ever started keeps its row (the list
-includes completed ones on purpose — see `gone` above), so after a respawn you will see the old
-`stopped` row *and* the new `busy` one under the same name. **Match on state, never on the name
-alone**, and read the newest live row as the current session. A rule like "is issue-14 busy?" is
-ambiguous the moment a respawn happens — which is exactly when you are asking.
-
-- **Never `rm`.** It deletes the worktree "when safe" — which is exactly the state being recovered.
-- **Never spawn onto a worktree whose previous session is still listed alive.** Two processes on one
-  worktree corrupts it. Verify first, every time.
-- **A stop can be acknowledged and not take.** Observed: `claude stop <id>` printed
-  `stopped <id>` while the session stayed `working` across repeated attempts. So **wait
-  bounded, then escalate — never spin**:
-
-  ```bash
-  timeout 60 bash -c 'until [ -z "$("$S" "$RUNID" <N> | awk "\$4 == \"busy\"")" ]; do sleep 5; done'
-  ```
-
-  If that times out, **do not respawn**. The safety rule is unchanged — two processes on one
-  worktree corrupts it — so tell the user instead, naming the id and the worktree, and let them
-  kill it by hand. An unbounded wait here turns a recoverable wedge into a silent hang of the
-  recovery path itself.
-- The respawned session picks up from the **last commit**, not from the top of the issue.
-
-**Respawn once. Escalate on the second failure.** A task that wedges two sessions gets a human, not
-a third 40k-token spawn. The count comes from the run log:
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" state "$RUNID"    # respawned=12:2,13:1
-```
-
-Nothing else records it — git and GitHub have no idea a session was killed — which is why
-`respawned` is one of the run log's four events.
+Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; session states
+(`busy`/`idle`/`blocked`/`done`/`stopped`/`failed`/`gone`), the codex backend's PID-based control,
+and the full `stop` → verify → respawn recovery procedure are documented in
+[infra's README](../../../infra/README.md#liveness-and-recovery).
 
 ---
 
@@ -559,6 +477,22 @@ Nothing else records it — git and GitHub have no idea a session was killed —
 
 A worker that hits something only a human can answer `SendMessage`s the orchestrator:
 `issue <N> escalate <question>`.
+
+**A codex worker escalates by ending its turn, not by waiting.** It has no inbox, so there is
+nothing to relay to and nothing to `claude attach`. It reports `issue <N> escalate <question>`
+through `worker-report.sh` and its process exits — but **its context survives**: the answer is
+delivered by resuming its thread, so it picks up where it stopped rather than restarting. Offer
+the question to Will, then send his answer back with:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --answer "..."
+```
+
+It prints the resumed turn's report in the same one line as any other worker, so handling is
+unchanged. **Do not hand-assemble a `codex exec resume`**: the sandbox does not carry over and
+there is no `-C`, so a hand-written one comes back offline and fails its own `gh` protocol
+silently ([infra's README](../../../infra/README.md#escalation-on-a-codex-worker)). Attaching is
+not an option to offer here — there is no session to attach to — so mediating is the only route.
 
 **Offer both routes. Recommend one.**
 
@@ -665,7 +599,10 @@ with real tests:
 | `merge-fold.sh` | the deterministic fold |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
-| `resolve-tier.sh` | tier → {model, effort} |
+| `resolve-tier.sh` | tier → {model, effort, backend} |
+
+`spawn.sh`, `session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra**
+plugin and are always called at `~/.claude/kit/infra/scripts/`.
 
 ---
 

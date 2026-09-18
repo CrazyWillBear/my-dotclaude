@@ -1,14 +1,14 @@
 ---
 name: classify-task
-description: Classify one task or issue into a complexity tier — trivial, standard, or complex — and emit that tier plus a rationale; consumers resolve the tier's {model, effort} roster via the plugin's resolve-tier.sh. Grounds the call by fanning out 1–3 Explore subagents over the touched codebase areas, then asks you to confirm or override. Use for "/classify-task <issue#|brief>", "classify this task".
+description: Classify one task or issue into a complexity tier — trivial, standard, or complex — and emit that tier plus a rationale; consumers resolve the tier's {model, effort, backend} roster via infra's resolve-tier.sh. Grounds the call by fanning out 1–3 Explore subagents over the touched codebase areas, then asks you to confirm or override. Use for "/classify-task <issue#|brief>", "classify this task".
 argument-hint: "[issue# | task brief text] [--no-confirm]"
 effort: high
 allowed-tools: Read, Grep, Glob, Bash, Agent, AskUserQuestion
 ---
 
 Classify one task into a complexity **tier** — trivial, standard, or complex — and emit that
-tier plus a short rationale. The tier's `{model, effort}` roster is **not** your output —
-consumers resolve it from the plugin's `resolve-tier.sh` (see **Roster resolution** below). You
+tier plus a short rationale. The tier's `{model, effort, backend}` roster is **not** your output —
+consumers resolve it from infra's `resolve-tier.sh` (see **Roster resolution** below). You
 run on the **main thread** because only the main thread can spawn the Explore subagents that
 ground the call. You are **read-only** apart from `gh issue view`: you inspect, classify, and emit
 a contract — you never edit.
@@ -19,14 +19,17 @@ load-bearing — callers parse it — so emit it verbatim.
 
 ## Roster resolution
 
-The tier→`{model, effort}` mapping lives in `${CLAUDE_PLUGIN_ROOT}/model-tiers.json`, resolved by
-the plugin's helper — **not** copied here. To see any tier's roster, run:
+The tier→`{model, effort, backend}` mapping ships in `~/.claude/kit/infra/model-tiers.json` and is
+resolved by infra's helper — **not** copied here. A user table at
+`${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` overrides the shipped one when it exists, so
+the shipped file is not always what answers. Always ask the helper rather than reading either
+file. To see any tier's roster, run:
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>
+bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>
 ```
 
-It prints that tier's planner / implementer / reviewer `{model, effort}` pairs (or the standard
+It prints that tier's planner / implementer / reviewer `{model, effort, backend}` triples (or the standard
 roster plus a single warning if the config is missing or invalid). Never mix cells across rows — a
 tier is one whole row. The old hardwired single roster ≈ the **complex** tier; the two
 cheaper tiers sit below it.
@@ -87,7 +90,7 @@ the tier and writes it back as a label. That run is autonomous past its launch g
 per-issue confirm here would stall it — never prompt in batch mode.
 
 Otherwise, show the user the tier, the rationale, and the classified tier's resolved roster — run
-`bash "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-tier.sh" <tier>` to fetch it — then `AskUserQuestion`:
+`bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>` to fetch it — then `AskUserQuestion`:
 **trivial** / **standard** / **complex** / **proceed** (accept the classification). An
 **override** swaps to that tier wholesale (re-resolve its roster) — never a mixed row.
 
@@ -100,5 +103,5 @@ tier=trivial|standard|complex
 rationale=<one to three sentences>
 ```
 
-The tier is the whole contract — callers resolve the `{model, effort}` roster themselves through
-`resolve-tier.sh` (one resolution site), so this skill never emits a model or effort.
+The tier is the whole contract — callers resolve the `{model, effort, backend}` roster themselves through
+`resolve-tier.sh` (one resolution site), so this skill never emits a model, effort, or backend.

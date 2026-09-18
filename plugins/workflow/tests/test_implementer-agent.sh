@@ -7,7 +7,7 @@
 # (this test is the structural regression lock for the issue contract):
 #
 #   1. File exists at the expected discovery path; model pins to sonnet and
-#      effort stays xhigh.
+#      effort stays max.
 #   2. Both input shapes are described: issue (number + body + worktree +
 #      issue-<N> branch) and work order (plan text + worktree + branch +
 #      commit-scope hint).
@@ -46,10 +46,10 @@ if [ -f "$AGENT_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter — name, model: sonnet pin, and xhigh effort survive"
+echo "test: frontmatter — name, model: sonnet pin, and max effort survive"
 assert_contains "name field present" "$content" "name: implementer"
 assert_contains "model pinned to sonnet" "$content" "model: sonnet"
-assert_contains "effort stays xhigh" "$content" "effort: xhigh"
+assert_contains "effort stays max" "$content" "effort: max"
 
 # ---------------------------------------------------------------------------
 echo "test: issue input shape present (orchestrate contract)"

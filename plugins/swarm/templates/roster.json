@@ -1,0 +1,20 @@
+{
+  "orchestrator": {
+    "kind": "orchestrator",
+    "backend": "claude",
+    "model": "opus",
+    "effort": "high"
+  },
+  "swe-manager": {
+    "kind": "manager",
+    "backend": "claude",
+    "model": "opus",
+    "effort": "high"
+  },
+  "performance-engineer": {
+    "kind": "doer",
+    "backend": "claude",
+    "model": "opus",
+    "effort": "high"
+  }
+}

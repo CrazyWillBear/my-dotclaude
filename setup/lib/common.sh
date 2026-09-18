@@ -11,18 +11,14 @@
 REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
-PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
-WORKFLOW_PLUGIN="workflow@${OUR_MARKETPLACE}"
 PONYTAIL_REPO="DietrichGebert/ponytail"
 PONYTAIL_PLUGIN="ponytail@ponytail"
 # Anthropic's official marketplace ships with Claude Code (usually already registered);
 # agent-sdk-dev scaffolds new Claude Agent SDK apps.
 OFFICIAL_MARKETPLACE_REPO="anthropics/claude-plugins-official"
 AGENT_SDK_PLUGIN="agent-sdk-dev@claude-plugins-official"
-# Composio marketplace (third-party): perf (perf-investigation workflow) +
-# security-guidance (advisory PreToolUse hook).
+# Composio marketplace (third-party): security-guidance (advisory PreToolUse hook).
 COMPOSIO_MARKETPLACE_REPO="ComposioHQ/awesome-claude-plugins"
-PERF_PLUGIN="perf@awesome-claude-plugins"
 SECURITY_GUIDANCE_PLUGIN="security-guidance@awesome-claude-plugins"
 # security-sweep (third-party, read-only scan skill): its repo is its own marketplace.
 SECURITY_SWEEP_REPO="Onome-AJ/security-sweep-plugin"
@@ -57,6 +53,7 @@ tcr_require() {
 tcr_check_deps() {
   tcr_require git "Install git, then re-run."
   tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+  tcr_require python3 "Install python3, then re-run."
   # curl is only needed for the remote-template path.
   if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
     tcr_require curl "Install curl, or run this script from a local checkout of the repo."
@@ -94,10 +91,48 @@ tcr_install_plugin() {
   fi
 }
 
-# Installs the workflow plugin (the autonomous dev loop + context watchdog).
-# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
-tcr_install_workflow() {
-  tcr_install_plugin "$WORKFLOW_PLUGIN"
+# Prints, one per line, every plugin name listed in our marketplace manifest
+# (.claude-plugin/marketplace.json — from TCR_LOCAL_ROOT when set, else fetched
+# from GitHub). Shared by tcr_install_our_plugins and update-kit.sh, so both
+# derive the plugin list instead of hardcoding plugin names.
+tcr_our_plugin_names() {
+  local mp tmp=""
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
+    mp="$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json"
+  else
+    tmp="$(mktemp)"
+    curl -fsSL "$RAW_BASE/.claude-plugin/marketplace.json" -o "$tmp" \
+      || tcr_die "Could not fetch marketplace manifest from $RAW_BASE."
+    mp="$tmp"
+  fi
+  python3 -c '
+import json, sys
+with open(sys.argv[1]) as fh:
+    data = json.load(fh)
+for p in data["plugins"]:
+    print(p["name"])
+' "$mp"
+  local rc=$?
+  [ -n "$tmp" ] && rm -f "$tmp"
+  [ "$rc" -eq 0 ] || tcr_die "Could not parse marketplace manifest $mp."
+}
+
+# Installs every plugin listed in our marketplace manifest — personal-tools,
+# workflow, and any plugin added there later — instead of one hand-written
+# function per plugin name. Assumes our marketplace is already added (call
+# tcr_add_our_marketplace first).
+# NOTE: this is the ONLY install helper that returns non-zero — every sibling soft-fails via
+# TCR_INSTALL_FAILED and returns 0. The setup scripts run under `set -euo pipefail`, so CALL
+# SITES MUST GUARD IT (`|| TCR_INSTALL_FAILED=1`). Unguarded, a transient curl failure during
+# `curl | bash` aborted the whole installer and silently skipped every later step, none of
+# which need the manifest. Verified 2026-09-17; pinned by test_plugin_wiring.sh.
+tcr_install_our_plugins() {
+  local names
+  names="$(tcr_our_plugin_names)" || return 1
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
+  done <<< "$names"
 }
 
 tcr_install_ponytail() {
@@ -111,11 +146,9 @@ tcr_install_agent_sdk_dev() {
   tcr_install_plugin "$AGENT_SDK_PLUGIN"
 }
 
-# Installs the Composio marketplace plugins: perf (perf-investigation workflow) and
-# security-guidance (advisory PreToolUse hook). Both live in one marketplace.
+# Installs the Composio marketplace plugin: security-guidance (advisory PreToolUse hook).
 tcr_install_composio_plugins() {
   tcr_add_marketplace "$COMPOSIO_MARKETPLACE_REPO"
-  tcr_install_plugin "$PERF_PLUGIN"
   tcr_install_plugin "$SECURITY_GUIDANCE_PLUGIN"
 }
 
@@ -172,12 +205,6 @@ tcr_setup_gh() {
   else
     tcr_warn "gh (GitHub CLI) not found — install it from https://cli.github.com and run 'gh auth login'. Claude uses gh for GitHub (there is no GitHub MCP)."
   fi
-}
-
-# Installs personal-tools. Assumes our marketplace is already added (call
-# tcr_add_our_marketplace before this).
-tcr_install_personal_tools() {
-  tcr_install_plugin "$PERSONAL_PLUGIN"
 }
 
 # --- system tools ------------------------------------------------------------

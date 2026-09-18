@@ -7,14 +7,29 @@
   },
   "plugins": [
     {
+      "name": "context",
+      "source": "./plugins/context",
+      "description": "Context-window management: the four hooks (watchdog, resume, save-handoff, suggest-docs) that drive deliberate, early /clear and /handoff as a session's window fills, plus /handoff and /handoff-plan themselves. Calls into nothing else, so every other plugin can depend on it."
+    },
+    {
       "name": "personal-tools",
       "source": "./plugins/personal-tools",
       "description": "My personal Claude Code slash commands and subagents."
     },
     {
+      "name": "infra",
+      "source": "./plugins/infra",
+      "description": "Scripts-only shared layer: background-session spawning, session state, inbound-message checks, and tier resolution. A SessionStart hook links ~/.claude/kit/infra to this plugin so other plugins call its scripts by one fixed path."
+    },
+    {
       "name": "workflow",
       "source": "./plugins/workflow",
-      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread. Plus a context watchdog that drives early /clear and /handoff as the window fills and auto-resumes the in-flight plan."
+      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread. It also holds /classify-task and the manager's front half, /to-prd and /to-issues."
+    },
+    {
+      "name": "swarm",
+      "source": "./plugins/swarm",
+      "description": "Roster-driven multi-session teams: /init-swarm writes a project's .claude/swarm/roster.json, charter, and one brief per chosen role (orchestrator, swe-manager, performance-engineer), roster.sh validates the roster and answers the get/list queries other swarm tooling routes on, and swarm.sh runs the team: up, down, rotate, attach and brief."
     }
   ]
 }

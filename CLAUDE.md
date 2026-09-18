@@ -10,16 +10,23 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 
 - `global/CLAUDE.md` — developer machine-wide rules; `setup-dev.sh` installs to `~/.claude/CLAUDE.md`.
 - `global/CLAUDE.simple.md` — plain-English variant of the above; `setup-simple.sh` installs it instead, for non-coders.
-- `plugins/personal-tools/`, `plugins/workflow/` — my slash commands, subagents, hooks.
-- `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, session
-  state, spawn, run log, merge fold). Logic belongs here, not in skill prose: a script gets a
-  real test, prose gets a grep.
+- `plugins/context/` — context-window hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan`.
+- `plugins/personal-tools/` — my slash commands, subagents, hooks.
+- `plugins/workflow/` — the `/orchestrate` dispatcher, `/classify-task`, and the manager's front half `/to-prd` + `/to-issues`.
+- `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, the one
+  graph fetch, PRD scoping, run log, merge fold). Logic belongs here, not in skill prose: a
+  script gets a real test, prose gets a grep.
+- `plugins/infra/` — scripts-only shared layer (`spawn.sh`, `session-status.sh`,
+  `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`). Its SessionStart hook runs
+  `link-kit.sh`, which links `~/.claude/kit/infra`; other plugins call infra only through that
+  path, never by relative path.
+- `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, `roster.sh` + `memory.sh`, briefs, charter).
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
 - `scripts/` — repo-maintenance utilities (`sync-version.sh`, `check-version-consistency.sh`, `run-tests.sh`) + `scripts/tests/`.
 - `.github/workflows/` — CI (`ci.yml`, gates PRs into `main`) and release (`release.yml`) automation.
 - `.claude-plugin/` — plugin marketplace manifest.
-- `docs/` — cross-cutting design notes (e.g. `anti-mock-drift.md`, the mock-drift guard woven through the `/to-prd`→`/to-issues`→`/orchestrate` flow).
+- `docs/` — cross-cutting design notes: `swarm-design.md` (the orchestrator → peers → workers kit and the plugin split) and `anti-mock-drift.md` (the mock-drift guard woven through the `/to-prd`→`/to-issues`→`/orchestrate` flow).
 
 ## Payload vs. governing — read this
 
@@ -46,10 +53,9 @@ hand-edit a version anywhere else. Bump it with:
 bash scripts/sync-version.sh <x.y.z>
 ```
 
-That writes `VERSION` and stamps the same `version` into both plugin manifests
-(`plugins/personal-tools/.claude-plugin/plugin.json` and
-`plugins/workflow/.claude-plugin/plugin.json`) so all three stay in lockstep.
-`scripts/check-version-consistency.sh` enforces the lockstep — it fails if either
+That writes `VERSION` and stamps the same `version` into every
+`plugins/*/.claude-plugin/plugin.json` so all of them stay in lockstep.
+`scripts/check-version-consistency.sh` enforces the lockstep — it fails if any
 plugin.json drifts from `VERSION` — and CI (`.github/workflows/ci.yml`) runs it on
 every PR into `main`, so a mismatched version blocks the merge.
 
@@ -78,8 +84,9 @@ scripts.
 
 **Prose is grep-tested; behavior lives in scripts.** Nearly everything here is prose, and
 a grep can only prove a *string describing* the behavior is present. So the deterministic
-half of `/orchestrate` deliberately lives in `plugins/workflow/scripts/` — `ready.sh`,
-`session-status.sh`, `spawn.sh`, `run-log.sh`, `merge-fold.sh` — where each one is driven
+half of `/orchestrate` deliberately lives in `plugins/workflow/scripts/` (`ready.sh`,
+`run-log.sh`, `merge-fold.sh`) and `plugins/infra/scripts/` (`spawn.sh`, `session-status.sh`,
+`check-inbound.sh`, `resolve-tier.sh`), where each one is driven
 against real fixtures by its own `test_*.sh`. When you find yourself writing a rule into a
 skill that a script could enforce, that is a signal to move it. (The old `js`-block-in-
 markdown scheduler and its bespoke node harness are gone; `node` is no longer needed by

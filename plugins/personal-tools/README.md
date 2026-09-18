@@ -12,12 +12,8 @@ plugins/personal-tools/
 │   ├── diagnose/SKILL.md          # /diagnose — root-cause debugging workflow (6 phases)
 │   ├── explain/SKILL.md           # /explain — whole-codebase overview
 │   ├── grill-me/SKILL.md          # /grill-me — interrogate the task, emit a shared-understanding summary
-│   ├── handoff/SKILL.md           # /handoff — write a handoff doc + resume pointer, then /clear
-│   ├── handoff-plan/SKILL.md      # /handoff-plan — capture the approved plan + resume pointer, then /clear
 │   ├── init-python-project/SKILL.md  # /init-python-project — scaffold Python project docs
 │   ├── my-review/SKILL.md         # /my-review [PR#] — deep, security-weighted review; forward-or-judge model pick
-│   ├── to-issues/SKILL.md         # /to-issues <#> — slice a PRD into vertical-slice issues
-│   ├── to-prd/SKILL.md            # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   ├── update-kit/SKILL.md        # /update-kit — apply the latest kit release
 │   └── verify-plan/SKILL.md       # /verify-plan — check plan/PRD/issues vs session decisions
 ├── agents/
@@ -26,6 +22,8 @@ plugins/personal-tools/
 │   └── hooks.json                 # PreToolUse (worktree-guard) + SessionStart (notify-update, worktree-gc) + UserPromptSubmit (stash-session)
 ├── scripts/
 │   ├── check-update.sh            # backing script for /check-updates — compares installed vs latest release
+│   ├── update-kit.sh              # backing script for /update-kit — marketplace entry, every listed plugin, status line
+│   ├── dedup-search.sh            # backing script for /dedup-search — ripgrep/ctags candidate table for the given terms
 │   ├── notify-update.sh           # SessionStart hook — surfaces an available update (reuses check-update.sh, throttled, fail-open)
 │   ├── stash-session.sh           # UserPromptSubmit hook — stashes transcript_path for /verify-plan (fail-open)
 │   ├── distill-transcript.sh      # strips a transcript to its spoken turns (~12x) so /verify-plan reads dialogue, not tool output
@@ -50,30 +48,6 @@ plugins/personal-tools/
   results and tool-call parameters, so measuring the raw file tripped the size cap on exactly the
   long, reversal-heavy sessions this check is worth running on. Pairs with `/grill-me` →
   `/to-prd` → `/to-issues`.
-- **`/to-prd [summary]`** — turn an aligned task into a Product Requirements Doc and file it as
-  a GitHub issue via `gh`: explore the repo, confirm the testing seam with me, fill the PRD
-  template verbatim, and publish it labeled `prd` (a tracking doc — *not* built directly).
-  `/to-issues` then slices it into the `ready-for-agent` issues the `workflow` plugin's
-  `/orchestrate` loop builds.
-- **`/to-issues <#>`** — break a PRD issue into **tracer-bullet vertical slices** (each cuts all
-  layers, demoable alone): quiz me on granularity/dependencies/HITL/tier, then file them in
-  dependency order so each issue's `## Blocked by` carries real `#N` refs. Labels slices
-  `ready-for-agent` **and their complexity tier** (`tier:trivial|standard|complex`, by
-  `classify-task`'s rubric — the tier is what routes `/orchestrate`'s planner/implementer/reviewer
-  models, and it's set here because the slicing exploration already grounds it), plus `hitl` where
-  a human is needed; never edits the parent PRD.
-- **`/handoff [note]`** — capture a rich handoff before `/clear`: write the handoff doc and the
-  resume pointer the `workflow` plugin reads, both under a per-repo keyed dir
-  `~/.claude/handoffs/<sha1(--git-common-dir)[:16]>/` (`<branch-slug>.md` + `.pending.json`).
-  Keying by the shared common `.git` means the primary tree and all its linked worktrees share one
-  pointer (a worktree handoff resumes from anywhere in the repo) while concurrent handoffs across
-  *different* repos never collide. Captures work done, in-flight state, next steps, key files, and
-  gotchas, then tells me to `/clear` and send `go`. Requires committed work first.
-- **`/handoff-plan [path]`** — the plan-only sibling of `/handoff`, run *right after* exiting plan
-  mode: capture the just-approved plan (or the file at `[path]`, which wins when given) verbatim to
-  `<branch-slug>-plan.md` in the same keyed dir, write the same `.pending.json` resume pointer, then
-  tell me to `/clear` and send `go` so a fresh session reads the plan and implements it from the
-  committed baseline. No rich doc — the plan *is* the doc. Warns (not blocks) on a dirty tree.
 - **`/dedup-search [task]`** — search the repo for reusable or extendable code before writing
   anything new. It extracts 3–8 concrete search terms from the task description, runs the
   `scripts/dedup-search.sh` helper against the repo, and triages each candidate into
@@ -124,8 +98,10 @@ plugins/personal-tools/
   and silently so it can never block a session. When a newer release exists it surfaces a short
   non-blocking notice naming the version and telling you to run `/update-kit`.
 - **`/update-kit`** — apply the latest kit release on this machine. Runs
-  `claude plugin marketplace update my-dotclaude`, then updates both the `personal-tools` and
-  `workflow` plugins via `claude plugin update`, then prints a reminder to restart Claude Code.
+  `claude plugin marketplace update my-dotclaude`, then updates every plugin listed in its
+  manifest via `claude plugin update`, then refreshes the status line (`global/statusline.py`
+  plus its `settings.json` wiring — not plugin payload, so the plugin updates don't carry it;
+  a refresh failure is non-fatal), then prints a reminder to restart Claude Code.
   No arguments needed; works for both developer and simple-setup audiences.
 - **Worktree isolation** (`scripts/worktree-guard.sh` + `scripts/worktree-gc.sh`, wired in
   `hooks/hooks.json`) — enforces the global "worktree per coding task" rule so parallel sessions
