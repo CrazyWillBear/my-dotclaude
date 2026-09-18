@@ -363,6 +363,22 @@ happened** (a timeout, or a worker that finished without a readable report) and 
 Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
 so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
 
+**With more than one codex worker in flight, wait on the SET, not on one of them:**
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh --any "$RUNID" <N> <N> ...
+```
+
+The single-issue form blocks on the issue you name, so a fast worker queued behind a slow one
+cannot free its admission slot until the slow one finishes. The **builds** stay parallel either
+way — it is the SCHEDULING that serialises. `--any` returns the first of those workers to reach a
+terminal state, in the same one line, with the same exit-0 / exit-1 split.
+
+**Pass the issues still in flight, and drop each one as it reports.** A worker that already
+reported stays terminal forever, so leaving it in the set hands you its report a second time
+instead of waiting for the next worker — and the run would admit new work against an outcome it
+already spent.
+
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
 session takes my-review's report and posts the `**Review round N**` comment itself. If you ever

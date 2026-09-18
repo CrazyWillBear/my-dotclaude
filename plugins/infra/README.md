@@ -88,6 +88,19 @@ line in the same vocabulary the session lane already parses** — `issue <N> bui
 branches on a codex report exactly as it does on a claude one. The orchestrator still never
 polls: it makes one blocking call per worker.
 
+With several codex workers in flight, `--any` waits on the **set** instead and returns the first
+one to finish:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-report.sh --any <runid> <issue> [issue ...]
+```
+
+Blocking on a single named worker serialises **scheduling** — the builds still run in parallel,
+but a fast issue queued behind a slow one cannot free its admission slot. Pass the issues still
+IN FLIGHT and drop each one as it reports: a finished worker stays terminal forever, so leaving
+it in the set returns its report again rather than waiting for the next. Every issue named must
+have a codex run dir, so a claude-backed number mixed in fails immediately instead of timing out.
+
 **Exit 0 means the line is a real result. Exit 1 means it could not tell what happened** — a
 timeout, a clean exit that wrote no report, an unparseable one, `built` with no head sha, an
 EMPTY review (a review that did not run is not a clean one), or a `head`/`review` whose shape

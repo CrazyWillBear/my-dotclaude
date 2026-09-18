@@ -136,6 +136,85 @@ if [ "$elapsed" -ge 2 ]; then ok "it waited (${elapsed}s) instead of returning e
 else no "returned after ${elapsed}s — it did not wait for the worker"; fi
 
 # ---------------------------------------------------------------------------
+# --any: block on the SET. The single form blocks on ONE named worker, which serialises
+# SCHEDULING — builds stay parallel, but a fast issue queued behind a slow one cannot free
+# its admission slot. These assert the three things that make the set form usable: it
+# returns whichever worker is terminal, it IGNORES one that is not in the set (the caller
+# drops each issue as it reports, and a finished worker stays terminal forever), and it
+# really waits rather than returning early.
+echo "test: --any reports the terminal worker while another is still busy"
+mkrun r5 80 - -          # no pid yet: the launch window, which reads busy
+mkrun r5 81 "$(dead)" 0 \
+  '{"issue":81,"status":"built","round":0,"head":"c0ffee1","review":"0 high, 1 medium, 0 low","note":""}'
+run --any r5 80 81 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_equals "it reported the one that finished, not the one still going" "$OUT" \
+    "issue 81 built head=c0ffee1 review=0 high, 1 medium, 0 low"
+
+echo "test: --any IGNORES a terminal worker that is not in the set"
+# THE DRAINED-ISSUE GUARD. A reported worker's run dir stays terminal for the rest of the
+# run, so if the set were ignored the loop would hand back issue 90 forever and the
+# orchestrator would admit new work against an outcome it already spent. Asking only for
+# the busy 91 must therefore TIME OUT rather than return 90.
+mkrun r6 90 "$(dead)" 0 \
+  '{"issue":90,"status":"built","round":0,"head":"dddaaa1","review":"0 high, 0 medium, 0 low","note":""}'
+BUSYDIR="$CODEX_ROOT/r6/issue-91"
+mkdir -p "$BUSYDIR"
+sleep 300 & BUSY_PID=$!
+printf '%s\n' "$BUSY_PID" >"$BUSYDIR/pid"
+run --any r6 91 --interval 1 --timeout 3
+kill "$BUSY_PID" 2>/dev/null
+assert_equals "exit 1 — it waited on 91, not on the drained 90" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "says it timed out" "$ERR" "timed out"
+
+echo "test: --any BLOCKS while every worker is busy, then reports the first to finish"
+for n in 100 101; do
+    mkdir -p "$CODEX_ROOT/r7/issue-$n"
+    sleep 300 & printf '%s\n' "$!" >"$CODEX_ROOT/r7/issue-$n/pid"
+done
+SLOW_PID="$(cat "$CODEX_ROOT/r7/issue-100/pid")"
+FAST_PID="$(cat "$CODEX_ROOT/r7/issue-101/pid")"
+(
+    sleep 3
+    printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"0 high, 0 medium, 0 low","note":""}' \
+        >"$CODEX_ROOT/r7/issue-101/last-message.txt"
+    kill "$FAST_PID" 2>/dev/null
+    printf '0\n' >"$CODEX_ROOT/r7/issue-101/exit"
+) &
+WRITER2=$!
+t0=$SECONDS
+run --any r7 100 101 --interval 1 --timeout 30
+elapsed=$((SECONDS - t0))
+wait "$WRITER2" 2>/dev/null
+kill "$SLOW_PID" 2>/dev/null
+assert_equals "exit 0" "$RC" "0"
+assert_contains "reported the one that finished" "$OUT" "issue 101 built head=9b0c1d2"
+if [ "$elapsed" -ge 2 ]; then ok "it waited (${elapsed}s) for the set instead of returning early"
+else no "returned after ${elapsed}s — it did not wait"; fi
+
+echo "test: --any refuses a set holding an issue with no codex run dir"
+# Fail now, not after the timeout: a claude-backed number mixed into the set would simply
+# never match, and the whole call would expire with nothing to show for it.
+run --any r5 80 998 --interval 1 --timeout 5
+assert_equals "exit 1" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "names the missing one" "$ERR" "no codex run dir for issue 998"
+
+echo "test: two issues WITHOUT --any is refused rather than half-answered"
+# Reporting the first and dropping the second would strand that worker with nobody
+# waiting on it — the same stranding --any exists to prevent.
+run r5 80 81 --interval 1 --timeout 5
+assert_equals "exit 1" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "points at --any" "$ERR" "needs --any"
+
+echo "test: --any with no issue numbers is a usage error, not a wait on everything"
+run --any r5 --interval 1 --timeout 5
+assert_equals "exit 1" "$RC" "1"
+assert_contains "usage" "$ERR" "usage"
+
+# ---------------------------------------------------------------------------
 # Everything below is the "we do not know what happened" half. stdout MUST stay empty.
 echo "test: a crash with no report still reports, using stderr — the only place the reason lands"
 d="$CODEX_ROOT/r3/issue-60"

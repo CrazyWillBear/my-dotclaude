@@ -10,13 +10,21 @@
 # (#96). A flipped roster without this leaves the orchestrator waiting on a session that
 # does not exist, forever. That is why the roster flip was held.
 #
-# The orchestrator still does not poll. It makes ONE blocking call per worker and gets
-# back the same one-line report it already branches on, so the admission loop's handling
-# of built / fixed / failed / escalate is unchanged.
+# The orchestrator still does not poll. It makes ONE blocking call — per worker, or per
+# SET with --any — and gets back the same one-line report it already branches on, so the
+# admission loop's handling of built / fixed / failed / escalate is unchanged.
 #
 # Usage:
 #   bash worker-report.sh <runid> <issue> [--interval S] [--timeout S]
+#   bash worker-report.sh --any <runid> <issue> [issue ...] [--interval S] [--timeout S]
 #
+#     --any          wait on the SET and report the FIRST worker to finish, rather than
+#                    blocking on one named worker. Builds run in parallel either way —
+#                    what the single form serialises is SCHEDULING: a fast issue queued
+#                    behind a slow one cannot free its admission slot until the slow one
+#                    is done. Pass the issues still IN FLIGHT and drop each one as it
+#                    reports; a worker that already reported stays terminal forever, so
+#                    leaving it in the set returns it again instead of waiting.
 #     --interval S   seconds between state reads (default 10)
 #     --timeout  S   give up after S seconds (default 7200; 0 waits forever)
 #
@@ -47,21 +55,41 @@ set -uo pipefail
 INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "error: $*" >&2; exit 1; }
 
-RUNID="${1:-}"; ISSUE="${2:-}"
-shift 2 2>/dev/null || true
+ANY=""
+if [ "${1:-}" = --any ]; then ANY=1; shift; fi
+
+RUNID="${1:-}"
+[ $# -eq 0 ] || shift
 INTERVAL=10
 TIMEOUT=7200
+ISSUES=""
 
+# Positionals after the runid are issue numbers; anything starting with `-` is a flag.
+# The old parser died on ANY extra positional, so nothing that worked before changes
+# shape here — a bare `--bogus` still dies as an unknown flag rather than being read
+# as an issue.
 while [ $# -gt 0 ]; do
     case "$1" in
         --interval) [ $# -ge 2 ] || die "--interval needs a value"; INTERVAL="$2"; shift 2 ;;
         --timeout)  [ $# -ge 2 ] || die "--timeout needs a value";  TIMEOUT="$2";  shift 2 ;;
-        *)          die "unknown flag $1" ;;
+        -*)         die "unknown flag $1" ;;
+        *)          ISSUES="${ISSUES:+$ISSUES }$1"; shift ;;
     esac
 done
 
-[ -n "$RUNID" ] && [ -n "$ISSUE" ] || die "usage: worker-report.sh <runid> <issue> [--interval S] [--timeout S]"
-case "$ISSUE"    in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
+USAGE="usage: worker-report.sh <runid> <issue> [--interval S] [--timeout S]
+       worker-report.sh --any <runid> <issue> [issue ...] [--interval S] [--timeout S]"
+[ -n "$RUNID" ] && [ -n "$ISSUES" ] || die "$USAGE"
+# Without --any this script reports exactly ONE worker. A second number means the caller
+# wanted --any and did not say so: reporting the first and silently dropping the rest
+# would leave those workers with nobody waiting on them, which is the same stranding
+# --any exists to prevent.
+if [ -z "$ANY" ]; then
+    case "$ISSUES" in *\ *) die "more than one issue needs --any: $USAGE" ;; esac
+fi
+for i in $ISSUES; do
+    case "$i" in ''|*[!0-9]*) die "issue must be a number, got '$i'" ;; esac
+done
 case "$INTERVAL" in ''|*[!0-9]*) die "--interval must be a number, got '$INTERVAL'" ;; esac
 case "$TIMEOUT"  in ''|*[!0-9]*) die "--timeout must be a number, got '$TIMEOUT'" ;; esac
 # Same guard as spawn.sh and run-log.sh: $RUNID is joined into a filesystem path below.
@@ -70,32 +98,49 @@ case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], 
 
 [ -f "$INFRA/session-status.sh" ] || die "missing infra sibling: $INFRA/session-status.sh"
 
-RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+CODEX_ROOT="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID"
 # Fail now rather than after a 2-hour wait. No run dir means no codex worker was ever
 # spawned for this issue — a caller that reached here with a claude-backed worker is
-# asking the wrong question, and should be told so immediately.
-[ -d "$RUNDIR" ] || die "no codex run dir for issue $ISSUE: $RUNDIR (is this worker codex-backed?)"
+# asking the wrong question, and should be told so immediately. EVERY issue in the set
+# is checked: one claude-backed number mixed into an --any set would otherwise just
+# never match, and the whole call would time out with nothing to show for it.
+for i in $ISSUES; do
+    [ -d "$CODEX_ROOT/issue-$i" ] || \
+        die "no codex run dir for issue $i: $CODEX_ROOT/issue-$i (is this worker codex-backed?)"
+done
 
-NAME="orch-$RUNID-issue-$ISSUE"
 START=$SECONDS
+ISSUE=""
 STATE=""
 
 while : ; do
     OUT="$(bash "$INFRA/session-status.sh" "$RUNID" 2>/dev/null)"
-    STATE="$(printf '%s\n' "$OUT" | awk -v n="$NAME" '$1 == n { print $4 }' | head -1)"
-
-    case "$STATE" in
-        done|failed) break ;;
-        busy|"")     ;;   # "" == not listed yet; the run dir exists, so it is coming
-        *)           ;;   # any other spelling: keep waiting rather than guess
-    esac
+    # Column 3 is the backend, column 4 the state. Filtering on `codex` keeps a CLAUDE
+    # session sharing the run prefix out of the answer: it reports over SendMessage and
+    # has no last-message.txt, so rendering it here would exit 1 on a worker that is
+    # perfectly healthy. A row that is not terminal, or not in the asked-for set, simply
+    # does not match and the loop waits — the same "keep waiting rather than guess" the
+    # single-worker form had for an unknown state spelling.
+    HIT="$(printf '%s\n' "$OUT" | awk -v pre="orch-$RUNID-issue-" -v want=" $ISSUES " '
+        BEGIN { plen = length(pre) }
+        $3 == "codex" && ($4 == "done" || $4 == "failed") && substr($1, 1, plen) == pre {
+            n = substr($1, plen + 1)
+            if (index(want, " " n " ") > 0) { print n " " $4; exit }
+        }')"
+    if [ -n "$HIT" ]; then
+        ISSUE="${HIT%% *}"
+        STATE="${HIT##* }"
+        break
+    fi
 
     if [ "$TIMEOUT" -gt 0 ] && [ $((SECONDS - START)) -ge "$TIMEOUT" ]; then
-        die "timed out after ${TIMEOUT}s waiting for issue $ISSUE (last state: ${STATE:-unlisted}) — \
+        die "timed out after ${TIMEOUT}s waiting for issue $ISSUES — \
 the worker may still be running; nothing was reported"
     fi
     sleep "$INTERVAL"
 done
+
+RUNDIR="$CODEX_ROOT/issue-$ISSUE"
 
 # Terminal. The report is the schema'd final message; on a crash there may be none, and
 # then stderr.log is the only place the reason lands (README § Two backends).
