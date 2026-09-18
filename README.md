@@ -81,6 +81,7 @@ Then **restart Claude Code** so it loads the plugins.
   swe-manager, performance-engineer), and `swarm.sh` runs the team — `up`, `down`, `rotate`,
   `attach`, and `brief` (drop a brief into a role's inbox).
   Replaces the third-party perf plugin with a performance-engineer role.
+  **Full reference:** [`plugins/swarm/README.md`](plugins/swarm/README.md).
 - **[ponytail](https://github.com/DietrichGebert/ponytail)** — third-party plugin for
   minimal, YAGNI-first code; installed alongside the above.
 - **[agent-sdk-dev](https://github.com/anthropics/claude-plugins-official)** — Anthropic's
@@ -225,7 +226,7 @@ my-dotclaude/
 │   ├── personal-tools/    # slash commands + subagents — see plugins/personal-tools/README.md
 │   ├── infra/             # shared scripts at ~/.claude/kit/infra — see plugins/infra/README.md
 │   ├── workflow/          # /orchestrate dispatcher + /to-prd, /to-issues — see plugins/workflow/README.md
-│   └── swarm/             # /init-swarm roster, charter + briefs; swarm.sh up|down|rotate|attach|brief
+│   └── swarm/             # /init-swarm roster, charter + briefs; swarm.sh up|down|rotate|attach|brief — see plugins/swarm/README.md
 ├── global/
 │   ├── CLAUDE.md         # my global ~/.claude/CLAUDE.md (developer setup)
 │   └── CLAUDE.simple.md  # plain-English variant (installed by setup-simple)
