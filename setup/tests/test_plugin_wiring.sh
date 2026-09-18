@@ -237,6 +237,19 @@ for f in setup-dev.sh setup-simple.sh; do
   assert_equals "$f calls tcr_install_security_sweep once"   "$sweep" "1"
 done
 
+# ---- test: the setup scripts GUARD tcr_install_our_plugins ------------------
+echo "test: setup scripts guard tcr_install_our_plugins, so one fetch failure cannot abort the rest"
+# The function's hard-fail is deliberate (asserted above). The risk is at the call site: both
+# scripts run under `set -euo pipefail`, so a BARE call aborts everything after it — ponytail,
+# agent-sdk-dev, composio, security-sweep, the Playwright MCP, the gh allowlist — none of which
+# need the manifest. Reproduced 2026-09-17 with a failing curl: bare -> rc=1 and later steps
+# skipped; guarded -> rc=0 and later steps ran.
+for f in setup-dev.sh setup-simple.sh; do
+    calls="$(grep -E '^[[:space:]]*tcr_install_our_plugins' "$SETUP_DIR/$f")"
+    assert_contains "$f calls tcr_install_our_plugins at all" "$calls" "tcr_install_our_plugins"
+    assert_contains "$f guards it against aborting the run" "$calls" "|| TCR_INSTALL_FAILED=1"
+done
+
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

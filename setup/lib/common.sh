@@ -121,6 +121,11 @@ for p in data["plugins"]:
 # workflow, and any plugin added there later — instead of one hand-written
 # function per plugin name. Assumes our marketplace is already added (call
 # tcr_add_our_marketplace first).
+# NOTE: this is the ONLY install helper that returns non-zero — every sibling soft-fails via
+# TCR_INSTALL_FAILED and returns 0. The setup scripts run under `set -euo pipefail`, so CALL
+# SITES MUST GUARD IT (`|| TCR_INSTALL_FAILED=1`). Unguarded, a transient curl failure during
+# `curl | bash` aborted the whole installer and silently skipped every later step, none of
+# which need the manifest. Verified 2026-09-17; pinned by test_plugin_wiring.sh.
 tcr_install_our_plugins() {
   local names
   names="$(tcr_our_plugin_names)" || return 1
