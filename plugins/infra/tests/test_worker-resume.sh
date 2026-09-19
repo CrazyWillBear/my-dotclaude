@@ -172,10 +172,10 @@ if [ "${2:-}" = review ]; then
         [ -n "${take:-}" ] && { rout="$a"; take=""; }
         [ "$a" = -o ] && take=1
     done
-    # NOT ${STUB_REVIEW_JSON:-{...}}: a `}` inside the default closes the expansion early
-    # and the rest lands as literal text, which silently appends a stray brace to the JSON.
-    rj="${STUB_REVIEW_JSON:-}"
-    [ -n "$rj" ] || rj='{"high":0,"medium":1,"low":0,"findings":"src/f:1 a finding"}'
+    # PROSE in codex's own review format, because that is all a review turn can emit:
+    # --base forbids a prompt and --output-schema is ignored there.
+    rj="${STUB_REVIEW_TEXT:-}"
+    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
     [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
     exit "${STUB_REVIEW_EXIT:-0}"
 fi
@@ -292,7 +292,9 @@ echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own 
 rm -f "$WORK/review-argv" "$WORK/gh-argv"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
-    STUB_REVIEW_JSON='{"high":2,"medium":0,"low":1,"findings":"src/f:1 a finding"}' \
+    STUB_REVIEW_TEXT='- [P1] a finding — src/f:1
+- [P1] another — src/g:2
+- [P3] a nit — src/h:3' \
     run r1 86 standard "$REPO" --answer "x" --base base --round 4
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
@@ -312,11 +314,15 @@ assert_not_contains "never the implementer's" \
 echo "test: the reviewer's findings are posted as the round's issue comment"
 assert_contains "gh issue comment was called" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
 assert_contains "on the right issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "86"
-assert_contains "carrying the round number it was given" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
-    "**Review round 4**"
-assert_contains "and the reviewer's own findings text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a finding"
-assert_contains "with the counts in the heading" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
-    "2 high, 0 medium, 1 low"
+# The body travels as a FILE, not an argument: a review is multi-line model-written text,
+# and passing it as --body would put it at the mercy of shell quoting.
+assert_contains "as a --body-file" "$(cat "$WORK/gh-argv" 2>/dev/null)" "--body-file"
+COMMENT="$(cat "$CODEX_ROOT/r1/issue-86/review-comment.md" 2>/dev/null)"
+assert_contains "carrying the round number it was given" "$COMMENT" "**Review round 4**"
+assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
+# The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
+# the verdict with — so the issue thread and the merge queue cannot disagree.
+assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
 
 echo "test: a FAILED review leaves no verdict behind — the run fails CLOSED"
 # The sharp one. A reviewer that dies must not leave a half-written review.txt: a COUNTS
@@ -330,7 +336,7 @@ STUB_REPORT='{"issue":87,"status":"built","round":0,"head":"abc1234","review":""
 assert_equals "exit 1 — we do not know if the branch is clean" "$RC" "1"
 assert_empty "nothing on stdout the lane could act on" "$OUT"
 assert_contains "says no review was recorded" "$ERR" "no independent review"
-if [ -f "$CODEX_ROOT/r1/issue-87/review.json" ]; then
+if [ -f "$CODEX_ROOT/r1/issue-87/review.txt" ]; then
     no "a failed review left review.txt behind"
 else
     ok "the failed review's output was deleted, not left to be misread"
@@ -342,7 +348,9 @@ echo "test: a worker that grades itself anyway is ignored, not believed"
 rm -f "$WORK/review-argv"
 mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":88,"status":"built","round":0,"head":"abc1234","review":"0 high, 0 medium, 0 low","note":""}' \
-    STUB_REVIEW_JSON='{"high":3,"medium":0,"low":0,"findings":"src/f:1 a finding"}' \
+    STUB_REVIEW_TEXT='- [P1] one — a:1
+- [P1] two — b:2
+- [P1] three — c:3' \
     run r1 88 standard "$REPO" --answer "x" --base base
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the reviewer's verdict won" "$OUT" "review=3 high, 0 medium, 0 low"

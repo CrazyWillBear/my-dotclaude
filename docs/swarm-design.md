@@ -326,8 +326,10 @@ one-shot, so it maps onto `codex exec`:
   outright — the reviewer died on every run and every codex build failed closed:
   **no `-C`** (it is a top-level `codex exec` flag only; the callers `cd` instead),
   **no trailing prompt** (`--base` and `[PROMPT]` are mutually exclusive, so the verdict's shape
-  is requested with `--output-schema` — ❓ that codex honours a schema on a *review* turn is still
-  unverified, and deliberately fails closed if it does not), and
+  is NOT requested at all: `--output-schema` is accepted on a review turn and silently IGNORED,
+  proven by a real run and a direct probe, so `review-counts.sh` parses codex's own review
+  template — `- [Pn] title — path:lines` items, or prose with no marker for a clean one — and
+  REFUSES anything it cannot read rather than counting it as zero findings), and
   **`--base` takes a resolved SHA, not a branch name**. That last one is a second door onto the
   same bug: `refs/` is a granted writable root, so a worker could `git branch -f <base> HEAD`,
   empty its own diff, and collect a clean verdict from an honest reviewer. `spawn.sh` resolves
@@ -360,8 +362,9 @@ leaves no exit file, which reads as `failed` and frees the orchestrator to respa
 
 Landed as `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/` holding `events.jsonl`,
 `stderr.log` (the only place a failed worker's reason lands), `last-message.txt`,
-`status-schema.json`, `review-schema.json`, `review.json` (the independent reviewer's verdict —
-the ONLY source of the finding counts), `review-stderr.log` (why it did not run, quoted back
+`status-schema.json`, `review.txt` (the independent reviewer's output — the ONLY source of the
+finding counts, parsed by `review-counts.sh`), `review-comment.md` (what was posted to the
+issue), `review-stderr.log` (why it did not run, quoted back
 when worker-report.sh refuses the run), `pid` and `exit` — which is written LAST, after the
 review, so a run that reads terminal always has its verdict on disk. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because

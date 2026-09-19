@@ -444,7 +444,7 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
     || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
 
 REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review-schema.json" "$RUNDIR/review.json")" || exit 1
+    "$RUNDIR/review.txt")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
@@ -476,7 +476,7 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # reads as `failed`, inventing a failure for a worker that is merely still launching.
 # With it gone the same window has no pid at all, which is the launch-window case that
 # already reads `busy` — the safe direction, and the one this script argues for elsewhere.
-# `review.json` goes with them, and for the sharpest version of the same reason: it is now
+# `review.txt` goes with them, and for the sharpest version of the same reason: it is now
 # the ONLY source of the finding counts, and worker-report.sh reads it the moment `exit`
 # appears. A fix round that left the previous round's review in place would be handed the
 # verdict on the code it was spawned to CHANGE — a stale "0 high" sending a branch whose
@@ -484,7 +484,7 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # missing-review error quotes its tail, and a stale one would explain this run's refusal
 # with the previous round's reason.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" \
-      "$RUNDIR/review.json" "$RUNDIR/review-stderr.log"
+      "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -509,24 +509,6 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot 
 }
 SCHEMA
 
-# THE REVIEWER's schema. `codex exec review` refuses a trailing PROMPT alongside `--base`
-# ("cannot be used with '[PROMPT]'"), so the verdict cannot be asked for in prose — this
-# is how it is asked for instead, and `findings` is what the fix round actually works from.
-# If codex does not honour a schema on a review turn, this file simply will not parse and
-# worker-report.sh refuses the run: loud, not silently clean (review-cmd.sh § UNVERIFIED).
-cat >"$RUNDIR/review-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot write $RUNDIR/review-schema.json"; }
-{
-  "type": "object",
-  "properties": {
-    "high":     { "type": "integer" },
-    "medium":   { "type": "integer" },
-    "low":      { "type": "integer" },
-    "findings": { "type": "string" }
-  },
-  "required": ["high", "medium", "low", "findings"],
-  "additionalProperties": false
-}
-SCHEMA
 
 # Wrapped so the recorded pid stays alive until the exit code is written:
 # session-status.sh reads "pid alive" as busy, and a gap between the process ending and
@@ -573,7 +555,7 @@ SCHEMA
 # fix round its detail, not its correctness.
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; shift 5
+    rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; counter=$6; shift 6
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
@@ -583,7 +565,7 @@ bash -c '
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
     # could reach, and a planted verdict must never outlive the worker that planted it.
-    rm -f "$rundir/review.json"
+    rm -f "$rundir/review.txt"
     # Reviewed only when the worker SAYS it built or fixed something. `escalate` and
     # `failed` also exit 0, and reviewing those posts a "Review round" comment on a
     # half-built branch — which the orchestrate lane counts as a spent cycle.
@@ -600,27 +582,33 @@ bash -c '
         if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
             if (cd "$worktree" && "${review[@]}") \
                     >>"$rundir/review-stderr.log" 2>&1 </dev/null; then
-                body="$(REVIEW_JSON="$rundir/review.json" REVIEW_ROUND="$round" python3 -c "
-import json, os
-r = json.load(open(os.environ[\"REVIEW_JSON\"]))
-print(\"**Review round %s** — %d high, %d medium, %d low\n\" % (
-    os.environ[\"REVIEW_ROUND\"], r[\"high\"], r[\"medium\"], r[\"low\"]))
-print(r[\"findings\"])" 2>>"$rundir/review-stderr.log")" \
-                    && (cd "$worktree" && gh issue comment "$issue" --body "$body") \
+                # The heading is counted by review-counts.sh — the SAME script
+                # worker-report.sh reads the verdict with, so the comment on the issue and
+                # the report the merge queue acts on can never disagree.
+                counts="$(bash "$counter" "$rundir/review.txt" 2>>"$rundir/review-stderr.log")"
+                if [ -n "$counts" ]; then
+                    { printf "**Review round %s** — %s\n\n" "$round" "$counts"
+                      cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
+                    (cd "$worktree" && gh issue comment "$issue" \
+                        --body-file "$rundir/review-comment.md") \
                         >/dev/null 2>>"$rundir/review-stderr.log" </dev/null \
-                    || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
+                        || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
+                else
+                    printf "REVIEW_UNREADABLE\n" >>"$rundir/review-stderr.log"
+                fi
             else
                 printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
-                rm -f "$rundir/review.json"
+                rm -f "$rundir/review.txt"
             fi
         else
             printf "REVIEW_SKIPPED containment check refused the worktree\n" \
                 >>"$rundir/review-stderr.log"
-            rm -f "$rundir/review.json"
+            rm -f "$rundir/review.txt"
         fi
     fi
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
+       "$INFRA/review-counts.sh" \
     "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m

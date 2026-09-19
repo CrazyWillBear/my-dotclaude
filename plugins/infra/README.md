@@ -64,10 +64,11 @@ ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 ├── stderr.log          # codex's progress, and the ONLY place a failure's reason lands
 ├── last-message.txt    # -o: the final message, shaped by --output-schema
 ├── status-schema.json  # the worker's fixed-shape status report
-├── review-schema.json  # the INDEPENDENT reviewer's fixed-shape verdict
-├── review.json         # that verdict. The ONLY source of the finding counts — the
-│                       #   worker cannot write it, and no review.json means the run
-│                       #   is REFUSED rather than read as clean
+├── review.txt          # the INDEPENDENT reviewer's output. The ONLY source of the
+│                       #   finding counts (review-counts.sh parses it) — the worker
+│                       #   cannot write it, and no review.txt means the run is
+│                       #   REFUSED rather than read as clean
+├── review-comment.md   # exactly what was posted as the "Review round" comment
 ├── review-stderr.log   # why the reviewer did not run; quoted back on that refusal
 ├── pid                 # alive => busy. The WRAPPER's pid, and its group leader:
 │                       #   stop it with `kill -- -<pid>` or codex is orphaned

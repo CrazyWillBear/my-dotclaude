@@ -11,6 +11,11 @@
 # not the implementer's), and WHAT IT DIFFS AGAINST (a base pinned to a SHA before the
 # worker ran, since a base named by branch could be moved by the worker itself).
 #
+# What it deliberately does NOT do is ask for a machine-readable verdict: a review turn
+# takes no prompt beside --base and ignores --output-schema. review-counts.sh parses
+# codex's own review template instead, and test_review-counts.sh pins that against real
+# captured output.
+#
 # THE CENTRAL MECHANISM is that this argv actually parses. The first version of this fix
 # shipped a command the installed CLI rejects outright — `-C` is not a flag of
 # `codex exec review`, and `--base` cannot be combined with a trailing PROMPT — so the
@@ -75,11 +80,10 @@ run() {
 # resolved by NAME could be moved by the worker (refs/ is a granted writable root),
 # emptying its own diff and buying a clean verdict from an honest reviewer.
 SHA=0123456789abcdef0123456789abcdef01234567
-SCHEMA=/tmp/rundir/review-schema.json
-OUTF=/tmp/rundir/review.json
+OUTF=/tmp/rundir/review.txt
 
 echo "test: it builds a codex exec review against the base COMMIT"
-run standard "$SHA" "$SCHEMA" "$OUTF"
+run standard "$SHA" "$OUTF"
 assert_equals "exit 0" "$RC" "0"
 assert_arg "codex"   "$OUT" "codex"
 assert_arg "exec"    "$OUT" "exec"
@@ -94,14 +98,17 @@ echo "test: -C is NEVER passed — codex exec review does not take it"
 # instead, which is what scopes the review.
 assert_not_contains "no -C" "$(printf '%s\n' "$OUT" | grep -Fx -- '-C')" "-C"
 
-echo "test: NO trailing prompt — --base and [PROMPT] are mutually exclusive"
-# Also verified on 0.155.0: "the argument '--base <BRANCH>' cannot be used with
-# '[PROMPT]'". A prompt here would make the reviewer die on every single run, which is
-# how the first attempt at this fix shipped broken.
-assert_arg "the verdict's shape is asked for with a schema" "$OUT" "--output-schema"
-assert_arg "the schema file"                                "$OUT" "$SCHEMA"
-assert_arg "and a file for the verdict"                     "$OUT" "-o"
-assert_arg "the out file"                                   "$OUT" "$OUTF"
+echo "test: NO trailing prompt, and NO --output-schema either"
+# Verified on 0.155.0: "the argument '--base <BRANCH>' cannot be used with '[PROMPT]'",
+# so the verdict's shape cannot be requested in prose. --output-schema was the obvious
+# substitute and it DOES NOT WORK — codex accepts it on a review turn and ignores it
+# (proven twice: a real ops-os run returned prose where the schema was required, and a
+# direct probe returned prose again with --json showing no structured findings event).
+# Passing a flag that silently does nothing is worse than not passing it: it reads as a
+# guarantee that is not there. review-counts.sh parses the review's own template instead.
+assert_arg "a file for the verdict" "$OUT" "-o"
+assert_arg "the out file"           "$OUT" "$OUTF"
+assert_not_contains "no schema, because it would be silently ignored" "$OUT" "--output-schema"
 assert_not_contains "nothing that looks like a prose instruction" "$OUT" "print exactly"
 
 echo "test: the sandbox is PINNED read-only, not inherited from the user's config"
@@ -117,7 +124,7 @@ assert_arg "-m"                    "$OUT" "-m"
 assert_arg "the reviewer's model"  "$OUT" "gpt-5.6-sol"
 assert_not_contains "and not the implementer's" "$OUT" "gpt-5.6-terra"
 
-run trivial "$SHA" "$SCHEMA" "$OUTF"
+run trivial "$SHA" "$OUTF"
 assert_arg "trivial reviews at ITS reviewer cell" "$OUT" "gpt-5.6-terra"
 assert_not_contains "not its luna implementer"    "$OUT" "gpt-5.6-luna"
 
@@ -126,7 +133,7 @@ echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review
 # codex lands here. Passing opus would make the review die on a model codex does not have,
 # leaving no review.json — which worker-report.sh refuses, turning a wrong-model review
 # into a run that cannot land at all.
-run complex "$SHA" "$SCHEMA" "$OUTF"
+run complex "$SHA" "$OUTF"
 assert_equals "exit 0 — it still builds a reviewer" "$RC" "0"
 assert_arg "still a review" "$OUT" "review"
 assert_not_contains "but never hands codex a claude model" "$OUT" "opus"
@@ -135,22 +142,22 @@ assert_not_contains "and no -m at all" "$(printf '%s\n' "$OUT" | grep -Fx -- '-m
 echo "test: a BRANCH NAME is refused — only a resolved sha closes the movable-base hole"
 # The whole point of pinning. If this accepted "main", a worker could `git branch -f main
 # HEAD` and the reviewer would diff nothing.
-run standard main "$SCHEMA" "$OUTF"
+run standard main "$OUTF"
 assert_equals "exits 1" "$RC" "1"
 assert_equals "nothing on stdout" "$OUT" ""
 assert_contains "says it wants a sha" "$ERR" "resolved SHA"
 
-run standard abc123 "$SCHEMA" "$OUTF"
+run standard abc123 "$OUTF"
 assert_equals "a too-short sha is refused too" "$RC" "1"
 assert_contains "says why" "$ERR" "too short"
 
 echo "test: EVERY argument is single-line — the callers read one argument per line"
 # The whole encoding rests on this. A newline anywhere would silently split one argument
 # into two, and codex would get a stray positional.
-run standard "$SHA" "$SCHEMA" "$OUTF"
+run standard "$SHA" "$OUTF"
 NLINES="$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')"
-# codex, exec, review, --base, <sha>, -c, <k=v>, -c, <k=v>, --output-schema, <f>, -o, <f>, -m, <model>
-assert_equals "the argument count is exactly what was built" "$NLINES" "15"
+# codex, exec, review, --base, <sha>, -c, <k=v>, -c, <k=v>, -o, <file>, -m, <model>
+assert_equals "the argument count is exactly what was built" "$NLINES" "13"
 
 echo "test: usage errors fail loudly, with nothing on stdout to misread as a command"
 run
@@ -158,7 +165,7 @@ assert_equals "no args exits 1" "$RC" "1"
 assert_equals "nothing on stdout" "$OUT" ""
 assert_contains "usage" "$ERR" "usage"
 run standard "$SHA"
-assert_equals "a missing schema/out exits 1" "$RC" "1"
+assert_equals "a missing out file exits 1" "$RC" "1"
 assert_equals "nothing on stdout" "$OUT" ""
 
 # ---------------------------------------------------------------------------

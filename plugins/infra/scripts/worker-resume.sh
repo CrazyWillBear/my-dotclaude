@@ -176,35 +176,20 @@ fi
 BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
     || die "cannot resolve base '$BASE' to a commit in $WORKTREE"
 REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review-schema.json" "$RUNDIR/review.json")" || exit 1
+    "$RUNDIR/review.txt")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
 EOF
 
-# review.json goes too, and for the sharpest version of the same reason: it is the only
+# review.txt goes too, and for the sharpest version of the same reason: it is the only
 # source of the finding counts, so the previous turn's review left in place would be read
 # as this turn's verdict on code the resumed worker has since changed. review-stderr.log
 # with it — the missing-review error quotes its tail, and a stale one would explain this
 # turn's refusal with the last one's reason.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
-      "$RUNDIR/review.json" "$RUNDIR/review-stderr.log"
+      "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
-# The reviewer's schema, identical to the one spawn.sh writes: `codex exec review` refuses
-# a trailing PROMPT next to `--base`, so the verdict's shape is requested this way.
-cat >"$RUNDIR/review-schema.json" <<'SCHEMA' || die "cannot write $RUNDIR/review-schema.json"
-{
-  "type": "object",
-  "properties": {
-    "high":     { "type": "integer" },
-    "medium":   { "type": "integer" },
-    "low":      { "type": "integer" },
-    "findings": { "type": "string" }
-  },
-  "required": ["high", "medium", "low", "findings"],
-  "additionalProperties": false
-}
-SCHEMA
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
@@ -232,23 +217,29 @@ if [ "$CODE" -eq 0 ] \
             >/dev/null 2>>"$RUNDIR/review-stderr.log"; then
         if ( cd "$WORKTREE" && "${REVIEW_CMD[@]}" ) \
                 >>"$RUNDIR/review-stderr.log" 2>&1 </dev/null; then
-            BODY="$(REVIEW_JSON="$RUNDIR/review.json" REVIEW_ROUND="$ROUND" python3 -c '
-import json, os
-r = json.load(open(os.environ["REVIEW_JSON"]))
-print("**Review round %s** — %d high, %d medium, %d low\n"
-      % (os.environ["REVIEW_ROUND"], r["high"], r["medium"], r["low"]))
-print(r["findings"])' 2>>"$RUNDIR/review-stderr.log")" \
-                && ( cd "$WORKTREE" && gh issue comment "$ISSUE" --body "$BODY" ) \
+            # The heading is counted by review-counts.sh — the SAME script
+            # worker-report.sh reads the verdict with, so the comment on the issue and the
+            # report the merge queue acts on can never disagree.
+            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
+                2>>"$RUNDIR/review-stderr.log")"
+            if [ -n "$COUNTS" ]; then
+                { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
+                  cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"
+                ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
+                    --body-file "$RUNDIR/review-comment.md" ) \
                     >/dev/null 2>>"$RUNDIR/review-stderr.log" </dev/null \
-                || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
+                    || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
+            else
+                printf 'REVIEW_UNREADABLE\n' >>"$RUNDIR/review-stderr.log"
+            fi
         else
             printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"
-            rm -f "$RUNDIR/review.json"
+            rm -f "$RUNDIR/review.txt"
         fi
     else
         printf 'REVIEW_SKIPPED containment check refused the worktree\n' \
             >>"$RUNDIR/review-stderr.log"
-        rm -f "$RUNDIR/review.json"
+        rm -f "$RUNDIR/review.txt"
     fi
 fi
 

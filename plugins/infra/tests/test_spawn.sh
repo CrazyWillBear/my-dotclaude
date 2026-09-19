@@ -39,6 +39,11 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3')" ;;
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 # the arg list is one-per-line, so an exact-line match is a real "this arg is present"
 assert_arg() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then ok "$1"; else no "$1 (no arg line '$3')"; fi; }
+# Was USED below before it was DEFINED. bash prints "command not found" and carries on, so
+# the assertion neither passed nor failed and the count never moved — the reviewer-skip
+# cases read as coverage while proving nothing, and a revert-probe found them green in both
+# directions. A test that cannot fail is worse than no test.
+assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got '$2')"; fi; }
 
 dry() { bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"; }
 err() { cat "$WORK/err"; }
@@ -288,9 +293,9 @@ if [ "${2:-}" = review ]; then
         [ -n "${take:-}" ] && { rout="$a"; take=""; }
         [ "$a" = -o ] && take=1
     done
-    # NOT ${VAR:-{...}}: a `}` inside the default closes the expansion early.
-    rj="${STUB_REVIEW_JSON:-}"
-    [ -n "$rj" ] || rj='{"high":0,"medium":1,"low":0,"findings":"src/f:1 a finding"}'
+    # PROSE in codex's own review format — a review turn cannot emit anything else.
+    rj="${STUB_REVIEW_TEXT:-}"
+    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
     [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
     exit "${STUB_REVIEW_EXIT:-0}"
 fi
@@ -472,14 +477,16 @@ assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
     "gpt-5.6-terra"
 
-echo "test: the reviewer's verdict is schema'd, and never asked for in a prompt"
-# `codex exec review` REFUSES a trailing PROMPT beside --base ("cannot be used with
-# '[PROMPT]'"), so the machine-readable verdict is requested with --output-schema instead.
-# A prompt argument here would make the reviewer die on every run.
-assert_arg "an output schema is passed" "$rv" "--output-schema"
-assert_arg "and a file to write the verdict to" "$rv" "-o"
-assert_contains "the schema lands in the run dir" "$rv" "review-schema.json"
-assert_contains "and so does the verdict" "$rv" "review.json"
+echo "test: the reviewer is asked for NOTHING — no prompt, and no schema either"
+# `codex exec review` refuses a trailing PROMPT beside --base ("cannot be used with
+# '[PROMPT]'"), and --output-schema is accepted on a review turn and then SILENTLY
+# IGNORED (ground-truthed twice — a real ops-os run and a direct probe). Passing a flag
+# that does nothing reads as a guarantee that is not there, so neither is passed: the
+# review's own template is the contract, and review-counts.sh parses it.
+assert_arg "the verdict is captured to a file" "$rv" "-o"
+assert_contains "which is the run dir's review.txt" "$rv" "review.txt"
+assert_not_contains "no schema is passed, because it would be ignored" "$rv" "--output-schema"
+assert_not_contains "and nothing resembling a prompt" "$rv" "print exactly"
 # -C is not a flag of `codex exec review` — only of top-level `codex exec`. Passing it
 # dies with "unexpected argument '-C' found"; the callers cd instead.
 assert_not_contains "no -C, which this subcommand does not take" "$rv" "
@@ -549,12 +556,15 @@ assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LE
 echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv"
 STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
-    STUB_REVIEW_JSON='{"high":2,"medium":1,"low":0,"findings":"src/f:1 a real finding"}' \
+    STUB_REVIEW_TEXT='- [P1] one — a:1
+- [P1] two — b:2
+- [P2] three — c:3
+a real finding is described above' \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-if [ -f "$RUNDIR/review.json" ]; then ok "the reviewer's verdict was written"
-else no "no $RUNDIR/review.json — the wrapper did not run the reviewer"; fi
+if [ -f "$RUNDIR/review.txt" ]; then ok "the reviewer's verdict was written"
+else no "no $RUNDIR/review.txt — the wrapper did not run the reviewer"; fi
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
@@ -562,15 +572,20 @@ assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
 # review landing after it would be read as a run with no verdict on every fast poll.
-if [ "$RUNDIR/review.json" -ot "$RUNDIR/exit" ] || [ "$RUNDIR/exit" -nt "$RUNDIR/review.json" ]; then
+if [ "$RUNDIR/review.txt" -ot "$RUNDIR/exit" ] || [ "$RUNDIR/exit" -nt "$RUNDIR/review.txt" ]; then
     ok "exit was written after the review, not before"
 else
     ok "exit and review landed within the same clock tick (order still not inverted)"
 fi
 assert_contains "the findings were posted to the issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
-assert_contains "with the counts in the heading" "$(cat "$WORK/gh-argv" 2>/dev/null)" \
-    "2 high, 1 medium, 0 low"
-assert_contains "and the reviewer's text" "$(cat "$WORK/gh-argv" 2>/dev/null)" "a real finding"
+# The body travels as a FILE: a review is multi-line model-written text, and passing it as
+# --body would leave it at the mercy of shell quoting.
+assert_contains "as a --body-file" "$(cat "$WORK/gh-argv" 2>/dev/null)" "--body-file"
+COMMENT="$(cat "$RUNDIR/review-comment.md" 2>/dev/null)"
+# The heading is counted by review-counts.sh — the SAME script worker-report.sh reads the
+# verdict with, so the issue thread and the merge queue cannot disagree about the findings.
+assert_contains "with the counts in the heading" "$COMMENT" "2 high, 1 medium, 0 low"
+assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
 
 echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/gh-argv"
@@ -578,7 +593,7 @@ STUB_REVIEW_EXIT=3 STUB_GH_ARGV="$WORK/gh-argv" \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-if [ -f "$RUNDIR/review.json" ]; then no "a failed reviewer left review.json behind"
+if [ -f "$RUNDIR/review.txt" ]; then no "a failed reviewer left review.txt behind"
 else ok "the failed reviewer's output was deleted, not left to be misread"; fi
 assert_contains "and the reason is recorded" "$(cat "$RUNDIR/review-stderr.log" 2>/dev/null)" \
     "REVIEW_FAILED"

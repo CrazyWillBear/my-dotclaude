@@ -18,11 +18,10 @@
 # nobody's sandbox, and the verdict never passes through the thing that wrote the code.
 #
 # Usage:
-#   bash review-cmd.sh <tier> <base-sha> <schema-file> <out-file>
+#   bash review-cmd.sh <tier> <base-sha> <out-file>
 #
 #     <base-sha>     what the review diffs against. A SHA, NOT a branch name — see below.
-#     <schema-file>  the JSON Schema the verdict must match (spawn.sh writes it)
-#     <out-file>     where codex writes that final message
+#     <out-file>     where codex writes its final message (the review itself)
 #
 # Output: the argv, ONE ARGUMENT PER LINE, on stdout; nothing on stdout on failure.
 # Exit 0 = a command was printed. Exit 1 = it could not be built, loud on stderr.
@@ -33,17 +32,23 @@
 # passing it dies with "unexpected argument '-C' found". Both callers `cd` into the
 # worktree before running this, which is what scopes the review.
 #
-# NO TRAILING PROMPT. `--base` and `[PROMPT]` are MUTUALLY EXCLUSIVE — "the argument
-# '--base <BRANCH>' cannot be used with '[PROMPT]'". So the machine-readable verdict
-# cannot be requested in prose; it is requested with `--output-schema`, which is the
-# CLI's own mechanism for shaping a final message and the same one the worker is
-# launched with.
-#   ❓ UNVERIFIED, DELIBERATELY FAIL-CLOSED: that codex honours --output-schema on a
-#   REVIEW turn specifically. The account hit its usage limit before this could be
-#   ground-truthed (#96's gate is where it gets proven). If it does NOT honour it, the
-#   out-file will not parse as this schema, worker-report.sh reports no verdict, and the
-#   run is REFUSED — loudly, every time. The failure mode is a run that cannot land, never
-#   a run that lands unreviewed, which is the direction this whole path is built to fail.
+# NO TRAILING PROMPT, AND NO --output-schema. `--base` and `[PROMPT]` are MUTUALLY
+# EXCLUSIVE — "the argument '--base <BRANCH>' cannot be used with '[PROMPT]'" — so the
+# verdict's shape cannot be requested in prose. `--output-schema` was the obvious
+# substitute and it DOES NOT WORK: codex accepts the flag on a review turn and ignores it.
+# Ground-truthed twice — a real run on ops-os issue #28 returned prose where the schema was
+# required, and a direct probe here returned prose again with `--json` showing no
+# structured findings event either (only an `agent_message` carrying the same text).
+# Passing a flag that silently does nothing is worse than not passing it: it reads as a
+# guarantee that is not there.
+#
+# So the REVIEW'S OWN OUTPUT FORMAT is the contract, and it is a stable one — it is codex's
+# review template, not something a prompt asked for. Verified shapes:
+#   findings   `- [P1] <title> — <path>:<lines>` list items, one per finding
+#   clean      ordinary prose, exit 0, no `[Pn]` marker anywhere
+# worker-report.sh counts those markers (P0/P1 high, P2 medium, P3+ low) and REFUSES
+# anything it cannot read that way, so a drift in this format costs a run rather than
+# inventing a clean verdict.
 #
 # A SHA, NOT A BRANCH NAME. The worker can write `refs/` (it is a granted writable root —
 # common-git-dir.sh --roots), so a worker that ran `git branch -f <base> HEAD` would empty
@@ -60,10 +65,9 @@ die() { echo "error: $*" >&2; exit 1; }
 
 TIER="${1:-}"
 BASE_SHA="${2:-}"
-SCHEMA="${3:-}"
-OUTFILE="${4:-}"
-[ -n "$TIER" ] && [ -n "$BASE_SHA" ] && [ -n "$SCHEMA" ] && [ -n "$OUTFILE" ] \
-    || die "usage: review-cmd.sh <tier> <base-sha> <schema-file> <out-file>"
+OUTFILE="${3:-}"
+[ -n "$TIER" ] && [ -n "$BASE_SHA" ] && [ -n "$OUTFILE" ] \
+    || die "usage: review-cmd.sh <tier> <base-sha> <out-file>"
 
 # A branch name here would silently reintroduce the movable-base hole above, and the
 # callers resolve it themselves, so anything that is not a hex object name is a caller bug.
@@ -83,11 +87,12 @@ REVIEWER_BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^reviewer_backend=//p' |
 # worker-authored, injectable content on the host with approval_policy=never. The reviewer
 # writes nothing but its own final message, so read-only costs it nothing. Same `-c`
 # override mechanism worker-resume.sh already relies on for the resumed worker's sandbox.
+# `-o` is how the review is captured. NOT stdout: that carries codex's own banner and
+# progress lines, and the review would have to be fished back out of them.
 set -- codex exec review \
     --base "$BASE_SHA" \
     -c "approval_policy=never" \
     -c "sandbox_mode=read-only" \
-    --output-schema "$SCHEMA" \
     -o "$OUTFILE"
 
 # `-m` only for a CODEX reviewer cell. A claude-backed cell — every row of the SHIPPED

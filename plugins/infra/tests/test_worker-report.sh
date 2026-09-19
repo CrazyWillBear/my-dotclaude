@@ -65,22 +65,30 @@ mkrun() {
     [ $# -lt 5 ] || printf '%s' "$5" >"$d/last-message.txt"
 }
 
-# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output file: the
-# schema'd final message of the sibling `codex exec review` process, never written by the
-# worker. A built/fixed report without one is refused, so almost every fixture below needs
-# it — that refusal IS the fix for the self-review substitution #96's gate caught.
+# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output: the final
+# message of the sibling `codex exec review` process, never written by the worker. A
+# built/fixed report without one is refused, so almost every fixture below needs it — that
+# refusal IS the fix for the self-review substitution #96's gate caught.
+#
+# The content is codex's real review format — `- [Pn] title — path:lines` list items —
+# because that format cannot be requested (--base forbids a prompt, --output-schema is
+# ignored on a review turn) and is therefore what the parser must read. P1 -> high,
+# P2 -> medium, P3 -> low.
 mkreview() {
-    local d="$CODEX_ROOT/$1/issue-$2"
+    local d="$CODEX_ROOT/$1/issue-$2" i
     mkdir -p "$d"
-    printf '{"high":%s,"medium":%s,"low":%s,"findings":"src/f.py:1 - a finding"}\n' \
-        "$3" "$4" "$5" >"$d/review.json"
+    : >"$d/review.txt"
+    i=0; while [ "$i" -lt "$3" ]; do printf -- '- [P1] a high — a.py:1\n' >>"$d/review.txt"; i=$((i+1)); done
+    i=0; while [ "$i" -lt "$4" ]; do printf -- '- [P2] a medium — b.py:2\n' >>"$d/review.txt"; i=$((i+1)); done
+    i=0; while [ "$i" -lt "$5" ]; do printf -- '- [P3] a low — c.py:3\n' >>"$d/review.txt"; i=$((i+1)); done
+    [ -s "$d/review.txt" ] || printf 'No issues found in this diff.\n' >"$d/review.txt"
 }
 
 # mkreview_raw <runid> <issue> <literal> — for the shapes that must be REFUSED.
 mkreview_raw() {
     local d="$CODEX_ROOT/$1/issue-$2"
     mkdir -p "$d"
-    printf '%s\n' "$3" >"$d/review.json"
+    printf '%s\n' "$3" >"$d/review.txt"
 }
 
 run() {   # run <args...> -> OUT/ERR/RC
@@ -146,7 +154,7 @@ printf '%s\n' "$LIVE_PID" >"$LIVEDIR/pid"
     sleep 3
     printf '%s' '{"issue":50,"status":"built","round":0,"head":"7e1a9f0","review":"","note":""}' \
         >"$LIVEDIR/last-message.txt"
-    printf '{"high":0,"medium":0,"low":0,"findings":"none"}\n' >"$LIVEDIR/review.json"
+    printf 'No issues found.\n' >"$LIVEDIR/review.txt"
     kill "$LIVE_PID" 2>/dev/null
     printf '0\n' >"$LIVEDIR/exit"
 ) &
@@ -205,7 +213,7 @@ FAST_PID="$(cat "$CODEX_ROOT/r7/issue-101/pid")"
     sleep 3
     printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"","note":""}' \
         >"$CODEX_ROOT/r7/issue-101/last-message.txt"
-    printf '{"high":0,"medium":0,"low":0,"findings":"none"}\n' >"$CODEX_ROOT/r7/issue-101/review.json"
+    printf 'No issues found.\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
     kill "$FAST_PID" 2>/dev/null
     printf '0\n' >"$CODEX_ROOT/r7/issue-101/exit"
 ) &
@@ -311,24 +319,22 @@ assert_empty "nothing on stdout the lane could merge on" "$OUT"
 assert_contains "says no independent review was recorded" "$ERR" "no independent review"
 assert_not_contains "and never emits the worker's own count" "$OUT" "0 high, 0 medium, 0 low"
 
-echo "test: a review.json that is NOT the schema is refused — prose is not a verdict"
-# The reviewer ran and wrote something, but not the shape it was asked for. This is also
-# exactly what it would look like if codex did not honour --output-schema on a review turn
-# (review-cmd.sh marks that unverified): refused, never scraped for a number.
+echo "test: a review whose FORMAT DRIFTED is refused, not counted as clean"
+# The reviewer ran and wrote something, but nothing this parser recognises as a finding
+# list while still mentioning a severity. Counting that as zero is the invented-fact
+# failure: it would send a branch nobody could read a verdict on to the merge queue.
 mkrun r3 69 "$(dead)" 0 \
   '{"issue":69,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
-mkreview_raw r3 69 "Looks good overall. I found nothing serious in this diff."
+mkreview_raw r3 69 "I rated the one issue I found as [P1] severity, described below."
 run r3 69 --interval 1 --timeout 20
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "says no review was recorded" "$ERR" "no independent review"
 
-echo "test: a review.json MISSING a severity key is refused, not read as zero"
-# A partial object is the shape a truncated or half-honoured schema produces. Treating a
-# missing "high" as 0 would be the invented-fact failure wearing a JSON hat.
+echo "test: an EMPTY review file is refused — the reviewer produced no verdict"
 mkrun r3 72 "$(dead)" 0 \
   '{"issue":72,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
-mkreview_raw r3 72 '{"medium":0,"low":0,"findings":"x"}'
+mkreview_raw r3 72 ""
 run r3 72 --interval 1 --timeout 20
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
@@ -345,17 +351,18 @@ run r3 73 --interval 1 --timeout 20
 assert_equals "exit 1" "$RC" "1"
 assert_contains "carries the reviewer's reason" "$ERR" "unexpected argument"
 
-echo "test: the verdict is read from the SCHEMA's fields, not from the findings prose"
-# The findings text is model-written and can say anything — including a count that
-# contradicts the structured fields. Only the integers decide, so prose that mentions
-# "0 high" cannot talk a real finding out of the report.
+echo "test: the verdict counts MARKERS, not the reviewer's own prose summary"
+# The summary paragraph is model-written and can say anything, including a count that
+# contradicts the findings it then lists. Only the `- [Pn]` items decide, so a cheerful
+# sentence cannot talk a real finding out of the report.
 mkrun r3 70 "$(dead)" 0 \
   '{"issue":70,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
-mkreview_raw r3 70 '{"high":1,"medium":0,"low":0,"findings":"Overall this looks clean: 0 high, 0 medium, 0 low by my count.\nsrc/a.py:12 - high - unchecked index"}'
+mkreview_raw r3 70 "Overall this looks clean, with 0 high and 0 medium by my own count.
+
+- [P1] unchecked index — src/a.py:12"
 run r3 70 --interval 1 --timeout 20
 assert_equals "exit 0" "$RC" "0"
-assert_contains "took the structured verdict" "$OUT" "review=1 high, 0 medium, 0 low"
-assert_not_contains "not the prose's contradicting count" "$OUT" "0 high, 0 medium, 0 low"
+assert_contains "counted the marker" "$OUT" "review=1 high, 0 medium, 0 low"
 
 echo "test: a head that is not a sha is refused, so it cannot smuggle a second review="
 # head and review are worker-controlled and land in a SPACE-DELIMITED line the orchestrator

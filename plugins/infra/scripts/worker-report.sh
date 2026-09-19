@@ -144,12 +144,14 @@ RUNDIR="$CODEX_ROOT/issue-$ISSUE"
 
 # Terminal. The report is the schema'd final message; on a crash there may be none, and
 # then stderr.log is the only place the reason lands (README § Two backends).
-REPORT_ISSUE="$ISSUE" REPORT_STATE="$STATE" REPORT_DIR="$RUNDIR" python3 <<"PY"
-import json, os, re, sys
+REPORT_ISSUE="$ISSUE" REPORT_STATE="$STATE" REPORT_DIR="$RUNDIR" REPORT_INFRA="$INFRA" \
+    python3 <<"PY"
+import json, os, re, subprocess, sys
 
 issue = int(os.environ["REPORT_ISSUE"])
 state = os.environ["REPORT_STATE"]
 rundir = os.environ["REPORT_DIR"]
+infra = os.environ["REPORT_INFRA"]
 
 def flat(s):
     # The orchestrator parses ONE line. A note carrying a traceback would otherwise
@@ -166,8 +168,8 @@ def read(name):
 raw = read("last-message.txt")
 
 def independent_review():
-    # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.json is the
-    # schema'd final message of the sibling `codex exec review` process that
+    # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.txt is the
+    # final message of the sibling `codex exec review` process that
     # spawn.sh/worker-resume.sh run AFTER the worker exits; the worker cannot write it and
     # is told to report an empty `review`.
     #
@@ -177,18 +179,20 @@ def independent_review():
     # review that had never run. Taking the counts from the reviewer's own output makes
     # that substitution impossible rather than merely discouraged.
     #
-    # Anything that is not this exact shape returns "" and the run is REFUSED. That
-    # deliberately includes the case where codex turns out not to honour --output-schema on
-    # a review turn (review-cmd.sh § UNVERIFIED): the run cannot land, which is the safe
-    # direction, rather than landing on a verdict nobody produced.
-    raw_review = read("review.json")
-    if not raw_review:
+    # The counting lives in review-counts.sh, not here: spawn.sh's wrapper and
+    # worker-resume.sh put the SAME counts in the "Review round" comment's heading, and a
+    # private second implementation here is how the issue thread and the merge queue would
+    # end up disagreeing about what the review found. That script also owns the rule that
+    # an UNREADABLE review is refused rather than counted as clean.
+    path = os.path.join(rundir, "review.txt")
+    if not os.path.exists(path):
         return ""
     try:
-        v = json.loads(raw_review)
-        return "%d high, %d medium, %d low" % (int(v["high"]), int(v["medium"]), int(v["low"]))
-    except (ValueError, TypeError, KeyError):
+        out = subprocess.run(["bash", os.path.join(infra, "review-counts.sh"), path],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
         return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
 
 if not raw:
     # No report at all. If codex exited non-zero this is the expected shape of a crash,
@@ -266,7 +270,7 @@ if status in ("built", "fixed"):
         why = flat(read("review-stderr.log")[-300:]) if read("review-stderr.log") else \
             "no reviewer output recorded"
         print("error: issue %d reported %s but no independent review was recorded in "
-              "review.json — a review that did not run is not a clean one: %s"
+              "review.txt — a review that did not run is not a clean one: %s"
               % (issue, status, why), file=sys.stderr)
         sys.exit(1)
     if status == "fixed":
