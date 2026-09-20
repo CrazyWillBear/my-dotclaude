@@ -190,9 +190,16 @@ EOF
 # as this turn's verdict on code the resumed worker has since changed. review-stderr.log
 # with it — the missing-review error quotes its tail, and a stale one would explain this
 # turn's refusal with the last one's reason.
-rm -rf "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
-      "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log" \
-      "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
+#
+# review-checkout and review-scratch are deliberately NOT cleared here. They are inputs the
+# CLONE and the sandbox grant TRUST, not just files the reviewer overwrites — `mkdir -p`
+# over an existing symlink-to-directory no-ops instead of failing, and `git clone` into one
+# writes through it. Clearing them here, before the worker about to run, would leave the
+# window between here and the clone below open for THAT SAME WORKER to plant one — the
+# non-default-CODEX_RUN_ROOT threat model spawn.sh's own pre-clone cleanup already names.
+# They are cleared AFTER the worker exits instead (below), mirroring spawn.sh's wrapper.
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
+      "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
@@ -201,6 +208,12 @@ rm -rf "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
 # script. </dev/null because codex blocks forever on an open stdin.
 ( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
+# Anything the worker just resumed may have left at review-checkout/review-scratch is gone
+# BEFORE the clone below trusts either path (#99) — same placement and reasoning as
+# spawn.sh's wrapper: a worker able to reach the run dir (a non-default CODEX_RUN_ROOT) and
+# left a symlink there would otherwise have `mkdir -p`/`git clone` follow it, handing the
+# reviewer's sandbox grant and TMPDIR to a directory the worker chose, not this script.
+rm -rf "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
 
 # THE INDEPENDENT REVIEWER, exactly as spawn.sh runs it and from the same builder — a
 # resumed worker's branch is as unreviewed as a freshly built one, and worker-report.sh

@@ -186,6 +186,12 @@ if [ "${2:-}" = review ]; then
 fi
 pwd >"$STUB_CWD"
 printf '%s\n' "$@" >"$STUB_ARGV"
+# Stands in for a worker that reached the run dir (#99's non-default-CODEX_RUN_ROOT threat
+# model) and planted a symlink at review-checkout BEFORE the resume's own cleanup runs.
+if [ -n "${STUB_PLANT_SYMLINK_AT:-}" ]; then
+    mkdir -p "$(dirname "$STUB_PLANT_SYMLINK_AT")"
+    ln -sfn "${STUB_PLANT_SYMLINK_TARGET:?}" "$STUB_PLANT_SYMLINK_AT"
+fi
 out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
@@ -343,6 +349,36 @@ assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
+
+echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
+# THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER
+# the worker's turn, not before it — clearing before leaves the window between "before the
+# worker runs" and "the clone trusts the path" wide open for that SAME worker (a
+# non-default CODEX_RUN_ROOT reaching the run dir) to plant a symlink there. `mkdir -p`
+# over a symlink-to-directory no-ops instead of failing, and `git clone` into one writes
+# through it, so an unneutralised plant would hand the reviewer's sandbox grant and TMPDIR
+# to a directory the WORKER chose.
+rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
+SENTINEL="$WORK/sentinel-91"; rm -rf "$SENTINEL"; mkdir -p "$SENTINEL"
+mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":91,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    STUB_PLANT_SYMLINK_AT="$CODEX_ROOT/r1/issue-91/review-checkout" \
+    STUB_PLANT_SYMLINK_TARGET="$SENTINEL" \
+    STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
+    run r1 91 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0 — the plant did not wedge the resume" "$RC" "0"
+assert_contains "the review still ran for real, against the real clone" "$OUT" \
+    "issue 91 built"
+# The decisive check: nothing landed in the attacker's sentinel directory. A dereferenced
+# plant would have `git clone` write the checkout's files straight into it.
+if [ -z "$(ls -A "$SENTINEL" 2>/dev/null)" ]; then
+    ok "the sentinel directory the plant pointed at stayed empty"
+else
+    no "the clone wrote through the planted symlink into the sentinel directory"
+fi
+RUNDIR91="$CODEX_ROOT/r1/issue-91"
+assert_equals "TMPDIR still resolved to the legitimate scratch root, not the plant" \
+    "$(cat "$WORK/review-tmpdir" 2>/dev/null)" "$RUNDIR91/review-scratch"
 
 echo "test: a FAILED review leaves no verdict behind — the run fails CLOSED"
 # The sharp one. A reviewer that dies must not leave a half-written review.txt: a COUNTS
