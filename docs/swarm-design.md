@@ -352,8 +352,9 @@ one-shot, so it maps onto `codex exec`:
   (#99) — where pytest cannot even open a temp file — while a `terra`-tier reviewer given the
   identical diff and the identical inability to run anything made no such claim: a model
   substituting its own confidence for a check it did not perform. Three candidate levers were
-  ground-truthed with real `gpt-5.6-sol` review runs against codex-cli 0.155.1 (2026-09-20)
-  looking for a way to instruct it otherwise:
+  ground-truthed with real `gpt-5.6-sol` review runs against codex-cli 0.155.1 (2026-09-20,
+  a later point release than the 0.155.0 ground-truthing above) looking for a way to
+  instruct it otherwise:
   - the trailing `[PROMPT]` — blocked outright by the CLI itself (above);
   - `-c instructions="…"` and `-c developer_instructions="…"` — both pass `--strict-config`
     (codex recognizes the field) but a real review run with either set never mentioned the
