@@ -22,8 +22,12 @@
 #   * down stops each live peer BY ID and never by name; it never touches the orchestrator
 #   * rotate waits for idle, RE-CHECKS idle, stops that id and respawns with --handoff;
 #     it refuses a blocked peer, a non-peer row and a bad handoff path, and in every
-#     refusal it stops nothing; a peer that is already dead is respawned on the handoff
-#     rather than refused (docs/swarm-design.md § Rotation)
+#     refusal it stops nothing; a peer reported gone is respawned on the handoff rather
+#     than refused (docs/swarm-design.md § Rotation)
+#   * rotate never takes a stopped/done label at face value (#101): it attempts a real
+#     `claude stop` and re-reads state before respawning over it — a confirmed-dead
+#     re-read respawns, a re-read that is still live (the label lied) refuses instead
+#     of spawning a duplicate, and a lie the stop itself corrects respawns once cleared
 #   * attach resolves the role name to an id and execs `claude attach <id>`
 #   * every failure path is loud: no roster, no orchestrator row, no infra link,
 #     an unknown role, a role that is not running
@@ -467,22 +471,64 @@ assert_not_contains "never up — it would exec the orchestrator and drop the ha
     "$ERR" "swarm.sh up"
 assert_contains "the handoff is still named" "$ERR" "$HANDOFF"
 
-echo "test: a peer that is already dead is respawned ON the handoff, not refused"
-for dead in stopped done; do
-    reset_calls
-    agents "[$(printf "$LIVE" "$dead")]"
-    run rotate swe-manager "$HANDOFF" "$PROJECT"
-    assert_equals "$dead: exit 0" "$RC" "0"
-    assert_equals "$dead: nothing stopped, just the respawn" "$(ncalls)" "1"
-    assert_contains "$dead: and it carries the handoff" "$(call 0)" "$HANDOFF"
-    assert_contains "$dead: says it was not running" "$OUT" "not running"
-done
+echo "test: a peer reported gone is respawned with no stop at all"
 reset_calls
 agents '[]'
 run rotate swe-manager "$HANDOFF" "$PROJECT"
 assert_equals "gone: exit 0" "$RC" "0"
 assert_equals "gone: nothing stopped, just the respawn" "$(ncalls)" "1"
 assert_contains "gone: and it carries the handoff" "$(call 0)" "$HANDOFF"
+
+# #101: a real gate run had session-status.sh report a genuinely idle peer as `done`,
+# and the old "stopped/done/gone -> respawn with no stop" branch put a duplicate
+# session right alongside the live one. `stopped`/`done` must now cost an actual
+# `claude stop` attempt plus a fresh re-read before the name is reused — not just be
+# taken on its word a second time.
+echo "test: stopped/done is confirmed by an actual stop attempt before respawn, not just relabeled"
+for dead in stopped done; do
+    reset_calls
+    # A real "No job matching …" — the common case, where the peer really was
+    # already dead — so the confirming re-read lands on the SAME fixture.
+    agents "[$(printf "$LIVE" "$dead")]"
+    export STUB_STOP_FAIL=1
+    run rotate swe-manager "$HANDOFF" "$PROJECT"
+    unset STUB_STOP_FAIL
+    assert_equals "$dead: exit 0" "$RC" "0"
+    assert_equals "$dead: a confirming stop attempt, then the respawn" "$(ncalls)" "2"
+    assert_contains "$dead: the confirming stop named the real id" "$(call 0)" "p111"
+    assert_contains "$dead: THEN the respawn, carrying the handoff" "$(call 1)" "$HANDOFF"
+    assert_contains "$dead: says it confirmed the state" "$OUT" "confirmed"
+done
+
+echo "test: a done/stopped label that lied is caught — stop actually lands something, then a fresh read confirms it is clear, and respawn proceeds"
+reset_calls
+agents_seq "[$(printf "$LIVE" done)]" "[$(printf "$LIVE" stopped)]"
+run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exit 0 — corrected, not refused" "$RC" "0"
+assert_equals "the stop attempt, then the respawn" "$(ncalls)" "2"
+assert_contains "stopped the id the lying label named" "$(call 0)" "p111"
+assert_not_contains "the stop was never STUB'd to fail" "$ERR" "No job matching"
+assert_contains "respawned once the re-read confirmed it clear" "$(call 1)" "$HANDOFF"
+
+echo "test: a done/stopped label that is STILL wrong after the stop attempt refuses, never spawning a duplicate"
+reset_calls
+agents_seq "[$(printf "$LIVE" done)]" "[$(printf "$LIVE" busy)]"
+run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1 — refuses rather than guesses" "$RC" "1"
+assert_equals "only the confirming stop attempt, NEVER a second spawn" "$(ncalls)" "1"
+assert_not_contains "no duplicate session was spawned" "$(cat "$CALLS"/* 2>/dev/null)" "--bg"
+assert_contains "names the role" "$ERR" "swe-manager"
+assert_contains "says the label could not be trusted either way" "$ERR" "cannot be trusted"
+assert_contains "nothing was respawned" "$ERR" "Nothing was respawned"
+
+echo "test: a stopped/done peer with no id has nothing to confirm against, and refuses"
+reset_calls
+agents '[{ "cwd": "'"$PROJECT"'", "kind": "background", "name": "swe-manager", "state": "done" }]'
+run rotate swe-manager "$HANDOFF" "$PROJECT"
+assert_equals "exits 1" "$RC" "1"
+assert_equals "stops nothing and spawns nothing" "$(ncalls)" "0"
+assert_contains "names the role" "$ERR" "swe-manager"
+assert_contains "says there is nothing to confirm against" "$ERR" "nothing to confirm"
 
 echo "test: rotate refuses any row that is not a peer"
 reset_calls
