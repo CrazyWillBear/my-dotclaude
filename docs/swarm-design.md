@@ -387,6 +387,10 @@ messages sent to the name. The name is the stable address; the process is dispos
   `/handoff`, then tell the orchestrator you are ready with the doc path.* The peer picks the
   moment. This reintroduces a nudge that was once deleted for interrupting long runs; the
   difference is that this one says "next natural stopping point" and the model chooses.
+- **Resume grace (#102).** A rotated peer's transcript starts brand new (`rotate` stops the
+  old process and spawns a fresh one onto the handoff), so turn 1 alone — reading the handoff
+  plus the resume preamble — can already read as past `rotate_at`. The watchdog stays silent
+  on turn 1 and evaluates normally from turn 2.
 - **Rotation is `swarm.sh rotate <role> <handoff-path>`.** Wait for idle, refuse if blocked,
   stop by id, respawn via infra spawn with the handoff prepended. No pending pointer is used,
   which removes the per-repo `.pending.json` collision peers keep hitting.

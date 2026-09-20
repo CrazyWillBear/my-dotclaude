@@ -18,9 +18,11 @@
 #   * Peer rotation nudge — the ONE exception to that silence, and it is scoped:
 #     only a session whose transcript names it (`{"type":"agent-name"}`, which is
 #     what `claude -n` writes) as a `manager`/`doer` row in this project's
-#     roster.json, only past THAT row's rotate_at. The orchestrator row, a worker
-#     row, a name absent from the roster, and an unnamed session are all silent
-#     (docs/swarm-design.md § Rotation).
+#     roster.json, only past THAT row's rotate_at, and only past its first turn (a
+#     freshly-rotated peer's transcript starts brand new, so turn 1 can already be
+#     past rotate_at from resume overhead alone — #102). The orchestrator row, a
+#     worker row, a name absent from the roster, and an unnamed session are all
+#     silent (docs/swarm-design.md § Rotation).
 #   * Only UserPromptSubmit is handled — PostToolUse and Stop are silent.
 #   * Fail-open: a missing transcript stays silent.
 #
@@ -71,24 +73,27 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; 
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected silence, got: $2)"; fi; }
 
-# make_transcript <file> <total> [name] — a transcript whose LAST assistant entry sums
-# to <total> input-side tokens (an earlier, smaller entry proves we take the last).
+# make_transcript <file> <total> [name] [lead] — a transcript whose LAST assistant
+# entry sums to <total> input-side tokens. [lead] (default 1) is the number of
+# earlier, smaller dummy assistant entries before it — 1 proves we take the LAST
+# entry, not the first; 0 makes the total entry the transcript's ONLY turn, which is
+# what a just-rotated peer's brand-new transcript looks like (see the rotate_at
+# grace-turn tests below).
 #
 # [name] adds the `agent-name` rows `claude -n` writes. A session RENAMED mid-run has
 # two of them (seen live: a peer renamed from performance-engineer-cogito), so a stale
 # first row is included to pin that the LAST one wins. No [name] is an ordinary session
 # started without -n: no such row at all.
 make_transcript() {
-    python3 - "$1" "$2" "${3:-}" <<'PY'
+    python3 - "$1" "$2" "${3:-}" "${4:-1}" <<'PY'
 import sys, json
-path, total, name = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-rows = [
-    {"type": "user", "message": {"role": "user", "content": "hi"}},
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1}}},
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
-]
+path, total, name, lead = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+rows = [{"type": "user", "message": {"role": "user", "content": "hi"}}]
+for _ in range(lead):
+    rows.append({"type": "assistant", "message": {"role": "assistant", "usage": {
+        "input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1}}})
+rows.append({"type": "assistant", "message": {"role": "assistant", "usage": {
+    "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}})
 if name:
     rows.insert(0, {"type": "agent-name", "agentName": "a-stale-former-name", "sessionId": "s"})
     rows.insert(2, {"type": "agent-name", "agentName": name, "sessionId": "s"})
@@ -216,6 +221,19 @@ assert_contains "to the roster's orchestrator, by name" "$out" "orchestrator"
 assert_contains "and hand over the doc path" "$out" "path"
 assert_contains "names the role whose row was read" "$out" "swe-manager"
 assert_contains "shows a user-facing systemMessage" "$out" "swarm:"
+
+# #102: `swarm.sh rotate` stops the old process and spawns a brand-new one onto the
+# handoff doc, so the successor's transcript starts empty — turn 1 can already be past
+# rotate_at from resume overhead alone (reading the handoff + the resume preamble),
+# before any real work happens. The guard is one turn's grace.
+echo "test: a freshly-resumed session past rotate_at on turn 1 alone is not nudged"
+make_transcript "$WORK/resumed-t1.jsonl" 310000 swe-manager 0
+assert_empty "past rotate_at on the very first turn: silent (resume overhead, not work)" \
+    "$(run_peer "$WORK/resumed-t1.jsonl")"
+
+echo "test: the same session nudges once it reaches a second turn"
+assert_contains "past rotate_at on turn 2 (mgr-over.jsonl, 2 turns): nudged" \
+    "$(run_peer "$WORK/mgr-over.jsonl")" "/handoff"
 
 # A hook that prints two JSON objects prints invalid JSON, and the whole advisory is
 # dropped — so this has to be exactly one document, never the gate's plus the nudge's.

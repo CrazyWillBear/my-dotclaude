@@ -20,6 +20,14 @@
 # stopping point run /handoff, then tell the orchestrator you are ready with the doc
 # path. The peer picks the moment; nothing rotates itself.
 #
+# GRACE TURN (#102): `swarm.sh rotate` stops the old process and spawns a brand-new
+# one onto the handoff doc, so the successor's transcript starts empty — turn 1 can
+# already be past rotate_at from resume overhead alone (reading the handoff plus the
+# resume preamble), before it has done a stitch of real work. The nudge stays silent
+# on turn 1 and evaluates normally from turn 2, using the transcript's own assistant-
+# entry count — no new state to track, since a rotated peer's transcript IS its
+# turns-since-resume.
+#
 # This is deliberately NOT the periodic nudge that was deleted (see the note at the
 # bottom). That one fired in any session at a fixed occupancy and interrupted long
 # autonomous runs. This one is gated three ways: the session's own name must be a
@@ -93,6 +101,10 @@ PLANGATE = _int_env("WORKFLOW_PLANGATE_TOKENS", 60000)
 # (docs/swarm-design.md § Plugin split), so one int is cheaper than a cross-plugin
 # path. ponytail: the comment is the only link between the two — move them together.
 ROTATE_AT_DEFAULT = 300000
+# #102: a peer's transcript is brand new right after rotate, so turn 1 alone can
+# already read as past rotate_at. Grace of 1 means "silent on turn 1, normal from
+# turn 2" — see the GRACE TURN note above.
+ROTATE_GRACE_TURNS = 1
 PEER_KINDS = ("manager", "doer")
 
 event      = data.get("hook_event_name", "")
@@ -105,12 +117,17 @@ if event != "UserPromptSubmit":
 
 
 def transcript_state(path):
-    # One pass, two answers: the LAST assistant entry's input-side usage = current
-    # occupancy, and the LAST agent-name row = this session's own name (or None).
+    # One pass, three answers: the LAST assistant entry's input-side usage = current
+    # occupancy, the LAST agent-name row = this session's own name (or None), and the
+    # COUNT of assistant entries = turns taken so far in THIS transcript. A rotated
+    # peer's transcript is a brand-new file (swarm.sh rotate stops the old process and
+    # spawns a fresh one onto the handoff), so that count is turns-since-resume with
+    # nothing extra to track (#102).
     if not path or not os.path.isfile(path):
-        return None, None
+        return None, None, 0
     last = None
     name = None
+    turns = 0
     try:
         with open(path, "r", errors="ignore") as fh:
             for line in fh:
@@ -126,6 +143,7 @@ def transcript_state(path):
                     continue
                 if entry.get("type") != "assistant":
                     continue
+                turns += 1
                 msg = entry.get("message")
                 if not isinstance(msg, dict):
                     continue
@@ -133,15 +151,15 @@ def transcript_state(path):
                 if isinstance(usage, dict):
                     last = usage
     except Exception:
-        return None, None
+        return None, None, 0
     if not isinstance(last, dict):
-        return None, name
+        return None, name, turns
     try:
         return (int(last.get("input_tokens", 0) or 0)
                 + int(last.get("cache_read_input_tokens", 0) or 0)
-                + int(last.get("cache_creation_input_tokens", 0) or 0)), name
+                + int(last.get("cache_creation_input_tokens", 0) or 0)), name, turns
     except Exception:
-        return None, name
+        return None, name, turns
 
 
 def emit(system_message, context):
@@ -155,7 +173,7 @@ def emit(system_message, context):
     sys.exit(0)
 
 
-size, me = transcript_state(transcript)
+size, me, turns = transcript_state(transcript)
 
 # --- 1. the orchestrate gate -----------------------------------------------
 # Requires a leading slash + word boundary: "please orchestrate" does NOT match,
@@ -204,6 +222,11 @@ if not isinstance(row, dict) or row.get("kind") not in PEER_KINDS:
 
 limit = rotate_at(row)
 if size < limit:
+    sys.exit(0)
+
+# #102: a peer this fresh (turn 1, right after `swarm.sh rotate` spawned it onto the
+# handoff) can be past rotate_at from resume overhead alone. Give it one turn's grace.
+if turns <= ROTATE_GRACE_TURNS:
     sys.exit(0)
 
 orch = next((name for name, row in roster.items()
