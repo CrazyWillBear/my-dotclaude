@@ -126,6 +126,28 @@ State comes from `session-status.sh` rather than a second copy of the pid/exit r
 subtleties (mid-launch is `busy`; a dead pid with no exit file is `failed`, never a quiet `done`)
 are exactly the half that would silently rot in a private reimplementation.
 
+### `review-tokens.sh` — the reviewer's real token cost
+
+`codex exec review --json`'s own `turn.completed` event reports an ALL-ZERO usage block —
+ground-truthed on two independent runs (#98). The review itself runs as a `subagent` thread
+forked from the reviewer's own top-level thread, and THAT subagent is what accumulates real
+`token_usage_record` entries, in its own rollout file under `~/.codex/sessions`. No `--json`
+needed: every `codex exec` invocation prints `session id: <uuid>` in its plain banner, already
+captured, unconditionally, in `review-stderr.log` — that uuid is the reviewer's own thread id,
+and it joins to the subagent's rollout by `session_id` (the subagent's own `id` differs, which
+is what tells it apart from the reviewer's own rollout).
+
+```bash
+bash ~/.claude/kit/infra/scripts/review-tokens.sh <review-stderr-log>
+```
+
+Prints the subagent's LAST `token_usage_record`'s `turn_token_usage` as one line of compact
+JSON, or refuses (exit 1, nothing on stdout) if the banner or the join is missing — the same
+discipline `review-counts.sh` uses: cost visibility is not a merge gate, but an invented number
+is still an invented number. `worker-report.sh` calls it best-effort and prints the result to
+**stderr only**, right after the independent review is confirmed present — the one-line stdout
+contract the orchestrator parses never changes.
+
 ### Escalation on a codex worker
 
 A codex worker has no inbox, so it cannot be relayed to or attached to — but **its context is not
