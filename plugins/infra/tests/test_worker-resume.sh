@@ -166,6 +166,11 @@ cat >"$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
 if [ "${2:-}" = review ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
+    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
+    # was granted.
+    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
     # The real reviewer writes its schema'd final message to -o, like any codex turn.
     rout=""
     for a in "$@"; do
@@ -289,12 +294,13 @@ assert_contains "names it" "$ERR" "unknown flag"
 # reviewing itself (#96). These assert the replacement: a sibling reviewer, its verdict
 # taken from its own output, and a run that cannot land when it did not run.
 echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own review"
-rm -f "$WORK/review-argv" "$WORK/gh-argv"
+rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     STUB_REVIEW_TEXT='- [P1] a finding — src/f:1
 - [P1] another — src/g:2
 - [P3] a nit — src/h:3' \
+    STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     run r1 86 standard "$REPO" --answer "x" --base base --round 4
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
@@ -310,6 +316,20 @@ assert_contains "at the tier's REVIEWER model, not the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-sol"
 assert_not_contains "never the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
+# THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree —
+# a disposable clone instead — with TMPDIR pointed at the one scratch root the sandbox
+# actually granted.
+RUNDIR86="$CODEX_ROOT/r1/issue-86"
+assert_equals "the review ran in the disposable checkout" \
+    "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR86/review-checkout"
+assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"
+assert_equals "TMPDIR matches the ONE root the sandbox actually granted" \
+    "$(cat "$WORK/review-tmpdir" 2>/dev/null)" "$RUNDIR86/review-scratch"
+if [ -e "$RUNDIR86/review-checkout" ] || [ -e "$RUNDIR86/review-scratch" ]; then
+    no "the disposable checkout or scratch dir survived the review"
+else
+    ok "the disposable checkout and scratch dir are cleaned up after the review"
+fi
 
 echo "test: the reviewer's findings are posted as the round's issue comment"
 assert_contains "gh issue comment was called" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
