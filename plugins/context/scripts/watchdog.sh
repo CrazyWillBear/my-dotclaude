@@ -21,12 +21,14 @@
 # path. The peer picks the moment; nothing rotates itself.
 #
 # GRACE TURN (#102): `swarm.sh rotate` stops the old process and spawns a brand-new
-# one onto the handoff doc, so the successor's transcript starts empty — turn 1 can
-# already be past rotate_at from resume overhead alone (reading the handoff plus the
-# resume preamble), before it has done a stitch of real work. The nudge stays silent
-# on turn 1 and evaluates normally from turn 2, using the transcript's own assistant-
-# entry count — no new state to track, since a rotated peer's transcript IS its
-# turns-since-resume.
+# one onto the handoff doc, so the successor's transcript starts empty — its first
+# real turn (reading the handoff plus the resume preamble, however many tool calls
+# that takes) can already be past rotate_at before it has done a stitch of work
+# beyond resuming. The nudge stays silent through that first real turn and evaluates
+# normally from the second one, counting REAL USER PROMPTS in the transcript, not
+# raw assistant entries — a single turn can cost many of those, one per tool call,
+# so counting them undercounts what "one turn" means. No new state to track: a
+# rotated peer's transcript already IS its turns-since-resume.
 #
 # This is deliberately NOT the periodic nudge that was deleted (see the note at the
 # bottom). That one fired in any session at a fixed occupancy and interrupted long
@@ -101,9 +103,9 @@ PLANGATE = _int_env("WORKFLOW_PLANGATE_TOKENS", 60000)
 # (docs/swarm-design.md § Plugin split), so one int is cheaper than a cross-plugin
 # path. ponytail: the comment is the only link between the two — move them together.
 ROTATE_AT_DEFAULT = 300000
-# #102: a peer's transcript is brand new right after rotate, so turn 1 alone can
-# already read as past rotate_at. Grace of 1 means "silent on turn 1, normal from
-# turn 2" — see the GRACE TURN note above.
+# #102: a peer's transcript is brand new right after rotate, so its first real turn
+# alone can already read as past rotate_at. Grace of 1 means "silent while at most 1
+# real turn has completed, normal from the 2nd" — see the GRACE TURN note above.
 ROTATE_GRACE_TURNS = 1
 PEER_KINDS = ("manager", "doer")
 
@@ -116,13 +118,30 @@ if event != "UserPromptSubmit":
     sys.exit(0)
 
 
+def _real_prompt(msg):
+    # A tool_result is delivered back to the model as a `type: "user"` entry too (the
+    # API's own shape for a tool call's reply) — that is not a prompt anyone
+    # submitted, and a single real turn can cost several of them (one per tool call).
+    # Only content carrying actual text is a real, human/orchestrator-submitted turn.
+    if not isinstance(msg, dict):
+        return False
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(isinstance(b, dict) and b.get("type") == "text"
+                   and str(b.get("text", "")).strip() for b in content)
+    return False
+
+
 def transcript_state(path):
     # One pass, three answers: the LAST assistant entry's input-side usage = current
-    # occupancy, the LAST agent-name row = this session's own name (or None), and the
-    # COUNT of assistant entries = turns taken so far in THIS transcript. A rotated
-    # peer's transcript is a brand-new file (swarm.sh rotate stops the old process and
-    # spawns a fresh one onto the handoff), so that count is turns-since-resume with
-    # nothing extra to track (#102).
+    # occupancy; the LAST agent-name row = this session's own name (or None); and the
+    # COUNT of REAL prompts (turns) seen so far in THIS transcript — not raw
+    # assistant-entry count, which one turn can inflate by many (one per tool call:
+    # #102 review). A rotated peer's transcript is a brand-new file (swarm.sh rotate
+    # stops the old process and spawns a fresh one onto the handoff), so that count is
+    # real turns since resume with nothing extra to track.
     if not path or not os.path.isfile(path):
         return None, None, 0
     last = None
@@ -138,12 +157,16 @@ def transcript_state(path):
                     entry = json.loads(line)
                 except Exception:
                     continue
-                if entry.get("type") == "agent-name":
+                etype = entry.get("type")
+                if etype == "agent-name":
                     name = entry.get("agentName") or name
                     continue
-                if entry.get("type") != "assistant":
+                if etype == "user":
+                    if _real_prompt(entry.get("message")):
+                        turns += 1
                     continue
-                turns += 1
+                if etype != "assistant":
+                    continue
                 msg = entry.get("message")
                 if not isinstance(msg, dict):
                     continue
@@ -224,8 +247,9 @@ limit = rotate_at(row)
 if size < limit:
     sys.exit(0)
 
-# #102: a peer this fresh (turn 1, right after `swarm.sh rotate` spawned it onto the
-# handoff) can be past rotate_at from resume overhead alone. Give it one turn's grace.
+# #102: a peer this fresh (only its first real turn done, right after `swarm.sh
+# rotate` spawned it onto the handoff) can be past rotate_at from resume overhead
+# alone, however many tool calls that turn took. Give it one real turn's grace.
 if turns <= ROTATE_GRACE_TURNS:
     sys.exit(0)
 
