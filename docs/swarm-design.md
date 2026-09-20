@@ -239,7 +239,9 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
   so swarm never calls into context.
 - `attach <role>` — `claude attach` by id, for when Will wants to sit in a peer.
 - `brief <role> <file>` — copy a brief into `.claude/swarm/inbox/<role>/` and print the
-  absolute path to send: briefs are files, messages are pointers (§ Rotation).
+  absolute path to send: briefs are files, messages are pointers (§ Rotation). A manual,
+  occasional call — nothing in `up`, `down`, `rotate` or `attach` invokes it, so in practice
+  an inbox holds only the role's standing `brief.md`.
 
 Nothing rotates automatically. The context plugin's watchdog advises; the orchestrator asks.
 
@@ -398,11 +400,13 @@ messages sent to the name. The name is the stable address; the process is dispos
      check and the stop is the residual race.
   3. Message arrives after the stop: SendMessage to a missing name fails on the sender's side
      (verified), so the sender retries.
-  What makes all three harmless: **briefs are files, messages are pointers.** Every brief is
-  written to `.claude/swarm/inbox/<role>/` and the message carries only the path. The
-  successor's first act after reading its handoff is to list that inbox. A lost message is a
-  lost nudge, never lost work. This is `/orchestrate`'s "the issue thread is the bus" rule,
-  applied to peers.
+  What actually closes each window is the mechanism named above — append, re-check, retry
+  — not the inbox. **The inbox is read once, at spawn or rotation**, and in practice holds
+  only the role's standing `brief.md` from init: nothing in the lifecycle drops a fresh file
+  there mid-run, so listing it first is a cheap check for a brief staged ahead of the
+  rotation, not a recovery path for arbitrary lost content. Ongoing coordination — a run id,
+  a blocker, a question — is SendMessage, never a file; a real gate run showed exactly that
+  (#96). This is `/orchestrate`'s "the issue thread is the bus" rule, applied to peers.
 - **Backstop.** Peers launch with `--autocompact` at the roster's `autocompact` (default
   400k). The context plugin's PreCompact hook writes a handoff before any compaction, so a
   peer that never reaches a natural stopping point degrades to a compaction, not a cliff.
