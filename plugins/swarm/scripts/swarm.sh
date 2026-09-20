@@ -84,8 +84,9 @@ USAGE
 # ---------------------------------------------------------------------------
 # brief — copy a brief file into a role's inbox and print the pointer to send.
 #
-# Briefs travel as files, messages are pointers: the path is stable across rotation,
-# and the successor's first act after reading its handoff is to list that inbox.
+# Briefs travel as files, messages are pointers: the path is stable across rotation.
+# The inbox itself is read once, at spawn/rotation, for the standing brief.md — ongoing
+# coordination after that is SendMessage, not further inbox traffic (#96, #103).
 # ---------------------------------------------------------------------------
 cmd_brief() {
     export SWARM_CMD=brief SWARM_ROLE="$ROLE" SWARM_FILE="$FILE" SWARM_PROJECT_DIR="$PROJECT_DIR"
