@@ -346,6 +346,29 @@ one-shot, so it maps onto `codex exec`:
   wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
   codex-backed**: a claude reviewer names `opus` or `sonnet`, which codex does not have, so that
   pairing leaves the flag off and takes codex's default rather than failing the review outright.
+
+  **Verification honesty — ACCEPTED, no lever exists (#100).** A `sol`-tier reviewer's verdict
+  once asserted "All six tests pass" while running under the pinned `sandbox_mode=read-only`
+  (#99) — where pytest cannot even open a temp file — while a `terra`-tier reviewer given the
+  identical diff and the identical inability to run anything made no such claim: a model
+  substituting its own confidence for a check it did not perform. Three candidate levers were
+  ground-truthed with real `gpt-5.6-sol` review runs against codex-cli 0.155.1 (2026-09-20,
+  a later point release than the 0.155.0 ground-truthing above) looking for a way to
+  instruct it otherwise:
+  - the trailing `[PROMPT]` — blocked outright by the CLI itself (above);
+  - `-c instructions="…"` and `-c developer_instructions="…"` — both pass `--strict-config`
+    (codex recognizes the field) but a real review run with either set never mentioned the
+    injected text — the same recognized-but-ignored shape as `--output-schema` above;
+  - an `AGENTS.md` at the reviewed repo's root — NOT loaded into a review turn's context the
+    way it is for a plain `codex exec` (`codex debug prompt-input` shows it injected there as a
+    developer-role message). On a real review run the model saw it only incidentally, through
+    its own `find … -exec sed` sweep of repo files, and did not follow the instruction planted
+    in it even then.
+
+  `codex exec review`'s system prompt is entirely fixed — codex's own review template (above)
+  — and codex-cli 0.155.1 gives a caller no way to shape what it says about how it verified
+  something. Accepted knowingly, same as the network and `--disallowedTools` gaps (§ Roster):
+  the honest fix is upstream, in codex itself, not in this repo.
 - **No inbox.** `codex queue` only feeds a running session's next turn. Codex is never a peer.
 
 `infra/spawn.sh` switches on the tier's backend and writes a pid file and an exit-code file
