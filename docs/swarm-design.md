@@ -337,9 +337,36 @@ one-shot, so it maps onto `codex exec`:
   empty its own diff, and collect a clean verdict from an honest reviewer. `spawn.sh` resolves
   the base to a commit *before* the worker starts.
 
-  The reviewer's sandbox is pinned to `read-only` rather than inherited: `exec review` takes no
-  `-s`, and a user whose config defaults to `danger-full-access` would otherwise have a model
-  reading worker-authored, injectable content run on the host with `approval_policy=never`.
+  The reviewer's sandbox is pinned rather than inherited: `exec review` takes no `-s`, and a
+  user whose config defaults to `danger-full-access` would otherwise have a model reading
+  worker-authored, injectable content run on the host with `approval_policy=never`.
+
+  **It is `workspace-write`, not `read-only` (#99).** Read-only blocked every write with no
+  config-level exception, so a test runner inside the review could never create a tempfile —
+  `pytest` (and equivalents) failed with "no usable temporary directory", and the reviewer was
+  diff-reading only, silently, on every run. **A scratch root alone does not close that gap
+  safely**, ground-truthed against codex-cli 0.155.1 (2026-09-20) with `codex exec
+  --strict-config`, whose startup banner echoes the resolved policy:
+  `sandbox_workspace_write.writable_roots` only ADDS roots, it never subtracts the ones
+  `workspace-write` grants unconditionally, and one of those is `workdir` — wherever the
+  process is run FROM. `exclude_slash_tmp` and `exclude_tmpdir_env_var` are real keys, verified
+  to drop `/tmp`/`$TMPDIR` from that banner; no key drops `workdir`. `exec review` takes no
+  `-C`, so its `workdir` is wherever the caller `cd`s. Flipping only the sandbox mode, with the
+  real worktree still cwd, would have handed the reviewer write access to every tracked file
+  outside `.git` — the exact regression #99 said the fix must not make.
+
+  So the review never runs FROM the worktree. `spawn.sh`'s wrapper and `worker-resume.sh` both
+  `git clone --shared` it into a disposable checkout under the run dir first — sharing objects
+  costs no copy — `cd` there, and run the argv with `TMPDIR` set to a scratch dir alongside it
+  (also under the run dir, also disposable). `workdir` being writable then costs nothing: the
+  clone and scratch dir are deleted the moment the review exits, on every path (success,
+  failure, or a containment refusal). `--base`, a resolved SHA, still diffs correctly in the
+  clone — it carries the same commit history — and nothing is lost by reviewing it instead of
+  the live worktree: this reviews COMMITTED state only (`--base`, never `--uncommitted`), which
+  a clone has exactly. Verified end-to-end with a real `codex exec` run, not just the banner: a
+  tempfile created inside the scratch root succeeded, and a write attempted one level above
+  `workdir` (standing in for anywhere ungranted) failed with "read-only file system".
+
   The reviewer runs only when the worker REPORTED `built` or `fixed` — `escalate` and `failed`
   exit 0 too, and reviewing those posts a `Review round` comment the lane counts as a cycle.
 

@@ -175,8 +175,11 @@ fi
 # by the worker, emptying its own diff and buying an honest clean verdict.
 BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
     || die "cannot resolve base '$BASE' to a commit in $WORKTREE"
+# The scratch dir a test runner inside the review may write to (#99) — see review-cmd.sh
+# for why the review itself never runs from $WORKTREE, and spawn.sh's wrapper for the
+# identical clone-and-cleanup this script mirrors below.
 REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review.txt")" || exit 1
+    "$RUNDIR/review.txt" "$RUNDIR/review-scratch")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
@@ -187,6 +190,14 @@ EOF
 # as this turn's verdict on code the resumed worker has since changed. review-stderr.log
 # with it — the missing-review error quotes its tail, and a stale one would explain this
 # turn's refusal with the last one's reason.
+#
+# review-checkout and review-scratch are deliberately NOT cleared here. They are inputs the
+# CLONE and the sandbox grant TRUST, not just files the reviewer overwrites — `mkdir -p`
+# over an existing symlink-to-directory no-ops instead of failing, and `git clone` into one
+# writes through it. Clearing them here, before the worker about to run, would leave the
+# window between here and the clone below open for THAT SAME WORKER to plant one — the
+# non-default-CODEX_RUN_ROOT threat model spawn.sh's own pre-clone cleanup already names.
+# They are cleared AFTER the worker exits instead (below), mirroring spawn.sh's wrapper.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
@@ -197,6 +208,12 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
 # script. </dev/null because codex blocks forever on an open stdin.
 ( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
+# Anything the worker just resumed may have left at review-checkout/review-scratch is gone
+# BEFORE the clone below trusts either path (#99) — same placement and reasoning as
+# spawn.sh's wrapper: a worker able to reach the run dir (a non-default CODEX_RUN_ROOT) and
+# left a symlink there would otherwise have `mkdir -p`/`git clone` follow it, handing the
+# reviewer's sandbox grant and TMPDIR to a directory the worker chose, not this script.
+rm -rf "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
 
 # THE INDEPENDENT REVIEWER, exactly as spawn.sh runs it and from the same builder — a
 # resumed worker's branch is as unreviewed as a freshly built one, and worker-report.sh
@@ -211,11 +228,20 @@ CODE=$?
 if [ "$CODE" -eq 0 ] \
    && grep -q '"status"[[:space:]]*:[[:space:]]*"\(built\|fixed\)"' \
         "$RUNDIR/last-message.txt" 2>/dev/null; then
-    # TRIPWIRE, as in spawn.sh: the reviewer and the gh call are the first host processes
-    # to run git in this worktree after a worker that could have rewritten $OWN/commondir.
+    # TRIPWIRE, as in spawn.sh: the CLONE below is the first host process to run git in
+    # this worktree after a worker that could have rewritten $OWN/commondir.
     if bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" \
             >/dev/null 2>>"$RUNDIR/review-stderr.log"; then
-        if ( cd "$WORKTREE" && "${REVIEW_CMD[@]}" ) \
+        # THE REVIEW NEVER RUNS FROM $WORKTREE ITSELF (#99) — see review-cmd.sh for why
+        # workspace-write's unconditional grant of wherever it runs FROM made that unsafe.
+        # A disposable `--shared` clone stands in: no object copy, and `--base` (a SHA)
+        # diffs identically there. TMPDIR points a test runner at the same scratch dir the
+        # argv was built to grant.
+        mkdir -p "$RUNDIR/review-scratch" \
+            && git clone --quiet --shared -- "$WORKTREE" "$RUNDIR/review-checkout" \
+                >/dev/null 2>>"$RUNDIR/review-stderr.log"
+        if [ -d "$RUNDIR/review-checkout" ] && ( cd "$RUNDIR/review-checkout" \
+                && TMPDIR="$RUNDIR/review-scratch" "${REVIEW_CMD[@]}" ) \
                 >>"$RUNDIR/review-stderr.log" 2>&1 </dev/null; then
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
@@ -236,6 +262,7 @@ if [ "$CODE" -eq 0 ] \
             printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"
             rm -f "$RUNDIR/review.txt"
         fi
+        rm -rf "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
     else
         printf 'REVIEW_SKIPPED containment check refused the worktree\n' \
             >>"$RUNDIR/review-stderr.log"

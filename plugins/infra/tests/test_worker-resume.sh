@@ -166,6 +166,11 @@ cat >"$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
 if [ "${2:-}" = review ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
+    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
+    # was granted.
+    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
     # The real reviewer writes its schema'd final message to -o, like any codex turn.
     rout=""
     for a in "$@"; do
@@ -181,6 +186,12 @@ if [ "${2:-}" = review ]; then
 fi
 pwd >"$STUB_CWD"
 printf '%s\n' "$@" >"$STUB_ARGV"
+# Stands in for a worker that reached the run dir (#99's non-default-CODEX_RUN_ROOT threat
+# model) and planted a symlink at review-checkout BEFORE the resume's own cleanup runs.
+if [ -n "${STUB_PLANT_SYMLINK_AT:-}" ]; then
+    mkdir -p "$(dirname "$STUB_PLANT_SYMLINK_AT")"
+    ln -sfn "${STUB_PLANT_SYMLINK_TARGET:?}" "$STUB_PLANT_SYMLINK_AT"
+fi
 out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
@@ -289,12 +300,13 @@ assert_contains "names it" "$ERR" "unknown flag"
 # reviewing itself (#96). These assert the replacement: a sibling reviewer, its verdict
 # taken from its own output, and a run that cannot land when it did not run.
 echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own review"
-rm -f "$WORK/review-argv" "$WORK/gh-argv"
+rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     STUB_REVIEW_TEXT='- [P1] a finding — src/f:1
 - [P1] another — src/g:2
 - [P3] a nit — src/h:3' \
+    STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     run r1 86 standard "$REPO" --answer "x" --base base --round 4
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
@@ -310,6 +322,20 @@ assert_contains "at the tier's REVIEWER model, not the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-sol"
 assert_not_contains "never the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
+# THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree —
+# a disposable clone instead — with TMPDIR pointed at the one scratch root the sandbox
+# actually granted.
+RUNDIR86="$CODEX_ROOT/r1/issue-86"
+assert_equals "the review ran in the disposable checkout" \
+    "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR86/review-checkout"
+assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"
+assert_equals "TMPDIR matches the ONE root the sandbox actually granted" \
+    "$(cat "$WORK/review-tmpdir" 2>/dev/null)" "$RUNDIR86/review-scratch"
+if [ -e "$RUNDIR86/review-checkout" ] || [ -e "$RUNDIR86/review-scratch" ]; then
+    no "the disposable checkout or scratch dir survived the review"
+else
+    ok "the disposable checkout and scratch dir are cleaned up after the review"
+fi
 
 echo "test: the reviewer's findings are posted as the round's issue comment"
 assert_contains "gh issue comment was called" "$(cat "$WORK/gh-argv" 2>/dev/null)" "comment"
@@ -323,6 +349,36 @@ assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
+
+echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
+# THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER
+# the worker's turn, not before it — clearing before leaves the window between "before the
+# worker runs" and "the clone trusts the path" wide open for that SAME worker (a
+# non-default CODEX_RUN_ROOT reaching the run dir) to plant a symlink there. `mkdir -p`
+# over a symlink-to-directory no-ops instead of failing, and `git clone` into one writes
+# through it, so an unneutralised plant would hand the reviewer's sandbox grant and TMPDIR
+# to a directory the WORKER chose.
+rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
+SENTINEL="$WORK/sentinel-91"; rm -rf "$SENTINEL"; mkdir -p "$SENTINEL"
+mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":91,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    STUB_PLANT_SYMLINK_AT="$CODEX_ROOT/r1/issue-91/review-checkout" \
+    STUB_PLANT_SYMLINK_TARGET="$SENTINEL" \
+    STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
+    run r1 91 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0 — the plant did not wedge the resume" "$RC" "0"
+assert_contains "the review still ran for real, against the real clone" "$OUT" \
+    "issue 91 built"
+# The decisive check: nothing landed in the attacker's sentinel directory. A dereferenced
+# plant would have `git clone` write the checkout's files straight into it.
+if [ -z "$(ls -A "$SENTINEL" 2>/dev/null)" ]; then
+    ok "the sentinel directory the plant pointed at stayed empty"
+else
+    no "the clone wrote through the planted symlink into the sentinel directory"
+fi
+RUNDIR91="$CODEX_ROOT/r1/issue-91"
+assert_equals "TMPDIR still resolved to the legitimate scratch root, not the plant" \
+    "$(cat "$WORK/review-tmpdir" 2>/dev/null)" "$RUNDIR91/review-scratch"
 
 echo "test: a FAILED review leaves no verdict behind — the run fails CLOSED"
 # The sharp one. A reviewer that dies must not leave a half-written review.txt: a COUNTS

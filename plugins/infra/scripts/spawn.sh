@@ -443,8 +443,11 @@ CMD=(codex exec
 BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
     || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
 
+# The scratch dir a test runner inside the review may write to (#99) — a STRING only,
+# here: the wrapper below creates it (and the disposable checkout it goes with) only on
+# the non-dry-run path, so a dry run still touches no disk.
 REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review.txt")" || exit 1
+    "$RUNDIR/review.txt" "$RUNDIR/review-scratch")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
@@ -564,8 +567,11 @@ bash -c '
     rc=$?
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
-    # could reach, and a planted verdict must never outlive the worker that planted it.
-    rm -f "$rundir/review.txt"
+    # could reach, and a planted verdict must never outlive the worker that planted it. The
+    # disposable checkout and scratch dir go too, for the same reason and for a crashed
+    # PREVIOUS round of the same reused run dir (#99) — a worker-planted checkout would be
+    # a repo the reviewer is fooled into trusting.
+    rm -rf "$rundir/review.txt" "$rundir/review-checkout" "$rundir/review-scratch"
     # Reviewed only when the worker SAYS it built or fixed something. `escalate` and
     # `failed` also exit 0, and reviewing those posts a "Review round" comment on a
     # half-built branch — which the orchestrate lane counts as a spent cycle.
@@ -574,13 +580,27 @@ bash -c '
         "$rundir/last-message.txt" 2>/dev/null && built=1
     if [ "$rc" -eq 0 ] && [ -n "$built" ] && [ "${#review[@]}" -gt 0 ]; then
         # TRIPWIRE. The worker could rewrite $OWN/commondir (the accepted residual in
-        # common-git-dir.sh) to point git at a config it controls. The reviewer and the gh
-        # call below are the FIRST host processes to run git in that worktree afterwards,
-        # unattended — `core.fsmonitor` in a planted config fires on the reviewers first
-        # `git diff`. Re-running --roots re-checks the containment and refuses a worktree
-        # that no longer passes, before any git runs there.
+        # common-git-dir.sh) to point git at a config it controls. The CLONE below is now
+        # the FIRST host process to run git in that worktree afterwards, unattended —
+        # `core.fsmonitor` in a planted config fires on the clone'\''s first read.
+        # Re-running --roots re-checks the containment and refuses a worktree that no
+        # longer passes, before any git runs there.
         if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
-            if (cd "$worktree" && "${review[@]}") \
+            # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99). `sandbox_mode=workspace-write`
+            # is what lets a test runner create a tempfile, but workspace-write ALWAYS grants
+            # write access to wherever it is run from, with no config key to exclude it — see
+            # review-cmd.sh for how that was ground-truthed. Running the review IN $worktree
+            # would make every tracked file outside .git writable to it, so it runs in a
+            # DISPOSABLE clone instead: `--shared` costs no object copy, and codex'\''s own
+            # `--base` diffing works identically there, since the clone carries the same
+            # commit history. TMPDIR points a test runner at the scratch dir this argv was
+            # built to grant — without it, tempfile creation still falls back to the /tmp
+            # this sandbox now excludes.
+            mkdir -p "$rundir/review-scratch" \
+                && git clone --quiet --shared -- "$worktree" "$rundir/review-checkout" \
+                    >/dev/null 2>>"$rundir/review-stderr.log"
+            if [ -d "$rundir/review-checkout" ] && (cd "$rundir/review-checkout" \
+                    && TMPDIR="$rundir/review-scratch" "${review[@]}") \
                     >>"$rundir/review-stderr.log" 2>&1 </dev/null; then
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
@@ -600,6 +620,7 @@ bash -c '
                 printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
                 rm -f "$rundir/review.txt"
             fi
+            rm -rf "$rundir/review-checkout" "$rundir/review-scratch"
         else
             printf "REVIEW_SKIPPED containment check refused the worktree\n" \
                 >>"$rundir/review-stderr.log"

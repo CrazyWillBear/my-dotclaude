@@ -288,6 +288,11 @@ cat >"$CODEX_BIN/codex" <<'STUB'
 # verdict to its -o file and records its own argv, so the worker's is not clobbered.
 if [ "${2:-}" = review ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
+    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
+    # was granted — this is how the tests below prove the wiring, not just the argv shape.
+    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
     rout=""
     for a in "$@"; do
         [ -n "${take:-}" ] && { rout="$a"; take=""; }
@@ -496,7 +501,20 @@ echo "test: the reviewer's sandbox is PINNED, not inherited from the user's conf
 # `exec review` takes no -s, so without this it runs at whatever ~/.codex/config.toml
 # defaults to — and a user on danger-full-access would have a model reading
 # worker-authored, injectable content run on the host with approval_policy=never.
-assert_arg "read-only" "$rv" "sandbox_mode=read-only"
+#
+# workspace-write, not read-only (#99): read-only blocked a test runner from ever creating
+# a tempfile, so the done-check could never actually run. workspace-write grants
+# `writable_roots` IN ADDITION TO wherever it is run from, with no key to subtract that
+# (ground-truthed on codex-cli 0.155.1 — see review-cmd.sh), so the wrapper below never
+# runs this FROM the worktree — the cwd/TMPDIR tests further down prove that part.
+assert_arg "workspace-write, no longer read-only" "$rv" "sandbox_mode=workspace-write"
+assert_not_contains "never read-only" "$rv" "sandbox_mode=read-only"
+assert_contains "a narrowed scratch root, not the whole default grant" "$rv" \
+    "sandbox_workspace_write.writable_roots=[\"$RUNDIR/review-scratch\"]"
+assert_arg "the default /tmp grant excluded" "$rv" \
+    "sandbox_workspace_write.exclude_slash_tmp=true"
+assert_arg "the default \$TMPDIR grant excluded" "$rv" \
+    "sandbox_workspace_write.exclude_tmpdir_env_var=true"
 
 echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
 # The SHIPPED table is claude in every cell, so a user who flips only the implementer to
@@ -554,8 +572,9 @@ assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LE
 # coverage at all while the resume path had four cases — the dry run proves what the argv
 # would be, never that the wrapper actually runs it, in the right order, or cleans up.
 echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
-rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
 STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+    STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     STUB_REVIEW_TEXT='- [P1] one — a:1
 - [P1] two — b:2
 - [P2] three — c:3
@@ -565,6 +584,21 @@ a real finding is described above' \
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 if [ -f "$RUNDIR/review.txt" ]; then ok "the reviewer's verdict was written"
 else no "no $RUNDIR/review.txt — the wrapper did not run the reviewer"; fi
+# THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree, and
+# a test runner inside it would find its tempfiles pointed at the scratch root the argv
+# granted — not at whatever the worktree's own sandbox default would have been.
+assert_equals "the review ran in the disposable checkout" \
+    "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR/review-checkout"
+assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"
+assert_equals "TMPDIR matches the ONE root the sandbox actually granted" \
+    "$(cat "$WORK/review-tmpdir" 2>/dev/null)" "$RUNDIR/review-scratch"
+# Both are disposable: nothing of them survives for a later stage to trip over or a human
+# to find.
+if [ -e "$RUNDIR/review-checkout" ] || [ -e "$RUNDIR/review-scratch" ]; then
+    no "the disposable checkout or scratch dir survived the review"
+else
+    ok "the disposable checkout and scratch dir are cleaned up after the review"
+fi
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
