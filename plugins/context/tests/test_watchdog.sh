@@ -18,9 +18,11 @@
 #   * Peer rotation nudge — the ONE exception to that silence, and it is scoped:
 #     only a session whose transcript names it (`{"type":"agent-name"}`, which is
 #     what `claude -n` writes) as a `manager`/`doer` row in this project's
-#     roster.json, only past THAT row's rotate_at. The orchestrator row, a worker
-#     row, a name absent from the roster, and an unnamed session are all silent
-#     (docs/swarm-design.md § Rotation).
+#     roster.json, only past THAT row's rotate_at, and only past its first turn (a
+#     freshly-rotated peer's transcript starts brand new, so turn 1 can already be
+#     past rotate_at from resume overhead alone — #102). The orchestrator row, a
+#     worker row, a name absent from the roster, and an unnamed session are all
+#     silent (docs/swarm-design.md § Rotation).
 #   * Only UserPromptSubmit is handled — PostToolUse and Stop are silent.
 #   * Fail-open: a missing transcript stays silent.
 #
@@ -71,27 +73,37 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; 
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected silence, got: $2)"; fi; }
 
-# make_transcript <file> <total> [name] — a transcript whose LAST assistant entry sums
-# to <total> input-side tokens (an earlier, smaller entry proves we take the last).
+# make_transcript <file> <total> [name] [lead] [user_turns] — a transcript whose LAST
+# assistant entry sums to <total> input-side tokens.
+#
+# [lead] (default 1) is the number of earlier, smaller dummy assistant entries before
+# it — proof we take the LAST entry, not the first. A higher [lead] doubles as "this
+# turn took several tool calls" (one assistant entry per call), which must NOT inflate
+# rotate_at's turn count (#102 review) — see the grace-turn tests below.
+#
+# [user_turns] (default 2) is the count of REAL user-submitted prompts in the
+# transcript: plain text, as opposed to the tool_result deliveries the harness also
+# logs as `type: "user"` for every tool call and which watchdog.sh's _real_prompt()
+# does not count. Default 2 is "well past the first turn"; the grace-turn tests pass 1
+# for "only the resume prompt has happened so far."
 #
 # [name] adds the `agent-name` rows `claude -n` writes. A session RENAMED mid-run has
 # two of them (seen live: a peer renamed from performance-engineer-cogito), so a stale
 # first row is included to pin that the LAST one wins. No [name] is an ordinary session
 # started without -n: no such row at all.
 make_transcript() {
-    python3 - "$1" "$2" "${3:-}" <<'PY'
+    python3 - "$1" "$2" "${3:-}" "${4:-1}" "${5:-2}" <<'PY'
 import sys, json
-path, total, name = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-rows = [
-    {"type": "user", "message": {"role": "user", "content": "hi"}},
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1}}},
-    {"type": "assistant", "message": {"role": "assistant", "usage": {
-        "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}},
-]
+path, total, name, lead, user_turns = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
+rows = [{"type": "user", "message": {"role": "user", "content": "hi %d" % i}} for i in range(user_turns)]
+for _ in range(lead):
+    rows.append({"type": "assistant", "message": {"role": "assistant", "usage": {
+        "input_tokens": 3, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 1}}})
+rows.append({"type": "assistant", "message": {"role": "assistant", "usage": {
+    "input_tokens": total, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 5}}})
 if name:
-    rows.insert(0, {"type": "agent-name", "agentName": "a-stale-former-name", "sessionId": "s"})
-    rows.insert(2, {"type": "agent-name", "agentName": name, "sessionId": "s"})
+    rows = [{"type": "agent-name", "agentName": "a-stale-former-name", "sessionId": "s"},
+            {"type": "agent-name", "agentName": name, "sessionId": "s"}] + rows
 with open(path, "w") as fh:
     for r in rows:
         fh.write(json.dumps(r) + "\n")
@@ -216,6 +228,21 @@ assert_contains "to the roster's orchestrator, by name" "$out" "orchestrator"
 assert_contains "and hand over the doc path" "$out" "path"
 assert_contains "names the role whose row was read" "$out" "swe-manager"
 assert_contains "shows a user-facing systemMessage" "$out" "swarm:"
+
+# #102: `swarm.sh rotate` stops the old process and spawns a brand-new one onto the
+# handoff doc, so the successor's transcript starts empty — its first real turn
+# (reading the handoff + the resume preamble) can already be past rotate_at before any
+# work beyond resuming happens. The guard is one real turn's grace. 5 leading assistant
+# entries (tool calls) inside that ONE real turn pin down the review finding: a chatty
+# first turn must not read as several turns just because it made several tool calls.
+echo "test: a freshly-resumed session past rotate_at on turn 1 alone is not nudged"
+make_transcript "$WORK/resumed-t1.jsonl" 310000 swe-manager 5 1
+assert_empty "past rotate_at after 1 real turn (5 tool-call entries inside it): silent" \
+    "$(run_peer "$WORK/resumed-t1.jsonl")"
+
+echo "test: the same session nudges once it reaches a second real turn"
+assert_contains "past rotate_at on real turn 2 (mgr-over.jsonl, 2 real turns): nudged" \
+    "$(run_peer "$WORK/mgr-over.jsonl")" "/handoff"
 
 # A hook that prints two JSON objects prints invalid JSON, and the whole advisory is
 # dropped — so this has to be exactly one document, never the gate's plus the nudge's.
