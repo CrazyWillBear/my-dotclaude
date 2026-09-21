@@ -365,12 +365,30 @@ in $PROJECT_DIR — check \`claude agents\` and re-run \`swarm.sh down\`"
 # state the CLI grows that this does not know goes the same way — refusing costs a
 # re-run, guessing costs the turn.
 #
-# A peer that is already stopped, done or gone is respawned with no stop at all. `up`
-# would bring it back from its brief alone; the orchestrator asked for a rotation ONTO
-# this handoff, and that doc is the only record of what the predecessor was doing.
+# `gone` — no entry at all for this name+cwd, even with `--all` — is respawned with no
+# stop at all: `up` would bring it back from its brief alone; the orchestrator asked
+# for a rotation ONTO this handoff, and that doc is the only record of what the
+# predecessor was doing.
+#
+# `stopped`/`done` is NOT taken on its word (#101): a real gate run had
+# `session-status.sh --peers` report a genuinely idle peer as `done`, and this branch
+# respawned a duplicate right alongside it — two sessions, one memory file, both
+# writing. A peer is a `claude --bg` session, and a background session never carries a
+# pid in `agents --json` (verified against a live agent list: every `interactive` row
+# had one, zero `background` rows did), so there is no per-session
+# `/run/user/*/cc-socks/<pid>.sock` or other OS-level signal to cross-check against —
+# that upstream gap is not fixable here. What IS available is infra's own
+# worker-recovery move (infra/README.md § Recovery): attempt `claude stop`, then
+# RE-READ status rather than trust either the old label or the stop's own exit code
+# (that README also notes a stop can be "acknowledged and not take"). Only a fresh read
+# that again lands on stopped/done/gone earns the respawn; still-live or anything
+# outside that vocabulary refuses instead, loud, per this task's conservative default.
+# ponytail: a fresh read right after `stop` is evidence, not proof — it closes a
+# stale-label lie but not one that stays stuck. Upgrade path if that surfaces: a
+# session backend that exposes a real per-peer pid/socket to check independently.
 cmd_rotate() {
     require_infra
-    local kind orch_role line id state idles=0 deadline err
+    local kind orch_role line id state idles=0 deadline err recheck restate
 
     kind="$(roster get "$ROLE" kind)" || exit 1
     is_peer "$kind" || die "$ROLE is a $kind row, not a peer — only manager and doer \
@@ -399,8 +417,31 @@ name. Nothing was stopped."
             busy)
                 idles=0
                 ;;
-            stopped|done|gone)
-                echo "$ROLE not running ($state) — respawning it on the handoff"
+            gone)
+                echo "$ROLE not running (gone) — respawning it on the handoff"
+                id="-"
+                break
+                ;;
+            stopped|done)
+                # The label just lied once in production (#101) — do not act on it a
+                # second time. `id` is real here (checked below), so ask `claude stop`
+                # to actually try, then re-read state fresh instead of trusting either
+                # that call's exit code or the original label.
+                [ -n "$id" ] && [ "$id" != "-" ] || die "$ROLE is $state in \
+$PROJECT_DIR but the agent list gives it no id, so there is nothing to confirm its \
+death against before the name would be reused. Nothing was stopped."
+                claude stop "$id" >/dev/null 2>&1
+                recheck="$(peer_status "$ROLE")" || exit 1
+                read -r _role _id _kind restate <<<"$recheck"
+                case "$restate" in
+                    stopped|done|gone) ;;
+                    *) die "$ROLE was reported $state but a fresh read after \
+\`claude stop $id\` says $restate, not stopped/done/gone — the label cannot be \
+trusted either way. Nothing was respawned; run \`swarm.sh attach $ROLE\` to check by \
+hand, or stop it yourself and re-run rotate." ;;
+                esac
+                echo "$ROLE not running ($state, confirmed $restate after \
+\`claude stop $id\`) — respawning it on the handoff"
                 id="-"
                 break
                 ;;
