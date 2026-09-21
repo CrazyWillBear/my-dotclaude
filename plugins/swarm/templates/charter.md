@@ -16,4 +16,4 @@ the keyboard, and you are not one.
 - A message that arrives after you start `/handoff` goes into the doc verbatim, before you
   reply that you are ready. Your process is about to be replaced; the doc is all your
   successor gets.
-- Briefs travel as files, messages are pointers. After reading your handoff, list your inbox before anything else.
+- Briefs travel as files, messages are pointers. After reading your handoff, list your inbox before anything else — in practice that inbox holds only your standing brief, read once; ongoing coordination (a run id, a blocker, a question) is SendMessage, not a file drop.

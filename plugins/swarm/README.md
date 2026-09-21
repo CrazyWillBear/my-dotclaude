@@ -79,8 +79,10 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/swarm.sh" brief  <role> <file> [project-dir]
   Nothing here measures context: the peer nudges itself from its own transcript (the
   [`context`](../context/README.md) plugin's watchdog), and you rotate it once it replies that it
   is ready.
-- **`brief`** copies a file into a role's inbox. **Briefs travel as files; messages are pointers** —
-  a peer lists its inbox before anything else.
+- **`brief`** copies a file into a role's inbox — a manual, occasional call; nothing in `up`,
+  `down`, `rotate` or `attach` invokes it. In practice an inbox holds only the role's
+  standing `brief.md` from init; a peer lists it once after a handoff, but ongoing
+  coordination is `SendMessage`, not a file drop.
 
 **Addressing is the one thing to get right.** `claude stop` and `claude attach` take a session
 **id** and reject a name outright; the name is what `SendMessage` uses. Every id here comes from
