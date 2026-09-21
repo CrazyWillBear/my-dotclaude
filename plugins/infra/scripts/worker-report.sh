@@ -194,6 +194,22 @@ def independent_review():
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
 
+def reviewer_token_usage():
+    # COST VISIBILITY, NOT A GATE (#98). `codex exec review --json`'s own usage block is
+    # all zeroes; the real numbers live in the review subagent's OWN rollout under
+    # ~/.codex/sessions, keyed off the "session id:" banner review-stderr.log already
+    # carries — see review-tokens.sh. Best-effort and stderr-only: a miss here must never
+    # touch the one-line stdout contract the orchestrator parses.
+    path = os.path.join(rundir, "review-stderr.log")
+    if not os.path.exists(path):
+        return ""
+    try:
+        out = subprocess.run(["bash", os.path.join(infra, "review-tokens.sh"), path],
+                             capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
 if not raw:
     # No report at all. If codex exited non-zero this is the expected shape of a crash,
     # and the run is still reportable: `failed` plus whatever stderr caught. If it exited
@@ -273,6 +289,9 @@ if status in ("built", "fixed"):
               "review.txt — a review that did not run is not a clean one: %s"
               % (issue, status, why), file=sys.stderr)
         sys.exit(1)
+    tokens = reviewer_token_usage()
+    if tokens:
+        print("issue %d reviewer token usage: %s" % (issue, tokens), file=sys.stderr)
     if status == "fixed":
         try:
             rnd = int(r.get("round", 0))
