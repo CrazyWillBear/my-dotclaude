@@ -21,13 +21,20 @@
 #
 # Signals, any one sufficient, checked in this order:
 #   failed         the worker reported `failed`, exited non-zero, or died with no exit code
-#   deviation-cap  more `**Deviation**` comments than the consult cap allows (cap 2: the
-#                  third deviation escalates rather than drawing a third consult)
+#   deviation-cap  the worker is paused on a deviation (status `escalate`, note beginning
+#                  `deviation:`) and this attempt already used its consults (cap 2): the
+#                  third deviation escalates rather than drawing a third consult. Consults
+#                  are counted from the thread's `**Consult N**` headings, which
+#                  consult.sh posts; a worker forging one only escalates itself sooner and
+#                  cannot remove one, so the thread is safe to read for THIS signal.
 #   review-cap     a SECOND review round within this attempt still has high or medium
-#                  findings — the fix session is spawned at the next chain position. The
-#                  rounds are counted inside the attempt's window, not read off the
-#                  run-wide `N` in the heading, which a respawn inherits: every position
-#                  gets its own two rounds.
+#                  findings — the fix session is spawned at the next chain position.
+#                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append
+#                  (`<round> <H> high, <M> medium, <L> low`), NEVER from the thread: a
+#                  worker can post a comment headed `**Review round 99** — 0 high…` and
+#                  cannot touch the run dir. Rounds are counted inside the attempt (the
+#                  ledger position recorded at the last handoff), not off the run-wide
+#                  round number, which a respawn inherits: every position gets two.
 #
 # THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
 # deviation would otherwise fire on every wake forever and walk the whole chain in three
@@ -172,31 +179,39 @@ elif code == "" and pid and not alive:
 
 # --- the thread: deviations and review rounds, THIS attempt's only ------------------------
 mark_path = os.path.join(rundir, "handoff.json")
-mark, marked_attempt = 0, None
+mark, rounds_mark, marked_attempt = 0, 0, None
 try:
     with open(mark_path) as fh:
         m = json.load(fh)
         mark, marked_attempt = int(m.get("mark", 0)), int(m.get("attempt", -1))
+        rounds_mark = int(m.get("rounds_mark", 0))
 except (OSError, ValueError, TypeError):
     pass
 this_attempt = comments[mark:]
+ledger = [l for l in (read("rounds") or "").splitlines() if l.strip()]
 if reason is None:
-    devs = sum(1 for c in this_attempt if re.search(r"(?m)^\*\*Deviation\*\*", c))
-    if devs > cap:
-        reason = ("deviation-cap", "%d deviations on the thread; the consult cap is %d" % (devs, cap))
+    consults = sum(1 for c in this_attempt if re.search(r"(?m)^\*\*Consult \d+\*\*", c))
+    if status == "escalate" and note.lower().startswith("deviation:") and consults >= cap:
+        reason = ("deviation-cap", "a deviation after %d consults this attempt; the cap is %d" % (consults, cap))
 if reason is None:
     rounds = []
-    for c in this_attempt:
-        m = re.search(r"(?m)^\*\*Review round (\d+)\*\*\s*[—-]+\s*(\d+) high, (\d+) medium", c)
+    for l in ledger[rounds_mark:]:
+        m = re.match(r"(\d+) (\d+) high, (\d+) medium", l)
         if m:
             rounds.append(tuple(int(x) for x in m.groups()))
     if len(rounds) >= 2:
-        n, h, med = max(rounds)
+        n, h, med = rounds[-1]          # the NEWEST, not the highest number
         if h > 0 or med > 0:
             reason = ("review-cap", "review round %d (this attempt's %d) still has %d high, %d medium" % (n, len(rounds), h, med))
 
 # --- the rollout: live context occupancy ------------------------------------------------
-reviewing = os.path.exists(os.path.join(rundir, "reviewing"))
+# The marker holds the stall signal off only for as long as a review may reasonably run:
+# past the stall window a wedged `claude -p` reviewer is a stall like any other (the
+# marker has no other bound, and a hung review would otherwise be invisible forever).
+try:
+    reviewing = time.time() - os.stat(os.path.join(rundir, "reviewing")).st_mtime < stall_s
+except OSError:
+    reviewing = False
 running = code == "" and alive and not reviewing
 if reason is None and (running or status == "escalate"):
     ev = read("events.jsonl") or ""
@@ -260,7 +275,7 @@ if not dry and not already:
     # belongs to the attempt being replaced. Recorded BEFORE the post so a failed post still
     # scopes the next attempt correctly (an off-by-one here only ever hides one comment).
     with open(mark_path, "w") as fh:
-        json.dump({"attempt": attempt, "mark": len(comments) + 1}, fh)
+        json.dump({"attempt": attempt, "mark": len(comments) + 1, "rounds_mark": len(ledger)}, fh)
 print("%s: %s" % reason)
 if not dry:
     print("POSTED" if already else "POST", file=sys.stderr)

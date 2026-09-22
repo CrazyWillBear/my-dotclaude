@@ -54,6 +54,8 @@ done
 case "$ROLE" in plan|consult) ;; *) die "$USAGE" ;; esac
 [ -n "$RUNID" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
+# $TIER reaches the model's prompt verbatim, and it came off a GitHub label via a model.
+case "$TIER" in trivial|standard|complex) ;; *) die "unknown tier '$TIER'" ;; esac
 case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 

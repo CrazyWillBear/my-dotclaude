@@ -289,6 +289,7 @@ bash "$SPAWN" r1 >/dev/null 2>"$WORK/err"; assert_equals "too few args exits 1" 
 assert_contains "prints usage" "$(err)" "usage:"
 dry r1 twelve standard /w base >/dev/null; assert_equals "non-numeric issue exits 1" "$?" "1"
 dry r1 12 standard /w base --role sideways >/dev/null; assert_equals "bad role exits 1" "$?" "1"
+dry r1 12 standard /w base --round two >/dev/null; assert_equals "a non-numeric round exits 1" "$?" "1"
 dry r1 12 standard /w base --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
 assert_contains "names the flag" "$(err)" "unknown flag"
 
@@ -647,6 +648,8 @@ COMMENT="$(cat "$RUNDIR/review-comment.md" 2>/dev/null)"
 # The heading is counted by review-counts.sh — the SAME script worker-report.sh reads the
 # verdict with, so the issue thread and the merge queue cannot disagree about the findings.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 1 medium, 0 low"
+assert_equals "and the run-dir rounds ledger escalate.sh reads carries the same verdict" \
+    "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 2 high, 1 medium, 0 low"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
 
 echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"

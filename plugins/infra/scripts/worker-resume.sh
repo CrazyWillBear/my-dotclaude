@@ -264,6 +264,8 @@ if [ "$CODE" -eq 0 ] \
             COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
+                # The run-dir ledger escalate.sh counts rounds from (see spawn.sh's wrapper).
+                printf '%s %s\n' "$ROUND" "$COUNTS" >>"$RUNDIR/rounds"
                 { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
                   cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"
                 ( cd "$WORKTREE" && gh issue comment "$ISSUE" \

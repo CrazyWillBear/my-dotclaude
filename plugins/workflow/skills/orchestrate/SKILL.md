@@ -482,7 +482,7 @@ deviation is an escalation, not a consult); if it prints nothing:
 bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" consulted '{"n":<N>}'
 bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> \
-     --base "$BASE" --attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."
+     --base "$BASE" --attempt <A> --round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."
 ```
 
 The decision stays on the thread; the answer you pass is a pointer to it, so no prose enters

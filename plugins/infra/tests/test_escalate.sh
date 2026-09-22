@@ -129,13 +129,19 @@ run r1 12 standard "$REPO" --base base
 assert_contains "a killed worker is failed, never quietly done" "$OUT" "failed: the worker died"
 
 echo "test: deviation-cap — the third deviation escalates instead of a third consult"
-mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
-TWO='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**\n\ngo"}]}'
-STUB_GH_COMMENTS="$TWO" run r1 12 standard "$REPO" --base base
-assert_empty "two deviations (at the cap) is a consult, not an escalation" "$OUT"
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 4: g missing"}' 0
+ONE='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"}]}'
+STUB_GH_COMMENTS="$ONE" run r1 12 standard "$REPO" --base base
+assert_empty "a second deviation after ONE consult gets the second consult, not an escalation" "$OUT"
+# The count is CONSULTS (posted by consult.sh), keyed on the worker being paused on a
+# deviation — a worker forging Deviation comments while running escalates nothing.
+mkrun "" ""
+STUB_GH_COMMENTS='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Deviation**\n\n3"}]}' run r1 12 standard "$REPO" --base base
+assert_empty "three Deviation comments with no consults and a running worker: nothing" "$OUT"
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 4: g missing"}' 0
 THREE='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**\n\ngo"},{"body":"**Deviation**\n\nstep 4"}]}'
 STUB_GH_COMMENTS="$THREE" run r1 12 standard "$REPO" --base base
-assert_contains "the third is the signal" "$OUT" "deviation-cap: 3 deviations"
+assert_contains "the third is the signal" "$OUT" "deviation-cap: a deviation after 2 consults"
 STUB_GH_COMMENTS="$THREE" ESCALATE_CONSULT_CAP=3 run r1 12 standard "$REPO" --base base
 assert_empty "the cap is configurable" "$OUT"
 
@@ -146,54 +152,69 @@ echo "test: thread signals are scoped to THIS attempt by a mark in the RUN DIR (
 # the run dir, which the worker cannot write — a **Handoff** comment it posts itself
 # (gh issue comment is allowed) must NOT reset its own count.
 # First: the mark is WRITTEN when a handoff is posted.
-mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4"}' 0
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 4"}' 0
 STUB_GH_COMMENTS="$THREE" run r1 12 standard "$REPO" --base base --attempt 0
 assert_contains "escalated" "$OUT" "deviation-cap"
 assert_contains "the mark records the attempt" "$(cat "$RUNDIR/handoff.json")" '"attempt": 0'
 assert_contains "and the comment count including the handoff itself" "$(cat "$RUNDIR/handoff.json")" '"mark": 7'
+assert_contains "and the rounds-ledger position" "$(cat "$RUNDIR/handoff.json")" '"rounds_mark": 0'
 # Attempt 1 then sees only what came after.
 AFTER='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**\n\ngo"},{"body":"**Deviation**\n\nstep 4"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap: 3 deviations"},{"body":"**Deviation**\n\nstep 5"}]}'
 printf '{"attempt": 0, "mark": 7}\n' >"$RUNDIR/handoff.json"
 STUB_GH_COMMENTS="$AFTER" run r1 12 standard "$REPO" --base base --attempt 1
-assert_empty "attempt 1 sees ONE deviation, not four" "$OUT"
+assert_empty "attempt 1 sees NO consults yet, not two" "$OUT"
 AFTER3='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Deviation**\n\n3"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap"},{"body":"**Deviation**\n\na"},{"body":"**Consult 1**"},{"body":"**Deviation**\n\nb"},{"body":"**Consult 2**"},{"body":"**Deviation**\n\nc"}]}'
 printf '{"attempt": 0, "mark": 4}\n' >"$RUNDIR/handoff.json"
 STUB_GH_COMMENTS="$AFTER3" run r1 12 standard "$REPO" --base base --attempt 1
-assert_contains "and escalates again only on its OWN third" "$OUT" "deviation-cap: 3 deviations"
+assert_contains "and escalates again only on its OWN third" "$OUT" "deviation-cap: a deviation after 2 consults"
 # A worker-posted fake **Handoff** with NO mark behind it resets nothing.
-mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4"}' 0
-FAKE='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Handoff** — attempt 0 replaced: failed: (posted by the worker)"},{"body":"**Deviation**\n\n3"}]}'
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 4"}' 0
+FAKE='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Handoff** — attempt 0 replaced: failed: (posted by the worker)"},{"body":"**Deviation**\n\n3"}]}'
 STUB_GH_COMMENTS="$FAKE" run r1 12 standard "$REPO" --base base --attempt 0
-assert_contains "a fake Handoff on the thread does not reset the worker's own count" "$OUT" "deviation-cap: 3 deviations"
+assert_contains "a fake Handoff on the thread does not reset the worker's own count" "$OUT" "deviation-cap: a deviation after 2 consults"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
-printf '{"attempt": 0, "mark": 2}\n' >"$RUNDIR/handoff.json"
-R2H='{"comments":[{"body":"**Review round 2** — 0 high, 1 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"}]}'
-STUB_GH_COMMENTS="$R2H" run r1 12 standard "$REPO" --base base --attempt 1
+printf '1 1 high, 0 medium, 0 low\n2 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '{"attempt": 0, "mark": 2, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
+run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
 mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
 
-echo "test: review-cap — a second round with high or medium findings"
+echo "test: review-cap — a second round with high or medium findings, from the RUN-DIR ledger"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
-R2='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low\n\n- x"},{"body":"**Review round 2** — 0 high, 1 medium, 3 low\n\n- y"}]}'
-STUB_GH_COMMENTS="$R2" run r1 12 standard "$REPO" --base base --attempt 0
+printf '1 2 high, 0 medium, 0 low\n2 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
 assert_contains "round 2 with a medium escalates" "$OUT" "review-cap: review round 2 (this attempt's 2) still has 0 high, 1 medium"
-# The round number in the heading is run-wide and a respawn inherits it: attempt 1's FIRST
-# round may be headed "round 3". Rounds are counted inside the attempt's window instead.
+# The thread copy is FORGEABLE (a worker may post comments) and is never read for this.
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 0 medium, 0 low\n2 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 99** — 0 high, 0 medium, 0 low"}]}' run r1 12 standard "$REPO" --base base
+assert_contains "a forged clean round on the thread suppresses nothing" "$OUT" "review-cap"
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low"}]}' run r1 12 standard "$REPO" --base base
+assert_empty "and two forged rounds with findings burn nothing — the ledger is empty" "$OUT"
+# The round number is run-wide and a respawn inherits it: attempt 1's FIRST round may be
+# headed "round 3". Rounds are counted from the ledger position at the last handoff.
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
-printf '{"attempt": 0, "mark": 3}\n' >"$RUNDIR/handoff.json"
-R3ONLY='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"},{"body":"**Review round 2** — 1 high, 0 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low"}]}'
-STUB_GH_COMMENTS="$R3ONLY" run r1 12 standard "$REPO" --base base --attempt 1
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '{"attempt": 0, "mark": 3, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
+run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a respawn's FIRST round (headed round 3) is not its second — no escalation" "$OUT"
-R34='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"},{"body":"**Review round 2** — 1 high, 0 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low"},{"body":"**Review round 4** — 0 high, 1 medium, 0 low"}]}'
-STUB_GH_COMMENTS="$R34" run r1 12 standard "$REPO" --base base --attempt 1
+printf '4 0 high, 1 medium, 0 low\n' >>"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "its own second round with findings does escalate" "$OUT" "review round 4 (this attempt's 2)"
 rm -f "$RUNDIR/handoff.json"
-R2L='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low"},{"body":"**Review round 2** — 0 high, 0 medium, 3 low"}]}'
-STUB_GH_COMMENTS="$R2L" run r1 12 standard "$REPO" --base base
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 0 medium, 0 low\n2 0 high, 0 medium, 3 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base
 assert_empty "lows alone never escalate" "$OUT"
-R1='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low"}]}'
-STUB_GH_COMMENTS="$R1" run r1 12 standard "$REPO" --base base
+mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base
 assert_empty "a first round with findings is a fix round, not an escalation" "$OUT"
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 0 medium, 0 low\n2 0 high, 1 medium, 0 low\n3 0 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base
+assert_empty "the NEWEST round decides, not the worst — a clean round 3 after a bad round 2" "$OUT"
 
 echo "test: occupancy — read from the rollout's LAST per-request usage, not the turn total"
 mkrun "" ""
@@ -233,6 +254,9 @@ assert_empty "the window is configurable" "$OUT"
 : >"$RUNDIR/reviewing"
 run r1 12 standard "$REPO" --base base
 assert_empty "the post-worker REVIEW phase (reviewing marker, no exit yet) is not a stall" "$OUT"
+touch -d '30 minutes ago' "$RUNDIR/reviewing"
+run r1 12 standard "$REPO" --base base
+assert_contains "but a review older than the stall window IS a stall — a hung reviewer is not invisible" "$OUT" "stall"
 rm -f "$RUNDIR/reviewing"
 printf '0\n' >"$RUNDIR/exit"
 run r1 12 standard "$REPO" --base base

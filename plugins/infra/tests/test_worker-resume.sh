@@ -356,6 +356,7 @@ assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
+assert_equals "the rounds ledger records round 4's verdict" "$(cat "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
 
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
 # THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER
