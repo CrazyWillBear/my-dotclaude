@@ -369,7 +369,8 @@ Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
    line — grep the repo for other instances of the same pattern and fix those in the
    same round. If that fact isn't already written down where the project's CLAUDE.md
    says such facts live (a schema doc, a \`## Decisions\` section), add a one-line note
-   there in the same commit, so the next issue that touches it doesn't relearn it.
+   there in the same commit, so the next issue that touches it doesn't relearn it. If
+   CLAUDE.md names no such place, skip the doc note — don't invent a new doc for it.
 3. Run the project's done-check. It must be green.
 $FIX_REVIEW_STEP
 $FIX_REPORT_STEP

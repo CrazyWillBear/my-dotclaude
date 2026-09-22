@@ -82,12 +82,13 @@ repo has no such docs, hold this **correctness floor**:
 
 Some bugs aren't local to the diff: they violate a fact about a named concept (a field,
 column, table) or a decision the project already settled elsewhere. For every new or
-changed identifier in the diff, check whether the project's schema/architecture docs —
-whatever `CLAUDE.md` names as where table/column/field semantics live (e.g.
-`docs/SCHEMA.md`) — or its `## Decisions` section (typically in `ARCHITECTURE.md`), if
-one exists, already say something about it. A new usage that contradicts a documented
-fact or an already-settled decision is a finding like any other, at the severity the
-contradiction deserves.
+changed identifier that names a schema/config concept — a field, column, table, or
+similar shared identity, not every local variable — check whether the project's
+schema/architecture docs (whatever `CLAUDE.md` names as where table/column/field
+semantics live, e.g. `docs/SCHEMA.md`) or its `## Decisions` section (typically in
+`ARCHITECTURE.md`), if one exists, already say something about it. A new usage that
+contradicts a documented fact or an already-settled decision is a finding like any
+other, at the severity the contradiction deserves.
 
 When a finding **is** such a fact — true beyond this one line, not a mistake local to
 it — say so in the finding text. That is what tells the fix round to grep the rest of
