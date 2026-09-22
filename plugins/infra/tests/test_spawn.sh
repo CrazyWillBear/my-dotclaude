@@ -852,6 +852,9 @@ CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     >/dev/null 2>"$WORK/err"
 assert_equals "exits 1 on a traversal runid" "$?" "1"
 assert_contains "names the value and what is allowed" "$(err)" "runid may only contain"
+CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" ".." 12 standard "$REPO" base --orchestrator orch-main --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "a bare .. runid is refused too — every character is allowed, the path step is not" "$?" "1"
 
 echo "test: a real codex spawn with NO codex CLI fails loud, naming the user-table fix (review fix 3)"
 # Every binary the real PATH has, EXCEPT codex — so the only thing this run lacks is the CLI.

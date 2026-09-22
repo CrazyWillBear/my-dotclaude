@@ -75,7 +75,7 @@ done
 [ -n "$BASE" ] || die "--base BRANCH is required — the handoff lists the commits since it"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
@@ -84,6 +84,15 @@ if [ ! -d "$RUNDIR" ]; then
     echo "note: no codex run dir for issue $ISSUE — a claude worker tops its chain and is never escalated" >&2
     exit 0
 fi
+
+# TRIPWIRE (same as spawn.sh's wrapper, worker-resume.sh and consult.sh): git and gh run
+# in the worker's worktree below, on every wake, while the worker may still be writing it.
+# A rewritten `commondir` would also silently empty the commit list, so the handoff would
+# tell the replacement that nothing landed. Refuse loudly instead.
+INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$INFRA/common-git-dir.sh" ] || die "missing infra sibling: $INFRA/common-git-dir.sh"
+bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
+    || die "containment check refused the worktree $WORKTREE — not reading it"
 
 # The thread, ONCE. Deviation count, review rounds and an existing handoff all come from
 # the same read, so they can never disagree with each other.
@@ -242,7 +251,8 @@ if not dry and not already:
     with open(mark_path, "w") as fh:
         json.dump({"attempt": attempt, "mark": len(comments) + 1}, fh)
 print("%s: %s" % reason)
-print("POSTED" if (already or dry) else "POST", file=sys.stderr)
+if not dry:
+    print("POSTED" if already else "POST", file=sys.stderr)
 PY
 )"
 RC=$?

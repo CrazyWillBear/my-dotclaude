@@ -186,7 +186,7 @@ case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;
 # both `mkdir -p` and `rm -rf`, and the caller is a model assembling argv by hand. A `..`
 # component would put both outside the run root. run-log.sh guards the identical value
 # with this same case.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -n "$WORKTREE" ] || die "worktree is required"
 [ -n "$BASE" ] || die "base branch is required"
 
@@ -292,8 +292,8 @@ fi
 # SendMessage tool and no subagents: telling it to use either produces a session that
 # finishes the work and then reports into nothing, which reads to the orchestrator
 # exactly like a worker still thinking. Its final message IS its report (`--output-schema`
-# forces the shape), and `codex exec review --base` is its reviewer
-# (docs/swarm-design.md § Codex backend).
+# forces the shape), and the claude reviewer is run FOR it as a sibling process after it
+# exits (review-cmd.sh; docs/swarm-design.md § Codex backend).
 if [ "$BACKEND" = codex ]; then
     # DO NOT tell the worker to review itself. It was told exactly that until #96's e2e
     # gate caught what happens: `codex exec review` NESTED inside this worker's own
@@ -457,8 +457,8 @@ RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue
 # brackets and quotes.
 #
 # network_access is not optional either: workspace-write is OFFLINE by default, and this
-# worker's prompt orders `gh issue view`, `gh issue comment` and `codex exec review`.
-# Every one of them needs the network, and `approval_policy=never` means the worker
+# worker's prompt orders `gh issue view`, `gh issue comment`, `git push` and the done-check.
+# Every one of them may need the network, and `approval_policy=never` means the worker
 # cannot ask for it back — it would fail its whole protocol silently.
 CMD=(codex exec
      -C "$WORKTREE"
@@ -499,8 +499,11 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
 # reader would hand claude the first line of it (review round 2). An empty array is
 # review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
+# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
-mapfile -d '' REVIEW_CMD < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review

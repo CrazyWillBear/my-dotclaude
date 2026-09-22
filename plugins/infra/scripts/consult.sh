@@ -7,8 +7,9 @@
 #            cheaper implementer executes near-mechanically, posted as `**Plan**`.
 #   consult  AFTER a worker paused on a `**Deviation**` comment: decide what the worker
 #            does next, with revised steps if the plan is wrong from that step on, posted
-#            as `**Consult N**` — N counts the consults already on the thread, so
-#            escalate.sh can cap them by reading the same heading.
+#            as `**Consult N**` — N counts the consults already on the thread. (The cap
+#            is enforced by escalate.sh counting `**Deviation**` comments, not this
+#            heading; N is for the humans and the worker reading the thread.)
 #
 # Usage:
 #   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--dry-run]
@@ -53,7 +54,7 @@ done
 case "$ROLE" in plan|consult) ;; *) die "$USAGE" ;; esac
 [ -n "$RUNID" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
@@ -154,6 +155,16 @@ if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
     exit 0
 fi
+
+# TRIPWIRE, as in spawn.sh's wrapper and worker-resume.sh: this is a host process about
+# to run git (the consult prompt orders `git log` / `git diff`) in a worktree a worker
+# just wrote, unattended, under bypassPermissions. A rewritten `$OWN/commondir` (the
+# accepted residual in common-git-dir.sh) would point git at a config the worker controls,
+# and `core.fsmonitor` in it is host code execution on the first index refresh. Re-running
+# --roots re-checks the containment and refuses a worktree that no longer passes.
+[ -f "$INFRA/common-git-dir.sh" ] || die "missing infra sibling: $INFRA/common-git-dir.sh"
+bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
+    || die "containment check refused the worktree $WORKTREE — not running a model in it"
 
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT

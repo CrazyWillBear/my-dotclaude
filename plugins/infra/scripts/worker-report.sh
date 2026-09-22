@@ -93,7 +93,7 @@ done
 case "$INTERVAL" in ''|*[!0-9]*) die "--interval must be a number, got '$INTERVAL'" ;; esac
 case "$TIMEOUT"  in ''|*[!0-9]*) die "--timeout must be a number, got '$TIMEOUT'" ;; esac
 # Same guard as spawn.sh and run-log.sh: $RUNID is joined into a filesystem path below.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$INTERVAL" -gt 0 ] || die "--interval must be greater than 0"
 
 [ -f "$INFRA/session-status.sh" ] || die "missing infra sibling: $INFRA/session-status.sh"

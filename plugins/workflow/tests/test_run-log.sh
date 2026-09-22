@@ -160,6 +160,7 @@ assert_contains "says it was not JSON" "$(err)" "not JSON"
 r append run1 held '[1,2]' >/dev/null; assert_equals "a JSON array exits 1" "$?" "1"
 assert_contains "wants an object" "$(err)" "must be a JSON object"
 r append 'run 1;rm -rf' held >/dev/null; assert_equals "junk runid exits 1" "$?" "1"
+r append '..' held >/dev/null; assert_equals "a .. runid exits 1 — dots are allowed, a path step is not" "$?" "1"
 r bogus run1 >/dev/null; assert_equals "unknown command exits 1" "$?" "1"
 r replay >/dev/null; assert_equals "missing runid exits 1" "$?" "1"
 

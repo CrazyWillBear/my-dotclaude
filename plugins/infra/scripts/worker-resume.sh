@@ -76,7 +76,7 @@ done
 USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--round N] [--dry-run]"
 [ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 # --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
-# independent review (below) and `codex exec review --base` cannot run without one —
+# independent review (below) and the reviewer's commit range cannot be built without one —
 # and a resume that quietly skipped the review would land an unreviewed branch wearing
 # the same report shape as a reviewed one, which is the exact failure #96 caught.
 # Guessing a base here (`main`, the current branch) would be the same silence with extra
@@ -86,7 +86,7 @@ case "$ROUND" in ''|*[!0-9]*) die "--round must be a number, got '$ROUND'" ;; es
 case "$ATTEMPT" in ''|*[!0-9]*) die "--attempt must be a number, got '$ATTEMPT'" ;; esac
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 # Same guard as spawn.sh, worker-report.sh and run-log.sh: it is joined into a path.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$ANSWER_SET" -eq 1 ] || die "an answer is required: --answer TEXT or --answer-file FILE"
 [ -n "${ANSWER//[[:space:]]/}" ] || die "the answer is empty — resuming with nothing to say wastes the thread"
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
@@ -189,8 +189,11 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
 # reader would hand claude the first line of it (review round 2). An empty array is
 # review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
+# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
-mapfile -d '' REVIEW_CMD < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # review.txt goes too, and for the sharpest version of the same reason: it is the only

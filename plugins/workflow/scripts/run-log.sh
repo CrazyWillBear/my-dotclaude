@@ -68,7 +68,7 @@ KEY="$(python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).
 [ -n "$KEY" ] || die "could not compute repo key (python3 -c failed)"
 DIR="${HOME:-/nonexistent}/.claude/handoffs/$KEY"
 
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-]" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .." ;; esac
 
 LOG="$DIR/runs/$RUNID.jsonl"
 

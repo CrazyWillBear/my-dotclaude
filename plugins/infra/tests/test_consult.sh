@@ -77,7 +77,12 @@ exit "${STUB_GH_EXIT:-0}"
 STUB
 chmod +x "$BIN/claude" "$BIN/gh"
 export PATH="$BIN:$PATH"
-WT="$WORK/wt"; mkdir -p "$WT"
+# A real LINKED worktree: consult.sh re-runs common-git-dir.sh --roots before it lets a
+# model loose in the worktree, and that check refuses anything that is not one.
+ORIGIN="$WORK/origin"; mkdir -p "$ORIGIN"
+git -C "$ORIGIN" init -q; git -C "$ORIGIN" config user.email t@t.t; git -C "$ORIGIN" config user.name t
+printf 'x\n' >"$ORIGIN/f"; git -C "$ORIGIN" add f; git -C "$ORIGIN" commit -qm init
+WT="$WORK/wt"; git -C "$ORIGIN" worktree add -q -b issue-12 "$WT" >/dev/null 2>&1
 
 run() { OUT="$(bash "$SCRIPT" "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
 reset() { rm -f "$WORK/argv" "$WORK/cwd" "$WORK/gh-argv" "$WORK/body"; }
@@ -161,6 +166,14 @@ reset
 STUB_GH_EXIT=1 run plan r1 12 standard "$WT"
 assert_equals "a failed post exits 1" "$RC" "1"
 assert_empty "with nothing on stdout" "$OUT"
+
+echo "test: the containment tripwire — a worktree --roots refuses gets no model (review fix 3)"
+PLAIN="$WORK/plain"; mkdir -p "$PLAIN"; git -C "$PLAIN" init -q
+reset
+run plan r1 12 standard "$PLAIN"
+assert_equals "exit 1" "$RC" "1"
+assert_contains "says the containment check refused it" "$ERR" "containment check refused"
+assert_empty "and no model ran" "$(cat "$WORK/argv" 2>/dev/null)"
 
 echo "test: a codex-backed planner cell is refused — this is a claude -p call"
 run plan r1 12 complex "$WT" --dry-run

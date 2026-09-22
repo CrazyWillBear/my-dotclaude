@@ -48,11 +48,16 @@ STUB
 chmod +x "$BIN/gh"
 export PATH="$BIN:$PATH"
 
-# A real repo with a base branch and two commits on top: the handoff lists them.
-REPO="$WORK/repo"; mkdir -p "$REPO"
-git -C "$REPO" init -q; git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
-printf 'x\n' >"$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm init
-git -C "$REPO" branch base
+# A real LINKED worktree (the only shape common-git-dir.sh --roots accepts — escalate.sh
+# re-checks containment before touching it) with a base branch and two commits on top:
+# the handoff lists them.
+ORIGIN="$WORK/origin"; mkdir -p "$ORIGIN"
+git -C "$ORIGIN" init -q; git -C "$ORIGIN" config user.email t@t.t; git -C "$ORIGIN" config user.name t
+printf 'x\n' >"$ORIGIN/f"; git -C "$ORIGIN" add f; git -C "$ORIGIN" commit -qm init
+git -C "$ORIGIN" branch base
+REPO="$WORK/repo"
+git -C "$ORIGIN" worktree add -q -b issue-12 "$REPO" >/dev/null 2>&1
+git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
 printf 'y\n' >"$REPO/f"; git -C "$REPO" commit -qam "step 1: add f"
 printf 'z\n' >"$REPO/f"; git -C "$REPO" commit -qam "step 2: wire f"
 
@@ -236,6 +241,15 @@ run r1 12 standard "$REPO" --base base
 assert_equals "exit 0" "$RC" "0"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "and says why on stderr" "$ERR" "never escalated"
+
+echo "test: the containment tripwire — a worktree --roots refuses is not read (review fix 3)"
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0
+PLAIN="$WORK/plain"; mkdir -p "$PLAIN"; git -C "$PLAIN" init -q
+run r1 12 standard "$PLAIN" --base base
+assert_equals "exit 1" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "says why" "$ERR" "containment check refused"
+assert_equals "nothing posted" "$(posted)" "no"
 
 echo "test: usage errors fail loud"
 run r1 12 standard "$REPO"; assert_equals "missing --base exits 1" "$RC" "1"
