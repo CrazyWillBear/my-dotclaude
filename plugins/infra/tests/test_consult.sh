@@ -174,6 +174,10 @@ run plan r1 12 standard "$PLAIN"
 assert_equals "exit 1" "$RC" "1"
 assert_contains "says the containment check refused it" "$ERR" "containment check refused"
 assert_empty "and no model ran" "$(cat "$WORK/argv" 2>/dev/null)"
+reset
+run consult r1 12 standard "$PLAIN"
+assert_equals "the consult role is refused BEFORE it reads the thread from that worktree" "$RC" "1"
+assert_empty "no gh call at all" "$(cat "$WORK/gh-argv" 2>/dev/null)"
 
 echo "test: a codex-backed planner cell is refused — this is a claude -p call"
 run plan r1 12 complex "$WT" --dry-run

@@ -209,7 +209,7 @@ while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
 # window between here and the clone below open for THAT SAME WORKER to plant one — the
 # non-default-CODEX_RUN_ROOT threat model spawn.sh's own pre-clone cleanup already names.
 # They are cleared AFTER the worker exits instead (below), mirroring spawn.sh's wrapper.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 
@@ -225,6 +225,9 @@ CODE=$?
 # left a symlink there would otherwise have `mkdir -p`/`git clone` follow it, handing the
 # reviewer's sandbox grant and TMPDIR to a directory the worker chose, not this script.
 rm -rf "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
+# The worker is done; a frozen event log from here on is the reviewer running, not a stall
+# (escalate.sh reads this marker). Removed just before `exit` lands, as in spawn.sh.
+: >"$RUNDIR/reviewing"
 
 # THE INDEPENDENT REVIEWER (claude on the reviewer cell, spawning my-review — #104),
 # exactly as spawn.sh runs it and from the same builder — a resumed worker's branch is as
@@ -282,6 +285,7 @@ if [ "$CODE" -eq 0 ] \
     fi
 fi
 
+rm -f "$RUNDIR/reviewing"
 printf '%s\n' "$CODE" >"$RUNDIR/exit"
 
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the

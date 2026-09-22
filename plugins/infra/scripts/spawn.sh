@@ -538,7 +538,7 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # fixes were never looked at straight to the merge queue. review-stderr.log goes too: the
 # missing-review error quotes its tail, and a stale one would explain this run's refusal
 # with the previous round's reason.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" \
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
@@ -624,6 +624,10 @@ bash -c '
     # PREVIOUS round of the same reused run dir (#99) — a worker-planted checkout would be
     # a repo the reviewer is fooled into trusting.
     rm -rf "$rundir/review.txt" "$rundir/review-checkout" "$rundir/review-scratch"
+    # THE WORKER IS DONE; THE REVIEW MAY TAKE A WHILE. `reviewing` tells escalate.sh that a
+    # frozen event log from here on is not a stall — the worker process is gone and the
+    # sibling reviewer is what the live pid is doing. Removed just before `exit` lands.
+    : >"$rundir/reviewing"
     # Reviewed only when the worker SAYS it built or fixed something. `escalate` and
     # `failed` also exit 0, and reviewing those posts a "Review round" comment on a
     # half-built branch — which the orchestrate lane counts as a spent cycle.
@@ -675,6 +679,7 @@ bash -c '
             rm -f "$rundir/review.txt"
         fi
     fi
+    rm -f "$rundir/reviewing"
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \

@@ -37,10 +37,16 @@
 # on the thread would have allowed (review round 2). The same record is what stops a
 # handoff being posted twice for one attempt. (`failed` needs no scoping — spawn.sh clears
 # `exit` and `last-message.txt` on every respawn.)
-#   occupancy      the worker's context is at or above the threshold (256K)
+#   occupancy      the worker's context is at or above the threshold (256K) — only while
+#                  it is running, or paused on a deviation (a resume would land in a full
+#                  window). A finished worker's last figure says nothing about the FRESH
+#                  session a fix round is.
 #   stall          the process is alive, no exit code, and the EVENT LOG has not changed
 #                  for the stall window (20 min). Event-log staleness, not worktree mtime:
-#                  the log is touched on every action, the worktree only on writes.
+#                  the log is touched on every action, the worktree only on writes. NOT
+#                  while `$RUNDIR/reviewing` exists: the wrapper writes it once the worker
+#                  process has exited and the sibling reviewer is running — the log is
+#                  frozen then by design, and `exit` lands only after the review.
 #
 # WHERE OCCUPANCY COMES FROM. `events.jsonl`'s `turn.completed` usage block is the TURN'S
 # CUMULATIVE input (a real run: 2.9M over one turn), not the context size, and it lands
@@ -187,7 +193,9 @@ if reason is None:
             reason = ("review-cap", "review round %d still has %d high, %d medium" % (n, h, med))
 
 # --- the rollout: live context occupancy ------------------------------------------------
-if reason is None:
+reviewing = os.path.exists(os.path.join(rundir, "reviewing"))
+running = code == "" and alive and not reviewing
+if reason is None and (running or status == "escalate"):
     ev = read("events.jsonl") or ""
     m = re.search(r'"thread_id"\s*:\s*"([^"]+)"', ev)
     if m:
@@ -211,7 +219,7 @@ if reason is None:
             reason = ("occupancy", "context at %d tokens, threshold %d" % (last, occ_max))
 
 # --- stall: alive, not finished, event log untouched ------------------------------------
-if reason is None and code == "" and alive:
+if reason is None and running:
     try:
         age = time.time() - os.stat(os.path.join(rundir, "events.jsonl")).st_mtime
     except OSError:

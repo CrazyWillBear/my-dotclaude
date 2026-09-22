@@ -628,6 +628,7 @@ assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
 # review landing after it would be read as a run with no verdict on every fast poll.
+if [ -e "$RUNDIR/reviewing" ]; then no "the reviewing marker outlived the review"; else ok "the reviewing marker is gone once exit lands"; fi
 if [ "$RUNDIR/review.txt" -ot "$RUNDIR/exit" ] || [ "$RUNDIR/exit" -nt "$RUNDIR/review.txt" ]; then
     ok "exit was written after the review, not before"
 else

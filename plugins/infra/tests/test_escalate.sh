@@ -194,6 +194,14 @@ run r1 12 standard "$REPO" --base base
 assert_empty "at 200K it does not — the 9M turn total is NOT the occupancy" "$OUT"
 ESCALATE_OCCUPANCY_TOKENS=150000 run r1 12 standard "$REPO" --base base
 assert_contains "the threshold is configurable" "$OUT" "occupancy"
+mkrollout 300000
+mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
+STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"}]}' run r1 12 standard "$REPO" --base base
+assert_empty "a FINISHED worker's last context is not a signal — the fix round is a fresh session" "$OUT"
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 3"}' 0
+run r1 12 standard "$REPO" --base base
+assert_contains "but a worker paused on a deviation at a full window IS — a resume would not fit" "$OUT" "occupancy"
+mkrun "" ""
 rm -rf "$SESSIONS"
 run r1 12 standard "$REPO" --base base
 assert_empty "no rollout found: no occupancy signal, no crash" "$OUT"
@@ -211,6 +219,10 @@ assert_empty "a fresh event log is not a stall" "$OUT"
 touch -d '30 minutes ago' "$RUNDIR/events.jsonl"
 ESCALATE_STALL_MINUTES=45 run r1 12 standard "$REPO" --base base
 assert_empty "the window is configurable" "$OUT"
+: >"$RUNDIR/reviewing"
+run r1 12 standard "$REPO" --base base
+assert_empty "the post-worker REVIEW phase (reviewing marker, no exit yet) is not a stall" "$OUT"
+rm -f "$RUNDIR/reviewing"
 printf '0\n' >"$RUNDIR/exit"
 run r1 12 standard "$REPO" --base base
 assert_empty "a FINISHED worker with an old log is not a stall" "$OUT"

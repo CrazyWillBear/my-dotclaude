@@ -62,7 +62,7 @@ cat >"$CFG/model-tiers.json" <<'JSON'
 JSON
 export RESOLVE_TIER_ROOT="$CFG"
 
-# The contract is NUL-delimited; read it the way the callers do (mapfile -d ''), then
+# The contract is NUL-delimited; read it the way the callers do (read -r -d ''), then
 # render one element per line for the substring assertions. ARGC is the element count —
 # the prompt must be ONE element however many lines it spans (review round 2).
 run() {

@@ -32,7 +32,8 @@
 # failure. Exit 0 = a command was printed. Exit 1 = it could not be built, loud on stderr.
 # NUL, not newline: the prompt is one multi-line argument, and a newline-split reader
 # handed claude 28 arguments of which the CLI keeps only the first line (review round 2).
-# Callers read it with `mapfile -d ''`.
+# Callers read it with `while IFS= read -r -d '' a` (never `mapfile`: bash 4+, and the kit
+# promises macOS bash 3.2).
 #
 # THE VERDICT GOES TO STDOUT. `claude -p` prints its final text; the CALLERS redirect it
 # into the run dir's review.txt, and review-counts.sh parses that. The prompt below pins
