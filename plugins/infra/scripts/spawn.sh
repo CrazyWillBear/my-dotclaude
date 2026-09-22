@@ -5,8 +5,8 @@
 # A worker's TIER decides its BACKEND. `backend: claude` (and every peer) is a
 # `claude --bg` session; `backend: codex` is a `codex exec` process instead — same
 # contract, different everything else. See § CODEX below and docs/swarm-design.md
-# § Codex backend. The shipped table is claude-only today; the codex path is live and
-# reached by any tier row that says so.
+# § Codex backend. The shipped table routes trivial and standard through codex first
+# (PRD #104); a user table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json overrides it.
 #
 # A WORKER is one-shot and owns one issue; it exits when the issue is built. A PEER is
 # a standing role session that idles between briefs and is rotated by handoff. Both are
@@ -21,6 +21,13 @@
 #   worker:
 #     --role build|fix      build (default) or a fix round on an existing branch
 #     --round N             fix-round number, quoted in the fix prompt (default 1)
+#     --attempt N           chain position (default 0). The tier's implementer cell is an
+#                           ORDERED CHAIN (resolve-tier.sh, #104); escalate.sh decides a
+#                           worker is out of its depth and the orchestrator respawns at
+#                           attempt+1 on the SAME worktree. Past the top of the chain this
+#                           script refuses — the orchestrator drains there, it never wraps.
+#                           A respawn is told it is one: the **Handoff** comment on the
+#                           thread and the branch's commits are its whole inheritance.
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -148,7 +155,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--orchestrator NAME] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -156,10 +163,12 @@ shift 5
 
 ROLE=build
 ROUND=1
+ATTEMPT=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --role)         need $# --role;         ROLE="$2"; shift 2 ;;
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
+        --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
@@ -168,6 +177,7 @@ done
 
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
+case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 [ -n "$RUNID" ] || die "runid is required"
 # Not just non-empty: $RUNID is joined into the codex run dir below, a path that reaches
 # both `mkdir -p` and `rm -rf`, and the caller is a model assembling argv by hand. A `..`
@@ -177,15 +187,21 @@ case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], 
 [ -n "$WORKTREE" ] || die "worktree is required"
 [ -n "$BASE" ] || die "base branch is required"
 
-# The tier's roster. resolve-tier.sh always exits 0 and always prints a roster
-# (falling back to standard), so a broken model-tiers.json degrades to a working
-# spawn rather than no spawn at all.
+# The tier's roster, at this attempt's chain position. resolve-tier.sh always exits 0 and
+# always prints a roster (falling back to the claude-only one), so a broken
+# model-tiers.json degrades to a working spawn rather than no spawn at all. An attempt
+# PAST THE TOP is the one thing that does not degrade: the resolver falls back with
+# chain=1, and 1 <= attempt is refused here — a wrapped chain would quietly rebuild on the
+# cheapest model the exact issue that just defeated the strongest one.
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
-ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
+ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null)"
 MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1)"
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
+CHAIN="$(printf '%s\n' "$ROSTER"   | sed -n 's/^implementer_chain=//p'   | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
+[ "$ATTEMPT" -lt "${CHAIN:-1}" ] \
+    || die "attempt $ATTEMPT is past the top of tier '$TIER' implementer chain (length ${CHAIN:-1}) — drain, do not respawn"
 # resolve-tier.sh validates the backend against the model and falls back rather than
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
@@ -233,22 +249,33 @@ else
 # ---------------------------------------------------------------------------
 EXTRA=(--add-dir "$WORKTREE")
 
-# Only COMPLEX work plans. Trivial and standard self-plan — planning TDD-first is
-# already in the implementer's contract, and a plan stage in front of an implementer
-# that explores anyway was measured at 26% of all agent-minutes on a 56-agent run.
-# The SESSION spawns the planner, never the orchestrator: a plan is prose, and prose
-# the orchestrator reads is prose in its context for the rest of the run.
-# A codex worker has no subagents, so it plans in its own context instead. Either way
-# the plan stays HERE: prose the orchestrator reads is prose in its context all run.
+# STANDARD and COMPLEX build to a PLAN that is already on the thread (#104): consult.sh
+# runs the planner as a one-shot call on the planner cell's model BEFORE this spawn and
+# posts a **Plan** comment, so a cheap implementer executes a plan a smart one wrote, and
+# the plan reaches the worker the way everything does — by reading the issue. The
+# orchestrator never reads it. Trivial self-plans. The one rule that makes the split safe:
+# a false plan assumption is a STOP, never an improvisation — the worker posts a
+# **Deviation** comment and pauses (status escalate), a consult on the planner's model
+# answers it, and the worker is resumed with the decision.
 PLAN_STEP=""
-if [ "$TIER" = complex ] && [ "$BACKEND" = codex ]; then
-    PLAN_STEP="0. This is a COMPLEX issue: PLAN FIRST. Read the repo, write yourself an ordered
-   implementation plan with file paths and testable acceptance criteria, then build to
-   it. Keep the plan in YOUR context — it is never part of your report.
+if [ "$TIER" != trivial ]; then
+    PLAN_STEP="0. A \"**Plan**\" comment is on the thread. FOLLOW IT step by step — it was written on a
+   stronger model so that executing it is near-mechanical. If a plan assumption turns out
+   FALSE, do NOT improvise: post a comment headed \"**Deviation**\" (which step, what you
+   found, what you tried) and STOP with status \"escalate\", the same text in \"note\". A
+   \"**Consult**\" answers it; follow that decision when you are resumed.
 "
-elif [ "$TIER" = complex ]; then
-    PLAN_STEP="0. This is a COMPLEX issue: spawn the workflow:planner agent FIRST and build to the
-   plan it returns. Keep the plan in YOUR context — never send it to the orchestrator.
+fi
+# A RESPAWN (attempt > 0) replaces a worker escalate.sh judged out of its depth. It is
+# told so: the thread's **Handoff** comment says why and what landed, and the branch
+# carries every committed sub-step. It never restarts the issue.
+HANDOFF_STEP=""
+if [ "$ATTEMPT" -gt 0 ]; then
+    HANDOFF_STEP="You are ATTEMPT $((ATTEMPT + 1)) on this issue: a previous worker was replaced. The
+thread carries a \"**Handoff**\" comment (why, the commits landed, its last activity) plus
+the plan, every deviation and every consult. Read them, then continue from the branch's
+last commit — never restart the issue.
+
 "
 fi
 
@@ -329,7 +356,7 @@ if [ "$ROLE" = build ]; then
     TASK="$(cat <<PROMPT
 You are the BUILD session for issue #$ISSUE, run $RUNID.
 
-Worktree: $WORKTREE — branch $BRANCH, cut from $BASE. Work ONLY here; never touch
+${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH, cut from $BASE. Work ONLY here; never touch
 another worktree or $BASE.
 
 ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --comments\`. The
@@ -359,7 +386,7 @@ else
     TASK="$(cat <<PROMPT
 You are FIX ROUND $ROUND for issue #$ISSUE, run $RUNID. You did not write this code.
 
-Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
+${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
    Those findings are your work order; the review already names file and line. Fix the

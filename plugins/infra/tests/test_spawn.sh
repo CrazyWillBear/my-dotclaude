@@ -181,13 +181,58 @@ assert_contains "does not fix its own findings" "$out" "a fresh session does tha
 assert_contains "context map is a hint" "$out" "CONTEXT-MAP.md"
 assert_contains "escalation path" "$out" "escalate"
 
-echo "test: only a complex issue is told to plan first"
+echo "test: standard and complex build to the PLAN on the thread; trivial self-plans (#104)"
+# The plan is posted to the issue by consult.sh BEFORE the build spawn, so the worker
+# receives it the way it receives everything else — by reading the thread. Nobody spawns
+# a planner from inside the build session any more.
 out_p=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
-assert_contains "complex spawns the planner itself" "$out_p" "spawn the workflow:planner agent FIRST"
-assert_contains "and keeps the plan out of the orchestrator" "$out_p" "never send it to the orchestrator"
+assert_contains "complex follows the Plan comment" "$out_p" "**Plan**"
+assert_not_contains "and spawns no planner of its own" "$out_p" "workflow:planner"
 out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
-assert_not_contains "standard self-plans" "$out_s" "workflow:planner"
-assert_not_contains "trivial self-plans" "$(dry r1 12 trivial /w base)" "workflow:planner"
+assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
+assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
+assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
+assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
+
+echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
+CFG_CHAIN="$WORK/cfg-chain"
+mkdir -p "$CFG_CHAIN"
+cat >"$CFG_CHAIN/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "low" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "medium" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "opus",  "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
+  }
+}
+JSON
+out_a0=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base)
+assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
+assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
+out_a1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 1)
+assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
+assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
+assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
+assert_contains "and to continue from the last commit" "$out_a1" "last commit"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 2 >/dev/null
+assert_equals "past the top of the chain exits 1 — the orchestrator drains there, never respawns" "$?" "1"
+assert_contains "and says so" "$(err)" "chain"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt x >/dev/null
+assert_equals "a non-numeric attempt exits 1" "$?" "1"
+out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
+assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
 
 echo "test: --role fix is a fresh session working from the review comment"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
@@ -244,8 +289,8 @@ dry r1 12 standard /w base --role sideways >/dev/null; assert_equals "bad role e
 dry r1 12 standard /w base --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
 assert_contains "names the flag" "$(err)" "unknown flag"
 
-echo "test: an unknown tier still spawns — resolve-tier.sh falls back to standard"
-out=$(dry r1 12 nonsense /w/issue-12 base); assert_arg "fallback roster" "$out" "sonnet"
+echo "test: an unknown tier still spawns — resolve-tier.sh falls back to the claude-only roster"
+out=$(dry r1 12 nonsense /w/issue-12 base); assert_arg "fallback roster" "$out" "opus"
 
 echo "test: a real spawn refuses a worktree that does not exist"
 bash "$SPAWN" r1 12 standard "$WORK/nope" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
@@ -446,12 +491,14 @@ rm -rf "$CODEX_ROOT/schemafail"
 echo "test: the codex tier is resolved per tier, not hardcoded"
 assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
 assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
-# A codex worker has no subagents either, so "spawn the planner" is the same stranding
-# bug as "use SendMessage" — it still has to PLAN, it just has to do it itself.
+# A codex worker has no subagents either, so "spawn the planner" would be the same
+# stranding bug as "use SendMessage" — the plan is on the THREAD instead (#104).
 out_cx=$(codex_dry r9 12 complex "$REPO" base)
-assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
-assert_not_contains "but is not told to spawn an agent it cannot spawn" \
+assert_contains "complex builds to the Plan comment" "$out_cx" "**Plan**"
+assert_not_contains "and is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
+assert_contains "a codex worker pauses on a deviation with the escalate status" \
+    "$out_cx" "**Deviation**"
 
 echo "test: a SIBLING reviewer is spawned, at the tier's REVIEWER model"
 # THE FIX FOR WHAT #96's GATE CAUGHT. The worker used to run `codex exec review` itself,
@@ -794,23 +841,32 @@ esac
 stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 [ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 
-# The codex path above is built and tested; the SHIPPED roster deliberately stays claude, and
-# that is the INTENDED END STATE, not a hold (docs/swarm-design.md § Roster, decided 2026-09-17).
-# This kit installs on other people's machines: a shipped codex default makes every worker fail
-# for anyone without the codex CLI, and spawn.sh has no preflight check for it, so the failure
-# reads as a generic `failed` with no hint that codex is simply missing. Codex is opt-in per
-# user, through a table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json.
+# The SHIPPED roster (PRD #104, 2026-09-22, superseding the 2026-09-17 claude-only decision):
+# trivial and standard implement on codex — luna, then terra, then opus — behind an opus
+# plan; complex stays on opus. A user without the codex CLI writes a claude-only table at
+# ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json; the FALLBACK roster is claude-only for
+# the same reason, so a broken table never depends on codex.
 #
-# CLAUDE_CONFIG_DIR is pinned at an empty dir for exactly that reason: without it this test
-# would read the developer's OWN user table and go red on any machine that opted into codex.
-echo "test: the SHIPPED roster routes workers through claude — codex is opt-in, not the default"
-for t in trivial standard complex; do
+# CLAUDE_CONFIG_DIR is pinned at an empty dir so this reads the shipped table, not the
+# developer's own.
+echo "test: the SHIPPED roster — luna heads the trivial and standard chains, opus builds complex"
+for t in trivial standard; do
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
-    assert_arg "shipped $t spawns claude" "$out" "--bg"
-    assert_not_contains "shipped $t does not route to codex by default" \
-        "$out" "codex exec"
+    assert_arg "shipped $t attempt 0 spawns codex" "$out" "exec"
+    assert_arg "shipped $t attempt 0 is luna" "$out" "gpt-5.6-luna"
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
+    assert_arg "shipped $t attempt 1 is terra" "$out" "gpt-5.6-terra"
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 2 2>/dev/null)
+    assert_arg "shipped $t attempt 2 tops out on claude" "$out" "--bg"
+    assert_arg "at opus" "$out" "opus"
 done
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+      bash "$SPAWN" r9 12 complex "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+assert_arg "shipped complex spawns claude" "$out" "--bg"
+assert_not_contains "shipped complex never routes to codex" "$out" "codex exec"
 
 echo "test: a runid carrying a path component is refused before it reaches mkdir -p or rm -rf"
 # $RUNID is joined into the codex run dir, which spawn.sh both creates and — on a failed
