@@ -151,6 +151,10 @@ echo "SIGNAL 2: a stale event log with a live pid → stall → respawn"
 rm -rf "$CODEX_ROOT"
 STUB_SLEEP=60 STUB_REPORT='{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     spawn --attempt 1 >/dev/null
+unset STUB_SLEEP   # `spawn` is a shell FUNCTION: on bash < 4.4 (macOS's 3.2) a var assigned
+                   # in front of a function call can leak into the CURRENT shell instead of
+                   # staying scoped to that call — every LATER spawn in this file would then
+                   # sleep 60s it never asked for.
 for _ in $(seq 1 25); do [ -s "$RUNDIR/pid" ] && [ -f "$RUNDIR/events.jsonl" ] && break; sleep 0.2; done
 WPID="$(cat "$RUNDIR/pid")"
 sleep 0.5   # let the stub finish streaming before the mtime is aged
@@ -171,6 +175,8 @@ sleep 0.3
 echo "SIGNAL 3: an over-threshold occupancy in the rollout → escalate"
 rm -rf "$CODEX_ROOT" "$SESSIONS"
 STUB_SLEEP=60 STUB_THREAD=thr-int-occ spawn --attempt 0 >/dev/null
+unset STUB_SLEEP STUB_THREAD   # same leak risk as above — the CLEAN BUILD spawn right below
+                               # this signal must NOT inherit a 60s sleep or a fixed thread id
 for _ in $(seq 1 25); do [ -s "$RUNDIR/pid" ] && grep -q thread.started "$RUNDIR/events.jsonl" 2>/dev/null && break; sleep 0.2; done
 WPID="$(cat "$RUNDIR/pid")"
 mkdir -p "$SESSIONS/2026/09/22"

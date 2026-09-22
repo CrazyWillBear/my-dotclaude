@@ -13,6 +13,13 @@
 #            can disagree by design after a handoff: N=3 on the thread can be this
 #            attempt's first.
 #
+#            A CLAUDE-BACKED WORKER HAS NO escalate.sh CHECK AT ALL (no run dir — it tops
+#            its chain and a script never escalates it), so nothing else stops a repeated
+#            consult past the cap. It also never respawns, so the thread-wide N IS this
+#            (only) attempt's count — none of escalate.sh's cross-attempt scoping applies.
+#            THIS SCRIPT refuses past the cap in exactly that case (below); a codex
+#            worker's own deviation-cap already prevents reaching a third consult call.
+#
 # Usage:
 #   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--dry-run]
 #   bash consult.sh consult <runid> <issue> <tier> <worktree> [--dry-run]
@@ -99,6 +106,15 @@ for c in doc.get("comments") or []:
         n += 1
 print(n + 1)
 ')" || die "could not parse issue #$ISSUE's comments"
+    # THE CLAUDE-BACKED BACKSTOP (see the role comment above): no run dir here means no
+    # escalate.sh check ever ran for this worker, and it never respawns, so N is safely
+    # this attempt's whole count. A codex issue always HAS a run dir, so this never fires
+    # for one — escalate.sh's own, attempt-scoped deviation-cap already governs it.
+    if [ ! -d "${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE" ]; then
+        CONSULT_CAP="${ESCALATE_CONSULT_CAP:-2}"
+        [ "$N" -le "$CONSULT_CAP" ] \
+            || die "consult $N is past the cap ($CONSULT_CAP) for issue #$ISSUE — this claude-backed worker has no run dir and no escalate.sh check; drain the issue instead of consulting again"
+    fi
 fi
 
 if [ "$ROLE" = plan ]; then

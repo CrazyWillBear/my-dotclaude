@@ -263,8 +263,8 @@ EXTRA=(--add-dir "$WORKTREE")
 # the plan reaches the worker the way everything does — by reading the issue. The
 # orchestrator never reads it. Trivial self-plans. The one rule that makes the split safe:
 # a false plan assumption is a STOP, never an improvisation — the worker posts a
-# **Deviation** comment and pauses (status escalate), a consult on the planner's model
-# answers it, and the worker is resumed with the decision.
+# **Deviation** comment and pauses (the pause mechanism is backend-shaped, below), a
+# consult on the planner's model answers it, and the worker is resumed with the decision.
 # BACKEND-SHAPED PAUSE. A false plan assumption is a THIRD backend-varying step, same as
 # review and report (below): codex has no SendMessage, and a claude worker has no
 # status/note fields — those only exist because --output-schema forces them. Giving every

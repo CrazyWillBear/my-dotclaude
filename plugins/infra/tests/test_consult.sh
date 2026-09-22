@@ -151,6 +151,36 @@ STUB_GH_COMMENTS='{"comments":[{"body":"a comment mentioning **Consult 9** mid-l
     run consult r1 12 standard "$WT"
 assert_equals "only a heading at line start counts" "$OUT" "**Consult 1** posted on #12"
 
+echo "test: consult refuses PAST THE CAP for a claude-backed worker (review round 10)"
+# No run dir for this issue (this test's HOME has none) = claude-backed by consult.sh's own
+# check. escalate.sh never runs for such a worker at all, so nothing else stops a third
+# consult — this script's own backstop is the only thing that can.
+reset
+AT_CAP='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}'
+STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+assert_equals "the third consult (N=3) is refused" "$RC" "1"
+assert_empty "nothing on stdout" "$OUT"
+assert_contains "says why" "$ERR" "past the cap"
+if grep -qx comment "$WORK/gh-argv" 2>/dev/null; then no "and no comment was posted (a read to compute N is expected)"; else ok "and no comment was posted (a read to compute N is expected)"; fi
+reset
+UNDER_CAP='{"comments":[{"body":"**Consult 1**"}]}'
+STUB_GH_COMMENTS="$UNDER_CAP" run consult r1 12 standard "$WT"
+assert_equals "the SECOND consult (N=2, at the cap) still goes through" "$RC" "0"
+assert_equals "posted normally" "$OUT" "**Consult 2** posted on #12"
+reset
+ESCALATE_CONSULT_CAP=5 STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+assert_equals "the cap is configurable" "$RC" "0"
+unset ESCALATE_CONSULT_CAP   # `run` is a shell function — see the note elsewhere in this suite
+# With a REAL codex run dir present, the cap is NOT enforced here — escalate.sh's own,
+# attempt-scoped deviation-cap already governs a codex worker before this script is ever
+# reached a third time in the same attempt.
+reset
+CODEX_RUN_ROOT="$WORK/codexruns"
+mkdir -p "$CODEX_RUN_ROOT/r1/issue-12"
+CODEX_RUN_ROOT="$CODEX_RUN_ROOT" STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+assert_equals "a codex-backed issue's third consult is NOT refused here" "$RC" "0"
+assert_equals "posted normally" "$OUT" "**Consult 3** posted on #12"
+
 echo "test: empty output is NEVER posted"
 reset
 STUB_CLAUDE_TEXT='   ' run plan r1 12 standard "$WT"

@@ -489,8 +489,11 @@ bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree>
      --base "$BASE" --attempt <A> --round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."
 ```
 
-The decision stays on the thread; the answer you pass is a pointer to it, so no prose enters
-your context. A claude session is resumed the same way by `SendMessage` with that pointer.
+**If `consult.sh` refuses instead** ("past the cap", only for a claude-backed worker — it
+has no `escalate.sh` check and never respawns): treat it as `failed` — drain, since claude
+already tops its chain. Otherwise the decision stays on the thread; the answer you pass is a
+pointer to it, so no prose enters your context. A claude session resumes the same way, by
+`SendMessage` with that pointer.
 
 **Anything else — a question only a human can answer.** A codex worker escalates by ending its
 turn: no inbox, nothing to attach to, but **its context survives** — resume its thread with
@@ -526,7 +529,7 @@ bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --ba
 
 It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
 `failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
-medium findings, or an event log untouched for 20 minutes while alive and not in its post-build
+medium findings, an event log untouched for 20 minutes while alive and not in its post-build
 review (own budget, below), or a context past 256K. On a hit it has posted `**Handoff**`. Then:
 
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
@@ -691,9 +694,6 @@ instead of buried under a success table:
 Each of these is something a fresh session will reasonably want to add. Each was argued down:
 
 - **Two-at-a-time conflict resolution** — until a real run reports `K > 5`; the fold measures it.
-- **Recon to predict file overlap** — the fold *observes* conflicts, so measuring beats predicting.
-- **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already prevents concurrent work on an interface that does not exist.
-- **Waves / round barriers** — continuous scheduling with slot refill is strictly better.
-- **Watch/claim tables, notification queues** — the issue thread replaces all three. **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
-- **A worker-scoped context nudge** — nothing compounds; `escalate.sh` reads occupancy from outside.
-- **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate gate only.
+- **Recon to predict file overlap** — the fold *observes* conflicts, so measuring beats predicting. **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already prevents concurrent work on an interface that does not exist.
+- **Waves / round barriers** — continuous scheduling with slot refill is strictly better. **Watch/claim tables, notification queues** — the issue thread replaces all three. **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
+- **A worker-scoped context nudge** — nothing compounds; `escalate.sh` reads occupancy from outside. **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate gate only.

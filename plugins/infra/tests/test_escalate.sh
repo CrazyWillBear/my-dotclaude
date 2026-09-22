@@ -242,6 +242,7 @@ run r1 12 standard "$REPO" --base base
 assert_empty "at 200K it does not — the 9M turn total is NOT the occupancy" "$OUT"
 ESCALATE_OCCUPANCY_TOKENS=150000 run r1 12 standard "$REPO" --base base
 assert_contains "the threshold is configurable" "$OUT" "occupancy"
+unset ESCALATE_OCCUPANCY_TOKENS   # see the ESCALATE_CONSULT_CAP note above — same shape
 mkrollout 300000
 mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
 STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"}]}' run r1 12 standard "$REPO" --base base
@@ -267,6 +268,8 @@ assert_empty "a fresh event log is not a stall" "$OUT"
 age_file "$RUNDIR/events.jsonl" 30
 ESCALATE_STALL_MINUTES=45 run r1 12 standard "$REPO" --base base
 assert_empty "the window is configurable" "$OUT"
+unset ESCALATE_STALL_MINUTES   # see the ESCALATE_CONSULT_CAP note above — same shape; every
+                               # assertion below this line assumes the DEFAULT 20-minute stall
 : >"$RUNDIR/reviewing"
 run r1 12 standard "$REPO" --base base
 assert_empty "the post-worker REVIEW phase (reviewing marker, no exit yet) is not a stall" "$OUT"
@@ -277,6 +280,7 @@ assert_empty "but 30 minutes into review is still WITHIN the review's own (longe
 # is the one case that actually exercises ESC_REVIEW rather than just outliving the default.
 ESCALATE_REVIEW_MINUTES=5 run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "the review budget is configurable, independent of the stall window" "$OUT" "stall"
+unset ESCALATE_REVIEW_MINUTES   # this next case is exactly what would go unmeasured if it leaked
 age_file "$RUNDIR/reviewing" 50
 run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "past the DEFAULT review budget too, a hung reviewer is not invisible" "$OUT" "stall"

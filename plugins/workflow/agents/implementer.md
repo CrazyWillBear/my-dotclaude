@@ -68,8 +68,9 @@ never covered and the reviewer never expected. Instead:
 3. A `**Consult N**` comment answers it — a decision, and revised steps if the plan is wrong from
    that step on. You are resumed with that decision as your answer. **Follow it.**
 
-Consults are capped (two per attempt — a respawned attempt gets its own two); past the cap the orchestrator replaces you with a stronger
-model, which is the right outcome, not a failure of yours. Never patch around a false assumption
+Consults are capped (two per attempt — a respawned attempt gets its own two); past the cap the
+orchestrator replaces you with a stronger model — or, if you are already the strongest model on
+this issue's chain, drains it — which is the right outcome, not a failure of yours. Never patch around a false assumption
 to avoid the pause — that is exactly the drift the pause exists to catch.
 
 **If `CONTEXT-MAP.md` exists in your worktree, read it.** It is a flat path-plus-one-line map
