@@ -66,7 +66,7 @@ cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >>"${STUB_GH_ARGV:-/dev/null}"
 if [ "${1:-}" = issue ] && [ "${2:-}" = view ]; then
-    : "${STUB_GH_COMMENTS:='{"comments":[]}'}"
+    [ -n "${STUB_GH_COMMENTS:-}" ] || STUB_GH_COMMENTS='{"comments":[]}'
     printf '%s' "$STUB_GH_COMMENTS"
     exit 0
 fi
