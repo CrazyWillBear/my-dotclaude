@@ -80,7 +80,8 @@ bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
     || die "containment check refused the worktree $WORKTREE — not running a model in it"
 
 # The consult number comes from the THREAD, never from a counter kept here: the heading is
-# what escalate.sh counts, so the two can never disagree. `gh` resolves the repo from the
+# what escalate.sh counts — within THIS ATTEMPT's window, so N on the thread and the cap
+# can disagree by design after a handoff (see the header above). `gh` resolves the repo from the
 # worktree. A plan has no number — there is one per issue.
 N=""
 if [ "$ROLE" = consult ]; then

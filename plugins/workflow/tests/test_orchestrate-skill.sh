@@ -172,8 +172,7 @@ assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
 
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
-assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "third
-deviation is an escalation|third deviation"
+assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"

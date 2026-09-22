@@ -194,7 +194,12 @@ out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
 assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
 assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
 assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
-assert_contains "the escalate note carries the deviation: prefix the orchestrator dispatches on" "$out_s" '"note" = "deviation: "'
+# CLAUDE-backed (this roster's standard cell is claude): the pause is SendMessage, not the
+# codex-only status/note shape — a claude worker has neither field (review round 9). Giving
+# every backend the codex shape left a claude worker unable to emit its own pause mechanism.
+assert_contains "a CLAUDE worker's pause is SendMessage, with the deviation: prefix" "$out_s" \
+    "issue 12 escalate deviation: <the same three lines>"
+assert_not_contains "never the codex-only status/note shape it cannot emit" "$out_s" '"note" = "deviation: "'
 assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
 
 echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
@@ -234,6 +239,11 @@ assert_equals "past the top of the chain exits 1 — the orchestrator drains the
 assert_contains "and says so" "$(err)" "chain"
 RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt x >/dev/null
 assert_equals "a non-numeric attempt exits 1" "$?" "1"
+# `dry` is a shell FUNCTION: on bash < 4.4, a var assigned in front of a function call can
+# leak into the CURRENT shell instead of staying scoped to that call (fixed in 4.4; this
+# repo promises macOS's bash 3.2). Both calls above are direct — not wrapped in $(...), so
+# nothing forked a subshell to contain it — restore the file's own default explicitly.
+RESOLVE_TIER_ROOT="$CFG_CLAUDE"
 out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
 assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
 
@@ -502,6 +512,10 @@ assert_not_contains "and is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
 assert_contains "a codex worker pauses on a deviation with the escalate status" \
     "$out_cx" "**Deviation**"
+# The codex-only shape belongs ONLY here — a codex worker has status/note fields (from
+# --output-schema) that a claude worker does not (review round 9).
+assert_contains "a CODEX worker's pause DOES use the status/note shape" "$out_cx" \
+    '"note" = "deviation: "'
 
 echo "test: a SIBLING reviewer is spawned — CLAUDE, at the tier's REVIEWER cell (#104)"
 # THE FIX FOR WHAT #96's GATE CAUGHT, then #104's: the worker used to run `codex exec

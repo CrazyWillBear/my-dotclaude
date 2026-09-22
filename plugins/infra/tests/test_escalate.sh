@@ -155,6 +155,11 @@ STUB_GH_COMMENTS="$THREE" run r1 12 standard "$REPO" --base base
 assert_contains "the third is the signal" "$OUT" "deviation-cap: a deviation after 2 consults"
 STUB_GH_COMMENTS="$THREE" ESCALATE_CONSULT_CAP=3 run r1 12 standard "$REPO" --base base
 assert_empty "the cap is configurable" "$OUT"
+# `run` is a shell FUNCTION, not an external command: on bash < 4.4 a var assigned in front
+# of a function call can leak into the CURRENT shell rather than staying scoped to that one
+# call (fixed in 4.4; this repo still promises macOS's bash 3.2 — spawn.sh, review-cmd.sh).
+# Unset explicitly rather than trust it died with the command.
+unset ESCALATE_CONSULT_CAP
 
 echo "test: thread signals are scoped to THIS attempt by a mark in the RUN DIR (review fixes 1, 2)"
 # Comments are permanent. Without the scope, the three deviations that escalated attempt 0

@@ -460,7 +460,7 @@ you one line; the graph was frozen before any plan existed. Only workers, consul
 `escalate.sh` read the thread ([Context discipline](#context-discipline)).
 
 **Consults are the same script in its other role:** a worker that hits a false plan assumption
-posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's model. Two per issue.
+posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's model. Two per attempt.
 
 ---
 
@@ -526,8 +526,8 @@ bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --ba
 
 It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
 `failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
-medium findings, a context past 256K, or an event log untouched for 20 minutes while alive. On a
-hit it has already posted the `**Handoff**` comment. Then:
+medium findings, or an event log untouched for 20 minutes while alive and not in its post-build
+review (own budget, below), or a context past 256K. On a hit it has posted `**Handoff**`. Then:
 
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
    for a codex row; verify nothing is still busy.
@@ -538,7 +538,7 @@ hit it has already posted the `**Handoff**` comment. Then:
 4. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
 Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
-`ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); the run log's counts decide if they move.
+`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); run-log counts decide if they move.
 
 ---
 

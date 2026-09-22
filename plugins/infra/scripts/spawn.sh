@@ -265,14 +265,28 @@ EXTRA=(--add-dir "$WORKTREE")
 # a false plan assumption is a STOP, never an improvisation — the worker posts a
 # **Deviation** comment and pauses (status escalate), a consult on the planner's model
 # answers it, and the worker is resumed with the decision.
+# BACKEND-SHAPED PAUSE. A false plan assumption is a THIRD backend-varying step, same as
+# review and report (below): codex has no SendMessage, and a claude worker has no
+# status/note fields — those only exist because --output-schema forces them. Giving every
+# worker the codex shape (as a first pass here did) leaves a claude worker with a pause
+# mechanism it cannot emit: the deviation either reaches the orchestrator with no
+# "deviation: " prefix (routed to a human, stalling an unattended run) or reaches nobody.
+if [ "$BACKEND" = codex ]; then
+    PLAN_PAUSE="and STOP with status \"escalate\" and \"note\" = \"deviation: \" followed
+   by the same three lines — the \"deviation: \" prefix is how the orchestrator tells a
+   deviation from a question."
+else
+    PLAN_PAUSE="and use SendMessage, addressed to \"$ORCH\", with exactly:
+      issue $ISSUE escalate deviation: <the same three lines>
+   then wait. The \"deviation: \" prefix is how the orchestrator tells a deviation from a
+   question — it is not optional."
+fi
 PLAN_STEP=""
 if [ "$TIER" != trivial ]; then
     PLAN_STEP="0. A \"**Plan**\" comment is on the thread. FOLLOW IT step by step — it was written on a
    stronger model so that executing it is near-mechanical. If a plan assumption turns out
    FALSE, do NOT improvise: post a comment headed \"**Deviation**\" (which step, what you
-   found, what you tried) and STOP with status \"escalate\" and \"note\" = \"deviation: \"
-   followed by the same three lines — the \"deviation: \" prefix is how the orchestrator
-   tells a deviation from a question. A \"**Consult**\" answers it; follow that decision
+   found, what you tried) $PLAN_PAUSE A \"**Consult**\" answers it; follow that decision
    when you are resumed.
 "
 fi

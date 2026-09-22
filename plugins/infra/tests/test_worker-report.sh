@@ -66,15 +66,14 @@ mkrun() {
     [ $# -lt 5 ] || printf '%s' "$5" >"$d/last-message.txt"
 }
 
-# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output: the final
-# message of the sibling `codex exec review` process, never written by the worker. A
+# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output: the stdout of the
+# sibling `claude -p` reviewer process (review-cmd.sh, #104), never written by the worker. A
 # built/fixed report without one is refused, so almost every fixture below needs it — that
 # refusal IS the fix for the self-review substitution #96's gate caught.
 #
-# The content is codex's real review format — `- [Pn] title — path:lines` list items —
-# because that format cannot be requested (--base forbids a prompt, --output-schema is
-# ignored on a review turn) and is therefore what the parser must read. P1 -> high,
-# P2 -> medium, P3 -> low.
+# The content is the format the reviewer's prompt requests — `- [Pn] title — path:lines` list
+# items, or the literal `No findings.` for clean — which review-counts.sh parses and refuses
+# anything else. P1 -> high, P2 -> medium, P3 -> low.
 mkreview() {
     local d="$CODEX_ROOT/$1/issue-$2" i
     mkdir -p "$d"
