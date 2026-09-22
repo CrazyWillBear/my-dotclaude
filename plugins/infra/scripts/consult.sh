@@ -15,11 +15,12 @@
 #
 #            A CLAUDE-BACKED WORKER (resolve-tier.sh says so for THIS --attempt — it tops
 #            its chain) HAS NO escalate.sh CHECK AT ALL, so nothing else stops a repeated
-#            consult past the cap. It also never respawns, so the count since the newest
-#            **Plan** heading IS this (only) attempt's count — none of escalate.sh's
-#            cross-attempt scoping applies. THIS SCRIPT refuses past the cap in exactly that
-#            case (below); a codex worker's own deviation-cap already prevents reaching a
-#            third consult call.
+#            consult past the cap. THIS SCRIPT refuses past the cap in exactly that case,
+#            counting THIS ATTEMPT's consults from the run dir's handoff.json mark (below);
+#            a codex worker's own deviation-cap already prevents reaching a third consult
+#            call. Note a claude attempt does NOT imply a first attempt: on the shipped
+#            roster the claude cell is chain position 2, reached after two codex attempts
+#            whose consults must not count against it.
 #
 # Usage:
 #   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--attempt N] [--dry-run]
@@ -101,17 +102,33 @@ bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
 # can disagree by design after a handoff (see the header above). `gh` resolves the repo from the
 # worktree. A plan has no number — there is one per issue.
 #
-# THE CAP, separately, floors at the NEWEST **Plan** heading (round-11 fix): consult.sh
-# plan posts exactly one per run per standard/complex issue, before the build spawn, so it
-# is already a natural per-run anchor. Without this floor a claude-backed issue that spent
-# its cap in one run and drained would compute N=3 on its very first consult of the NEXT
-# run (the thread is permanent) and drain again, forever, since nothing else ever resets it.
-N=""; N_SINCE_PLAN=""
+# THE CAP counts THIS ATTEMPT's consults, and its floor is the RUN DIR's `handoff.json`
+# mark — the same anchor escalate.sh settled on in review round 2, for the same reason: a
+# worker may post issue comments but cannot reach the run dir, so it cannot move its own
+# floor. `**Plan**` is NOT that anchor (round-12 fix): there is exactly ONE plan per issue
+# per RUN (posted at admission; a respawn re-plans nothing — SKILL.md's respawn step), so a
+# plan-floored count folds EVERY earlier attempt's consults into the current attempt's
+# budget. On the shipped roster the claude cell is chain position 2, so it would inherit
+# attempts 0 and 1's consults and be refused — and drained — on its very first deviation.
+#
+# NO handoff.json (this attempt's first evaluation, or the complex tier's claude-only chain,
+# which never creates a run dir at all — spawn.sh writes one only on the codex path): fall
+# back to the newest comment whose FIRST line is `**Plan**`. There the fallback is exact,
+# because a one-cell chain has exactly one attempt per run, so per-run IS per-attempt.
+# RESIDUAL, accepted: that fallback is a thread heading, and a worker could post `**Plan**`
+# as its own first line to widen its budget. Closing it needs a run-scoped ledger the
+# orchestrator writes and infra can read, which today lives in the workflow plugin
+# (run-log.sh) — infra must not call upward into it. The blast radius is extra consults on
+# the planner's model, not a wrong merge.
+# ponytail: forgeable Plan fallback on the no-run-dir path; a run-scoped ledger if it bites.
+N=""; N_THIS_ATTEMPT=""
 if [ "$ROLE" = consult ]; then
     THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null </dev/null)" \
         || die "could not read issue #$ISSUE's comments"
-    COUNTS="$(printf '%s' "$THREAD" | python3 -c '
-import json, re, sys
+    COUNTS="$(printf '%s' "$THREAD" \
+        | CONSULT_RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE" \
+          CONSULT_ATTEMPT="$ATTEMPT" python3 -c '
+import json, os, re, sys
 try:
     doc = json.load(sys.stdin)
 except Exception:
@@ -119,24 +136,38 @@ except Exception:
 comments = [str(c.get("body") or "") for c in (doc.get("comments") or [])]
 is_consult = lambda c: re.search(r"(?m)^\*\*Consult \d+\*\*", c)
 total = sum(1 for c in comments if is_consult(c))
-plan_idx = 0
-for i, c in enumerate(comments):
-    if re.search(r"(?m)^\*\*Plan\*\*", c):
-        plan_idx = i
-since_plan = sum(1 for c in comments[plan_idx:] if is_consult(c))
+
+# The floor: the mark the LAST handoff recorded, when it is the one that ended the attempt
+# before this one. Anything else (no file, unreadable, a mark for another attempt) falls
+# through to the plan heading, which is the exact answer on a one-attempt chain.
+floor = None
+try:
+    with open(os.path.join(os.environ["CONSULT_RUNDIR"], "handoff.json")) as fh:
+        m = json.load(fh)
+    if int(m.get("attempt", -1)) == int(os.environ["CONSULT_ATTEMPT"]) - 1:
+        floor = max(0, min(len(comments), int(m.get("mark", 0))))
+except (OSError, ValueError, TypeError, KeyError):
+    floor = None
+if floor is None:
+    floor = 0
+    for i, c in enumerate(comments):
+        if c.lstrip().startswith("**Plan**"):
+            floor = i
+this_attempt = sum(1 for c in comments[floor:] if is_consult(c))
 print(total + 1)
-print(since_plan + 1)
+print(this_attempt + 1)
 ')" || die "could not parse issue #$ISSUE's comments"
     N="$(printf '%s\n' "$COUNTS" | sed -n '1p')"
-    N_SINCE_PLAN="$(printf '%s\n' "$COUNTS" | sed -n '2p')"
+    N_THIS_ATTEMPT="$(printf '%s\n' "$COUNTS" | sed -n '2p')"
+    case "$N$N_THIS_ATTEMPT" in ''|*[!0-9]*) die "could not count the consults on issue #$ISSUE" ;; esac
     # THE CLAUDE-BACKED BACKSTOP (see the role comment above): resolve-tier.sh says this
     # attempt's implementer is claude-backed, which tops its chain and gets no escalate.sh
     # check at all, so nothing else stops a repeated consult past the cap. A codex attempt
     # is already governed by escalate.sh's own, attempt-scoped deviation-cap.
     if [ "$IMPL_BACKEND" = claude ]; then
         CONSULT_CAP="${ESCALATE_CONSULT_CAP:-2}"
-        [ "$N_SINCE_PLAN" -le "$CONSULT_CAP" ] \
-            || die "consult $N_SINCE_PLAN is past the cap ($CONSULT_CAP) for issue #$ISSUE since the newest **Plan** — this claude-backed worker (attempt $ATTEMPT) has no escalate.sh check; drain the issue instead of consulting again"
+        [ "$N_THIS_ATTEMPT" -le "$CONSULT_CAP" ] \
+            || die "consult $N_THIS_ATTEMPT of attempt $ATTEMPT is past the cap ($CONSULT_CAP) for issue #$ISSUE — this claude-backed worker has no escalate.sh check; drain the issue instead of consulting again"
     fi
 fi
 

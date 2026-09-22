@@ -73,7 +73,9 @@
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
-# Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts).
+# Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
+# backend is now resolved, not inferred — RESOLVE_TIER_ROOT / CLAUDE_CONFIG_DIR, whose table
+# decides whether this script runs at all for a given attempt.
 #
 # `$RUNDIR/.started` is written once by spawn.sh, at the FIRST spawn of a run, and never
 # rewritten by a respawn — it floors the deviation/consult window for an issue's very first
@@ -110,6 +112,12 @@ done
 [ -n "$BASE" ] || die "--base BRANCH is required — the handoff lists the commits since it"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
+# An UNKNOWN tier must not reach resolve-tier.sh: it answers one with the claude-only
+# FALLBACK roster (exit 0, its WARN discarded below), which reads here as "claude-backed,
+# never escalated" — silently switching every signal off for that worker for the rest of
+# the run, with only a reassuring note on stderr. `tier:standard` (the LABEL form) is the
+# typo that does it. consult.sh refuses an unknown tier for a weaker reason than this.
+case "$TIER" in trivial|standard|complex) ;; *) die "unknown tier '$TIER'" ;; esac
 case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
@@ -129,6 +137,10 @@ if [ "$IMPL_BACKEND" = claude ]; then
     echo "note: attempt $ATTEMPT of issue $ISSUE is claude-backed — a claude worker tops its chain and is never escalated" >&2
     exit 0
 fi
+# A codex attempt's run dir is spawn.sh's, and every read below — plus the stderr log the
+# python block redirects into — assumes it exists. Say which dir is missing rather than
+# failing later as a bare redirect error and a `cat` of a log that was never created.
+[ -d "$RUNDIR" ] || die "no codex run dir for issue $ISSUE: $RUNDIR"
 
 # TRIPWIRE (same as spawn.sh's wrapper, worker-resume.sh and consult.sh): git and gh run
 # in the worker's worktree below, on every wake, while the worker may still be writing it.

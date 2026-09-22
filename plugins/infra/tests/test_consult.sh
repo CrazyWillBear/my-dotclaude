@@ -40,14 +40,14 @@ assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got 
 CFG="$WORK/cfg"; mkdir -p "$CFG"
 cat >"$CFG/model-tiers.json" <<'JSON'
 {
-  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+  "trivial":  { "planner": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" },
                 "implementer": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
                 "reviewer": { "backend": "claude", "model": "opus", "effort": "low" } },
   "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
                 "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
                                  { "backend": "claude", "model": "opus", "effort": "medium" } ],
                 "reviewer": { "backend": "claude", "model": "opus", "effort": "medium" } },
-  "complex":  { "planner": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+  "complex":  { "planner": { "backend": "claude", "model": "fable", "effort": "medium" },
                 "implementer": { "backend": "claude", "model": "opus", "effort": "medium" },
                 "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } }
 }
@@ -196,22 +196,58 @@ reset
 STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
 assert_equals "no --attempt defaults to 0 (codex here) — not refused" "$RC" "0"
 
-echo "test: the consult cap floors at the NEWEST **Plan** heading (review round 11)"
-# Two Consults from a PREVIOUS run (before this run's Plan) plus one from THIS run (after
-# it) — only the one after the Plan counts toward the CAP. The heading number stays
-# thread-wide by design (see the header comment), so this still posts as Consult 4.
+echo "test: the cap counts THIS ATTEMPT only, from the run dir's mark (review round 12)"
+# THE ROUND-12 BUG: there is exactly ONE **Plan** per issue per RUN (a respawn re-plans
+# nothing), so a plan-floored count folds every EARLIER attempt's consults into the current
+# attempt's budget. On the shipped roster the claude cell is chain position 2, so it would
+# inherit attempts 0 and 1's consults and be refused — and drained — on its first deviation.
+# The floor is handoff.json's mark instead: escalate.sh writes it, the worker cannot.
 reset
-PAST_PLAN='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**"}]}'
-STUB_GH_COMMENTS="$PAST_PLAN" run consult r1 12 standard "$WT" --attempt 1
-assert_equals "not refused — only 2 consults counted since the Plan, at the cap" "$RC" "0"
+RD="$WORK/codexruns/r1/issue-12"; mkdir -p "$RD"
+# attempt 0 burned two consults, then handed off at mark 5; attempt 1 is asking for its FIRST.
+INHERITED='{"comments":[{"body":"**Plan**\n\n1. x"},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap"},{"body":"**Deviation**\n\nstep 4"}]}'
+printf '{"attempt": 0, "mark": 6}\n' >"$RD/handoff.json"
+CODEX_RUN_ROOT="$WORK/codexruns" STUB_GH_COMMENTS="$INHERITED" run consult r1 12 standard "$WT" --attempt 1
+unset CODEX_RUN_ROOT
+assert_equals "attempt 1's FIRST consult is not refused for attempt 0's two" "$RC" "0"
+assert_equals "the heading number stays thread-wide" "$OUT" "**Consult 3** posted on #12"
+reset
+# Its own third, past the mark, IS refused — the cap still bites within the attempt.
+OWN_THREE='{"comments":[{"body":"**Plan**\n\n1. x"},{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap"},{"body":"**Consult 3**"},{"body":"**Consult 4**"},{"body":"**Deviation**\n\nstep 9"}]}'
+printf '{"attempt": 0, "mark": 4}\n' >"$RD/handoff.json"
+CODEX_RUN_ROOT="$WORK/codexruns" STUB_GH_COMMENTS="$OWN_THREE" run consult r1 12 standard "$WT" --attempt 1
+unset CODEX_RUN_ROOT
+assert_equals "attempt 1's own third consult is refused" "$RC" "1"
+assert_contains "and names the attempt" "$ERR" "attempt 1"
+reset
+# A mark belonging to a DIFFERENT attempt is not this attempt's floor: fall through to the
+# plan heading rather than trusting a stale record.
+printf '{"attempt": 5, "mark": 6}\n' >"$RD/handoff.json"
+CODEX_RUN_ROOT="$WORK/codexruns" STUB_GH_COMMENTS="$OWN_THREE" run consult r1 12 standard "$WT" --attempt 1
+unset CODEX_RUN_ROOT
+assert_equals "a mark for another attempt is ignored (plan-floored: 4 consults, refused)" "$RC" "1"
+rm -rf "$WORK/codexruns"
+
+echo "test: with NO run dir (complex tier's claude-only chain) the floor is the **Plan**"
+# A one-cell chain has exactly one attempt per run, so per-run IS per-attempt there — and a
+# previous RUN's consults (the thread is permanent) must not count, which is what the plan
+# heading gives. This is review round 11's case, still covered.
+reset
+PAST_RUN='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**"}]}'
+STUB_GH_COMMENTS="$PAST_RUN" run consult r1 12 complex "$WT"
+assert_equals "a prior run's two consults do not count against this run's first" "$RC" "0"
 assert_equals "the heading number stays thread-wide" "$OUT" "**Consult 4** posted on #12"
 reset
-# A third consult SINCE the Plan is refused, even though a prior run left two more before it
-# that a non-floored count would have wrongly folded in (review round 11's exact bug: a
-# drained issue's next run computes N past the cap on its very first consult).
-PAST_PLAN_OVER='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}'
-STUB_GH_COMMENTS="$PAST_PLAN_OVER" run consult r1 12 standard "$WT" --attempt 1
+PAST_RUN_OVER='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}'
+STUB_GH_COMMENTS="$PAST_RUN_OVER" run consult r1 12 complex "$WT"
 assert_equals "a third consult since the Plan is refused" "$RC" "1"
+assert_contains "says why" "$ERR" "past the cap"
+reset
+# Only a comment whose FIRST line is the heading anchors it — a **Deviation** that QUOTES
+# the plan mid-body must not silently widen the budget.
+QUOTES_PLAN='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Deviation**\n\n**Plan** said f() exists; it does not"}]}'
+STUB_GH_COMMENTS="$QUOTES_PLAN" run consult r1 12 complex "$WT"
+assert_equals "a deviation quoting **Plan** mid-body does not reset the count" "$RC" "1"
 assert_contains "says why" "$ERR" "past the cap"
 
 echo "test: empty output is NEVER posted"
@@ -243,7 +279,7 @@ assert_equals "the consult role is refused BEFORE it reads the thread from that 
 assert_empty "no gh call at all" "$(cat "$WORK/gh-argv" 2>/dev/null)"
 
 echo "test: a codex-backed planner cell is refused — this is a claude -p call"
-run plan r1 12 complex "$WT" --dry-run
+run plan r1 12 trivial "$WT" --dry-run
 assert_equals "exit 1" "$RC" "1"
 assert_contains "names the backend" "$ERR" "codex"
 

@@ -390,6 +390,28 @@ assert_empty "nothing on stdout" "$OUT"
 assert_contains "says why" "$ERR" "containment check refused"
 assert_equals "nothing posted" "$(posted)" "no"
 
+echo "test: an unknown tier is refused, never resolved (review round 12)"
+# resolve-tier.sh answers an unknown tier with its claude-only FALLBACK roster and exit 0,
+# which would read here as "claude-backed, never escalated" — silently switching every
+# signal off for that worker for the rest of the run. `tier:standard`, the LABEL form, is
+# the typo that does it, and the note on stderr would look reassuring.
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0
+run r1 12 tier:standard "$REPO" --base base --attempt 0
+assert_equals "the label form exits 1" "$RC" "1"
+assert_contains "and names the tier" "$ERR" "unknown tier 'tier:standard'"
+assert_not_contains "never reports it as claude-backed" "$ERR" "never escalated"
+assert_equals "nothing posted" "$(posted)" "no"
+
+echo "test: a codex attempt with a missing run dir says so (review round 12)"
+# The [ -d "$RUNDIR" ] gate went with the run-dir backend test; without a replacement the
+# stderr redirect into that dir fails and the operator gets a bare redirect error plus a
+# cat of a log that was never created.
+rm -rf "$RUNDIR"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "exit 1" "$RC" "1"
+assert_contains "names the missing run dir" "$ERR" "no codex run dir for issue 12"
+assert_not_contains "no bare cat failure" "$ERR" "No such file or directory"
+
 echo "test: usage errors fail loud"
 run r1 12 standard "$REPO"; assert_equals "missing --base exits 1" "$RC" "1"
 run r1 x standard "$REPO" --base base; assert_equals "bad issue exits 1" "$RC" "1"
