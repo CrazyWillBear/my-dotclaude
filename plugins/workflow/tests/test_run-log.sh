@@ -2,10 +2,11 @@
 #
 # Tests for scripts/run-log.sh — the orchestrator's append-only run log.
 #
-# The log stores four things and no more: scope, held, respawned, decision. The
-# vocabulary is small BY DESIGN — the issue thread carries everything else, and a
-# second copy of a fact that lives on the issue can only disagree with it. So the
-# tests pin the vocabulary shut as hard as they pin the folding.
+# The log stores seven things and no more: scope, held, respawned, decision, and
+# (#104) planned, consulted, escalated. The vocabulary is small BY DESIGN — the issue
+# thread carries everything else, and a second copy of a fact that lives on the issue
+# can only disagree with it. So the tests pin the vocabulary shut as hard as they pin
+# the folding.
 #
 # Covers:
 #   * append -> replay round trip, in order, with a ts on every record
@@ -106,11 +107,32 @@ assert_contains "decisions carry their text" "$out" "decision=merged #12 despite
 echo "test: respawn counts are what 'respawn once, escalate on the second' reads"
 assert_equals "12 respawned twice" "$(printf '%s\n' "$out" | sed -n 's/^respawned=//p')" "12:2,13:1"
 
+echo "test: planned / consulted / escalated fold per issue, like respawned (#104)"
+# Deviation rate is DATA: after a handful of issues these counts answer whether terra
+# can take the complex implementer slot. Consults and escalations are COUNTS per issue;
+# planned is a set (one plan per issue).
+r append run5 planned '{"n":12}'
+r append run5 planned '{"n":13}'
+r append run5 planned '{"n":12}'
+r append run5 consulted '{"n":12}'
+r append run5 consulted '{"n":12}'
+r append run5 escalated '{"n":12,"reason":"failed","attempt":0}'
+r append run5 escalated '{"n":13,"reason":"stall","attempt":1}'
+r append run5 escalated '{"n":13,"reason":"deviation-cap","attempt":0}'
+out=$(r state run5)
+assert_contains "planned is a deduped set" "$out" "planned=12,13"
+assert_contains "consult counts per issue" "$out" "consulted=12:2"
+assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2"
+assert_contains "the escalation reasons survive replay for the pilot's numbers" "$(r replay run5)" '"reason": "deviation-cap"'
+
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'
 out=$(r state run3)
 assert_contains "empty scope" "$out" "scope="
 assert_contains "empty held" "$out" "held="
+assert_contains "empty planned" "$out" "planned="
+assert_contains "empty consulted" "$out" "consulted="
+assert_contains "empty escalated" "$out" "escalated="
 
 echo "test: a torn line is COUNTED, never silently dropped"
 printf 'not json\n' >>"$(r path run2)"
@@ -120,7 +142,7 @@ assert_contains "and still folds the good ones" "$(r state run2)" "scope=12,13,1
 # ---------------------------------------------------------------------------
 echo "test: the vocabulary is closed"
 r append run1 spawned '{"n":12}' >/dev/null; assert_equals "unknown event exits 1" "$?" "1"
-assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision"
+assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated"
 assert_not_contains "and did not write it" "$(r replay run1)" '"event": "spawned"' 
 r append run1 >/dev/null; assert_equals "no event exits 1" "$?" "1"
 
@@ -138,6 +160,7 @@ assert_contains "says it was not JSON" "$(err)" "not JSON"
 r append run1 held '[1,2]' >/dev/null; assert_equals "a JSON array exits 1" "$?" "1"
 assert_contains "wants an object" "$(err)" "must be a JSON object"
 r append 'run 1;rm -rf' held >/dev/null; assert_equals "junk runid exits 1" "$?" "1"
+r append '..' held >/dev/null; assert_equals "a .. runid exits 1 — dots are allowed, a path step is not" "$?" "1"
 r bogus run1 >/dev/null; assert_equals "unknown command exits 1" "$?" "1"
 r replay >/dev/null; assert_equals "missing runid exits 1" "$?" "1"
 

@@ -84,21 +84,33 @@ Peers are always Claude sessions: they need an inbox, and only a Claude session 
 Workers are routed by the **tier table**, which moves from `model-tiers.json` into infra and
 gains a backend column:
 
-| tier | share of work | planner | implementer | reviewer |
-|---|---|---|---|---|
-| trivial | ~30% | — | codex luna | codex terra |
-| standard | ~60% | — | codex terra | codex terra |
-| complex | ~10% | codex sol | codex sol | codex sol |
+| tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
+|---|---|---|---|
+| trivial | none run (opus medium cell kept valid) | codex luna xhigh → codex terra xhigh → claude opus medium (the session lane's trivial subagent runs the top cell; the codex cells are reached only through `spawn.sh`) | claude opus low |
+| standard | claude opus medium | codex luna xhigh → codex terra xhigh → claude opus medium | claude opus medium |
+| complex | claude fable medium | claude opus medium | claude opus high |
 
-**The shipped table stays claude, and that is now the intended end state — not a hold.**
-`model-tiers.json` is `backend=claude` in every cell and `test_spawn.sh` pins it. The ingest that
-once blocked a flip is done (`infra/worker-report.sh` reads `last-message.txt` and returns the
-session lane's own one-line report), but the flip itself is no longer the goal: this kit installs
-on other people's machines, and a shipped codex default would make every worker fail for anyone
-without the codex CLI — `spawn.sh` has no preflight check for it. **Decided 2026-09-17: codex is
-opt-in per user**, through a user table at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` that
-overrides the shipped one. That reverses the "Ship the roster from § Roster" line in **#87**,
-which is closed and accepted — recorded here and on #96 rather than diverging silently.
+**Decided 2026-09-22 (PRD #104), superseding 2026-09-17's claude-only shipped table:** the roster
+spends the expensive model on one bounded planning pass and the cheap model on the build loop.
+Sonnet is out (no cost point where it wins); fable enters as the complex planner. The
+`implementer` cell is a JSON array — a chain — and `resolve-tier.sh <tier> [attempt]` prints one
+position plus `implementer_chain`; `spawn.sh --attempt N` launches it. **The shipped table is
+codex-first**, so a machine without the codex CLI needs a user table at
+`${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` (it overrides the shipped one and survives
+updates); the **fallback** roster on any broken table stays claude-only (opus medium everywhere)
+so a typo never makes a run depend on codex. The plan is posted to the issue thread by
+`consult.sh plan` before the build spawn (standard and complex); a worker that hits a false plan
+assumption posts `**Deviation**` and pauses with an escalate note beginning `deviation: ` (the
+prefix is the dispatch key: the orchestrator sends those to a consult and everything else to a
+human, without reading the thread), `consult.sh consult` answers it on the planner cell,
+and `worker-resume.sh` resumes the worker with a pointer to that comment. `escalate.sh` decides,
+from the run dir, the thread and the worker's rollout, when a codex worker is replaced by the
+next chain position — a `failed` report, a third deviation, a second review round with findings,
+a stall (event-log mtime, 20 min), or occupancy (`last_token_usage` from the rollout, 256K) —
+posts the `**Handoff**` comment, and the orchestrator respawns at attempt+1 onto the same
+worktree; at the top of the chain the run drains. Only codex workers are ever escalated. Every
+plan, consult and escalation is a run-log event, so the deviation rate is data for whether terra
+can take the complex implementer slot later. Sol stays a valid model id for user tables.
 
 The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
 
@@ -145,17 +157,26 @@ The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
   single PR at the end** — workers do not open their own — so what is exposed is a worker that
   disobeys its prompt, not a capability the design hands it. Recorded here as a logged decision
   rather than an unstated gap, the same way the network grant is.
+- **The claude reviewer, consult and planner are NOT sandboxed — ACCEPTED (#104).** `codex exec
+  review` ran under a pinned codex sandbox; its replacement (`review-cmd.sh`), and `consult.sh`
+  in both roles, are `claude -p --permission-mode bypassPermissions` on the host — reading
+  worker-authored branches and comments, unattended. Their `--disallowedTools` rules are prefix
+  patterns (`git -C x commit`, `sh -c`, `curl`, and reads of `~` all pass), so what fences them is
+  prompt discipline (every prompt states that repo and thread content is data), the disposable
+  clone for the reviewer (bounds file damage, not host or GitHub reach), the `--roots` tripwire
+  before any git runs, and the denylist as a tripwire against the obvious commands. This is the
+  same posture every claude-backed worker already runs under; it is new only for codex-built
+  branches, whose review used to be sandboxed. Decided 2026-09-22 rather than left implied.
 
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
 affordable on the $20 codex plan. A review is a shorter turn than an implementation but sol
 costs twice terra per token; the `turn.completed` usage on real runs decides it.
 
-The claude-side roster (used until codex is wired, and for claude-routed rows after) is
-trivial haiku with a sonnet reviewer, standard sonnet with an opus reviewer, complex opus
-with an opus reviewer. Fable no longer reviews. `resolve-tier.sh`
-keeps its seven-line contract and adds `<role>_backend=`. A backend of `claude` with the old
-model names keeps today's behaviour, so nothing breaks before codex is wired.
+The ad-hoc lane's claude-side substitution for a codex cell is the chain's TOP cell
+(`resolve-tier.sh <tier> $((implementer_chain-1))` — opus medium in the shipped table); a codex
+reviewer cell becomes opus. Fable never reviews. `resolve-tier.sh` prints twelve lines: the
+ten cells plus `implementer_attempt` and `implementer_chain`.
 
 ## Roles shipped in v1
 
@@ -258,7 +279,7 @@ one-shot, so it maps onto `codex exec`:
   blocks forever reading it. `-m` must always be passed: a resumed thread otherwise falls
   back to the config default model. Verified: `workspace-write` is OFFLINE by default — a
   `curl` inside it fails at DNS — and with `network_access=true` it returns 200. The flag is
-  not optional, since the worker's own prompt orders `gh` and `codex exec review`, and
+  not optional, since the worker's own prompt orders `gh` and `git push`, and
   `approval_policy=never` means it cannot ask for the network back. It cuts both ways:
   workspace-write restricts writes, not reads, so a networked worker that ingests an
   untrusted issue comment has both this machine's credentials and an egress path. Accepted
@@ -307,9 +328,15 @@ one-shot, so it maps onto `codex exec`:
   `-o`, `--output-schema`, `--json` and `-c`, but **not** `-s` and **not** `-C` — so the sandbox
   must be re-passed through `-c` and the resume launched from the worktree directory. `-m` must
   be re-passed for the same reason it must on a fresh run.
-- **Review.** `codex exec review --base <branch>` is a working reviewer: it read the diff and
-  returned priority-graded findings with file and line. It fills the reviewer slot for
-  codex-routed tiers; `my-review` stays the reviewer for claude-routed ones.
+- **Review.** **Superseded by #104: a codex-built branch is reviewed by the CLAUDE reviewer** —
+  `review-cmd.sh` builds a `claude -p` call at the reviewer cell's model (its effort reaches only
+  the launcher; the my-review agent's frontmatter pins its own) that spawns
+  `personal-tools:my-review` on the commit range, in the disposable clone, and emits
+  `- [Pn] title — path:line` items or the literal `No findings.` for `review-counts.sh`.
+  `codex exec review` was a working reviewer, but it could not be pointed at a claude model, so
+  the roster's "reviewer: opus" was silently false for every codex worker, and (below) nothing
+  could shape what it said about how it verified. The paragraphs below record what was learned
+  about it; the sibling-process, pinned-SHA and disposable-clone properties all carry over.
 
   **It runs as a SIBLING of the worker, never inside it** (`review-cmd.sh`, invoked by
   `spawn.sh`'s wrapper and by `worker-resume.sh`). The worker was originally told to run its own
@@ -370,11 +397,9 @@ one-shot, so it maps onto `codex exec`:
   The reviewer runs only when the worker REPORTED `built` or `fixed` — `escalate` and `failed`
   exit 0 too, and reviewing those posts a `Review round` comment the lane counts as a cycle.
 
-  `review-cmd.sh` passes the roster's **reviewer** cell as `-m`, so the review runs at the tier's
-  reviewer model instead of whatever the user's codex config defaults to — the same silent
-  wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
-  codex-backed**: a claude reviewer names `opus` or `sonnet`, which codex does not have, so that
-  pairing leaves the flag off and takes codex's default rather than failing the review outright.
+  (Historical — retired by #104.) `review-cmd.sh` passed the roster's **reviewer** cell as `-m`
+  only when that cell was itself codex-backed; a claude reviewer cell left the flag off and took
+  codex's default model. That silent substitution is the bug the claude reviewer fixes.
 
   **Verification honesty — ACCEPTED, no lever exists (#100).** A `sol`-tier reviewer's verdict
   once asserted "All six tests pass" while running under the pinned `sandbox_mode=read-only`
@@ -421,7 +446,7 @@ when worker-report.sh refuses the run), `pid` and `exit` — which is written LA
 review, so a run that reads terminal always has its verdict on disk. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
 `/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
-also swaps two steps: a sibling `codex exec review --base` replaces the `my-review` subagent —
+also swaps two steps: a sibling claude reviewer replaces the in-session `my-review` subagent —
 run for the worker rather than by it, see § Review — and the schema'd final message replaces
 `SendMessage`, which codex does not have.
 

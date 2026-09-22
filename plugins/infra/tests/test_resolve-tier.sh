@@ -11,9 +11,12 @@
 #   1. Script exists + is executable, and carries no `jq` dependency (the plugin
 #      runtime must not require jq — it parses the config with awk instead).
 #   2. Each shipped tier resolves to its full {model,effort,backend} roster;
-#      stderr empty (no WARN); exit 0; exactly ten key=value lines. A codex
-#      cell's model is one of gpt-5.6-luna/terra/sol; a claude cell's is one of
-#      haiku/sonnet/opus/fable.
+#      stderr empty (no WARN); exit 0; exactly twelve key=value lines (the ten
+#      cells plus implementer_attempt / implementer_chain). A codex cell's model
+#      is one of gpt-5.6-luna/terra/sol; a claude cell's is one of
+#      haiku/sonnet/opus/fable. The IMPLEMENTER cell is an ordered CHAIN (#104):
+#      `resolve-tier.sh <tier> [attempt]` prints the chain's attempt-th cell and
+#      the chain length, so a caller knows when it is at the top.
 #   3. Missing config → the single WARN line on stderr (exact equality) + the
 #      standard roster on stdout, backend=claude on every role; exit 0.
 #   4. Malformed configs (invalid JSON, a missing role, a bad model, a bad
@@ -34,11 +37,10 @@
 #      {haiku,sonnet,opus,fable}, or codex paired with a model in
 #      {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}, and an effort in
 #      {low,medium,high,xhigh,max} — checked via the helper, not a re-parse.
-#   8. Fallback is pinned literally to the hardcoded claude standard roster
-#      (sonnet/sonnet/opus, backend=claude on every role) — independent of
-#      whatever the shipped config's standard tier resolves to, so a future
-#      codex rollout in the config can never change what a broken config
-#      falls back to.
+#   8. Fallback is pinned literally to the hardcoded claude-only roster (opus
+#      medium in every role, backend=claude, a chain of one) — independent of
+#      the shipped config, which now names codex models (#104): a broken config
+#      must never fall back onto a CLI that may not be installed.
 #   9. A `cd` failure inside the BASH_SOURCE fallback (the SCRIPT_DIR/PLUGIN_ROOT
 #      lines, exercised when RESOLVE_TIER_ROOT is unset) is fully suppressed —
 #      stderr is EXACTLY the one WARN line, never that plus a leaked
@@ -90,15 +92,17 @@ WARN='WARN: model-tiers.json missing or invalid — falling back to standard tie
 # write_cfg <dir> — read a config heredoc from stdin into <dir>/model-tiers.json.
 write_cfg() { mkdir -p "$1"; cat > "$1/model-tiers.json"; }
 
-# run_tier <tier> [plugin_root] — run the real script and set OUT / ERR / RC.
-# With no plugin_root, run with RESOLVE_TIER_ROOT unset so the BASH_SOURCE
-# fallback resolves the REAL shipped config.
+# run_tier <tier> [plugin_root] [attempt] — run the real script and set OUT / ERR / RC.
+# With no plugin_root (or __REAL__), run with RESOLVE_TIER_ROOT unset so the BASH_SOURCE
+# fallback resolves the REAL shipped config. An attempt index selects the implementer
+# chain position; omitted means 0, the head of the chain.
 run_tier() {
     local tier="$1" root="${2-__REAL__}" errfile="$WORK/err"
+    set -- "$tier" ${3+"$3"}
     if [ "$root" = "__REAL__" ]; then
-        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" "$@" 2>"$errfile")"
     else
-        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" RESOLVE_TIER_ROOT="$root" bash "$SCRIPT" "$tier" 2>"$errfile")"
+        OUT="$(CLAUDE_CONFIG_DIR="$NOUSERCFG" RESOLVE_TIER_ROOT="$root" bash "$SCRIPT" "$@" 2>"$errfile")"
     fi
     RC=$?
     ERR="$(cat "$errfile")"
@@ -118,45 +122,155 @@ echo "test: shipped config resolves each tier's full roster (stderr clean, exit 
 run_tier trivial
 assert_equals "trivial: exit 0" "$RC" "0"
 assert_equals "trivial: stderr empty (no WARN)" "$ERR" ""
-assert_equals "trivial: exactly 10 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "10"
+assert_equals "trivial: exactly 12 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "12"
 assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
-assert_equals "trivial: planner_model haiku" "$(val "$OUT" planner_model)" "haiku"
+assert_equals "trivial: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "trivial: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "trivial: implementer_model haiku" "$(val "$OUT" implementer_model)" "haiku"
-assert_equals "trivial: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
-assert_equals "trivial: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
-assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
-assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "trivial: implementer_model luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "trivial: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
+assert_equals "trivial: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
+assert_equals "trivial: implementer_attempt 0" "$(val "$OUT" implementer_attempt)" "0"
+assert_equals "trivial: implementer_chain 3" "$(val "$OUT" implementer_chain)" "3"
+assert_equals "trivial: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
+assert_equals "trivial: reviewer_effort low" "$(val "$OUT" reviewer_effort)" "low"
 assert_equals "trivial: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier standard
 assert_equals "standard: exit 0" "$RC" "0"
 assert_equals "standard: stderr empty (no WARN)" "$ERR" ""
 assert_equals "standard: tier echoed" "$(val "$OUT" tier)" "standard"
-assert_equals "standard: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
-assert_equals "standard: planner_effort high" "$(val "$OUT" planner_effort)" "high"
+assert_equals "standard: planner_model opus" "$(val "$OUT" planner_model)" "opus"
+assert_equals "standard: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "standard: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "standard: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
-assert_equals "standard: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
-assert_equals "standard: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "standard: implementer_model luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "standard: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
+assert_equals "standard: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
+assert_equals "standard: implementer_chain 3" "$(val "$OUT" implementer_chain)" "3"
 assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
-assert_equals "standard: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "standard: reviewer_effort medium" "$(val "$OUT" reviewer_effort)" "medium"
 assert_equals "standard: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier complex
 assert_equals "complex: exit 0" "$RC" "0"
 assert_equals "complex: stderr empty (no WARN)" "$ERR" ""
 assert_equals "complex: tier echoed" "$(val "$OUT" tier)" "complex"
-assert_equals "complex: planner_model opus" "$(val "$OUT" planner_model)" "opus"
-assert_equals "complex: planner_effort xhigh" "$(val "$OUT" planner_effort)" "xhigh"
+assert_equals "complex: planner_model fable" "$(val "$OUT" planner_model)" "fable"
+assert_equals "complex: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "complex: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "complex: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
-assert_equals "complex: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
+assert_equals "complex: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
 assert_equals "complex: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "complex: implementer_chain 1 (a single cell is a chain of one)" "$(val "$OUT" implementer_chain)" "1"
 assert_equals "complex: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
-assert_equals "complex: reviewer_effort xhigh" "$(val "$OUT" reviewer_effort)" "xhigh"
+assert_equals "complex: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 assert_equals "complex: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
+
+# ---------------------------------------------------------------------------
+echo "test: the implementer CHAIN — an attempt index walks it, and the top is knowable (#104)"
+# Sonnet is out of the shipped roster; the reviewer is never fable (memory: reviews on opus).
+for t in trivial standard complex; do
+    run_tier "$t"
+    assert_not_contains "$t: no sonnet anywhere in the shipped roster" "$OUT" "sonnet"
+    assert_not_contains "$t: the reviewer is never fable" "$(val "$OUT" reviewer_model)" "fable"
+done
+run_tier standard __REAL__ 1
+assert_equals "standard attempt 1: exit 0" "$RC" "0"
+assert_equals "standard attempt 1: stderr empty" "$ERR" ""
+assert_equals "standard attempt 1: terra" "$(val "$OUT" implementer_model)" "gpt-5.6-terra"
+assert_equals "standard attempt 1: still codex" "$(val "$OUT" implementer_backend)" "codex"
+assert_equals "standard attempt 1: attempt echoed" "$(val "$OUT" implementer_attempt)" "1"
+run_tier standard __REAL__ 2
+assert_equals "standard attempt 2: opus tops the chain" "$(val "$OUT" implementer_model)" "opus"
+assert_equals "standard attempt 2: at medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "standard attempt 2: claude backend" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "standard attempt 2: chain still 3" "$(val "$OUT" implementer_chain)" "3"
+# The planner and reviewer cells do not move with the attempt.
+assert_equals "standard attempt 2: planner unchanged" "$(val "$OUT" planner_model)" "opus"
+assert_equals "standard attempt 2: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
+run_tier trivial __REAL__ 1
+assert_equals "trivial shares the standard chain: attempt 1 is terra" "$(val "$OUT" implementer_model)" "gpt-5.6-terra"
+
+echo "test: an attempt past the top of the chain is a loud fallback, never a silent wrap"
+run_tier standard __REAL__ 3
+assert_equals "past the top: exit 0 (the contract holds)" "$RC" "0"
+assert_contains "past the top: WARN names the attempt" "$ERR" "attempt 3"
+assert_contains "past the top: WARN names the chain length" "$ERR" "3"
+assert_equals "past the top: falls back to the claude-only roster" "$(val "$OUT" implementer_model)" "opus"
+assert_equals "past the top: fallback chain length is 1" "$(val "$OUT" implementer_chain)" "1"
+run_tier standard __REAL__ -1
+assert_contains "a negative attempt is a WARN" "$ERR" "WARN"
+run_tier standard __REAL__ x
+assert_contains "a non-numeric attempt is a WARN" "$ERR" "WARN"
+
+echo "test: a user table may still write a single implementer OBJECT (a chain of one)"
+write_cfg "$WORK/single" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+                "implementer": { "backend": "claude", "model": "sonnet", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "high" },
+                "implementer": { "backend": "claude", "model": "sonnet", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
+}
+JSON
+run_tier standard "$WORK/single"
+assert_equals "single object: no WARN" "$ERR" ""
+assert_equals "single object: sonnet stays a VALID model for a user table" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "single object: chain length 1" "$(val "$OUT" implementer_chain)" "1"
+run_tier standard "$WORK/single" 1
+assert_contains "single object: attempt 1 is past the top" "$ERR" "attempt 1"
+
+echo "test: every cell of a chain is validated, not just the head"
+write_cfg "$WORK/badchain" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
+                                 { "backend": "claude", "model": "gpt-5.6-terra", "effort": "max" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "high" },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
+}
+JSON
+run_tier standard "$WORK/badchain"
+assert_equals "a bad second cell in ANOTHER tier's chain still falls back" "$ERR" "$WARN"
+write_cfg "$WORK/emptychain" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+                "implementer": [ ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "high" },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
+}
+JSON
+run_tier standard "$WORK/emptychain"
+assert_equals "an empty chain is a miss" "$ERR" "$WARN"
+write_cfg "$WORK/plannerchain" <<'JSON'
+{
+  "trivial":  { "planner": [ { "backend": "claude", "model": "haiku", "effort": "low" } ],
+                "implementer": { "backend": "claude", "model": "haiku", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "high" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "max" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
+}
+JSON
+run_tier standard "$WORK/plannerchain"
+assert_equals "planner and reviewer stay SINGLE cells — an array there is a miss" "$ERR" "$WARN"
 
 # ---------------------------------------------------------------------------
 echo "test: missing config → the exact WARN line + standard roster, exit 0"
@@ -171,12 +285,13 @@ run_tier complex "$EMPTY"
 assert_equals "missing: exit 0" "$RC" "0"
 assert_equals "missing: stderr is exactly the WARN line" "$ERR" "$WARN"
 assert_equals "missing: tier fell back to standard" "$(val "$OUT" tier)" "standard"
-assert_equals "missing: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
-assert_equals "missing: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "missing: planner_model opus" "$(val "$OUT" planner_model)" "opus"
+assert_equals "missing: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
 assert_equals "missing: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
-assert_equals "missing: planner_effort high" "$(val "$OUT" planner_effort)" "high"
-assert_equals "missing: implementer_effort max" "$(val "$OUT" implementer_effort)" "max"
-assert_equals "missing: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
+assert_equals "missing: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "missing: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "missing: reviewer_effort medium" "$(val "$OUT" reviewer_effort)" "medium"
+assert_equals "missing: implementer_chain 1" "$(val "$OUT" implementer_chain)" "1"
 assert_equals "missing: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "missing: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "missing: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
@@ -216,7 +331,7 @@ run_tier standard "$WORK/mal-b"
 assert_equals "malformed(missing role): exit 0" "$RC" "0"
 assert_equals "malformed(missing role): exact WARN" "$ERR" "$WARN"
 assert_equals "malformed(missing role): standard fallback" "$(val "$OUT" tier)" "standard"
-assert_equals "malformed(missing role): implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "malformed(missing role): implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
 
 # (c) a model outside the allowed set
 write_cfg "$WORK/mal-c" <<'JSON'
@@ -410,7 +525,7 @@ run_tier trivial "$WORK/mal-j"
 assert_equals "nested-role-object: exit 0" "$RC" "0"
 assert_equals "nested-role-object: stderr is exactly the WARN line" "$ERR" "$WARN"
 assert_equals "nested-role-object: standard fallback (not nested values)" "$(val "$OUT" tier)" "standard"
-assert_equals "nested-role-object: planner_effort high (fallback, not nested max)" "$(val "$OUT" planner_effort)" "high"
+assert_equals "nested-role-object: planner_effort medium (fallback, not nested max)" "$(val "$OUT" planner_effort)" "medium"
 
 # ---------------------------------------------------------------------------
 echo "test: reformatted-but-valid configs resolve correctly with no WARN (layout-independent)"
@@ -484,7 +599,7 @@ JSON
 run_tier trivial "$WORK/fmt-h"
 assert_equals "minified: trivial stderr empty (no WARN)" "$ERR" ""
 assert_equals "minified: trivial planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
-assert_equals "minified: trivial exactly 10 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "10"
+assert_equals "minified: trivial exactly 12 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "12"
 run_tier standard "$WORK/fmt-h"
 assert_equals "minified: standard planner_model opus" "$(val "$OUT" planner_model)" "opus"
 run_tier complex "$WORK/fmt-h"
@@ -581,29 +696,32 @@ done
 assert_equals "shipped config: all 9 tier×role cells resolve to a valid model/effort/backend" "$complete" "1"
 
 # ---------------------------------------------------------------------------
-echo "test: fallback is pinned literally to the hardcoded claude standard roster"
-# Deliberately NOT derived from resolving `standard` against the shipped config:
-# the fallback is a fixed roster independent of whatever the config's standard
-# tier currently resolves to, so a future codex rollout there can't change what
-# a broken config falls back to — even though both happen to match today.
+echo "test: fallback is pinned literally to the hardcoded claude-only roster"
+# Deliberately NOT derived from resolving `standard` against the shipped config: the
+# shipped table now names codex models (#104), and the fallback must NEVER — a broken
+# user table cannot be allowed to depend on a CLI that may not be installed. Opus
+# medium in every role, a chain of one.
 EXPECTED_FALLBACK="tier=standard
-planner_model=sonnet
-planner_effort=high
+planner_model=opus
+planner_effort=medium
 planner_backend=claude
-implementer_model=sonnet
-implementer_effort=max
+implementer_model=opus
+implementer_effort=medium
 implementer_backend=claude
+implementer_attempt=0
+implementer_chain=1
 reviewer_model=opus
-reviewer_effort=high
+reviewer_effort=medium
 reviewer_backend=claude"
 run_tier complex "$EMPTY"   # missing config → fallback, whatever tier was asked
-assert_equals "fallback output matches the pinned claude standard roster" "$OUT" "$EXPECTED_FALLBACK"
+assert_equals "fallback output matches the pinned claude-only roster" "$OUT" "$EXPECTED_FALLBACK"
+assert_not_contains "the fallback never names a codex model" "$OUT" "gpt-5.6"
 
 # ---------------------------------------------------------------------------
 echo "test: a USER table at CLAUDE_CONFIG_DIR overrides the shipped one"
-# The point of the whole mechanism: the shipped table is claude so a fresh install works with no
-# codex CLI, and a person opts into codex for themselves without editing a plugin file that the
-# next kit update overwrites.
+# A person's own table wins over the shipped one without editing a plugin file that the next
+# kit update overwrites. The fixture below names TERRA where the shipped table says luna, so
+# the values below can only come from the user table.
 USERCFG="$WORK/usercfg"
 write_cfg "$USERCFG" <<'JSON'
 {
@@ -625,10 +743,10 @@ UOUT="$(CLAUDE_CONFIG_DIR="$USERCFG" env -u RESOLVE_TIER_ROOT bash "$SCRIPT" sta
 assert_equals "user table: implementer routes to codex" "$(val "$UOUT" implementer_backend)" "codex"
 assert_equals "user table: implementer model is the user's" "$(val "$UOUT" implementer_model)" "gpt-5.6-terra"
 
-echo "test: with no user table the SHIPPED table is used, and it is claude"
+echo "test: with no user table the SHIPPED table is used"
 run_tier standard
 assert_equals "shipped: no WARN" "$ERR" ""
-assert_equals "shipped: implementer stays claude" "$(val "$OUT" implementer_backend)" "claude"
+assert_equals "shipped: standard's chain head is luna" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
 
 echo "test: RESOLVE_TIER_ROOT wins over a user table — the test seam stays authoritative"
 # Without this, every test that pins a specific table would silently read the developer's own
@@ -660,8 +778,8 @@ HOUT="$(env -u HOME -u CLAUDE_CONFIG_DIR -u RESOLVE_TIER_ROOT bash "$SCRIPT" sta
 HRC=$?
 assert_equals "unset HOME: exit 0" "$HRC" "0"
 assert_equals "unset HOME: nothing but the roster on stderr" "$(cat "$WORK/herr")" ""
-assert_equals "unset HOME: ten key=value lines" "$(printf '%s\n' "$HOUT" | grep -c '=')" "10"
-assert_equals "unset HOME: resolves the shipped standard tier" "$(val "$HOUT" implementer_model)" "sonnet"
+assert_equals "unset HOME: twelve key=value lines" "$(printf '%s\n' "$HOUT" | grep -c '=')" "12"
+assert_equals "unset HOME: resolves the shipped standard tier" "$(val "$HOUT" implementer_model)" "gpt-5.6-luna"
 
 echo "test: a MALFORMED user table is loud, not a silent revert to the shipped table"
 # A typo in your own table must not look like the shipped roster quietly winning.

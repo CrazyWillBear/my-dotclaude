@@ -6,8 +6,9 @@
 # and, above all, that the obligations the run depends on are all still stated
 # (this test is the structural regression lock for the issue contract):
 #
-#   1. File exists at the expected discovery path; model pins to sonnet and
-#      effort stays max.
+#   1. File exists at the expected discovery path; model pins to opus (the
+#      fallback for a spawn that omits an override — sonnet left the roster in
+#      #104) and effort stays max.
 #   2. Both input shapes are described: issue (number + body + worktree +
 #      issue-<N> branch) and work order (plan text + worktree + branch +
 #      commit-scope hint).
@@ -46,9 +47,10 @@ if [ -f "$AGENT_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter — name, model: sonnet pin, and max effort survive"
+echo "test: frontmatter — name, model: opus pin, and max effort survive"
 assert_contains "name field present" "$content" "name: implementer"
-assert_contains "model pinned to sonnet" "$content" "model: sonnet"
+assert_contains "model pinned to opus (sonnet is out of the roster, #104)" "$content" "model: opus"
+assert_not_contains "no sonnet fallback" "$content" "model: sonnet"
 assert_contains "effort stays max" "$content" "effort: max"
 
 # ---------------------------------------------------------------------------
@@ -108,6 +110,23 @@ assert_contains "reads the comments first" "$content" "gh issue view <N> --comme
 assert_contains "says why: rulings live in comments" "$content" "not** in the body"
 assert_contains "posts the tackled line" "$content" "Tackled #<N> on branch issue-<N>"
 assert_contains "brevity framed as correctness" "$content" "correctness property"
+
+echo "test: follow the Plan; stop on deviation, never improvise (#104)"
+assert_contains "the Plan comment is followed" "$content" "**Plan**"
+assert_contains "follows it step by step" "$content" "Follow it
+step by step"
+assert_contains "a false assumption is a stop" "$content" "do not improvise"
+assert_contains "the Deviation comment" "$content" "**Deviation**"
+assert_contains "names which step" "$content" "which step"
+assert_contains "what was found" "$content" "what you found"
+assert_contains "what was tried" "$content" "what you tried"
+assert_contains "a session pauses by escalating WITH the deviation: prefix" "$content" "issue <N> escalate deviation: <the same"
+assert_contains "a codex worker pauses with the escalate status" "$content" '"status": "escalate"'
+assert_contains "and the same prefix in note" "$content" '"note": "deviation: <the same three lines>"'
+assert_contains "the prefix is named as the dispatch key" "$content" "prefix is load-bearing"
+assert_contains "the Consult answers it" "$content" "**Consult N**"
+assert_contains "and the decision is followed" "$content" "Follow it.**"
+assert_contains "the consult cap is stated" "$content" "capped"
 
 echo "test: the context map is a hint the implementer may ignore"
 assert_contains "reads CONTEXT-MAP.md if present" "$content" "CONTEXT-MAP.md"

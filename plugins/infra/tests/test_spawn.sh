@@ -52,7 +52,7 @@ err() { cat "$WORK/err"; }
 # pin one instead of riding whatever the shipped table happens to say this week. The
 # claude-path assertions below run against CFG_CLAUDE; the codex section further down
 # swaps in CFG_CODEX, which is what proves a codex-routed tier reaches the codex path.
-# One test deliberately uses the REAL shipped table — to pin that it is still claude.
+# One test deliberately uses the REAL shipped table — to pin the luna → terra → opus chain.
 CFG_CLAUDE="$WORK/cfg-claude"
 mkdir -p "$CFG_CLAUDE"
 cat >"$CFG_CLAUDE/model-tiers.json" <<'JSON'
@@ -81,17 +81,17 @@ cat >"$CFG_CODEX/model-tiers.json" <<'JSON'
   "trivial": {
     "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "low" }
   },
   "standard": {
     "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "medium" }
   },
   "complex": {
     "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" }
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "high" }
   }
 }
 JSON
@@ -161,6 +161,8 @@ assert_arg "no git worktree" "$out" "Bash(git worktree:*)"
 assert_arg "no gh pr" "$out" "Bash(gh pr:*)"
 assert_arg "no gh issue close" "$out" "Bash(gh issue close:*)"
 assert_arg "no gh issue edit" "$out" "Bash(gh issue edit:*)"
+assert_arg "no gh api — it can close, edit and merge around every other rule" "$out" "Bash(gh api:*)"
+assert_arg "no gh repo" "$out" "Bash(gh repo:*)"
 
 echo "test: push and issue comment stay ALLOWED — the thread is the bus"
 assert_not_contains "push not denied" "$out" "Bash(git push"
@@ -181,13 +183,69 @@ assert_contains "does not fix its own findings" "$out" "a fresh session does tha
 assert_contains "context map is a hint" "$out" "CONTEXT-MAP.md"
 assert_contains "escalation path" "$out" "escalate"
 
-echo "test: only a complex issue is told to plan first"
+echo "test: standard and complex build to the PLAN on the thread; trivial self-plans (#104)"
+# The plan is posted to the issue by consult.sh BEFORE the build spawn, so the worker
+# receives it the way it receives everything else — by reading the thread. Nobody spawns
+# a planner from inside the build session any more.
 out_p=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
-assert_contains "complex spawns the planner itself" "$out_p" "spawn the workflow:planner agent FIRST"
-assert_contains "and keeps the plan out of the orchestrator" "$out_p" "never send it to the orchestrator"
+assert_contains "complex follows the Plan comment" "$out_p" "**Plan**"
+assert_not_contains "and spawns no planner of its own" "$out_p" "workflow:planner"
 out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
-assert_not_contains "standard self-plans" "$out_s" "workflow:planner"
-assert_not_contains "trivial self-plans" "$(dry r1 12 trivial /w base)" "workflow:planner"
+assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
+assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
+assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
+# CLAUDE-backed (this roster's standard cell is claude): the pause is SendMessage, not the
+# codex-only status/note shape — a claude worker has neither field (review round 9). Giving
+# every backend the codex shape left a claude worker unable to emit its own pause mechanism.
+assert_contains "a CLAUDE worker's pause is SendMessage, with the deviation: prefix" "$out_s" \
+    "issue 12 escalate deviation: <the same three lines>"
+assert_not_contains "never the codex-only status/note shape it cannot emit" "$out_s" '"note" = "deviation: "'
+assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
+
+echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
+CFG_CHAIN="$WORK/cfg-chain"
+mkdir -p "$CFG_CHAIN"
+cat >"$CFG_CHAIN/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "low" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "medium" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "opus",  "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
+  }
+}
+JSON
+out_a0=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base)
+assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
+assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
+out_a1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 1)
+assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
+assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
+assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
+assert_contains "and to continue from the last commit" "$out_a1" "last commit"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 2 >/dev/null
+assert_equals "past the top of the chain exits 1 — the orchestrator drains there, never respawns" "$?" "1"
+assert_contains "and says so" "$(err)" "chain"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt x >/dev/null
+assert_equals "a non-numeric attempt exits 1" "$?" "1"
+# `dry` is a shell FUNCTION: on bash < 4.4, a var assigned in front of a function call can
+# leak into the CURRENT shell instead of staying scoped to that call (fixed in 4.4; this
+# repo promises macOS's bash 3.2). Both calls above are direct — not wrapped in $(...), so
+# nothing forked a subshell to contain it — restore the file's own default explicitly.
+RESOLVE_TIER_ROOT="$CFG_CLAUDE"
+out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
+assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
 
 echo "test: --role fix is a fresh session working from the review comment"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
@@ -241,11 +299,12 @@ bash "$SPAWN" r1 >/dev/null 2>"$WORK/err"; assert_equals "too few args exits 1" 
 assert_contains "prints usage" "$(err)" "usage:"
 dry r1 twelve standard /w base >/dev/null; assert_equals "non-numeric issue exits 1" "$?" "1"
 dry r1 12 standard /w base --role sideways >/dev/null; assert_equals "bad role exits 1" "$?" "1"
+dry r1 12 standard /w base --round two >/dev/null; assert_equals "a non-numeric round exits 1" "$?" "1"
 dry r1 12 standard /w base --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
 assert_contains "names the flag" "$(err)" "unknown flag"
 
-echo "test: an unknown tier still spawns — resolve-tier.sh falls back to standard"
-out=$(dry r1 12 nonsense /w/issue-12 base); assert_arg "fallback roster" "$out" "sonnet"
+echo "test: an unknown tier still spawns — resolve-tier.sh falls back to the claude-only roster"
+out=$(dry r1 12 nonsense /w/issue-12 base); assert_arg "fallback roster" "$out" "opus"
 
 echo "test: a real spawn refuses a worktree that does not exist"
 bash "$SPAWN" r1 12 standard "$WORK/nope" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
@@ -283,27 +342,6 @@ mkdir -p "$CODEX_BIN"
 # the events file) and, like the real one, writes its final message to the `-o` path.
 cat >"$CODEX_BIN/codex" <<'STUB'
 #!/usr/bin/env bash
-# `codex exec review` is the SECOND codex a spawn runs — the independent reviewer the
-# wrapper starts once the worker exits. It is answered separately: it writes a schema'd
-# verdict to its -o file and records its own argv, so the worker's is not clobbered.
-if [ "${2:-}" = review ]; then
-    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
-    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
-    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
-    # was granted — this is how the tests below prove the wiring, not just the argv shape.
-    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
-    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
-    rout=""
-    for a in "$@"; do
-        [ -n "${take:-}" ] && { rout="$a"; take=""; }
-        [ "$a" = -o ] && take=1
-    done
-    # PROSE in codex's own review format — a review turn cannot emit anything else.
-    rj="${STUB_REVIEW_TEXT:-}"
-    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
-    [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
-    exit "${STUB_REVIEW_EXIT:-0}"
-fi
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
 while [ $# -gt 0 ]; do
@@ -313,6 +351,26 @@ done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
+
+# The INDEPENDENT REVIEWER is `claude -p` (#104) — the SECOND process a spawn runs, once
+# the worker exits. It records its own argv (so the worker's is not clobbered), its cwd
+# and TMPDIR (#99: the review must run in a disposable clone, with TMPDIR at the scratch
+# root beside it), and prints its verdict to STDOUT in the shape review-counts.sh parses.
+cat >"$CODEX_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
+pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+# The `reviewing` marker must exist WHILE the review runs (escalate.sh reads it to hold the
+# stall signal off); the run dir is the clone's parent.
+[ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
+printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
+rj="${STUB_REVIEW_TEXT:-}"
+[ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
+printf '%s\n' "$rj"
+exit "${STUB_REVIEW_EXIT:-0}"
+STUB
+chmod +x "$CODEX_BIN/claude"
 
 # gh is STUBBED, and that is not optional. The wrapper posts the reviewer's findings with
 # `gh issue comment`, so a real gh here would comment on whatever repo the suite happens to
@@ -446,33 +504,42 @@ rm -rf "$CODEX_ROOT/schemafail"
 echo "test: the codex tier is resolved per tier, not hardcoded"
 assert_arg "trivial -> luna" "$(codex_dry r9 12 trivial "$REPO" base)" "gpt-5.6-luna"
 assert_arg "complex -> sol" "$(codex_dry r9 12 complex "$REPO" base)" "gpt-5.6-sol"
-# A codex worker has no subagents either, so "spawn the planner" is the same stranding
-# bug as "use SendMessage" — it still has to PLAN, it just has to do it itself.
+# A codex worker has no subagents either, so "spawn the planner" would be the same
+# stranding bug as "use SendMessage" — the plan is on the THREAD instead (#104).
 out_cx=$(codex_dry r9 12 complex "$REPO" base)
-assert_contains "complex still plans before it builds" "$out_cx" "PLAN FIRST"
-assert_not_contains "but is not told to spawn an agent it cannot spawn" \
+assert_contains "complex builds to the Plan comment" "$out_cx" "**Plan**"
+assert_not_contains "and is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
+assert_contains "a codex worker pauses on a deviation with the escalate status" \
+    "$out_cx" "**Deviation**"
+# The codex-only shape belongs ONLY here — a codex worker has status/note fields (from
+# --output-schema) that a claude worker does not (review round 9).
+assert_contains "a CODEX worker's pause DOES use the status/note shape" "$out_cx" \
+    '"note" = "deviation: "'
 
-echo "test: a SIBLING reviewer is spawned, at the tier's REVIEWER model"
-# THE FIX FOR WHAT #96's GATE CAUGHT. The worker used to run `codex exec review` itself,
-# from inside its own sandbox, where that call can never start ("Read-only file system") —
-# and it then reported its own opinion of its own diff as the independent verdict. The
-# reviewer is now its own top-level process, printed after the --REVIEW-- marker.
+echo "test: a SIBLING reviewer is spawned — CLAUDE, at the tier's REVIEWER cell (#104)"
+# THE FIX FOR WHAT #96's GATE CAUGHT, then #104's: the worker used to run `codex exec
+# review` itself (it cannot start inside its sandbox, and it substituted its own opinion),
+# then a sibling `codex exec review` — which could not honour a claude reviewer cell, so
+# "reviewer: opus" was silently false for every codex-built branch. The reviewer is now
+# `claude -p` spawning my-review, printed after the --REVIEW-- marker.
 #
-# TRIVIAL is the sharp case for the MODEL: its implementer is luna and its reviewer terra,
-# so a reviewer that merely echoed the run's model would say luna here. That is what tells
-# the two columns apart.
+# TRIVIAL is the sharp case: its implementer is luna and its reviewer sonnet/low, so a
+# reviewer that merely echoed the run's model would say luna here.
 out_tv=$(codex_dry r9 12 trivial "$REPO" base)
 assert_arg "the RUN is still at the implementer's model" "$out_tv" "gpt-5.6-luna"
 assert_contains "a reviewer argv follows the marker" "$out_tv" "--REVIEW--"
 review_argv() { printf '%s\n' "$1" | sed -n '/^--REVIEW--$/,$p'; }
 rv=$(review_argv "$out_tv")
-assert_contains "the reviewer is codex exec review" "$rv" "review"
-assert_contains "against the base branch" "$rv" "--base"
-assert_arg "at the REVIEWER's model, not the implementer's" "$rv" "gpt-5.6-terra"
-assert_not_contains "and never at the implementer's" "$rv" "gpt-5.6-luna"
-assert_contains "complex reviews at ITS reviewer model" \
-    "$(review_argv "$(codex_dry r9 12 complex "$REPO" base)")" "gpt-5.6-sol"
+assert_arg "the reviewer is claude" "$rv" "claude"
+assert_arg "one-shot" "$rv" "-p"
+assert_contains "spawning my-review" "$rv" "personal-tools:my-review"
+assert_arg "at the REVIEWER cell's model" "$rv" "sonnet"
+assert_arg "and the REVIEWER cell's effort" "$rv" "low"
+assert_not_contains "never at the implementer's model" "$rv" "gpt-5.6-luna"
+assert_not_contains "and never through codex" "$rv" "codex"
+assert_arg "complex reviews at ITS reviewer effort" \
+    "$(review_argv "$(codex_dry r9 12 complex "$REPO" base)")" "high"
 
 echo "test: the FIX round gets the same sibling reviewer"
 # A fix round's findings are the ones that decide whether the issue reaches the merge
@@ -480,47 +547,17 @@ echo "test: the FIX round gets the same sibling reviewer"
 # stage later.
 assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
-    "gpt-5.6-terra"
+    "opus"
 
-echo "test: the reviewer is asked for NOTHING — no prompt, and no schema either"
-# `codex exec review` refuses a trailing PROMPT beside --base ("cannot be used with
-# '[PROMPT]'"), and --output-schema is accepted on a review turn and then SILENTLY
-# IGNORED (ground-truthed twice — a real ops-os run and a direct probe). Passing a flag
-# that does nothing reads as a guarantee that is not there, so neither is passed: the
-# review's own template is the contract, and review-counts.sh parses it.
-assert_arg "the verdict is captured to a file" "$rv" "-o"
-assert_contains "which is the run dir's review.txt" "$rv" "review.txt"
-assert_not_contains "no schema is passed, because it would be ignored" "$rv" "--output-schema"
-assert_not_contains "and nothing resembling a prompt" "$rv" "print exactly"
-# -C is not a flag of `codex exec review` — only of top-level `codex exec`. Passing it
-# dies with "unexpected argument '-C' found"; the callers cd instead.
-assert_not_contains "no -C, which this subcommand does not take" "$rv" "
--C
-"
-echo "test: the reviewer's sandbox is PINNED, not inherited from the user's config"
-# `exec review` takes no -s, so without this it runs at whatever ~/.codex/config.toml
-# defaults to — and a user on danger-full-access would have a model reading
-# worker-authored, injectable content run on the host with approval_policy=never.
-#
-# workspace-write, not read-only (#99): read-only blocked a test runner from ever creating
-# a tempfile, so the done-check could never actually run. workspace-write grants
-# `writable_roots` IN ADDITION TO wherever it is run from, with no key to subtract that
-# (ground-truthed on codex-cli 0.155.1 — see review-cmd.sh), so the wrapper below never
-# runs this FROM the worktree — the cwd/TMPDIR tests further down prove that part.
-assert_arg "workspace-write, no longer read-only" "$rv" "sandbox_mode=workspace-write"
-assert_not_contains "never read-only" "$rv" "sandbox_mode=read-only"
-assert_contains "a narrowed scratch root, not the whole default grant" "$rv" \
-    "sandbox_workspace_write.writable_roots=[\"$RUNDIR/review-scratch\"]"
-assert_arg "the default /tmp grant excluded" "$rv" \
-    "sandbox_workspace_write.exclude_slash_tmp=true"
-assert_arg "the default \$TMPDIR grant excluded" "$rv" \
-    "sandbox_workspace_write.exclude_tmpdir_env_var=true"
+echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
+assert_contains "the finding shape" "$rv" "- [P1]"
+assert_contains "the clean literal" "$rv" "No findings."
+assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+assert_arg "no edits" "$rv" "Edit"
+assert_arg "no pushes" "$rv" "Bash(git push:*)"
+assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
 
-echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
-# The SHIPPED table is claude in every cell, so a user who flips only the implementer to
-# codex lands exactly here. Passing that cell's model would make `codex exec review` die
-# on a model codex does not have, leaving NO review.txt — which worker-report.sh refuses
-# outright, turning a wrong-model review into a run that cannot land at all.
+echo "test: a CODEX reviewer cell is reviewed on opus anyway — reviews are claude"
 CFG_MIXED="$WORK/cfg-mixed"
 mkdir -p "$CFG_MIXED"
 cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
@@ -528,12 +565,12 @@ cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
   "trivial": {
     "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "high" }
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
   },
   "standard": {
     "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "high" }
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" }
   },
   "complex": {
     "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
@@ -545,9 +582,8 @@ JSON
 out_mx=$(CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_MIXED" \
     bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>"$WORK/err")
 assert_contains "it still spawns a reviewer" "$out_mx" "--REVIEW--"
-assert_contains "still against the base branch" "$(review_argv "$out_mx")" "--base"
-assert_not_contains "but never hands codex a claude model" "$out_mx" "-m opus"
-assert_not_contains "nor any other claude model" "$(review_argv "$out_mx")" "sonnet"
+assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
+assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 rm -rf "$CODEX_ROOT"
@@ -573,7 +609,7 @@ assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LE
 # would be, never that the wrapper actually runs it, in the right order, or cleans up.
 echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
-STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc" STUB_REVIEW_MARKER="$WORK/review-marker" \
     STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     STUB_REVIEW_TEXT='- [P1] one — a:1
 - [P1] two — b:2
@@ -587,6 +623,8 @@ else no "no $RUNDIR/review.txt — the wrapper did not run the reviewer"; fi
 # THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree, and
 # a test runner inside it would find its tempfiles pointed at the scratch root the argv
 # granted — not at whatever the worktree's own sandbox default would have been.
+assert_equals "the reviewing marker existed while the review ran (round 4's producer)" \
+    "$(cat "$WORK/review-marker" 2>/dev/null)" "yes"
 assert_equals "the review ran in the disposable checkout" \
     "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR/review-checkout"
 assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"
@@ -599,13 +637,18 @@ if [ -e "$RUNDIR/review-checkout" ] || [ -e "$RUNDIR/review-scratch" ]; then
 else
     ok "the disposable checkout and scratch dir are cleaned up after the review"
 fi
-assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
+assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
+# 25 = -p, --model M, --effort E, --permission-mode X, --disallowedTools + 15 rules, --, and
+# the prompt as ONE argument. A newline-split reader hands claude 52 and it keeps line one.
+assert_equals "the multi-line prompt reached claude as ONE argument" \
+    "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
 assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
 # review landing after it would be read as a run with no verdict on every fast poll.
+if [ -e "$RUNDIR/reviewing" ]; then no "the reviewing marker outlived the review"; else ok "the reviewing marker is gone once exit lands"; fi
 if [ "$RUNDIR/review.txt" -ot "$RUNDIR/exit" ] || [ "$RUNDIR/exit" -nt "$RUNDIR/review.txt" ]; then
     ok "exit was written after the review, not before"
 else
@@ -619,6 +662,8 @@ COMMENT="$(cat "$RUNDIR/review-comment.md" 2>/dev/null)"
 # The heading is counted by review-counts.sh — the SAME script worker-report.sh reads the
 # verdict with, so the issue thread and the merge queue cannot disagree about the findings.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 1 medium, 0 low"
+assert_equals "and the run-dir rounds ledger escalate.sh reads carries the same verdict" \
+    "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 2 high, 1 medium, 0 low"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
 
 echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
@@ -794,23 +839,32 @@ esac
 stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 [ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 
-# The codex path above is built and tested; the SHIPPED roster deliberately stays claude, and
-# that is the INTENDED END STATE, not a hold (docs/swarm-design.md § Roster, decided 2026-09-17).
-# This kit installs on other people's machines: a shipped codex default makes every worker fail
-# for anyone without the codex CLI, and spawn.sh has no preflight check for it, so the failure
-# reads as a generic `failed` with no hint that codex is simply missing. Codex is opt-in per
-# user, through a table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json.
+# The SHIPPED roster (PRD #104, 2026-09-22, superseding the 2026-09-17 claude-only decision):
+# trivial and standard implement on codex — luna, then terra, then opus — behind an opus
+# plan; complex stays on opus. A user without the codex CLI writes a claude-only table at
+# ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json; the FALLBACK roster is claude-only for
+# the same reason, so a broken table never depends on codex.
 #
-# CLAUDE_CONFIG_DIR is pinned at an empty dir for exactly that reason: without it this test
-# would read the developer's OWN user table and go red on any machine that opted into codex.
-echo "test: the SHIPPED roster routes workers through claude — codex is opt-in, not the default"
-for t in trivial standard complex; do
+# CLAUDE_CONFIG_DIR is pinned at an empty dir so this reads the shipped table, not the
+# developer's own.
+echo "test: the SHIPPED roster — luna heads the trivial and standard chains, opus builds complex"
+for t in trivial standard; do
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
-    assert_arg "shipped $t spawns claude" "$out" "--bg"
-    assert_not_contains "shipped $t does not route to codex by default" \
-        "$out" "codex exec"
+    assert_arg "shipped $t attempt 0 spawns codex" "$out" "exec"
+    assert_arg "shipped $t attempt 0 is luna" "$out" "gpt-5.6-luna"
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
+    assert_arg "shipped $t attempt 1 is terra" "$out" "gpt-5.6-terra"
+    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 2 2>/dev/null)
+    assert_arg "shipped $t attempt 2 tops out on claude" "$out" "--bg"
+    assert_arg "at opus" "$out" "opus"
 done
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
+      bash "$SPAWN" r9 12 complex "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+assert_arg "shipped complex spawns claude" "$out" "--bg"
+assert_not_contains "shipped complex never routes to codex" "$out" "codex exec"
 
 echo "test: a runid carrying a path component is refused before it reaches mkdir -p or rm -rf"
 # $RUNID is joined into the codex run dir, which spawn.sh both creates and — on a failed
@@ -821,6 +875,29 @@ CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     >/dev/null 2>"$WORK/err"
 assert_equals "exits 1 on a traversal runid" "$?" "1"
 assert_contains "names the value and what is allowed" "$(err)" "runid may only contain"
+CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" ".." 12 standard "$REPO" base --orchestrator orch-main --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "a bare .. runid is refused too — every character is allowed, the path step is not" "$?" "1"
+
+echo "test: a real codex spawn with NO codex CLI fails loud, naming the user-table fix (review fix 3)"
+# Every binary the real PATH has, EXCEPT codex — so the only thing this run lacks is the CLI.
+NOCODEX="$WORK/nocodex"; mkdir -p "$NOCODEX"
+IFS=: read -ra _dirs <<<"$PATH"
+for d in "${_dirs[@]}"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+        n="$(basename "$f")"
+        [ "$n" = codex ] && continue
+        [ -e "$NOCODEX/$n" ] || ln -s "$f" "$NOCODEX/$n" 2>/dev/null
+    done
+done
+rm -rf "$CODEX_ROOT/nocodex"
+PATH="$NOCODEX" CODEX_RUN_ROOT="$CODEX_ROOT/nocodex" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    "$(command -v bash)" "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "says the CLI is missing" "$(err)" "codex CLI is not installed"
+assert_contains "and how to route around it" "$(err)" "model-tiers.json"
+if [ -e "$CODEX_ROOT/nocodex" ]; then no "left a run dir behind"; else ok "and leaves no run dir behind"; fi
 
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"

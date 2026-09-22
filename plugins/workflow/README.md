@@ -23,12 +23,12 @@ plugins/workflow/
 │   ├── to-prd/SKILL.md               # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   └── to-issues/SKILL.md            # /to-issues <#> — slice a PRD into vertical-slice issues, tiered for /orchestrate
 ├── agents/
-│   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
+│   ├── implementer.md                # opus, max effort (fallback; spawns pass the chain's top cell) — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
-│   └── planner.md                    # opus, high effort — complex-tier planning only, read-only
+│   └── planner.md                    # opus, high effort — the plan contract; in the session lane consult.sh runs it on the planner cell and posts **Plan** to the issue
 ├── scripts/
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
+│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
@@ -118,7 +118,9 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
    prompt tells it to report with `SendMessage` — miss that line and the orchestrator waits forever.
 5. **Fix rounds are fresh sessions** (`--role fix`), told to work from the issue's latest review-round
    comment. Nothing compounds, and the fixer is not defending its own code. Capped by `--max-cycles`
-   (default 2); **cycles are counted by reading the issue's review-round comments**, never stored.
+   (default 5); **cycles are counted from the authoritative source per backend** — the thread's
+   review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a codex-backed one
+   (its worker can post that comment too) — never a field kept separately.
 6. **Merge is a fold first.** `merge-fold.sh` lands every conflict-free branch with plain git, testing
    each with `git merge-tree --write-tree` before touching the working tree; only the **conflicted
    remainder** reaches the `merger` agent (**opus**, never tier-routed). It is a *fold*, not a filter:
@@ -153,8 +155,11 @@ Workers **commit after every green sub-step**. That is the *recovery mechanism*,
 the loss from a kill at one sub-step, which is what makes killing on **suspicion** affordable and
 resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
 respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
-onto a worktree whose previous session is still alive. **Respawn once, escalate on the second**; the
-count comes from `run-log.sh`, because nothing in git or GitHub records that a session was killed.
+onto a worktree whose previous session is still alive. A **codex** worker is replaced along its
+tier's implementer chain (luna → terra → opus) by `escalate.sh`, from countable evidence — a
+`failed` report, a third deviation, a second review round with findings, a stall, a full context
+— never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
+because nothing in git or GitHub records that a session was killed or a model changed.
 
 An escalating worker messages the orchestrator, which **offers both** mediation and
 `claude attach <id>` (column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the

@@ -93,7 +93,7 @@ done
 case "$INTERVAL" in ''|*[!0-9]*) die "--interval must be a number, got '$INTERVAL'" ;; esac
 case "$TIMEOUT"  in ''|*[!0-9]*) die "--timeout must be a number, got '$TIMEOUT'" ;; esac
 # Same guard as spawn.sh and run-log.sh: $RUNID is joined into a filesystem path below.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$INTERVAL" -gt 0 ] || die "--interval must be greater than 0"
 
 [ -f "$INFRA/session-status.sh" ] || die "missing infra sibling: $INFRA/session-status.sh"
@@ -169,7 +169,7 @@ raw = read("last-message.txt")
 
 def independent_review():
     # THE VERDICT COMES FROM THE REVIEWER, NEVER FROM THE WORKER. review.txt is the
-    # final message of the sibling `codex exec review` process that
+    # stdout of the sibling claude reviewer (review-cmd.sh) that
     # spawn.sh/worker-resume.sh run AFTER the worker exits; the worker cannot write it and
     # is told to report an empty `review`.
     #
@@ -189,22 +189,6 @@ def independent_review():
         return ""
     try:
         out = subprocess.run(["bash", os.path.join(infra, "review-counts.sh"), path],
-                             capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.stdout.strip() if out.returncode == 0 else ""
-
-def reviewer_token_usage():
-    # COST VISIBILITY, NOT A GATE (#98). `codex exec review --json`'s own usage block is
-    # all zeroes; the real numbers live in the review subagent's OWN rollout under
-    # ~/.codex/sessions, keyed off the "session id:" banner review-stderr.log already
-    # carries — see review-tokens.sh. Best-effort and stderr-only: a miss here must never
-    # touch the one-line stdout contract the orchestrator parses.
-    path = os.path.join(rundir, "review-stderr.log")
-    if not os.path.exists(path):
-        return ""
-    try:
-        out = subprocess.run(["bash", os.path.join(infra, "review-tokens.sh"), path],
                              capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -289,9 +273,6 @@ if status in ("built", "fixed"):
               "review.txt — a review that did not run is not a clean one: %s"
               % (issue, status, why), file=sys.stderr)
         sys.exit(1)
-    tokens = reviewer_token_usage()
-    if tokens:
-        print("issue %d reviewer token usage: %s" % (issue, tokens), file=sys.stderr)
     if status == "fixed":
         try:
             rnd = int(r.get("round", 0))

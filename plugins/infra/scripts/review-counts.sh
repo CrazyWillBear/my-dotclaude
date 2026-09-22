@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# review-counts.sh — read one `codex exec review` output file and print its finding counts.
+# review-counts.sh — read one independent-reviewer output file and print its finding counts.
 #
 # Usage:  bash review-counts.sh <review-file>
 # Output: exactly `<H> high, <M> medium, <L> low` on stdout.
@@ -12,21 +12,22 @@
 # one thing and the merge queue would act on another. It lived inline in all three for
 # about an hour and was already three copies, one of them subtly different.
 #
-# WHY IT PARSES PROSE. `codex exec review` cannot be asked for a machine-readable shape:
-# `--base` forbids a trailing PROMPT, and `--output-schema` is accepted on a review turn
-# and then SILENTLY IGNORED (ground-truthed twice — see review-cmd.sh). `--json` does not
-# help either: the event stream carries the same prose in an `agent_message` and no
-# structured findings event. So the review's own template is the contract:
+# THE FORMAT IS THE CONTRACT. The reviewer (`claude -p` spawning my-review, built by
+# review-cmd.sh — #104) is told to emit exactly this and nothing else, and the shape was
+# inherited from `codex exec review`'s own template, which review-cmd.sh used to run:
 #
 #   findings   `- [P1] <title> — <path>:<lines>` list items, one per finding
-#   clean      ordinary prose, exit 0, no `[Pn]` marker anywhere
+#   clean      the literal line `No findings.` and no `[Pn]` marker anywhere
 #
 # Severity maps P0/P1 -> high, P2 -> medium, P3+ -> low.
 #
 # THE ONE RULE THAT MATTERS: an unreadable file is NOT a clean one. A file that mentions a
-# `[Pn]` marker but not as a list item is format drift, and drift must never be counted as
-# zero findings — that is the invented-fact failure that merges unreviewed code, the whole
-# reason this path exists (#96). Refusing costs a run; guessing costs a review.
+# `[Pn]` marker but not as a list item is format drift; so is prose with neither a marker
+# nor the clean line (a reviewer that wrote its findings as a headed list instead). Drift
+# must never be counted as zero findings — that is the invented-fact failure that merges
+# unreviewed code, the whole reason this path exists (#96). Refusing costs a run; guessing
+# costs a review. (Codex's clean reviews were free prose; that path is retired for workers,
+# which is what lets clean be pinned to a literal.)
 
 set -uo pipefail
 
@@ -56,9 +57,15 @@ if not marks:
               "its format has drifted and an unreadable review is not a clean one",
               file=sys.stderr)
         sys.exit(1)
-    # A genuinely clean review: the reviewer exited 0 and said so in prose.
-    print("0 high, 0 medium, 0 low")
-    sys.exit(0)
+    if text.strip() == "No findings.":
+        # A genuinely clean review: the ENTIRE output is the one literal it was given.
+        # Anything around it is a reviewer that ignored its format, and that is refused.
+        print("0 high, 0 medium, 0 low")
+        sys.exit(0)
+    print("error: the review has no finding list items and no 'No findings.' line — "
+          "its format has drifted and an unreadable review is not a clean one",
+          file=sys.stderr)
+    sys.exit(1)
 
 high = sum(1 for m in marks if m in ("0", "1"))
 med = sum(1 for m in marks if m == "2")

@@ -10,15 +10,19 @@
 #
 # Usage:
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
-#        [--round N] [--dry-run]
+#        [--round N] [--attempt N] [--dry-run]
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer-file FILE \
-#        [--round N] [--dry-run]
+#        [--round N] [--attempt N] [--dry-run]
 #
 #     --base BRANCH  REQUIRED. What the post-resume review diffs against. The resumed
 #                    worker does not review itself (§ the reviewer, below), so without
 #                    this there is nothing to review against and the run would be landed
 #                    unreviewed.
 #     --round N      the round number quoted in the review comment this posts (default 1)
+#     --attempt N    the chain position the worker was SPAWNED at (default 0), so the
+#                    re-passed `-m` is the same model — a resume on a different model is
+#                    a stranger on the thread (#104). The answer is normally a consult's
+#                    decision (consult.sh) to a **Deviation**.
 #
 # Output: the resumed turn's report, in the same one line the lane already parses —
 # this script hands rendering to worker-report.sh rather than keeping a second copy of
@@ -49,6 +53,7 @@ ANSWER_SET=0
 DRY=""
 BASE=""
 ROUND=1
+ATTEMPT=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -61,6 +66,8 @@ while [ $# -gt 0 ]; do
                        BASE="$2"; shift 2 ;;
         --round)       [ $# -ge 2 ] || die "--round needs a value"
                        ROUND="$2"; shift 2 ;;
+        --attempt)     [ $# -ge 2 ] || die "--attempt needs a value"
+                       ATTEMPT="$2"; shift 2 ;;
         --dry-run)     DRY=1; shift ;;
         *)             die "unknown flag $1" ;;
     esac
@@ -69,16 +76,17 @@ done
 USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--round N] [--dry-run]"
 [ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 # --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
-# independent review (below) and `codex exec review --base` cannot run without one —
+# independent review (below) and the reviewer's commit range cannot be built without one —
 # and a resume that quietly skipped the review would land an unreviewed branch wearing
 # the same report shape as a reviewed one, which is the exact failure #96 caught.
 # Guessing a base here (`main`, the current branch) would be the same silence with extra
 # steps: wrong on any repo whose default differs, and undetectable when it is.
 [ -n "$BASE" ] || die "--base BRANCH is required — the post-resume review cannot run without it"
 case "$ROUND" in ''|*[!0-9]*) die "--round must be a number, got '$ROUND'" ;; esac
+case "$ATTEMPT" in ''|*[!0-9]*) die "--attempt must be a number, got '$ATTEMPT'" ;; esac
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 # Same guard as spawn.sh, worker-report.sh and run-log.sh: it is joined into a path.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$ANSWER_SET" -eq 1 ] || die "an answer is required: --answer TEXT or --answer-file FILE"
 [ -n "${ANSWER//[[:space:]]/}" ] || die "the answer is empty — resuming with nothing to say wastes the thread"
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
@@ -98,7 +106,7 @@ THREAD="$(sed -n 's/.*"thread_id":"\([^"]*\)".*/\1/p' "$RUNDIR/events.jsonl" | h
 # The tier decides the model, and it must be the SAME backend: resuming a claude-backed
 # worker through codex would start a stranger on its branch.
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
-ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
+ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null)"
 MODEL="$(printf '%s\n'   "$ROSTER" | sed -n 's/^implementer_model=//p'   | head -1)"
 EFFORT="$(printf '%s\n'  "$ROSTER" | sed -n 's/^implementer_effort=//p'  | head -1)"
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
@@ -178,12 +186,15 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # The scratch dir a test runner inside the review may write to (#99) — see review-cmd.sh
 # for why the review itself never runs from $WORKTREE, and spawn.sh's wrapper for the
 # identical clone-and-cleanup this script mirrors below.
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review.txt" "$RUNDIR/review-scratch")" || exit 1
+# NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
+# reader would hand claude the first line of it (review round 2). An empty array is
+# review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
+# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
-while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
-$REVIEW_ARGV
-EOF
+while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+[ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # review.txt goes too, and for the sharpest version of the same reason: it is the only
 # source of the finding counts, so the previous turn's review left in place would be read
@@ -198,7 +209,7 @@ EOF
 # window between here and the clone below open for THAT SAME WORKER to plant one — the
 # non-default-CODEX_RUN_ROOT threat model spawn.sh's own pre-clone cleanup already names.
 # They are cleared AFTER the worker exits instead (below), mirroring spawn.sh's wrapper.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" \
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 
@@ -214,11 +225,15 @@ CODE=$?
 # left a symlink there would otherwise have `mkdir -p`/`git clone` follow it, handing the
 # reviewer's sandbox grant and TMPDIR to a directory the worker chose, not this script.
 rm -rf "$RUNDIR/review-checkout" "$RUNDIR/review-scratch"
+# The worker is done; a frozen event log from here on is the reviewer running, not a stall
+# (escalate.sh reads this marker). Removed just before `exit` lands, as in spawn.sh.
+: >"$RUNDIR/reviewing"
 
-# THE INDEPENDENT REVIEWER, exactly as spawn.sh runs it and from the same builder — a
-# resumed worker's branch is as unreviewed as a freshly built one, and worker-report.sh
-# below refuses a built/fixed report with no review.txt. ORDER: before the exit file,
-# which is what makes the run terminal and readable.
+# THE INDEPENDENT REVIEWER (claude on the reviewer cell, spawning my-review — #104),
+# exactly as spawn.sh runs it and from the same builder — a resumed worker's branch is as
+# unreviewed as a freshly built one, and worker-report.sh below refuses a built/fixed
+# report with no review.txt. ORDER: before the exit file, which is what makes the run
+# terminal and readable. Its verdict is its stdout, captured to review.txt.
 #
 # FAIL CLOSED: a failed review leaves NO review.txt, so the run is refused rather than
 # merged on a verdict nobody produced.
@@ -242,13 +257,15 @@ if [ "$CODE" -eq 0 ] \
                 >/dev/null 2>>"$RUNDIR/review-stderr.log"
         if [ -d "$RUNDIR/review-checkout" ] && ( cd "$RUNDIR/review-checkout" \
                 && TMPDIR="$RUNDIR/review-scratch" "${REVIEW_CMD[@]}" ) \
-                >>"$RUNDIR/review-stderr.log" 2>&1 </dev/null; then
+                >"$RUNDIR/review.txt" 2>>"$RUNDIR/review-stderr.log" </dev/null; then
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
             # report the merge queue acts on can never disagree.
             COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
+                # The run-dir ledger escalate.sh counts rounds from (see spawn.sh's wrapper).
+                printf '%s %s\n' "$ROUND" "$COUNTS" >>"$RUNDIR/rounds"
                 { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
                   cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"
                 ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
@@ -270,6 +287,7 @@ if [ "$CODE" -eq 0 ] \
     fi
 fi
 
+rm -f "$RUNDIR/reviewing"
 printf '%s\n' "$CODE" >"$RUNDIR/exit"
 
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the

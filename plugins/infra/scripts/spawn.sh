@@ -5,8 +5,8 @@
 # A worker's TIER decides its BACKEND. `backend: claude` (and every peer) is a
 # `claude --bg` session; `backend: codex` is a `codex exec` process instead — same
 # contract, different everything else. See § CODEX below and docs/swarm-design.md
-# § Codex backend. The shipped table is claude-only today; the codex path is live and
-# reached by any tier row that says so.
+# § Codex backend. The shipped table routes trivial and standard through codex first
+# (PRD #104); a user table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json overrides it.
 #
 # A WORKER is one-shot and owns one issue; it exits when the issue is built. A PEER is
 # a standing role session that idles between briefs and is rotated by handoff. Both are
@@ -21,6 +21,13 @@
 #   worker:
 #     --role build|fix      build (default) or a fix round on an existing branch
 #     --round N             fix-round number, quoted in the fix prompt (default 1)
+#     --attempt N           chain position (default 0). The tier's implementer cell is an
+#                           ORDERED CHAIN (resolve-tier.sh, #104); escalate.sh decides a
+#                           worker is out of its depth and the orchestrator respawns at
+#                           attempt+1 on the SAME worktree. Past the top of the chain this
+#                           script refuses — the orchestrator drains there, it never wraps.
+#                           A respawn is told it is one: the **Handoff** comment on the
+#                           thread and the branch's commits are its whole inheritance.
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -71,8 +78,11 @@
 #                               worker was killed by a safety classifier, correctly).
 #                               `git push` and `gh issue comment` are deliberately
 #                               ALLOWED — a comment is additive, and the issue thread
-#                               is the coordination medium. IDENTICAL for both forms:
-#                               a peer has more standing, not more reach.
+#                               is the coordination medium. `gh api` / `gh repo` /
+#                               `gh workflow` / `gh release` are denied too: `gh api`
+#                               can close, edit and merge, so denying `gh pr` alone
+#                               fenced nothing. IDENTICAL for both forms: a peer has
+#                               more standing, not more reach.
 #   --model / --effort          a worker is routed by the issue's persisted tier, via
 #                               resolve-tier.sh. A PEER IS NOT TIER-ROUTED — its roster
 #                               row carries the model, so it passes them explicitly.
@@ -148,7 +158,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--orchestrator NAME] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -156,10 +166,12 @@ shift 5
 
 ROLE=build
 ROUND=1
+ATTEMPT=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --role)         need $# --role;         ROLE="$2"; shift 2 ;;
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
+        --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
@@ -168,24 +180,36 @@ done
 
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
+# $ROUND lands in the "**Review round N**" heading and the rounds ledger escalate.sh parses.
+case "$ROUND" in ''|*[!0-9]*) die "round must be a number, got '$ROUND'" ;; esac
+case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 [ -n "$RUNID" ] || die "runid is required"
 # Not just non-empty: $RUNID is joined into the codex run dir below, a path that reaches
 # both `mkdir -p` and `rm -rf`, and the caller is a model assembling argv by hand. A `..`
 # component would put both outside the run root. run-log.sh guards the identical value
 # with this same case.
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-], got '$RUNID'" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ -n "$WORKTREE" ] || die "worktree is required"
 [ -n "$BASE" ] || die "base branch is required"
 
-# The tier's roster. resolve-tier.sh always exits 0 and always prints a roster
-# (falling back to standard), so a broken model-tiers.json degrades to a working
-# spawn rather than no spawn at all.
+# The tier's roster, at this attempt's chain position. resolve-tier.sh always exits 0 and
+# always prints a roster (falling back to the claude-only one), so a broken
+# model-tiers.json degrades to a working spawn rather than no spawn at all. An attempt
+# PAST THE TOP is the one thing that does not degrade: the resolver falls back with
+# chain=1, and 1 <= attempt is refused here — a wrapped chain would quietly rebuild on the
+# cheapest model the exact issue that just defeated the strongest one.
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
-ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
+ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null)"
 MODEL="$(printf '%s\n' "$ROSTER"  | sed -n 's/^implementer_model=//p'  | head -1)"
 EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1)"
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
+CHAIN="$(printf '%s\n' "$ROSTER"   | sed -n 's/^implementer_chain=//p'   | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
+if [ "$ATTEMPT" -ge "${CHAIN:-1}" ]; then
+    # The refused resolve fell back (chain=1); name the REAL length from the chain head.
+    REAL="$(bash "$INFRA/resolve-tier.sh" "$TIER" 0 2>/dev/null | sed -n 's/^implementer_chain=//p' | head -1)"
+    die "attempt $ATTEMPT is past the top of tier '$TIER' implementer chain (length ${REAL:-1}) — drain, do not respawn"
+fi
 # resolve-tier.sh validates the backend against the model and falls back rather than
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
@@ -233,22 +257,49 @@ else
 # ---------------------------------------------------------------------------
 EXTRA=(--add-dir "$WORKTREE")
 
-# Only COMPLEX work plans. Trivial and standard self-plan — planning TDD-first is
-# already in the implementer's contract, and a plan stage in front of an implementer
-# that explores anyway was measured at 26% of all agent-minutes on a 56-agent run.
-# The SESSION spawns the planner, never the orchestrator: a plan is prose, and prose
-# the orchestrator reads is prose in its context for the rest of the run.
-# A codex worker has no subagents, so it plans in its own context instead. Either way
-# the plan stays HERE: prose the orchestrator reads is prose in its context all run.
+# STANDARD and COMPLEX build to a PLAN that is already on the thread (#104): consult.sh
+# runs the planner as a one-shot call on the planner cell's model BEFORE this spawn and
+# posts a **Plan** comment, so a cheap implementer executes a plan a smart one wrote, and
+# the plan reaches the worker the way everything does — by reading the issue. The
+# orchestrator never reads it. Trivial self-plans. The one rule that makes the split safe:
+# a false plan assumption is a STOP, never an improvisation — the worker posts a
+# **Deviation** comment and pauses (the pause mechanism is backend-shaped, below), a
+# consult on the planner's model answers it, and the worker is resumed with the decision.
+# BACKEND-SHAPED PAUSE. A false plan assumption is a THIRD backend-varying step, same as
+# review and report (below): codex has no SendMessage, and a claude worker has no
+# status/note fields — those only exist because --output-schema forces them. Giving every
+# worker the codex shape (as a first pass here did) leaves a claude worker with a pause
+# mechanism it cannot emit: the deviation either reaches the orchestrator with no
+# "deviation: " prefix (routed to a human, stalling an unattended run) or reaches nobody.
+if [ "$BACKEND" = codex ]; then
+    PLAN_PAUSE="and STOP with status \"escalate\" and \"note\" = \"deviation: \" followed
+   by the same three lines — the \"deviation: \" prefix is how the orchestrator tells a
+   deviation from a question."
+else
+    PLAN_PAUSE="and use SendMessage, addressed to \"$ORCH\", with exactly:
+      issue $ISSUE escalate deviation: <the same three lines>
+   then wait. The \"deviation: \" prefix is how the orchestrator tells a deviation from a
+   question — it is not optional."
+fi
 PLAN_STEP=""
-if [ "$TIER" = complex ] && [ "$BACKEND" = codex ]; then
-    PLAN_STEP="0. This is a COMPLEX issue: PLAN FIRST. Read the repo, write yourself an ordered
-   implementation plan with file paths and testable acceptance criteria, then build to
-   it. Keep the plan in YOUR context — it is never part of your report.
+if [ "$TIER" != trivial ]; then
+    PLAN_STEP="0. A \"**Plan**\" comment is on the thread. FOLLOW IT step by step — it was written on a
+   stronger model so that executing it is near-mechanical. If a plan assumption turns out
+   FALSE, do NOT improvise: post a comment headed \"**Deviation**\" (which step, what you
+   found, what you tried) $PLAN_PAUSE A \"**Consult**\" answers it; follow that decision
+   when you are resumed.
 "
-elif [ "$TIER" = complex ]; then
-    PLAN_STEP="0. This is a COMPLEX issue: spawn the workflow:planner agent FIRST and build to the
-   plan it returns. Keep the plan in YOUR context — never send it to the orchestrator.
+fi
+# A RESPAWN (attempt > 0) replaces a worker escalate.sh judged out of its depth. It is
+# told so: the thread's **Handoff** comment says why and what landed, and the branch
+# carries every committed sub-step. It never restarts the issue.
+HANDOFF_STEP=""
+if [ "$ATTEMPT" -gt 0 ]; then
+    HANDOFF_STEP="You are ATTEMPT $((ATTEMPT + 1)) on this issue: a previous worker was replaced. The
+thread carries a \"**Handoff**\" comment (why, the commits landed, its last activity) plus
+the plan, every deviation and every consult. Read them, then continue from the branch's
+last commit — never restart the issue.
+
 "
 fi
 
@@ -257,8 +308,8 @@ fi
 # SendMessage tool and no subagents: telling it to use either produces a session that
 # finishes the work and then reports into nothing, which reads to the orchestrator
 # exactly like a worker still thinking. Its final message IS its report (`--output-schema`
-# forces the shape), and `codex exec review --base` is its reviewer
-# (docs/swarm-design.md § Codex backend).
+# forces the shape), and the claude reviewer is run FOR it as a sibling process after it
+# exits (review-cmd.sh; docs/swarm-design.md § Codex backend).
 if [ "$BACKEND" = codex ]; then
     # DO NOT tell the worker to review itself. It was told exactly that until #96's e2e
     # gate caught what happens: `codex exec review` NESTED inside this worker's own
@@ -329,7 +380,7 @@ if [ "$ROLE" = build ]; then
     TASK="$(cat <<PROMPT
 You are the BUILD session for issue #$ISSUE, run $RUNID.
 
-Worktree: $WORKTREE — branch $BRANCH, cut from $BASE. Work ONLY here; never touch
+${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH, cut from $BASE. Work ONLY here; never touch
 another worktree or $BASE.
 
 ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --comments\`. The
@@ -359,12 +410,18 @@ else
     TASK="$(cat <<PROMPT
 You are FIX ROUND $ROUND for issue #$ISSUE, run $RUNID. You did not write this code.
 
-Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
+${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
    Those findings are your work order; the review already names file and line. Fix the
    highs and mediums; lows are listed, not fixed.
-2. Fix them, TDD-first, committing after every green sub-step.
+2. Fix them, TDD-first, committing after every green sub-step. If a finding names a
+   fact that's true anywhere else in the codebase too — not a mistake local to this
+   line — grep the repo for other instances of the same pattern and fix those in the
+   same round. If that fact isn't already written down where the project's CLAUDE.md
+   says such facts live (a schema doc, a \`## Decisions\` section), add a one-line note
+   there in the same commit, so the next issue that touches it doesn't relearn it. If
+   CLAUDE.md names no such place, skip the doc note — don't invent a new doc for it.
 3. Run the project's done-check. It must be green.
 $FIX_REVIEW_STEP
 $FIX_REPORT_STEP
@@ -386,6 +443,13 @@ if [ "$BACKEND" = codex ]; then
 # session-status.sh reads exactly this layout.
 # ---------------------------------------------------------------------------
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
+
+# THE SHIPPED TABLE IS CODEX-FIRST (#104), and this kit installs on other machines. Without
+# this check a missing CLI surfaces as a generic `failed` worker with no hint why. On the
+# real path only: a dry run must build its argv without the binary, as the tests do.
+if [ -z "$DRY" ] && ! command -v codex >/dev/null 2>&1; then
+    die "tier '$TIER' attempt $ATTEMPT routes to codex but the codex CLI is not installed — write a claude-only table at \${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json"
+fi
 
 # Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
@@ -409,8 +473,8 @@ RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue
 # brackets and quotes.
 #
 # network_access is not optional either: workspace-write is OFFLINE by default, and this
-# worker's prompt orders `gh issue view`, `gh issue comment` and `codex exec review`.
-# Every one of them needs the network, and `approval_policy=never` means the worker
+# worker's prompt orders `gh issue view`, `gh issue comment`, `git push` and the done-check.
+# Every one of them may need the network, and `approval_policy=never` means the worker
 # cannot ask for it back — it would fail its whole protocol silently.
 CMD=(codex exec
      -C "$WORKTREE"
@@ -428,7 +492,9 @@ CMD=(codex exec
 # THE INDEPENDENT REVIEWER. A SIBLING of the worker, never its child: the wrapper below
 # runs it only after the worker's process has exited, so it starts on the host with a
 # normal filesystem instead of inside the worker's read-only sandbox — which is the whole
-# reason the worker's own review step could never work (#96).
+# reason the worker's own review step could never work (#96). It is CLAUDE, at the tier's
+# reviewer cell, spawning my-review (#104) — `codex exec review` could not honour a claude
+# reviewer cell, so "reviewer: opus" was silently false for every codex worker.
 #
 # Built by review-cmd.sh, not here, for the reason common-git-dir.sh --roots is shared:
 # worker-resume.sh must run the IDENTICAL reviewer, and a second copy that drifted would
@@ -443,15 +509,17 @@ CMD=(codex exec
 BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
     || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
 
-# The scratch dir a test runner inside the review may write to (#99) — a STRING only,
-# here: the wrapper below creates it (and the disposable checkout it goes with) only on
-# the non-dry-run path, so a dry run still touches no disk.
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review.txt" "$RUNDIR/review-scratch")" || exit 1
+# The reviewer prints its verdict to STDOUT; the wrapper below captures it to review.txt
+# and points TMPDIR at a scratch dir beside the disposable checkout (#99) — both created
+# only on the non-dry-run path, so a dry run still touches no disk.
+# NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
+# reader would hand claude the first line of it (review round 2). An empty array is
+# review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
+# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
-while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
-$REVIEW_ARGV
-EOF
+while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review
@@ -465,6 +533,13 @@ if [ -n "$DRY" ]; then
 fi
 
 mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
+
+# Written ONCE, at the FIRST spawn of a run, and never rewritten by a respawn (that is
+# what "if absent" means — the dir and this file both survive every attempt of the same
+# issue in the same run). escalate.sh floors its very-first-evaluation comment window
+# here, so a PERMANENT thread comment left by an earlier /orchestrate run on this same
+# issue cannot be read as evidence produced by this one.
+[ -f "$RUNDIR/.started" ] || date +%s >"$RUNDIR/.started"
 
 # THE RUN DIR IS REUSED. Its path carries the runid and the issue but NOT the round, so a
 # fix round — and any recovery respawn — lands on the previous turn's `exit` and
@@ -486,7 +561,7 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # fixes were never looked at straight to the merge queue. review-stderr.log goes too: the
 # missing-review error quotes its tail, and a stale one would explain this run's refusal
 # with the previous round's reason.
-rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" \
+rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
@@ -572,6 +647,10 @@ bash -c '
     # PREVIOUS round of the same reused run dir (#99) — a worker-planted checkout would be
     # a repo the reviewer is fooled into trusting.
     rm -rf "$rundir/review.txt" "$rundir/review-checkout" "$rundir/review-scratch"
+    # THE WORKER IS DONE; THE REVIEW MAY TAKE A WHILE. `reviewing` tells escalate.sh that a
+    # frozen event log from here on is not a stall — the worker process is gone and the
+    # sibling reviewer is what the live pid is doing. Removed just before `exit` lands.
+    : >"$rundir/reviewing"
     # Reviewed only when the worker SAYS it built or fixed something. `escalate` and
     # `failed` also exit 0, and reviewing those posts a "Review round" comment on a
     # half-built branch — which the orchestrate lane counts as a spent cycle.
@@ -586,27 +665,28 @@ bash -c '
         # Re-running --roots re-checks the containment and refuses a worktree that no
         # longer passes, before any git runs there.
         if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
-            # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99). `sandbox_mode=workspace-write`
-            # is what lets a test runner create a tempfile, but workspace-write ALWAYS grants
-            # write access to wherever it is run from, with no config key to exclude it — see
-            # review-cmd.sh for how that was ground-truthed. Running the review IN $worktree
-            # would make every tracked file outside .git writable to it, so it runs in a
-            # DISPOSABLE clone instead: `--shared` costs no object copy, and codex'\''s own
-            # `--base` diffing works identically there, since the clone carries the same
-            # commit history. TMPDIR points a test runner at the scratch dir this argv was
-            # built to grant — without it, tempfile creation still falls back to the /tmp
-            # this sandbox now excludes.
+            # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99): the reviewer may run the
+            # project'\''s done-check, and it is fenced by a prefix-pattern tool denylist and
+            # its prompt, NOT a sandbox (an accepted gap — docs/swarm-design.md § Roster), so
+            # it runs in a DISPOSABLE clone instead — `--shared` costs no object copy, and the
+            # commit range diffs identically there. TMPDIR points a test runner at the
+            # scratch dir beside it. The verdict is the reviewer'\''s STDOUT, captured to
+            # review.txt; its stderr is the diagnostic worker-report.sh quotes on a refusal.
             mkdir -p "$rundir/review-scratch" \
                 && git clone --quiet --shared -- "$worktree" "$rundir/review-checkout" \
                     >/dev/null 2>>"$rundir/review-stderr.log"
             if [ -d "$rundir/review-checkout" ] && (cd "$rundir/review-checkout" \
                     && TMPDIR="$rundir/review-scratch" "${review[@]}") \
-                    >>"$rundir/review-stderr.log" 2>&1 </dev/null; then
+                    >"$rundir/review.txt" 2>>"$rundir/review-stderr.log" </dev/null; then
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
                 # the report the merge queue acts on can never disagree.
                 counts="$(bash "$counter" "$rundir/review.txt" 2>>"$rundir/review-stderr.log")"
                 if [ -n "$counts" ]; then
+                    # THE LEDGER escalate.sh counts review rounds from — in the run dir,
+                    # which the worker cannot write; the thread copy is for humans and
+                    # the fix round, and a worker can forge a comment there.
+                    printf "%s %s\n" "$round" "$counts" >>"$rundir/rounds"
                     { printf "**Review round %s** — %s\n\n" "$round" "$counts"
                       cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
                     (cd "$worktree" && gh issue comment "$issue" \
@@ -627,6 +707,7 @@ bash -c '
             rm -f "$rundir/review.txt"
         fi
     fi
+    rm -f "$rundir/reviewing"
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
@@ -653,6 +734,7 @@ CMD=(claude --bg -n "$NAME"
      "${EXTRA[@]}"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
+                       "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)"
      -- "$TASK")
 
 # --dry-run prints ONE ARGUMENT PER LINE, unquoted — that is what makes the flag set

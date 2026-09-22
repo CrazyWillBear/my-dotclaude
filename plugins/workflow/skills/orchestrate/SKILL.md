@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>`, spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
-argument-hint: "[--max N=5] [--max-cycles K=2] [--merge-split-at K=5] [--prd N] [--issues N,N,...] [--skip-unknown]"
+argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
 ---
@@ -21,7 +21,7 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
 
 - **`--max N`** — **concurrent issues in flight** (default **5**), not a batch size. A slot frees
   when its issue merges, and the freed slot takes the next ready issue.
-- **`--max-cycles K`** — the per-issue fix-round cap (default **2**). The initial review is free;
+- **`--max-cycles K`** — the per-issue fix-round cap (default **5**). The initial review is free;
   the cap counts **re-reviews**.
 - **`--merge-split-at K`** — the conflicted remainder above which the merge is split (default
   **5**). See [Merge](#merge).
@@ -79,21 +79,13 @@ The fix, when they want one, is one setting in `~/.claude/settings.json`:
 { "crossSessionInbound": "accept" }
 ```
 
-Values are `accept` (deliver), `hold` (park for review), `refuse` (opt out). **Unset means
-mode parity** — a message auto-delivers only when the sender's permission-mode class matches
-yours, which is exactly why a `bypassPermissions` worker reporting to a prompting orchestrator
-gets held. An explicit value always wins.
-
-It must be set at the **user** level: a repo's settings may only *tighten* this, so a project
-`.claude/settings.json` cannot loosen a user-level `hold`, and managed org policy overrides both.
-Setting it mid-run was observed to take effect on the very next worker report, but set it
-**before** launching a run rather than relying on that.
-
-**Say what it costs before anyone sets it.** `accept` delivers messages from *any* local Claude
-session without review — not just this run's workers. It is a machine-wide relaxation in exchange
-for an unattended loop. If the user does not want that, the session lane still works; it just
-stops for an approval on every report, so **tell them that up front** instead of letting them
-discover it mid-run. The ad-hoc lane is unaffected — subagents are not cross-session.
+Values are `accept` / `hold` / `refuse`; **unset means mode parity**, which is exactly why a
+`bypassPermissions` worker reporting to a prompting orchestrator gets held. It must be set at
+the **user** level — a repo's settings may only *tighten* it — and **before** the run.
+**Say what it costs first:** `accept` delivers messages from *any* local Claude session without
+review, a machine-wide relaxation in exchange for an unattended loop. Without it the session
+lane still works, it just stops for an approval on every report — **tell them that up front**.
+The ad-hoc lane is unaffected — subagents are not cross-session.
 
 ---
 
@@ -136,14 +128,13 @@ One unit of work, you are present, nothing to schedule. This is what `/pipeline`
 
 **Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
 `Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
-`resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is
-`backend: claude` in every cell, so its models are usable as-is — and that is the end state,
-not a hold: codex is opt-in per
-user through `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json`, so **a cell may well say `codex`
-on this machine even though the shipped table does not.** Resolve the roster and look; never
-assume the shipped values. **If a cell does say `codex`, do not pass its model to `Agent`** —
-substitute the claude-side roster: trivial `haiku` (reviewer `sonnet`), standard `sonnet`
-(reviewer `opus`), complex `opus`.
+`resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is `backend: codex` in some
+cells (the trivial and standard implementer chains start on luna — PRD #104), and a user table
+at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
+look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
+**top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
+(opus medium in the shipped table); a codex reviewer cell becomes `opus`. The plan comment
+and the escalation script are session-lane only.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -227,15 +218,14 @@ An **empty allowlist** stops the run. An empty scope is never a reason to widen 
 Read each scoped issue's labels; take its tier from `tier:trivial` / `tier:standard` /
 `tier:complex`.
 
-- **Missing → backfill.** Run `/classify-task <N> --no-confirm` (it fans out its own Explore agents,
-  so the tier is grounded), then persist it: ensure the label exists
-  (`gh label create tier:standard --description "complexity tier: standard" 2>/dev/null || true`)
-  and write it with `gh issue edit <N> --add-label tier:<t>`. The next run reads the label.
+- **Missing → backfill.** Run `/classify-task <N> --no-confirm` (Explore-grounded), then persist
+  it: `gh label create tier:<t> --description "complexity tier: <t>" 2>/dev/null || true` and
+  `gh issue edit <N> --add-label tier:<t>`. The next run reads the label.
 - **Auto-accept.** **Never prompt** to confirm or override a tier. Report the backfills in the
   launch line; that is the whole interaction.
 - **Conflicting labels** → the **highest tier wins** (complex > standard > trivial), and warn.
-  Under-tiering is the expensive failure: it routes real work to a model too cheap for it and you
-  pay for the bad build *and* the fix rounds chasing it.
+  Under-tiering routes real work to a model too cheap for it; the chain then escalates it anyway,
+  at the cost of a wasted attempt.
 
 ## Step 3 — the graph, fetched once
 
@@ -259,42 +249,27 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" scope '{"issues"
 
 The whole run executes in **one** worktree, so the merge writes to a linked worktree and the
 **primary checkout is never touched**. Canonicalize with `realpath` first — git may print a
-relative `.git`:
+relative `.git`. **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir`
+resolve to the **same** path) → record `base=$(git rev-parse HEAD)`, then
+**`EnterWorktree(name: "orchestrate-<runid>")`**, and verify: `worktree.baseRef` `head` (which
+this kit installs) branches from `HEAD`, but the built-in `fresh` = `origin/<default>` **silently
+drops local commits**, so if `git rev-parse HEAD` ≠ `$base`, `git reset --hard "$base"` (the
+worktree is brand-new). **Already in a linked worktree** (the two differ) → skip; this *is* it.
 
-- **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir` resolve to the
-  **same** path) → record `base=$(git rev-parse HEAD)` **before** the call, then
-  **`EnterWorktree(name: "orchestrate-<runid>")`**. The branch point follows `worktree.baseRef`:
-  `head` (which this kit's setup installs) uses the current `HEAD`, but the built-in default is
-  `fresh` = `origin/<default-branch>`, which **silently drops local commits**. So verify after
-  entering: if `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"` — the worktree is
-  brand-new, so the reset is safe.
-- **Already in a linked worktree** (the two **differ**) → **skip**; this worktree *is* the
-  orchestration worktree.
-
-**Then exclude the per-issue worktrees.** They nest at `<baseRepo>/.worktrees/<runid>/issue-<N>`,
-inside the orchestration worktree's own tree, so without this they show up as untracked files in
-`git status` while the merge runs. Append to the repo's **local** exclude (untracked — never a
-tracked `.gitignore` edit in the user's repo), idempotently:
+**Then exclude the per-issue worktrees**, which nest at `<baseRepo>/.worktrees/<runid>/issue-<N>`
+inside this tree and would show as untracked during the merge — in the repo's **local** exclude,
+never a tracked `.gitignore`, idempotently:
 
 ```bash
 excl="$(git rev-parse --git-common-dir)/info/exclude"
 grep -qxF '.worktrees/' "$excl" 2>/dev/null || printf '.worktrees/\n' >> "$excl"
 ```
 
-Say this in the final report: it is a persistent mutation of the user's real repo that outlives the
-run.
-
-**Then resolve the run's own address, once:**
-
-```bash
-ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"
-```
-
-That is the name every worker will `SendMessage`. Resolve it **here and pass it to every spawn**
-rather than letting each spawn re-resolve: the name is this session's *display title*, which is
-model-generated and can change, and a rename mid-run would leave already-spawned workers
-addressing a name that no longer exists. If you want it stable and unambiguous, launch the
-orchestrator itself as `claude -n orch-<runid>`.
+Say so in the final report: it is a persistent mutation of the user's real repo that outlives the
+run. **Then resolve the run's own address, once**, and pass it to every spawn —
+`ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"` — because the name is this
+session's model-generated display title, and a rename mid-run would leave already-spawned workers
+addressing a name that no longer exists (`claude -n orch-<runid>` makes it stable).
 
 ## Step 5 — the admission loop
 
@@ -326,18 +301,31 @@ model can, and historically did, hallucinate.
    ```bash
    git -C "$baseRepo" worktree add -b "issue-<N>" ".worktrees/<runid>/issue-<N>" "$baseBranch"
    ```
-3. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**;
-   `standard`/`complex` → a **session**:
+3. **Plan** (`standard` and `complex` only — see [The planner](#the-planner)):
+   ```bash
+   bash ~/.claude/kit/infra/scripts/consult.sh plan "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" planned '{"n":<N>}'
+   ```
+   It posts the `**Plan**` comment and prints one line. **Run it with a 10-minute Bash timeout**
+   (an opus pass outlasts the default). A non-zero exit is a failed plan: do not spawn a worker
+   onto an issue with no plan — report it and skip the issue.
+4. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**
+   at the chain's **top cell** (`resolve-tier.sh trivial $((chain-1))` — always claude, since
+   the `Agent` tool takes no codex model; never the frontmatter default);
+   `standard`/`complex` → a **session**, at **attempt 0** of the tier's implementer chain:
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
-        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH"
+        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
+   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the
+   thread or the ledger; every later spawn passes the same `--attempt` unless
+   [escalation](#escalation-by-script) moved it.
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
    (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
    `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
    the id rather than a bare id, so don't parse spawn's output: read it from
    **`session-status.sh <runid>`, column 2**, when you need it.
-4. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
+5. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
    `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
 
 **The session is the implementer.** `spawn.sh`'s prompt points it at
@@ -363,21 +351,10 @@ happened** (a timeout, or a worker that finished without a readable report) and 
 Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
 so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
 
-**With more than one codex worker in flight, wait on the SET, not on one of them:**
-
-```bash
-bash ~/.claude/kit/infra/scripts/worker-report.sh --any "$RUNID" <N> <N> ...
-```
-
-The single-issue form blocks on the issue you name, so a fast worker queued behind a slow one
-cannot free its admission slot until the slow one finishes. The **builds** stay parallel either
-way — it is the SCHEDULING that serialises. `--any` returns the first of those workers to reach a
-terminal state, in the same one line, with the same exit-0 / exit-1 split.
-
-**Pass the issues still in flight, and drop each one as it reports.** A worker that already
-reported stays terminal forever, so leaving it in the set hands you its report a second time
-instead of waiting for the next worker — and the run would admit new work against an outcome it
-already spent.
+**With more than one codex worker in flight, wait on the SET:** `worker-report.sh --any "$RUNID"
+<N> <N> ...` returns the first to reach a terminal state, in the same one line with the same exit
+split; the single form serialises SCHEDULING behind the slowest worker. **Pass only the issues
+still in flight, and drop each one as it reports** — a reported worker stays terminal forever.
 
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
@@ -389,16 +366,27 @@ that nobody owns is a stage that silently does not happen.
 `issue <N> fixed round=<K> head=<sha> review=…` from a fix round — same handling, and `round=K`
 is how you confirm which round just landed):
 
-- **`H > 0` or `M > 0`, and rounds remain** → spawn a **fix round**:
-  `spawn.sh ... --role fix --round <K>`. A **fresh** session every round: nothing compounds, and
-  the fixer is not defending its own code.
+- **`H > 0` or `M > 0`, and rounds remain** → run [`escalate.sh`](#escalation-by-script) first
+  (a second round with findings moves the attempt up), then spawn a **fix round**:
+  `spawn.sh ... --role fix --round <K> --attempt <A>`. A **fresh** session every round: nothing
+  compounds, and the fixer is not defending its own code.
 - **clean, or the cap is spent** → the issue joins the **merge queue**.
-- **`issue <N> failed <why>`** → **drain**: admit nothing new, let the in-flight work finish, then
-  stop and report. Killing the loop mid-flight strands built, reviewed branches that had already
-  earned their merge.
+- **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top of
+  the chain it respawns at the next model; **at the top → drain**: admit nothing new, let the
+  in-flight work finish, then stop and report. Killing the loop mid-flight strands built,
+  reviewed branches that had already earned their merge.
+- **`issue <N> escalate deviation: ...`** → a consult, not a human — see [Escalation](#escalation).
 
-**Cycles are counted by reading the issue** — the number of `**Review round N**` comments on it —
-never by a field you keep. See [The bus](#the-bus).
+**On every wake** (any report, idle notice, or `worker-report.sh` return) run `escalate.sh`
+for each codex worker in flight; a stall or full context is only visible from outside.
+Claude-backed workers top their chain and are never escalated.
+
+**Cycles are counted from the AUTHORITATIVE source, never by a field you keep.** A claude
+worker posts its own `**Review round N**` comment, so a claude-backed issue's count is that
+comment count — see [The bus](#the-bus). A codex worker can also post comments, so a
+codex-backed issue's count is `wc -l` of
+`${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds` instead (one line per
+reviewer wrapper run) when that file exists, falling back to the thread when it does not.
 
 **Failure is drain-then-stop, not kill.**
 
@@ -433,6 +421,19 @@ src/billing/client.py — calls it; owns the idempotency key
 tests/test_retry.py — the existing coverage
 ```
 
+**Also grep the project's own docs for concepts these files already use.** If the
+project's `CLAUDE.md` names a doc where table/column/field semantics live (a schema
+doc) or keeps a `## Decisions` section (typically in an architecture doc), grep it for
+any identifier that also appears in the files just listed, and fold a hit in as its own
+line, quoting the doc directly:
+
+```
+docs/SCHEMA.md:893 — "Gmail's thread ids are per-mailbox, not globally unique"
+```
+
+Same file, same flat format, same "hint not contract" rule below — this just widens the
+grep from files to the concepts those files use, which a path-only list would miss.
+
 **It is a hint, not a contract.** A pointer to a file that moved costs the implementer one failed
 `Read`. There are **no sha stamps and no staleness protocol** — if a session doubts the map, it
 deletes it and re-runs `Explore`. Anything more is a synchronization problem invented to serve a
@@ -446,21 +447,20 @@ a reviewer a map would widen its scope, which is the opposite of what it is for.
 
 # The planner
 
-**Kept — for `complex` issues only, and spawned by the build session, not by the orchestrator.**
+**Standard and complex issues get a plan, written by a script on the planner cell's model and
+posted to the issue thread before the build worker is spawned** (PRD #104). The implementer
+chain starts on a cheap model — luna — which executes a good plan well and recovers from a bad
+one badly, so the expensive model spends one bounded pass planning and the cheap one loops; the
+plan reaches the worker by reading the thread, like everything else. Trivial issues **self-plan**.
+The old rule (complex only, spawned inside the build session, measured at 26% of all work as a
+second exploration) is superseded: the cost is one `claude -p` call.
 
-`/pipeline` was the planner's other consumer and `/pipeline` is gone, so its fate had to be settled.
-The reasoning:
+**The orchestrator still never reads it.** `consult.sh` posts the `**Plan**` comment and hands
+you one line; the graph was frozen before any plan existed. Only workers, consults and
+`escalate.sh` read the thread ([Context discipline](#context-discipline)).
 
-- **Why keep it:** on a complex issue the cross-cutting design call is worth settling *before* any
-  code exists. That is a different job from the TDD-first planning already in the implementer's
-  contract.
-- **Why only complex:** the planner was measured as a second full repo exploration in front of an
-  implementer that explores anyway — 83 of 317 agent-minutes on a 56-agent run, **26% of all work**,
-  to hand over a document the implementer would have derived. Trivial and standard **self-plan**.
-- **Why the session spawns it, not the orchestrator:** a plan is prose, and prose the orchestrator
-  reads is prose in the orchestrator's context forever ([Context discipline](#context-discipline)).
-  The build session spawns `workflow:planner` as its first act, keeps the plan in its own context,
-  and the orchestrator never sees a word of it.
+**Consults are the same script in its other role:** a worker that hits a false plan assumption
+posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's model. Two per attempt.
 
 ---
 
@@ -475,49 +475,73 @@ and the full `stop` → verify → respawn recovery procedure are documented in
 
 # Escalation
 
-A worker that hits something only a human can answer `SendMessage`s the orchestrator:
-`issue <N> escalate <question>`.
+A worker that pauses `SendMessage`s the orchestrator: `issue <N> escalate <note>`. Two kinds,
+told apart by the note's first word — never by reading the thread:
 
-**A codex worker escalates by ending its turn, not by waiting.** It has no inbox, so there is
-nothing to relay to and nothing to `claude attach`. It reports `issue <N> escalate <question>`
-through `worker-report.sh` and its process exits — but **its context survives**: the answer is
-delivered by resuming its thread, so it picks up where it stopped rather than restarting. Offer
-the question to Will, then send his answer back with:
+**`escalate deviation: ...` — a false plan assumption. A consult answers it, not a human.**
+The worker posted a `**Deviation**` comment and paused. Run `escalate.sh` first (the third
+deviation is an escalation, not a consult); if it prints nothing:
 
 ```bash
+bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" consulted '{"n":<N>}'
 bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> \
-     --base "$BASE" --answer "..."
+     --base "$BASE" --attempt <A> --round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."
 ```
 
-It prints the resumed turn's report in the same one line as any other worker, so handling is
-unchanged. **Do not hand-assemble a `codex exec resume`**: the sandbox does not carry over and
-there is no `-C`, so a hand-written one comes back offline and fails its own `gh` protocol
-silently ([infra's README](../../../infra/README.md#escalation-on-a-codex-worker)). Attaching is
-not an option to offer here — there is no session to attach to — so mediating is the only route.
+**If `consult.sh` refuses instead** ("past the cap", only for a claude-backed worker — it
+has no `escalate.sh` check and never respawns): treat it as `failed` — drain, since claude
+already tops its chain. Otherwise the decision stays on the thread; the answer you pass is a
+pointer to it, so no prose enters your context. A claude session resumes the same way, by
+`SendMessage` with that pointer.
 
-**Offer both routes. Recommend one.**
+**Anything else — a question only a human can answer.** A codex worker escalates by ending its
+turn: no inbox, nothing to attach to, but **its context survives** — resume its thread with
+`worker-resume.sh ... --answer "..."` (same flags as above; pass the current `--attempt`), which
+prints the resumed turn's report in the same one line. **Do not hand-assemble a `codex exec
+resume`**: the sandbox does not carry over and there is no `-C`, so a hand-written one comes back
+offline and fails its own `gh` protocol silently ([infra's
+README](../../../infra/README.md#escalation-on-a-codex-worker)). For a claude session, **offer
+both routes. Recommend one.**
 
 > #14's session is asking whether the retry budget is per-request or per-session. I can relay the
 > answer, or you can `claude attach 7f3a1c04` and talk to it directly. Recommend attaching — this
 > is about the code.
 
-Give the **id**, not the name — `claude attach` takes an id (`Usage: claude attach <id>`), and you
-kept it at spawn.
+Give the **id**, not the name — `claude attach` takes an id, and you kept it at spawn.
+**Mediate** for short calls (a scope question, a yes/no); **attach** for back-and-forth about code,
+which relaying would drag into the orchestrator's context. Detaching (`←` or `Ctrl+Z`) leaves
+the session running. **An escalated session is exempt from the deadline** while you are engaged
+with it, and one that resolves an escalation directly with you **MUST report the resolution** —
+a `SendMessage` back *and* an issue comment — before continuing, or the orchestrator thinks #14
+is blocked while #14 is three commits past it.
 
-- **Mediate** for short calls: a scope question, a yes/no, a name.
-- **Attach** for real back-and-forth about code. Relaying that would drag the code itself into the
-  orchestrator's context, which is the one thing the orchestrator must not accumulate.
+---
+# Escalation by script
 
-`claude attach <id>` detaches with `←` or `Ctrl+Z` and **the session keeps running** — background
-sessions are owned by the background service, not the terminal (they carry no `pid` in
-`agents --json`).
+**A script decides a worker is out of its depth — never the worker, never you.** Each tier's
+implementer cell is an ordered **chain** (luna → terra → opus for trivial/standard; opus alone
+for complex); `spawn.sh --attempt <A>` selects the position:
 
-**An escalated session is exempt from the deadline** while you are engaged with it. Otherwise the
-watchdog kills the session you are in the middle of a conversation with.
+```bash
+bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A>
+```
 
-**A session that resolves an escalation directly with you MUST report the resolution** — a
-`SendMessage` back *and* an issue comment — before continuing. Without that the orchestrator's
-state silently diverges from reality: it thinks #14 is blocked while #14 is three commits past it.
+It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
+`failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
+medium findings, an event log untouched for 20 minutes while alive and not in its post-build
+review (own budget, below), or a context past 256K. On a hit it has posted `**Handoff**`. Then:
+
+1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
+   for a codex row; verify nothing is still busy.
+2. `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"<reason>","attempt":<A>}'`.
+3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`). The
+   worktree carries every commit; the thread carries the plan, consults, deviations and the
+   handoff — nothing is relayed.
+4. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
+
+Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
+`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); run-log counts decide if they move.
 
 ---
 
@@ -542,12 +566,9 @@ resolution corrupts the base branch for every issue in the run.
 
 ## The split
 
-**`--merge-split-at`, default 5.** `K` — the size of the conflicted remainder — is **measured** by
-the fold, every run, for free.
-
-**The two-at-a-time path is not built.** Build it when real runs report `K > 5`. The crossover comes
-from `C·K²/4 > S` with a measured session cost `S ≈ 40k` and per-conflict cost `C ≈ 5k`, giving
-≈5.7. Until then, one merger.
+**`--merge-split-at`, default 5.** `K` — the conflicted remainder — is **measured** by the fold,
+every run. **Not built**; build it when real runs report `K > 5` (crossover `C·K²/4 > S`
+with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
 
 ## What is gated and what is not
 
@@ -595,15 +616,17 @@ with real tests:
 | `ready.sh` | readiness + the empty-set classification |
 | `session-status.sh` | worker state, and `--self` |
 | `spawn.sh` | the session command and the worker prompt contract |
-| `run-log.sh` | scope · held · respawned · decision |
+| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated |
 | `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
-| `resolve-tier.sh` | tier → {model, effort, backend} |
+| `resolve-tier.sh` | tier + attempt → {model, effort, backend}, and the chain length |
+| `consult.sh` | the plan and the consult, posted to the thread |
+| `escalate.sh` | whether a codex worker is replaced, and the handoff comment |
 
-`spawn.sh`, `session-status.sh`, `check-inbound.sh` and `resolve-tier.sh` live in the **infra**
-plugin and are always called at `~/.claude/kit/infra/scripts/`.
+`spawn.sh`, `session-status.sh`, `check-inbound.sh`, `resolve-tier.sh`, `consult.sh` and
+`escalate.sh` live in the **infra** plugin and are always called at `~/.claude/kit/infra/scripts/`.
 
 ---
 
@@ -639,7 +662,7 @@ instead of buried under a success table:
    | merged? closed? | the fold's output + the close verification |
    | merge commit | the fold's output |
    | review outcome | the issue's **last review-round comment** — read it now, on demand, not during the run |
-   | notes | `run-log.sh state` (held, respawns, decisions) + `ready.sh`'s classification |
+   | notes | `run-log.sh state` (held, respawns, plans, consults, escalations, decisions) + `ready.sh`'s classification |
 
    Below the table: the stop reason if it drained; the **held** dependents and why; the **unbuilt**
    issues (scoped, admissible, never admitted); any respawns; the `.git/info/exclude` line Step 4
@@ -670,17 +693,7 @@ instead of buried under a success table:
 
 Each of these is something a fresh session will reasonably want to add. Each was argued down:
 
-- **Two-at-a-time conflict resolution** — until a real run reports `K > 5`. The fold measures it for
-  free every run.
-- **Recon to predict file overlap** — the fold *observes* conflicts directly, so predicting them is
-  solving a problem we can now just measure. (The context-map form of recon survives; it has a
-  different justification.)
-- **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already
-  prevents concurrent work on an interface that does not exist, and this commits speculative stubs
-  to a base branch that may be abandoned.
-- **Waves / round barriers** — continuous scheduling with slot refill is strictly better.
-- **Watch tables, claim tables, notification queues** — the issue thread replaces all three.
-- **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
-- **A worker-scoped context nudge** — nothing compounds: every fix round is a fresh session.
-- **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate
-  gate only.
+- **Two-at-a-time conflict resolution** — until a real run reports `K > 5`; the fold measures it.
+- **Recon to predict file overlap** — the fold *observes* conflicts, so measuring beats predicting. **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already prevents concurrent work on an interface that does not exist.
+- **Waves / round barriers** — continuous scheduling with slot refill is strictly better. **Watch/claim tables, notification queues** — the issue thread replaces all three. **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
+- **A worker-scoped context nudge** — nothing compounds; `escalate.sh` reads occupancy from outside. **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate gate only.

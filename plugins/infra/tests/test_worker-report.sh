@@ -29,12 +29,6 @@ trap 'rm -rf "$WORK"' EXIT
 CODEX_ROOT="$WORK/codexruns"
 export CODEX_RUN_ROOT="$CODEX_ROOT"
 
-# Hermetic and empty by default: reviewer_token_usage() must never reach the real
-# ~/.codex/sessions on the machine running this test. Populated by the one test below
-# that proves the wiring; every other fixture's review-stderr.log has no "session id:"
-# banner, so review-tokens.sh refuses before ever looking here regardless.
-export CODEX_SESSIONS_ROOT="$WORK/sessions"
-mkdir -p "$CODEX_SESSIONS_ROOT"
 
 BIN="$WORK/bin"
 mkdir -p "$BIN"
@@ -72,15 +66,14 @@ mkrun() {
     [ $# -lt 5 ] || printf '%s' "$5" >"$d/last-message.txt"
 }
 
-# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output: the final
-# message of the sibling `codex exec review` process, never written by the worker. A
+# mkreview <runid> <issue> <H> <M> <L> — the INDEPENDENT reviewer's output: the stdout of the
+# sibling `claude -p` reviewer process (review-cmd.sh, #104), never written by the worker. A
 # built/fixed report without one is refused, so almost every fixture below needs it — that
 # refusal IS the fix for the self-review substitution #96's gate caught.
 #
-# The content is codex's real review format — `- [Pn] title — path:lines` list items —
-# because that format cannot be requested (--base forbids a prompt, --output-schema is
-# ignored on a review turn) and is therefore what the parser must read. P1 -> high,
-# P2 -> medium, P3 -> low.
+# The content is the format the reviewer's prompt requests — `- [Pn] title — path:lines` list
+# items, or the literal `No findings.` for clean — which review-counts.sh parses and refuses
+# anything else. P1 -> high, P2 -> medium, P3 -> low.
 mkreview() {
     local d="$CODEX_ROOT/$1/issue-$2" i
     mkdir -p "$d"
@@ -88,7 +81,7 @@ mkreview() {
     i=0; while [ "$i" -lt "$3" ]; do printf -- '- [P1] a high — a.py:1\n' >>"$d/review.txt"; i=$((i+1)); done
     i=0; while [ "$i" -lt "$4" ]; do printf -- '- [P2] a medium — b.py:2\n' >>"$d/review.txt"; i=$((i+1)); done
     i=0; while [ "$i" -lt "$5" ]; do printf -- '- [P3] a low — c.py:3\n' >>"$d/review.txt"; i=$((i+1)); done
-    [ -s "$d/review.txt" ] || printf 'No issues found in this diff.\n' >"$d/review.txt"
+    [ -s "$d/review.txt" ] || printf 'No findings.\n' >"$d/review.txt"
 }
 
 # mkreview_raw <runid> <issue> <literal> — for the shapes that must be REFUSED.
@@ -115,24 +108,6 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "the exact report line" "$OUT" \
     "issue 41 built head=abc1234 review=1 high, 2 medium, 3 low"
 
-echo "test: reviewer token usage (#98) is surfaced on stderr WITHOUT touching stdout"
-# review-tokens.sh joins on the reviewer's own thread id, read from the "session id:"
-# banner review-stderr.log already carries — the SAME rollout shape test_review-tokens.sh
-# pins in isolation. Wiring it here proves worker-report.sh actually calls it.
-mkrun r1 44 "$(dead)" 0 \
-  '{"issue":44,"status":"built","round":0,"head":"abc9999","review":"","note":""}'
-mkreview r1 44 0 0 0
-printf '\033[1msession id:\033[0m 33333333-3333-3333-3333-333333333333\n' \
-    >"$CODEX_ROOT/r1/issue-44/review-stderr.log"
-mkdir -p "$CODEX_SESSIONS_ROOT/2026/09/18"
-printf '{"type":"session_meta","payload":{"session_id":"33333333-3333-3333-3333-333333333333","id":"44444444-4444-4444-4444-444444444444"}}\n{"type":"token_usage_record","payload":{"turn_token_usage":{"total_tokens":42}}}\n' \
-    >"$CODEX_SESSIONS_ROOT/2026/09/18/rollout-2026-09-18T00-00-00-44444444.jsonl"
-run r1 44 --interval 1 --timeout 20
-assert_equals "exit 0" "$RC" "0"
-assert_equals "stdout is UNCHANGED by the new diagnostic" "$OUT" \
-    "issue 44 built head=abc9999 review=0 high, 0 medium, 0 low"
-assert_contains "token usage lands on stderr instead" "$ERR" "reviewer token usage:"
-assert_contains "with the real cumulative number" "$ERR" '"total_tokens":42'
 
 echo "test: a fix round carries its round number, so the orchestrator knows which landed"
 mkrun r1 42 "$(dead)" 0 \
@@ -180,7 +155,7 @@ printf '%s\n' "$LIVE_PID" >"$LIVEDIR/pid"
     sleep 3
     printf '%s' '{"issue":50,"status":"built","round":0,"head":"7e1a9f0","review":"","note":""}' \
         >"$LIVEDIR/last-message.txt"
-    printf 'No issues found.\n' >"$LIVEDIR/review.txt"
+    printf 'No findings.\n' >"$LIVEDIR/review.txt"
     kill "$LIVE_PID" 2>/dev/null
     printf '0\n' >"$LIVEDIR/exit"
 ) &
@@ -239,7 +214,7 @@ FAST_PID="$(cat "$CODEX_ROOT/r7/issue-101/pid")"
     sleep 3
     printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"","note":""}' \
         >"$CODEX_ROOT/r7/issue-101/last-message.txt"
-    printf 'No issues found.\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
+    printf 'No findings.\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
     kill "$FAST_PID" 2>/dev/null
     printf '0\n' >"$CODEX_ROOT/r7/issue-101/exit"
 ) &

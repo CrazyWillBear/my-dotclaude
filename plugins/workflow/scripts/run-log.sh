@@ -8,8 +8,9 @@
 #   bash run-log.sh state  <runid>        # the folded state, as key=value lines
 #   bash run-log.sh path   <runid>        # where the log lives
 #
-# Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision.
-# An unknown event is an error, so the vocabulary cannot drift by accident.
+# Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
+# planned · consulted · escalated. An unknown event is an error, so the vocabulary
+# cannot drift by accident.
 #
 # The issue thread is the coordination medium (decision 12), which makes almost
 # everything a run log would traditionally store redundant — and a stored copy is
@@ -19,13 +20,17 @@
 #   ----------          --------------
 #   spawned             session-status.sh / `claude agents --json`
 #   merged              git log <base>..orchestrate-<ts>
-#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS ON THE ISSUE — never a field
+#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS (claude-backed) OR $RUNDIR/rounds
+#                       (codex-backed, whose worker can also post that comment) — never a field
 #   escalated + fix     the issue comment the escalation protocol requires
 #
-# `respawned` is the one thing genuinely underivable: nothing in git or GitHub
-# records that a session was killed and restarted, and "respawn once, escalate on
-# the second" needs the count. `held` is stored because a capped merge's hold is an
-# in-run judgment, not a fact on the issue.
+# `respawned` is genuinely underivable: nothing in git or GitHub records that a
+# session was killed and restarted. `held` is stored because a capped merge's hold is
+# an in-run judgment, not a fact on the issue. `planned` / `consulted` / `escalated`
+# (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
+# they are stored here anyway, per issue with the attempt and the reason, because the
+# deviation rate is the DATA that later decides whether a cheaper model can take the
+# complex implementer slot — and that is a question across runs, not one thread.
 #
 # Append-only means no read-modify-write: no lost updates, and no format drift
 # after a compact. Each line gets a `ts` and the event name; the rest is yours.
@@ -64,7 +69,7 @@ KEY="$(python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).
 [ -n "$KEY" ] || die "could not compute repo key (python3 -c failed)"
 DIR="${HOME:-/nonexistent}/.claude/handoffs/$KEY"
 
-case "$RUNID" in *[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-]" ;; esac
+case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .." ;; esac
 
 LOG="$DIR/runs/$RUNID.jsonl"
 
@@ -76,9 +81,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|held|respawned|decision) ;;
-            "") die "append needs an event: scope | held | respawned | decision" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision" ;;
+            scope|held|respawned|decision|planned|consulted|escalated) ;;
+            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
@@ -117,6 +122,7 @@ PY
 import json, os, sys
 
 scope, held, respawns, decisions = [], [], {}, []
+planned, consulted, escalated = [], {}, {}
 bad = 0
 
 with open(os.environ["RUNLOG_FILE"]) as fh:
@@ -144,11 +150,23 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
                 respawns[n] = respawns.get(n, 0) + 1
         elif event == "decision":
             decisions.append(str(rec.get("what") or "").replace("\n", " "))
+        elif event == "planned":
+            n = rec.get("n")
+            if n is not None and n not in planned:
+                planned.append(n)
+        elif event in ("consulted", "escalated"):
+            n = rec.get("n")
+            if n is not None:
+                d = consulted if event == "consulted" else escalated
+                d[n] = d.get(n, 0) + 1
 
 out = ["runid=%s" % os.environ["RUNLOG_RUNID"]]
 out.append("scope=%s" % ",".join(str(n) for n in scope))
 out.append("held=%s" % ",".join(str(n) for n in sorted(held)))
 out.append("respawned=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(respawns.items())))
+out.append("planned=%s" % ",".join(str(n) for n in sorted(planned)))
+out.append("consulted=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(consulted.items())))
+out.append("escalated=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(escalated.items())))
 for d in decisions:
     out.append("decision=%s" % d)
 if bad:

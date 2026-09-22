@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/review-counts.sh — turning one `codex exec review` output into the
+# Tests for scripts/review-counts.sh — turning one independent-reviewer output into the
 # finding counts the whole run is decided by.
 #
-# WHY THIS PARSES PROSE AT ALL. `codex exec review` cannot be asked for a machine-readable
-# shape: `--base` forbids a trailing PROMPT, and `--output-schema` is accepted on a review
-# turn and then silently IGNORED — ground-truthed twice, once by a real ops-os run whose
-# schema'd verdict came back as prose, once by a direct probe where `--json` also showed
-# only an `agent_message` and no structured findings event. So codex's own review template
-# is the contract.
-#
-# THE FIXTURES BELOW ARE REAL CODEX OUTPUT, copied verbatim from three actual runs — a
-# clean review, a one-P1 review, and the two-P2 review from ops-os issue #28. A parser for
-# a format nobody can request is only as good as the samples it was checked against, and
-# invented samples would just encode what this script already does.
+# THE FORMAT. The reviewer is `claude -p` spawning my-review (review-cmd.sh, #104), told
+# to emit `- [Pn] title — path:line` items or the literal `No findings.`. The item shape
+# was inherited from `codex exec review`'s own template, which this script used to parse;
+# the finding fixtures below are REAL CODEX OUTPUT copied verbatim from actual runs (a
+# one-P1 review and the two-P2 review from ops-os issue #28), and they still parse — the
+# one thing that changed is that a CLEAN review is now the literal line, not free prose.
 #
 # THE CENTRAL MECHANISM is that an UNREADABLE review is refused, never counted as clean.
 # Zero findings and "I could not read this" are the same number of findings and opposite
@@ -46,14 +41,30 @@ run() {   # run <file> -> OUT/ERR/RC
 }
 
 # ---------------------------------------------------------------------------
-echo "test: REAL codex output — a clean review counts zero"
-# Verbatim from a real run against a README-only diff.
-cat >"$WORK/clean.txt" <<'EOF'
-The change only updates the README description and introduces no functional issues.
-EOF
+echo "test: the clean literal counts zero"
+printf 'No findings.\n' >"$WORK/clean.txt"
 run "$WORK/clean.txt"
 assert_equals "exit 0" "$RC" "0"
 assert_equals "zero across the board" "$OUT" "0 high, 0 medium, 0 low"
+printf '\n  No findings.\n\n' >"$WORK/clean2.txt"
+run "$WORK/clean2.txt"
+assert_equals "surrounding whitespace is fine" "$OUT" "0 high, 0 medium, 0 low"
+printf 'Reviewed %s..HEAD as one unit.\n\nno findings\n' abc >"$WORK/clean3.txt"
+run "$WORK/clean3.txt"
+assert_equals "preamble or a lowercase variant is NOT the literal — refused" "$RC" "1"
+assert_equals "with nothing on stdout" "$OUT" ""
+
+echo "test: free prose with no markers is REFUSED — it used to be codex's clean shape"
+# `codex exec review` said "clean" in free prose. The claude reviewer is given one shape
+# for clean, so prose without it is a reviewer that ignored its format — which is exactly
+# what a reviewer that wrote its findings as a headed list would look like too.
+cat >"$WORK/prose.txt" <<'EOF'
+The change only updates the README description and introduces no functional issues.
+EOF
+run "$WORK/prose.txt"
+assert_equals "exit 1" "$RC" "1"
+assert_equals "NOTHING on stdout" "$OUT" ""
+assert_contains "says the format drifted" "$ERR" "drifted"
 
 echo "test: REAL codex output — one P1 becomes one high"
 # Verbatim from a real run against a diff adding subprocess(shell=True).
