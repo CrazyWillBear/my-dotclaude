@@ -109,6 +109,21 @@ assert_contains "says why: rulings live in comments" "$content" "not** in the bo
 assert_contains "posts the tackled line" "$content" "Tackled #<N> on branch issue-<N>"
 assert_contains "brevity framed as correctness" "$content" "correctness property"
 
+echo "test: follow the Plan; stop on deviation, never improvise (#104)"
+assert_contains "the Plan comment is followed" "$content" "**Plan**"
+assert_contains "follows it step by step" "$content" "Follow it
+step by step"
+assert_contains "a false assumption is a stop" "$content" "do not improvise"
+assert_contains "the Deviation comment" "$content" "**Deviation**"
+assert_contains "names which step" "$content" "which step"
+assert_contains "what was found" "$content" "what you found"
+assert_contains "what was tried" "$content" "what you tried"
+assert_contains "a session pauses by escalating" "$content" "issue <N> escalate <the same three lines>"
+assert_contains "a codex worker pauses with the escalate status" "$content" '"status": "escalate"'
+assert_contains "the Consult answers it" "$content" "**Consult N**"
+assert_contains "and the decision is followed" "$content" "Follow it.**"
+assert_contains "the consult cap is stated" "$content" "capped"
+
 echo "test: the context map is a hint the implementer may ignore"
 assert_contains "reads CONTEXT-MAP.md if present" "$content" "CONTEXT-MAP.md"
 assert_contains "hint, not a contract" "$content" "hint, not a contract"

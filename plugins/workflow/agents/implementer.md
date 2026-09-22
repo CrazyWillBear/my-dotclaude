@@ -48,6 +48,27 @@ ruled out and why. **Keep it short.** Verbose comments are read by every future 
 agent that touches this issue; brevity here is a correctness property, not a style preference.
 (The issue comment is this issue's memory; the doc from the section above is everyone else's.)
 
+## Follow the plan; stop on deviation (standard and complex issues)
+
+A `**Plan**` comment is on the thread for every standard and complex issue — written on a
+stronger model, before you were spawned, so that executing it is near-mechanical. **Follow it
+step by step.** Its `Assumptions` section lists what it rests on.
+
+**When a plan assumption turns out false, do not improvise.** Improvised code is code the plan
+never covered and the reviewer never expected. Instead:
+
+1. Post a comment headed `**Deviation**` — three short lines: **which step**, **what you found**
+   (the fact that contradicts the plan), **what you tried**. Nothing else.
+2. **Pause.** A background session `SendMessage`s `issue <N> escalate <the same three lines>`
+   and waits; a codex worker ends its turn with `"status": "escalate"` and the same text in
+   `note` (its thread survives); a subagent stops and reports.
+3. A `**Consult N**` comment answers it — a decision, and revised steps if the plan is wrong from
+   that step on. You are resumed with that decision as your answer. **Follow it.**
+
+Consults are capped (two per issue); past the cap the orchestrator replaces you with a stronger
+model, which is the right outcome, not a failure of yours. Never patch around a false assumption
+to avoid the pause — that is exactly the drift the pause exists to catch.
+
 **If `CONTEXT-MAP.md` exists in your worktree, read it.** It is a flat path-plus-one-line map
 written for you at admission. It is a **hint, not a contract** — where it disagrees with the
 code in front of you, the code wins, and a pointer to a file that moved costs you one failed
