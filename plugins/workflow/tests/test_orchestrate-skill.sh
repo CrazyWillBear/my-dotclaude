@@ -144,10 +144,44 @@ assert_matches "a hint, not a contract" "$BODY" "hint, not a contract"
 assert_matches "no staleness protocol" "$BODY" "no staleness protocol|no sha stamps"
 assert_matches "for the implementer only" "$BODY" "map is for the implementer only"
 
-echo "test: the planner's fate is decided in writing"
-assert_matches "kept for complex only" "$BODY" "complex.* only|only complex"
-assert_matches "and the reason is recorded" "$BODY" "26% of all work|83 of 317"
-assert_matches "spawned by the session, not the orchestrator" "$BODY" "session spawns it, not the orchestrator|spawned by the build session"
+echo "test: the planner — standard and complex, on the thread, before the spawn (#104)"
+assert_matches "standard and complex get a plan" "$BODY" "Standard and complex issues get a plan"
+assert_contains "written by consult.sh" "$BODY" "consult.sh plan"
+assert_contains "as the Plan comment" "$BODY" "**Plan**"
+assert_matches "before the build worker is spawned" "$BODY" "before the build worker is spawned"
+assert_matches "trivial self-plans" "$BODY" "issues \*\*self-plan\*\*"
+assert_matches "the old complex-only rule is recorded as superseded" "$BODY" "26% of all work.*superseded|superseded"
+assert_matches "the orchestrator still never reads it" "$BODY" "orchestrator still never reads it"
+assert_matches "a failed plan never gets a worker" "$BODY" "not spawn a worker onto an issue with no plan"
+assert_contains "the plan is logged" "$BODY" "planned '{\"n\":<N>}'"
+
+echo "test: deviation → consult → resume, never a human and never prose in the orchestrator (#104)"
+assert_contains "the deviation report shape" "$BODY" "escalate deviation:"
+assert_matches "told apart by the note's first word, not by reading" "$BODY" "first word.*never by reading"
+assert_contains "the consult role" "$BODY" "consult.sh consult"
+assert_contains "and it is logged" "$BODY" "consulted '{\"n\":<N>}'"
+assert_contains "the resume carries the attempt" "$BODY" '--base "$BASE" --attempt <A> --answer'
+assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'
+assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
+assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
+
+assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
+assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "third
+deviation is an escalation|third deviation"
+
+echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
+assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
+assert_contains "the chain is named" "$BODY" "luna → terra → opus"
+assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
+assert_matches "run on every wake" "$BODY" "On every wake"
+assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"
+assert_matches "the handoff is posted by the script" "$BODY" "Handoff.?.? comment"
+assert_matches "stop the worker first" "$BODY" "Stop the worker"
+assert_matches "respawn at attempt+1 on the same worktree" "$BODY" "attempt <A\+1>.*same worktree"
+assert_matches "the top of the chain drains" "$BODY" "past the top of.*chain.*(drain|failed)"
+assert_matches "nothing is resumed across a model change" "$BODY" "Nothing is resumed across a model change"
+assert_matches "fix rounds carry the attempt" "$BODY" "--role fix --round <K> --attempt <A>"
+assert_matches "claude workers are never escalated" "$BODY" "[Cc]laude-backed workers .{0,30}never escalated"
 
 # ---------------------------------------------------------------------------
 echo "test: liveness — subscribe, never poll"
@@ -283,10 +317,10 @@ lines=$(wc -l <"$SKILL_FILE")
 if [ "$lines" -lt 700 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
-for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh; do
+for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do
     assert_contains "calls $s via ~/.claude/kit/infra" "$BODY" "bash ~/.claude/kit/infra/scripts/$s"
 done
-for s in session-status.sh check-inbound.sh resolve-tier.sh spawn.sh; do
+for s in session-status.sh check-inbound.sh resolve-tier.sh spawn.sh consult.sh escalate.sh; do
     assert_not_contains "no plugin-root path to $s" "$BODY" '${CLAUDE_PLUGIN_ROOT}/scripts/'"$s"
 done
 assert_contains "fails loud without infra" "$BODY" "infra plugin not installed"
