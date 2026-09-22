@@ -88,7 +88,7 @@ mkreview() {
     i=0; while [ "$i" -lt "$3" ]; do printf -- '- [P1] a high — a.py:1\n' >>"$d/review.txt"; i=$((i+1)); done
     i=0; while [ "$i" -lt "$4" ]; do printf -- '- [P2] a medium — b.py:2\n' >>"$d/review.txt"; i=$((i+1)); done
     i=0; while [ "$i" -lt "$5" ]; do printf -- '- [P3] a low — c.py:3\n' >>"$d/review.txt"; i=$((i+1)); done
-    [ -s "$d/review.txt" ] || printf 'No issues found in this diff.\n' >"$d/review.txt"
+    [ -s "$d/review.txt" ] || printf 'No findings.\n' >"$d/review.txt"
 }
 
 # mkreview_raw <runid> <issue> <literal> — for the shapes that must be REFUSED.
@@ -180,7 +180,7 @@ printf '%s\n' "$LIVE_PID" >"$LIVEDIR/pid"
     sleep 3
     printf '%s' '{"issue":50,"status":"built","round":0,"head":"7e1a9f0","review":"","note":""}' \
         >"$LIVEDIR/last-message.txt"
-    printf 'No issues found.\n' >"$LIVEDIR/review.txt"
+    printf 'No findings.\n' >"$LIVEDIR/review.txt"
     kill "$LIVE_PID" 2>/dev/null
     printf '0\n' >"$LIVEDIR/exit"
 ) &
@@ -239,7 +239,7 @@ FAST_PID="$(cat "$CODEX_ROOT/r7/issue-101/pid")"
     sleep 3
     printf '%s' '{"issue":101,"status":"built","round":0,"head":"9b0c1d2","review":"","note":""}' \
         >"$CODEX_ROOT/r7/issue-101/last-message.txt"
-    printf 'No issues found.\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
+    printf 'No findings.\n' >"$CODEX_ROOT/r7/issue-101/review.txt"
     kill "$FAST_PID" 2>/dev/null
     printf '0\n' >"$CODEX_ROOT/r7/issue-101/exit"
 ) &

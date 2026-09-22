@@ -81,17 +81,17 @@ cat >"$CFG_CODEX/model-tiers.json" <<'JSON'
   "trivial": {
     "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "low" }
   },
   "standard": {
     "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "medium" }
   },
   "complex": {
     "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" },
-    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" }
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "high" }
   }
 }
 JSON
@@ -328,27 +328,6 @@ mkdir -p "$CODEX_BIN"
 # the events file) and, like the real one, writes its final message to the `-o` path.
 cat >"$CODEX_BIN/codex" <<'STUB'
 #!/usr/bin/env bash
-# `codex exec review` is the SECOND codex a spawn runs — the independent reviewer the
-# wrapper starts once the worker exits. It is answered separately: it writes a schema'd
-# verdict to its -o file and records its own argv, so the worker's is not clobbered.
-if [ "${2:-}" = review ]; then
-    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
-    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
-    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
-    # was granted — this is how the tests below prove the wiring, not just the argv shape.
-    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
-    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
-    rout=""
-    for a in "$@"; do
-        [ -n "${take:-}" ] && { rout="$a"; take=""; }
-        [ "$a" = -o ] && take=1
-    done
-    # PROSE in codex's own review format — a review turn cannot emit anything else.
-    rj="${STUB_REVIEW_TEXT:-}"
-    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
-    [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
-    exit "${STUB_REVIEW_EXIT:-0}"
-fi
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
 while [ $# -gt 0 ]; do
@@ -358,6 +337,22 @@ done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
+
+# The INDEPENDENT REVIEWER is `claude -p` (#104) — the SECOND process a spawn runs, once
+# the worker exits. It records its own argv (so the worker's is not clobbered), its cwd
+# and TMPDIR (#99: the review must run in a disposable clone, with TMPDIR at the scratch
+# root beside it), and prints its verdict to STDOUT in the shape review-counts.sh parses.
+cat >"$CODEX_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
+rj="${STUB_REVIEW_TEXT:-}"
+[ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
+printf '%s\n' "$rj"
+exit "${STUB_REVIEW_EXIT:-0}"
+STUB
+chmod +x "$CODEX_BIN/claude"
 
 # gh is STUBBED, and that is not optional. The wrapper posts the reviewer's findings with
 # `gh issue comment`, so a real gh here would comment on whatever repo the suite happens to
@@ -500,26 +495,29 @@ assert_not_contains "and is not told to spawn an agent it cannot spawn" \
 assert_contains "a codex worker pauses on a deviation with the escalate status" \
     "$out_cx" "**Deviation**"
 
-echo "test: a SIBLING reviewer is spawned, at the tier's REVIEWER model"
-# THE FIX FOR WHAT #96's GATE CAUGHT. The worker used to run `codex exec review` itself,
-# from inside its own sandbox, where that call can never start ("Read-only file system") —
-# and it then reported its own opinion of its own diff as the independent verdict. The
-# reviewer is now its own top-level process, printed after the --REVIEW-- marker.
+echo "test: a SIBLING reviewer is spawned — CLAUDE, at the tier's REVIEWER cell (#104)"
+# THE FIX FOR WHAT #96's GATE CAUGHT, then #104's: the worker used to run `codex exec
+# review` itself (it cannot start inside its sandbox, and it substituted its own opinion),
+# then a sibling `codex exec review` — which could not honour a claude reviewer cell, so
+# "reviewer: opus" was silently false for every codex-built branch. The reviewer is now
+# `claude -p` spawning my-review, printed after the --REVIEW-- marker.
 #
-# TRIVIAL is the sharp case for the MODEL: its implementer is luna and its reviewer terra,
-# so a reviewer that merely echoed the run's model would say luna here. That is what tells
-# the two columns apart.
+# TRIVIAL is the sharp case: its implementer is luna and its reviewer sonnet/low, so a
+# reviewer that merely echoed the run's model would say luna here.
 out_tv=$(codex_dry r9 12 trivial "$REPO" base)
 assert_arg "the RUN is still at the implementer's model" "$out_tv" "gpt-5.6-luna"
 assert_contains "a reviewer argv follows the marker" "$out_tv" "--REVIEW--"
 review_argv() { printf '%s\n' "$1" | sed -n '/^--REVIEW--$/,$p'; }
 rv=$(review_argv "$out_tv")
-assert_contains "the reviewer is codex exec review" "$rv" "review"
-assert_contains "against the base branch" "$rv" "--base"
-assert_arg "at the REVIEWER's model, not the implementer's" "$rv" "gpt-5.6-terra"
-assert_not_contains "and never at the implementer's" "$rv" "gpt-5.6-luna"
-assert_contains "complex reviews at ITS reviewer model" \
-    "$(review_argv "$(codex_dry r9 12 complex "$REPO" base)")" "gpt-5.6-sol"
+assert_arg "the reviewer is claude" "$rv" "claude"
+assert_arg "one-shot" "$rv" "-p"
+assert_contains "spawning my-review" "$rv" "personal-tools:my-review"
+assert_arg "at the REVIEWER cell's model" "$rv" "sonnet"
+assert_arg "and the REVIEWER cell's effort" "$rv" "low"
+assert_not_contains "never at the implementer's model" "$rv" "gpt-5.6-luna"
+assert_not_contains "and never through codex" "$rv" "codex"
+assert_arg "complex reviews at ITS reviewer effort" \
+    "$(review_argv "$(codex_dry r9 12 complex "$REPO" base)")" "high"
 
 echo "test: the FIX round gets the same sibling reviewer"
 # A fix round's findings are the ones that decide whether the issue reaches the merge
@@ -527,47 +525,17 @@ echo "test: the FIX round gets the same sibling reviewer"
 # stage later.
 assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
-    "gpt-5.6-terra"
+    "opus"
 
-echo "test: the reviewer is asked for NOTHING — no prompt, and no schema either"
-# `codex exec review` refuses a trailing PROMPT beside --base ("cannot be used with
-# '[PROMPT]'"), and --output-schema is accepted on a review turn and then SILENTLY
-# IGNORED (ground-truthed twice — a real ops-os run and a direct probe). Passing a flag
-# that does nothing reads as a guarantee that is not there, so neither is passed: the
-# review's own template is the contract, and review-counts.sh parses it.
-assert_arg "the verdict is captured to a file" "$rv" "-o"
-assert_contains "which is the run dir's review.txt" "$rv" "review.txt"
-assert_not_contains "no schema is passed, because it would be ignored" "$rv" "--output-schema"
-assert_not_contains "and nothing resembling a prompt" "$rv" "print exactly"
-# -C is not a flag of `codex exec review` — only of top-level `codex exec`. Passing it
-# dies with "unexpected argument '-C' found"; the callers cd instead.
-assert_not_contains "no -C, which this subcommand does not take" "$rv" "
--C
-"
-echo "test: the reviewer's sandbox is PINNED, not inherited from the user's config"
-# `exec review` takes no -s, so without this it runs at whatever ~/.codex/config.toml
-# defaults to — and a user on danger-full-access would have a model reading
-# worker-authored, injectable content run on the host with approval_policy=never.
-#
-# workspace-write, not read-only (#99): read-only blocked a test runner from ever creating
-# a tempfile, so the done-check could never actually run. workspace-write grants
-# `writable_roots` IN ADDITION TO wherever it is run from, with no key to subtract that
-# (ground-truthed on codex-cli 0.155.1 — see review-cmd.sh), so the wrapper below never
-# runs this FROM the worktree — the cwd/TMPDIR tests further down prove that part.
-assert_arg "workspace-write, no longer read-only" "$rv" "sandbox_mode=workspace-write"
-assert_not_contains "never read-only" "$rv" "sandbox_mode=read-only"
-assert_contains "a narrowed scratch root, not the whole default grant" "$rv" \
-    "sandbox_workspace_write.writable_roots=[\"$RUNDIR/review-scratch\"]"
-assert_arg "the default /tmp grant excluded" "$rv" \
-    "sandbox_workspace_write.exclude_slash_tmp=true"
-assert_arg "the default \$TMPDIR grant excluded" "$rv" \
-    "sandbox_workspace_write.exclude_tmpdir_env_var=true"
+echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
+assert_contains "the finding shape" "$rv" "- [P1]"
+assert_contains "the clean literal" "$rv" "No findings."
+assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+assert_arg "no edits" "$rv" "Edit"
+assert_arg "no pushes" "$rv" "Bash(git push:*)"
+assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
 
-echo "test: a CLAUDE reviewer cell leaves -m off — codex has no opus to review with"
-# The SHIPPED table is claude in every cell, so a user who flips only the implementer to
-# codex lands exactly here. Passing that cell's model would make `codex exec review` die
-# on a model codex does not have, leaving NO review.txt — which worker-report.sh refuses
-# outright, turning a wrong-model review into a run that cannot land at all.
+echo "test: a CODEX reviewer cell is reviewed on opus anyway — reviews are claude"
 CFG_MIXED="$WORK/cfg-mixed"
 mkdir -p "$CFG_MIXED"
 cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
@@ -575,12 +543,12 @@ cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
   "trivial": {
     "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-luna",  "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "high" }
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "high" }
   },
   "standard": {
     "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
     "implementer": { "backend": "codex",  "model": "gpt-5.6-terra", "effort": "max" },
-    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "high" }
+    "reviewer":    { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "high" }
   },
   "complex": {
     "planner":     { "backend": "codex",  "model": "gpt-5.6-sol",   "effort": "xhigh" },
@@ -592,9 +560,8 @@ JSON
 out_mx=$(CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_MIXED" \
     bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>"$WORK/err")
 assert_contains "it still spawns a reviewer" "$out_mx" "--REVIEW--"
-assert_contains "still against the base branch" "$(review_argv "$out_mx")" "--base"
-assert_not_contains "but never hands codex a claude model" "$out_mx" "-m opus"
-assert_not_contains "nor any other claude model" "$(review_argv "$out_mx")" "sonnet"
+assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
+assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 rm -rf "$CODEX_ROOT"
@@ -646,7 +613,7 @@ if [ -e "$RUNDIR/review-checkout" ] || [ -e "$RUNDIR/review-scratch" ]; then
 else
     ok "the disposable checkout and scratch dir are cleaned up after the review"
 fi
-assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
+assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
 assert_not_contains "never the branch name" \

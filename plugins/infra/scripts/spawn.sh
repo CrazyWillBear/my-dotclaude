@@ -461,7 +461,9 @@ CMD=(codex exec
 # THE INDEPENDENT REVIEWER. A SIBLING of the worker, never its child: the wrapper below
 # runs it only after the worker's process has exited, so it starts on the host with a
 # normal filesystem instead of inside the worker's read-only sandbox — which is the whole
-# reason the worker's own review step could never work (#96).
+# reason the worker's own review step could never work (#96). It is CLAUDE, at the tier's
+# reviewer cell, spawning my-review (#104) — `codex exec review` could not honour a claude
+# reviewer cell, so "reviewer: opus" was silently false for every codex worker.
 #
 # Built by review-cmd.sh, not here, for the reason common-git-dir.sh --roots is shared:
 # worker-resume.sh must run the IDENTICAL reviewer, and a second copy that drifted would
@@ -476,11 +478,10 @@ CMD=(codex exec
 BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
     || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
 
-# The scratch dir a test runner inside the review may write to (#99) — a STRING only,
-# here: the wrapper below creates it (and the disposable checkout it goes with) only on
-# the non-dry-run path, so a dry run still touches no disk.
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" \
-    "$RUNDIR/review.txt" "$RUNDIR/review-scratch")" || exit 1
+# The reviewer prints its verdict to STDOUT; the wrapper below captures it to review.txt
+# and points TMPDIR at a scratch dir beside the disposable checkout (#99) — both created
+# only on the non-dry-run path, so a dry run still touches no disk.
+REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")" || exit 1
 REVIEW_CMD=()
 while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
 $REVIEW_ARGV
@@ -619,22 +620,18 @@ bash -c '
         # Re-running --roots re-checks the containment and refuses a worktree that no
         # longer passes, before any git runs there.
         if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
-            # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99). `sandbox_mode=workspace-write`
-            # is what lets a test runner create a tempfile, but workspace-write ALWAYS grants
-            # write access to wherever it is run from, with no config key to exclude it — see
-            # review-cmd.sh for how that was ground-truthed. Running the review IN $worktree
-            # would make every tracked file outside .git writable to it, so it runs in a
-            # DISPOSABLE clone instead: `--shared` costs no object copy, and codex'\''s own
-            # `--base` diffing works identically there, since the clone carries the same
-            # commit history. TMPDIR points a test runner at the scratch dir this argv was
-            # built to grant — without it, tempfile creation still falls back to the /tmp
-            # this sandbox now excludes.
+            # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99): the reviewer may run the
+            # project'\''s done-check, and it is fenced by a tool denylist, not a sandbox, so
+            # it runs in a DISPOSABLE clone instead — `--shared` costs no object copy, and the
+            # commit range diffs identically there. TMPDIR points a test runner at the
+            # scratch dir beside it. The verdict is the reviewer'\''s STDOUT, captured to
+            # review.txt; its stderr is the diagnostic worker-report.sh quotes on a refusal.
             mkdir -p "$rundir/review-scratch" \
                 && git clone --quiet --shared -- "$worktree" "$rundir/review-checkout" \
                     >/dev/null 2>>"$rundir/review-stderr.log"
             if [ -d "$rundir/review-checkout" ] && (cd "$rundir/review-checkout" \
                     && TMPDIR="$rundir/review-scratch" "${review[@]}") \
-                    >>"$rundir/review-stderr.log" 2>&1 </dev/null; then
+                    >"$rundir/review.txt" 2>>"$rundir/review-stderr.log" </dev/null; then
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
                 # the report the merge queue acts on can never disagree.

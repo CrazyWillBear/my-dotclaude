@@ -31,9 +31,23 @@ export CODEX_RUN_ROOT="$CODEX_ROOT"
 BIN="$WORK/bin"
 mkdir -p "$BIN"
 
-# session-status.sh (via worker-report.sh) needs the CLI; no claude sessions in fixtures.
-printf '#!/usr/bin/env bash\nif [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi\nexit 0\n' \
-    >"$BIN/claude"
+# `claude` plays two parts: session-status.sh (via worker-report.sh) lists agents with it
+# (none in these fixtures), and it IS the independent reviewer (`claude -p`, #104) — which
+# records its argv, cwd and TMPDIR (#99) and prints its verdict to stdout.
+cat >"$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
+if [ "${1:-}" = -p ]; then
+    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
+    rj="${STUB_REVIEW_TEXT:-}"
+    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
+    printf '%s\n' "$rj"
+    exit "${STUB_REVIEW_EXIT:-0}"
+fi
+exit 0
+STUB
 chmod +x "$BIN/claude"
 PATH="$BIN:$PATH"
 export PATH
@@ -48,8 +62,9 @@ cat >"$CFG/model-tiers.json" <<'JSON'
                 "implementer": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "medium" },
                 "reviewer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } },
   "standard": { "planner": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" },
-                "implementer": { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
-                "reviewer": { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" } },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
+                                 { "backend": "codex", "model": "gpt-5.6-sol", "effort": "high" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
   "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "xhigh" },
                 "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
                 "reviewer": { "backend": "claude", "model": "opus", "effort": "xhigh" } }
@@ -138,6 +153,17 @@ assert_arg "the schema, so the report stays machine-readable" \
                                         "$OUT" "--output-schema"
 assert_contains "writes the report where worker-report.sh reads it" "$OUT" "last-message.txt"
 
+echo "test: --attempt re-passes the CHAIN cell's model, so a resume is not a stranger (#104)"
+run r1 80 standard "$REPO" --answer "x" --attempt 1 --dry-run
+assert_equals "exit 0" "$RC" "0"
+assert_arg "attempt 1 is the chain's second cell" "$OUT" "gpt-5.6-sol"
+assert_arg "at its effort" "$OUT" "model_reasoning_effort=high"
+assert_not_contains "not the head" "$OUT" "gpt-5.6-terra"
+run r1 80 standard "$REPO" --answer "x" --attempt 2 --dry-run
+assert_equals "past the top: the resolver falls back to claude, which resume refuses" "$RC" "1"
+run r1 80 standard "$REPO" --answer "x" --attempt q --dry-run
+assert_equals "a non-numeric attempt exits 1" "$RC" "1"
+
 echo "test: -s and -C are never passed — resume rejects both"
 assert_not_contains "no -s" "$(printf '%s\n' "$OUT" | grep -Fx -- '-s')" "-s"
 assert_not_contains "no -C" "$(printf '%s\n' "$OUT" | grep -Fx -- '-C')" "-C"
@@ -158,32 +184,10 @@ assert_contains "carries the file's text" "$OUT" "multi-line answer"
 echo "test: a real resume records the new exit code and reports through worker-report.sh"
 # The stub writes the NEW report, so a pass here proves rendering is delegated rather
 # than reimplemented — and that the stale previous report was cleared first.
-# `codex exec review` is the SECOND codex the script runs — the independent reviewer that
-# replaced the worker's own review step. It is answered separately: it takes no -o, writes
-# its verdict to STDOUT, and must not clobber the resume's recorded argv (its own goes to
-# STUB_REVIEW_ARGV, which the reviewer test below reads).
+# The independent reviewer is the `claude -p` stub above (its argv goes to
+# STUB_REVIEW_ARGV, which the reviewer test below reads); this stub is the WORKER only.
 cat >"$BIN/codex" <<'STUB'
 #!/usr/bin/env bash
-if [ "${2:-}" = review ]; then
-    printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
-    # cwd and TMPDIR at review time (#99): the review must run OUTSIDE the real worktree
-    # (a disposable clone instead), with TMPDIR pointed at the scratch root its own argv
-    # was granted.
-    pwd >"${STUB_REVIEW_CWD:-/dev/null}"
-    printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
-    # The real reviewer writes its schema'd final message to -o, like any codex turn.
-    rout=""
-    for a in "$@"; do
-        [ -n "${take:-}" ] && { rout="$a"; take=""; }
-        [ "$a" = -o ] && take=1
-    done
-    # PROSE in codex's own review format, because that is all a review turn can emit:
-    # --base forbids a prompt and --output-schema is ignored there.
-    rj="${STUB_REVIEW_TEXT:-}"
-    [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
-    [ -z "$rout" ] || printf '%s\n' "$rj" >"$rout"
-    exit "${STUB_REVIEW_EXIT:-0}"
-fi
 pwd >"$STUB_CWD"
 printf '%s\n' "$@" >"$STUB_ARGV"
 # Stands in for a worker that reached the run dir (#99's non-default-CODEX_RUN_ROOT threat
@@ -311,15 +315,14 @@ STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":""
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
-assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "review"
+assert_contains "a reviewer really ran — claude -p (#104)" "$(cat "$WORK/review-argv" 2>/dev/null)" "personal-tools:my-review"
 # A SHA, not the branch name it was given: a name could be moved by the worker.
 assert_not_contains "the base is NOT passed as a branch name" \
-    "$(cat "$WORK/review-argv" 2>/dev/null)" "--base
-main"
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "base..HEAD"
 assert_contains "but as a resolved sha" "$(cat "$WORK/review-argv" 2>/dev/null)" \
-    "$(git -C "$REPO" rev-parse --verify base^{commit})"
+    "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
 assert_contains "at the tier's REVIEWER model, not the implementer's" \
-    "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-sol"
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "opus"
 assert_not_contains "never the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "gpt-5.6-terra"
 # THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree —
