@@ -39,6 +39,7 @@ cat >"$BIN/claude" <<'STUB'
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
 if [ "${1:-}" = -p ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
     pwd >"${STUB_REVIEW_CWD:-/dev/null}"
     printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
     rj="${STUB_REVIEW_TEXT:-}"
@@ -211,7 +212,7 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"${STUB_GH_ARGV:-/dev/null}"
 chmod +x "$BIN/gh"
 
 export STUB_CWD="$WORK/cwd" STUB_ARGV="$WORK/argv"
-export STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv"
+export STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc"
 mkrun 81 '{"issue":81,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
 STUB_REPORT='{"issue":81,"status":"built","round":0,"head":"9c2b4d1","review":"0 high, 1 medium, 0 low","note":""}' \
     run r1 81 standard "$REPO" --answer "per-request"
@@ -316,6 +317,7 @@ assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
 assert_contains "a reviewer really ran — claude -p (#104)" "$(cat "$WORK/review-argv" 2>/dev/null)" "personal-tools:my-review"
+assert_equals "the prompt reached claude as ONE argument (review round 2)" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 # A SHA, not the branch name it was given: a name could be moved by the worker.
 assert_not_contains "the base is NOT passed as a branch name" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "base..HEAD"

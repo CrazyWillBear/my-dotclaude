@@ -194,6 +194,7 @@ out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
 assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
 assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
 assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
+assert_contains "the escalate note carries the deviation: prefix the orchestrator dispatches on" "$out_s" '"note" = "deviation: "'
 assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
 
 echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
@@ -347,6 +348,7 @@ STUB
 cat >"$CODEX_BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
+printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
 pwd >"${STUB_REVIEW_CWD:-/dev/null}"
 printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
 rj="${STUB_REVIEW_TEXT:-}"
@@ -589,7 +591,7 @@ assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LE
 # would be, never that the wrapper actually runs it, in the right order, or cleans up.
 echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
-STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc" \
     STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     STUB_REVIEW_TEXT='- [P1] one — a:1
 - [P1] two — b:2
@@ -616,6 +618,10 @@ else
     ok "the disposable checkout and scratch dir are cleaned up after the review"
 fi
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
+# 25 = -p, --model M, --effort E, --permission-mode X, --disallowedTools + 14 rules, --, and
+# the prompt as ONE argument. A newline-split reader hands claude 52 and it keeps line one.
+assert_equals "the multi-line prompt reached claude as ONE argument" \
+    "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
 assert_not_contains "never the branch name" \

@@ -268,8 +268,10 @@ if [ "$TIER" != trivial ]; then
     PLAN_STEP="0. A \"**Plan**\" comment is on the thread. FOLLOW IT step by step — it was written on a
    stronger model so that executing it is near-mechanical. If a plan assumption turns out
    FALSE, do NOT improvise: post a comment headed \"**Deviation**\" (which step, what you
-   found, what you tried) and STOP with status \"escalate\", the same text in \"note\". A
-   \"**Consult**\" answers it; follow that decision when you are resumed.
+   found, what you tried) and STOP with status \"escalate\" and \"note\" = \"deviation: \"
+   followed by the same three lines — the \"deviation: \" prefix is how the orchestrator
+   tells a deviation from a question. A \"**Consult**\" answers it; follow that decision
+   when you are resumed.
 "
 fi
 # A RESPAWN (attempt > 0) replaces a worker escalate.sh judged out of its depth. It is
@@ -494,11 +496,11 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # The reviewer prints its verdict to STDOUT; the wrapper below captures it to review.txt
 # and points TMPDIR at a scratch dir beside the disposable checkout (#99) — both created
 # only on the non-dry-run path, so a dry run still touches no disk.
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")" || exit 1
+# NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
+# reader would hand claude the first line of it (review round 2). An empty array is
+# review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
 REVIEW_CMD=()
-while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
-$REVIEW_ARGV
-EOF
+mapfile -d '' REVIEW_CMD < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review

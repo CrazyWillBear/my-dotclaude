@@ -59,9 +59,12 @@ never covered and the reviewer never expected. Instead:
 
 1. Post a comment headed `**Deviation**` — three short lines: **which step**, **what you found**
    (the fact that contradicts the plan), **what you tried**. Nothing else.
-2. **Pause.** A background session `SendMessage`s `issue <N> escalate <the same three lines>`
-   and waits; a codex worker ends its turn with `"status": "escalate"` and the same text in
-   `note` (its thread survives); a subagent stops and reports.
+2. **Pause.** A background session `SendMessage`s `issue <N> escalate deviation: <the same
+   three lines>` and waits; a codex worker ends its turn with `"status": "escalate"` and
+   `"note": "deviation: <the same three lines>"` (its thread survives); a subagent stops and
+   reports. **The `deviation: ` prefix is load-bearing**: it is how the orchestrator tells a
+   deviation (answered by a consult) from a question (answered by a human) without reading
+   the thread.
 3. A `**Consult N**` comment answers it — a decision, and revised steps if the plan is wrong from
    that step on. You are resumed with that decision as your answer. **Follow it.**
 

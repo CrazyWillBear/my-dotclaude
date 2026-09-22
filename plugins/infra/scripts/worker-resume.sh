@@ -186,11 +186,12 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # The scratch dir a test runner inside the review may write to (#99) — see review-cmd.sh
 # for why the review itself never runs from $WORKTREE, and spawn.sh's wrapper for the
 # identical clone-and-cleanup this script mirrors below.
-REVIEW_ARGV="$(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")" || exit 1
+# NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
+# reader would hand claude the first line of it (review round 2). An empty array is
+# review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
 REVIEW_CMD=()
-while IFS= read -r _arg; do REVIEW_CMD+=("$_arg"); done <<EOF
-$REVIEW_ARGV
-EOF
+mapfile -d '' REVIEW_CMD < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+[ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # review.txt goes too, and for the sharpest version of the same reason: it is the only
 # source of the finding counts, so the previous turn's review left in place would be read

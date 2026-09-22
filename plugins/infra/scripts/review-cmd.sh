@@ -28,8 +28,11 @@
 #     <base-sha>  what the review diffs against. A SHA, NOT a branch name — see below.
 #     <issue>     the issue number, for my-review's central-mechanism audit.
 #
-# Output: the argv, ONE ARGUMENT PER LINE, on stdout; nothing on stdout on failure.
-# Exit 0 = a command was printed. Exit 1 = it could not be built, loud on stderr.
+# Output: the argv, NUL-DELIMITED (`printf '%s\0'`), on stdout; nothing on stdout on
+# failure. Exit 0 = a command was printed. Exit 1 = it could not be built, loud on stderr.
+# NUL, not newline: the prompt is one multi-line argument, and a newline-split reader
+# handed claude 28 arguments of which the CLI keeps only the first line (review round 2).
+# Callers read it with `mapfile -d ''`.
 #
 # THE VERDICT GOES TO STDOUT. `claude -p` prints its final text; the CALLERS redirect it
 # into the run dir's review.txt, and review-counts.sh parses that. The prompt below pins
@@ -120,4 +123,4 @@ set -- claude -p \
         "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)" \
     -- "$PROMPT"
 
-printf '%s\n' "$@"
+printf '%s\0' "$@"

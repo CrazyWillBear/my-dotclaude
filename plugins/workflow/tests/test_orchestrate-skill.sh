@@ -157,7 +157,7 @@ assert_matches "before the build worker is spawned" "$BODY" "before the build wo
 assert_matches "trivial self-plans" "$BODY" "issues \*\*self-plan\*\*"
 assert_matches "the old complex-only rule is recorded as superseded" "$BODY" "26% of all work.*superseded|superseded"
 assert_matches "the orchestrator still never reads it" "$BODY" "orchestrator still never reads it"
-assert_matches "a failed plan never gets a worker" "$BODY" "not spawn a worker onto an issue with no plan"
+assert_matches "a failed plan never gets a worker" "$BODY" "onto an issue with no plan"
 assert_contains "the plan is logged" "$BODY" "planned '{\"n\":<N>}'"
 
 echo "test: deviation → consult → resume, never a human and never prose in the orchestrator (#104)"

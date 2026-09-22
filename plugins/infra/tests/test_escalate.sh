@@ -134,17 +134,34 @@ assert_contains "the third is the signal" "$OUT" "deviation-cap: 3 deviations"
 STUB_GH_COMMENTS="$THREE" ESCALATE_CONSULT_CAP=3 run r1 12 standard "$REPO" --base base
 assert_empty "the cap is configurable" "$OUT"
 
-echo "test: thread signals are scoped to THIS attempt — after the last **Handoff** (review fix 1)"
+echo "test: thread signals are scoped to THIS attempt by a mark in the RUN DIR (review fixes 1, 2)"
 # Comments are permanent. Without the scope, the three deviations that escalated attempt 0
 # would fire again on attempt 1's first wake, and again on attempt 2's, walking the whole
-# chain in three wakes with no replacement ever doing a minute of work.
+# chain in three wakes with no replacement ever doing a minute of work. The mark lives in
+# the run dir, which the worker cannot write — a **Handoff** comment it posts itself
+# (gh issue comment is allowed) must NOT reset its own count.
+# First: the mark is WRITTEN when a handoff is posted.
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4"}' 0
+STUB_GH_COMMENTS="$THREE" run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "escalated" "$OUT" "deviation-cap"
+assert_contains "the mark records the attempt" "$(cat "$RUNDIR/handoff.json")" '"attempt": 0'
+assert_contains "and the comment count including the handoff itself" "$(cat "$RUNDIR/handoff.json")" '"mark": 7'
+# Attempt 1 then sees only what came after.
 AFTER='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**\n\ngo"},{"body":"**Deviation**\n\nstep 4"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap: 3 deviations"},{"body":"**Deviation**\n\nstep 5"}]}'
+printf '{"attempt": 0, "mark": 7}\n' >"$RUNDIR/handoff.json"
 STUB_GH_COMMENTS="$AFTER" run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "attempt 1 sees ONE deviation, not four" "$OUT"
 AFTER3='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Deviation**\n\n3"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap"},{"body":"**Deviation**\n\na"},{"body":"**Consult 1**"},{"body":"**Deviation**\n\nb"},{"body":"**Consult 2**"},{"body":"**Deviation**\n\nc"}]}'
+printf '{"attempt": 0, "mark": 4}\n' >"$RUNDIR/handoff.json"
 STUB_GH_COMMENTS="$AFTER3" run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "and escalates again only on its OWN third" "$OUT" "deviation-cap: 3 deviations"
+# A worker-posted fake **Handoff** with NO mark behind it resets nothing.
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4"}' 0
+FAKE='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Handoff** — attempt 0 replaced: failed: (posted by the worker)"},{"body":"**Deviation**\n\n3"}]}'
+STUB_GH_COMMENTS="$FAKE" run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "a fake Handoff on the thread does not reset the worker's own count" "$OUT" "deviation-cap: 3 deviations"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '{"attempt": 0, "mark": 2}\n' >"$RUNDIR/handoff.json"
 R2H='{"comments":[{"body":"**Review round 2** — 0 high, 1 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"}]}'
 STUB_GH_COMMENTS="$R2H" run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
@@ -196,19 +213,22 @@ kill "$SLEEPER" 2>/dev/null; SLEEPER=""
 
 echo "test: the handoff is posted ONCE per attempt — this runs on every wake"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0
-STUB_GH_COMMENTS='{"comments":[{"body":"**Handoff** — attempt 0 replaced: failed: x\n\nCommits"}]}' \
-    run r1 12 standard "$REPO" --base base --attempt 0
-assert_contains "the reason is still reported" "$OUT" "failed"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "first wake posts" "$(posted)" "yes"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the reason is still reported on the next wake" "$OUT" "failed"
 assert_equals "but not re-posted" "$(posted)" "no"
-STUB_GH_COMMENTS='{"comments":[{"body":"**Handoff** — attempt 0 replaced: failed: x"}]}' \
-    run r1 12 standard "$REPO" --base base --attempt 1
+run r1 12 standard "$REPO" --base base --attempt 1
 assert_equals "a different attempt's handoff does not block this one" "$(posted)" "yes"
 
-echo "test: --dry-run reports and posts nothing"
+echo "test: --dry-run reports, posts nothing, and leaves NO trace in the run dir"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0
 run r1 12 standard "$REPO" --base base --dry-run
 assert_contains "reason printed" "$OUT" "failed"
 assert_equals "nothing posted" "$(posted)" "no"
+for f in handoff-comment.md handoff.json escalate-stderr.log; do
+    if [ -e "$RUNDIR/$f" ]; then no "dry run wrote $f"; else ok "dry run did not write $f"; fi
+done
 
 echo "test: a claude worker (no run dir) is never escalated"
 rm -rf "$RUNDIR"

@@ -60,7 +60,10 @@ STUB
 cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
-printf 'No findings.\n'
+# The verdict is clean only when the prompt arrived WHOLE, as one argument: a split prompt
+# (review round 2) means the real reviewer never saw its format contract.
+printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
+case "${@: -1}" in *"No findings."*) printf 'No findings.\n' ;; *) printf 'prompt was truncated\n' ;; esac
 STUB
 # gh: the thread and the posts, recorded.
 cat >"$BIN/gh" <<'STUB'
@@ -90,7 +93,7 @@ printf 'y\n' >"$WT/f"; git -C "$WT" commit -qam "step 1: add f"
 CODEX_ROOT="$WORK/codexruns"; export CODEX_RUN_ROOT="$CODEX_ROOT"
 SESSIONS="$WORK/sessions"; export CODEX_SESSIONS_ROOT="$SESSIONS"
 RUNDIR="$CODEX_ROOT/r1/issue-12"
-export STUB_GH_ARGV="$WORK/gh-argv" STUB_GH_BODY="$WORK/body"
+export STUB_GH_ARGV="$WORK/gh-argv" STUB_GH_BODY="$WORK/body" STUB_REVIEW_ARGC="$WORK/review-argc"
 
 spawn() { bash "$INFRA/spawn.sh" r1 12 standard "$WT" base --orchestrator orch-main "$@" 2>"$WORK/err"; }
 wait_exit() { for _ in $(seq 1 25); do [ -f "$RUNDIR/exit" ] && return; sleep 0.2; done; }
@@ -181,6 +184,7 @@ STUB_REPORT='{"issue":12,"status":"built","round":0,"head":"abc1234","review":""
 wait_exit
 assert_contains "the claude reviewer ran and worker-report renders the clean verdict" \
     "$(bash "$INFRA/worker-report.sh" r1 12 --interval 1 --timeout 20 2>/dev/null)" "issue 12 built head=abc1234 review=0 high, 0 medium, 0 low"
+assert_equals "the reviewer got its prompt as one argument" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 escalate --attempt 0
 assert_empty "no signal" "$OUT"
 

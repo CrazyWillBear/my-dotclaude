@@ -86,7 +86,7 @@ gains a backend column:
 
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (opus medium cell kept valid) | codex luna xhigh → codex terra xhigh → claude opus medium | claude opus low |
+| trivial | none run (opus medium cell kept valid) | codex luna xhigh → codex terra xhigh → claude opus medium (the session lane's trivial subagent runs the top cell; the codex cells are reached only through `spawn.sh`) | claude opus low |
 | standard | claude opus medium | codex luna xhigh → codex terra xhigh → claude opus medium | claude opus medium |
 | complex | claude fable medium | claude opus medium | claude opus high |
 
@@ -100,7 +100,9 @@ codex-first**, so a machine without the codex CLI needs a user table at
 updates); the **fallback** roster on any broken table stays claude-only (opus medium everywhere)
 so a typo never makes a run depend on codex. The plan is posted to the issue thread by
 `consult.sh plan` before the build spawn (standard and complex); a worker that hits a false plan
-assumption posts `**Deviation**` and pauses, `consult.sh consult` answers it on the planner cell,
+assumption posts `**Deviation**` and pauses with an escalate note beginning `deviation: ` (the
+prefix is the dispatch key: the orchestrator sends those to a consult and everything else to a
+human, without reading the thread), `consult.sh consult` answers it on the planner cell,
 and `worker-resume.sh` resumes the worker with a pointer to that comment. `escalate.sh` decides,
 from the run dir, the thread and the worker's rollout, when a codex worker is replaced by the
 next chain position — a `failed` report, a third deviation, a second review round with findings,

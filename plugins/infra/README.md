@@ -43,7 +43,7 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 
 | tier | planner | implementer (chain, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (cell kept valid) | luna xhigh → terra xhigh → opus medium | opus low |
+| trivial | none run (cell kept valid) | luna xhigh → terra xhigh → opus medium (session lane: the subagent runs the TOP cell — the Agent tool takes no codex model; luna/terra reach trivial only through `spawn.sh`) | opus low |
 | standard | opus medium | luna xhigh → terra xhigh → opus medium | opus medium |
 | complex | fable medium | opus medium | opus high |
 

@@ -62,10 +62,16 @@ cat >"$CFG/model-tiers.json" <<'JSON'
 JSON
 export RESOLVE_TIER_ROOT="$CFG"
 
+# The contract is NUL-delimited; read it the way the callers do (mapfile -d ''), then
+# render one element per line for the substring assertions. ARGC is the element count —
+# the prompt must be ONE element however many lines it spans (review round 2).
 run() {
     local errf="$WORK/err"
-    OUT="$(bash "$SCRIPT" "$@" 2>"$errf")"
-    RC=$?
+    ARGS=()
+    mapfile -d '' ARGS < <(bash "$SCRIPT" "$@" 2>"$errf"; echo -n "$?" >"$WORK/rc")
+    RC="$(cat "$WORK/rc")"
+    ARGC="${#ARGS[@]}"
+    OUT=""; [ "$ARGC" -eq 0 ] || OUT="$(printf '%s\n' "${ARGS[@]}")"
     ERR="$(cat "$errf")"
 }
 
@@ -111,8 +117,11 @@ echo "test: the prompt is the LAST argument, fenced by --"
 p=$(printf '%s\n' "$OUT" | grep -n "INDEPENDENT REVIEWER" | head -1 | cut -d: -f1)
 d=$(printf '%s\n' "$OUT" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
 if [ -n "$p" ] && [ -n "$d" ] && [ "$p" -eq "$((d + 1))" ]; then ok "prompt right after --"; else no "prompt at $p is not right after -- at $d"; fi
-assert_equals "every argument before the prompt is single-line (argv count)" \
-    "$(printf '%s\n' "$OUT" | sed -n "1,${d}p" | wc -l | tr -d ' ')" "$d"
+assert_equals "the multi-line prompt is ONE argument: element count = lines before -- plus one" \
+    "$ARGC" "$((d + 1))"
+assert_equals "and it is the last element" "$(printf '%s' "${ARGS[$((ARGC - 1))]}" | head -1)" \
+    "You are the INDEPENDENT REVIEWER for issue #12. This checkout is a disposable clone"
+assert_contains "carrying the whole prompt" "${ARGS[$((ARGC - 1))]}" "No findings."
 
 echo "test: NEVER fable, NEVER a codex model — opus stands in, loudly, at the cell's effort"
 run trivial "$SHA" 12

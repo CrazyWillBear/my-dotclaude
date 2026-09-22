@@ -28,9 +28,15 @@
 #
 # THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
 # deviation would otherwise fire on every wake forever and walk the whole chain in three
-# wakes without the replacement ever working. Only comments AFTER the most recent
-# `**Handoff**` count: each attempt is judged on evidence it produced. (`failed` needs no
-# such scoping — spawn.sh clears `exit` and `last-message.txt` on every respawn.)
+# wakes without the replacement ever working. Only comments after the last handoff count:
+# each attempt is judged on evidence it produced. THE ANCHOR LIVES IN THE RUN DIR, not on
+# the thread: when this script posts a handoff it records `{attempt, mark}` (the comment
+# count at that moment) in `$RUNDIR/handoff.json`, and later wakes scan `comments[mark:]`.
+# A worker may post comments (`gh issue comment` is allowed) but cannot reach the run dir,
+# so it cannot post a fake `**Handoff**` to reset its own count — which is what anchoring
+# on the thread would have allowed (review round 2). The same record is what stops a
+# handoff being posted twice for one attempt. (`failed` needs no scoping — spawn.sh clears
+# `exit` and `last-message.txt` on every respawn.)
 #   occupancy      the worker's context is at or above the threshold (256K)
 #   stall          the process is alive, no exit code, and the EVENT LOG has not changed
 #                  for the stall window (20 min). Event-log staleness, not worktree mtime:
@@ -85,14 +91,17 @@ THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null <
     || die "could not read issue #$ISSUE's comments"
 COMMITS="$(git -C "$WORKTREE" log --oneline "$BASE..HEAD" 2>/dev/null)" || COMMITS=""
 
-export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMMITS="$COMMITS" \
+export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMMITS="$COMMITS" ESC_DRY="$DRY" \
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
-REASON="$(python3 2>"$RUNDIR/escalate-stderr.log" <<'PY'
+# A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
+# python block skips the comment file and the mark.
+ESC_ERR="$RUNDIR/escalate-stderr.log"; [ -z "$DRY" ] || ESC_ERR=/dev/stderr
+REASON="$(python3 2>"$ESC_ERR" <<'PY'
 import glob, json, os, re, sys, time
 
 rundir  = os.environ["ESC_RUNDIR"]
@@ -144,8 +153,15 @@ elif code == "" and pid and not alive:
     reason = ("failed", "the worker died with no exit code (pid %s is gone)" % pid)
 
 # --- the thread: deviations and review rounds, THIS attempt's only ------------------------
-last_handoff = max((i for i, c in enumerate(comments) if re.search(r"(?m)^\*\*Handoff\*\*", c)), default=-1)
-this_attempt = comments[last_handoff + 1:]
+mark_path = os.path.join(rundir, "handoff.json")
+mark, marked_attempt = 0, None
+try:
+    with open(mark_path) as fh:
+        m = json.load(fh)
+        mark, marked_attempt = int(m.get("mark", 0)), int(m.get("attempt", -1))
+except (OSError, ValueError, TypeError):
+    pass
+this_attempt = comments[mark:]
 if reason is None:
     devs = sum(1 for c in this_attempt if re.search(r"(?m)^\*\*Deviation\*\*", c))
     if devs > cap:
@@ -198,7 +214,8 @@ if reason is None:
     sys.exit(0)
 
 # --- the mechanical handoff -------------------------------------------------------------
-already = any(re.search(r"(?m)^\*\*Handoff\*\* — attempt %d " % attempt, c) for c in comments)
+already = marked_attempt == attempt
+dry = bool(os.environ.get("ESC_DRY"))
 tail = []
 for line in (read("events.jsonl") or "").splitlines()[-40:]:
     try:
@@ -216,14 +233,20 @@ commits = os.environ["ESC_COMMITS"].strip()
 body = "**Handoff** — attempt %d replaced: %s: %s\n\n" % (attempt, reason[0], reason[1])
 body += "Commits on the branch since base:\n%s\n\n" % ("\n".join("- " + l for l in commits.splitlines()) if commits else "- (none)")
 body += "Last activity (event log):\n%s\n" % ("\n".join(tail) if tail else "- (none recorded)")
-with open(os.environ["ESC_COMMENT"], "w", encoding="utf-8") as fh:
-    fh.write(body)
+if not dry and not already:
+    with open(os.environ["ESC_COMMENT"], "w", encoding="utf-8") as fh:
+        fh.write(body)
+    # The mark: everything on the thread up to and including the handoff about to be posted
+    # belongs to the attempt being replaced. Recorded BEFORE the post so a failed post still
+    # scopes the next attempt correctly (an off-by-one here only ever hides one comment).
+    with open(mark_path, "w") as fh:
+        json.dump({"attempt": attempt, "mark": len(comments) + 1}, fh)
 print("%s: %s" % reason)
-print("POSTED" if already else "POST", file=sys.stderr)
+print("POSTED" if (already or dry) else "POST", file=sys.stderr)
 PY
 )"
 RC=$?
-[ "$RC" -eq 0 ] || { cat "$RUNDIR/escalate-stderr.log" >&2; exit 1; }
+[ "$RC" -eq 0 ] || { [ -n "$DRY" ] || cat "$RUNDIR/escalate-stderr.log" >&2; exit 1; }
 [ -n "$REASON" ] || exit 0
 
 if [ -z "$DRY" ] && ! grep -qx POSTED "$RUNDIR/escalate-stderr.log"; then

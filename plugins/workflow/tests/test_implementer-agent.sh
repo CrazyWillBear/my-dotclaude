@@ -120,8 +120,10 @@ assert_contains "the Deviation comment" "$content" "**Deviation**"
 assert_contains "names which step" "$content" "which step"
 assert_contains "what was found" "$content" "what you found"
 assert_contains "what was tried" "$content" "what you tried"
-assert_contains "a session pauses by escalating" "$content" "issue <N> escalate <the same three lines>"
+assert_contains "a session pauses by escalating WITH the deviation: prefix" "$content" "issue <N> escalate deviation: <the same"
 assert_contains "a codex worker pauses with the escalate status" "$content" '"status": "escalate"'
+assert_contains "and the same prefix in note" "$content" '"note": "deviation: <the same three lines>"'
+assert_contains "the prefix is named as the dispatch key" "$content" "prefix is load-bearing"
 assert_contains "the Consult answers it" "$content" "**Consult N**"
 assert_contains "and the decision is followed" "$content" "Follow it.**"
 assert_contains "the consult cap is stated" "$content" "capped"

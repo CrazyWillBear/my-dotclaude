@@ -306,8 +306,9 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/consult.sh plan "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>"
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" planned '{"n":<N>}'
    ```
-   It posts the `**Plan**` comment and prints one line. A non-zero exit is a failed plan: do
-   not spawn a worker onto an issue with no plan — report it and skip the issue.
+   It posts the `**Plan**` comment and prints one line. **Run it with a 10-minute Bash timeout**
+   (an opus pass outlasts the default). A non-zero exit is a failed plan: do not spawn a worker
+   onto an issue with no plan — report it and skip the issue.
 4. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**
    at the chain's **top cell** (`resolve-tier.sh trivial $((chain-1))` — always claude, since
    the `Agent` tool takes no codex model; never the frontmatter default);
@@ -316,9 +317,8 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
-   **Keep the attempt per issue** (a number in your notes, like the round). Every later spawn
-   for that issue — fix round or respawn — passes the same `--attempt` unless
-   [escalation](#escalation-by-script) moved it.
+   **Keep the attempt per issue** (a number in your notes, like the round); every later spawn
+   for it passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
    (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
    `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
