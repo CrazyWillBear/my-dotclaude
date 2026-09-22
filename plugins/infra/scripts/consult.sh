@@ -103,9 +103,13 @@ bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
 # worktree. A plan has no number — there is one per issue.
 #
 # THE CAP counts THIS ATTEMPT's consults, and its floor is the RUN DIR's `handoff.json`
-# mark — the same anchor escalate.sh settled on in review round 2, for the same reason: a
-# worker may post issue comments but cannot reach the run dir, so it cannot move its own
-# floor. `**Plan**` is NOT that anchor (round-12 fix): there is exactly ONE plan per issue
+# mark — the same anchor escalate.sh uses. THE REASON HERE IS CORRECTNESS, NOT FORGERY:
+# escalate.sh's run-dir anchor is unforgeable because a CODEX worker is sandboxed to its
+# writable roots, but this cap runs only for a CLAUDE-backed worker, and spawn.sh runs one
+# under bypassPermissions with Bash deliberately unfenced ("KNOWN LIMIT, ACCEPTED"), so it
+# could write handoff.json itself. Every floor on this path is advisory against a worker
+# that sets out to widen it; what the mark buys is a count that is right.
+# `**Plan**` is NOT that anchor (round-12 fix): there is exactly ONE plan per issue
 # per RUN (posted at admission; a respawn re-plans nothing — SKILL.md's respawn step), so a
 # plan-floored count folds EVERY earlier attempt's consults into the current attempt's
 # budget. On the shipped roster the claude cell is chain position 2, so it would inherit
@@ -115,12 +119,15 @@ bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
 # which never creates a run dir at all — spawn.sh writes one only on the codex path): fall
 # back to the newest comment whose FIRST line is `**Plan**`. There the fallback is exact,
 # because a one-cell chain has exactly one attempt per run, so per-run IS per-attempt.
-# RESIDUAL, accepted: that fallback is a thread heading, and a worker could post `**Plan**`
-# as its own first line to widen its budget. Closing it needs a run-scoped ledger the
-# orchestrator writes and infra can read, which today lives in the workflow plugin
-# (run-log.sh) — infra must not call upward into it. The blast radius is extra consults on
-# the planner's model, not a wrong merge.
-# ponytail: forgeable Plan fallback on the no-run-dir path; a run-scoped ledger if it bites.
+# RESIDUAL, accepted, and it covers the WHOLE claude path (above), not just this fallback:
+# an unsandboxed worker can widen its own budget, here by posting `**Plan**` as its first
+# line. Closing it needs a run-scoped ledger the orchestrator writes and infra can read,
+# which today lives in the workflow plugin (run-log.sh) — infra must not call upward into
+# it. A run dir of its own is NOT the cheaper answer: session-status.sh reads any
+# `issue-*` dir under the codex root as a live worker, so writing one for a claude issue
+# would report it busy forever. The blast radius is extra consults on the planner's model,
+# not a wrong merge.
+# ponytail: advisory floors on the claude path; a run-scoped ledger if it ever bites.
 N=""; N_THIS_ATTEMPT=""
 if [ "$ROLE" = consult ]; then
     THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null </dev/null)" \
@@ -134,7 +141,11 @@ try:
 except Exception:
     sys.exit(1)
 comments = [str(c.get("body") or "") for c in (doc.get("comments") or [])]
-is_consult = lambda c: re.search(r"(?m)^\*\*Consult \d+\*\*", c)
+# FIRST line only, as the plan floor below is. consult.sh always writes the heading on
+# line one, so a **Deviation** quoting "**Consult 5** assumed f() exists" at a line start
+# is not a consult; counting it would refuse, and drain, an attempt on its SECOND real
+# consult. (No apostrophes in here: this block is a single-quoted shell string.)
+is_consult = lambda c: re.match(r"\*\*Consult \d+\*\*", c.lstrip()) is not None
 total = sum(1 for c in comments if is_consult(c))
 
 # The floor: the mark the LAST handoff recorded, when it is the one that ended the attempt

@@ -150,6 +150,13 @@ reset
 STUB_GH_COMMENTS='{"comments":[{"body":"a comment mentioning **Consult 9** mid-line is not a heading"}]}' \
     run consult r1 12 standard "$WT"
 assert_equals "only a heading at line start counts" "$OUT" "**Consult 1** posted on #12"
+reset
+# ...and only on the comment's FIRST line (review round 13). consult.sh writes the heading
+# there, so a **Deviation** quoting an earlier consult is not itself a consult — counting it
+# would refuse, and drain, an attempt on its SECOND real consult.
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**"},{"body":"**Deviation**\n\n**Consult 1** assumed f() exists; it does not"}]}' \
+    run consult r1 12 standard "$WT"
+assert_equals "a deviation QUOTING a consult heading is not counted as one" "$OUT" "**Consult 2** posted on #12"
 
 echo "test: consult refuses PAST THE CAP for a claude-backed worker (review round 10/11)"
 # This suite's fixture standard chain is codex-luna @attempt 0, claude-opus @attempt 1 — the
@@ -253,12 +260,14 @@ assert_contains "says why" "$ERR" "past the cap"
 echo "test: empty output is NEVER posted"
 reset
 STUB_CLAUDE_TEXT='   ' run plan r1 12 standard "$WT"
+unset STUB_CLAUDE_TEXT   # `run` is a shell function — see the note elsewhere in this suite
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "says why" "$ERR" "no text"
 assert_empty "and no comment was posted" "$(cat "$WORK/gh-argv" 2>/dev/null)"
 reset
 STUB_CLAUDE_EXIT=2 run plan r1 12 standard "$WT"
+unset STUB_CLAUDE_EXIT   # without this the NEXT case never reaches the post path at all
 assert_equals "a failed call exits 1" "$RC" "1"
 assert_empty "and posts nothing" "$(cat "$WORK/gh-argv" 2>/dev/null)"
 reset

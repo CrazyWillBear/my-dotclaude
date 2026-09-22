@@ -260,7 +260,10 @@ if marked_attempt is None:
 this_attempt = comments[mark:]
 ledger = [l for l in (read("rounds") or "").splitlines() if l.strip()]
 if reason is None:
-    consults = sum(1 for c in this_attempt if re.search(r"(?m)^\*\*Consult \d+\*\*", c))
+    # FIRST line only (consult.sh writes it there): a **Deviation** quoting an earlier
+    # "**Consult 2** said..." at a line start would otherwise count as a consult and
+    # burn a chain position one deviation early.
+    consults = sum(1 for c in this_attempt if re.match(r"\*\*Consult \d+\*\*", c.lstrip()))
     if status == "escalate" and note.lower().startswith("deviation:") and consults >= cap:
         reason = ("deviation-cap", "a deviation after %d consults this attempt; the cap is %d" % (consults, cap))
 if reason is None:

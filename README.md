@@ -244,9 +244,10 @@ the `claude` CLI and use `curl`. Ponytail and the Playwright MCP both need
 Node ≥ 18 (Playwright runs via `npx`). The issue loop (`/to-prd`, `/to-issues`,
 `/orchestrate`) needs the [`gh` CLI](https://cli.github.com) installed and
 `gh auth login`'d; the setup just warns if it's absent. The shipped model roster builds
-trivial and standard issues on the `codex` CLI first (luna, then terra, then opus); without
-it, `spawn.sh` refuses those spawns and tells you to write a claude-only table at
-`~/.claude/model-tiers.json`.
+standard issues on the `codex` CLI first (luna, then terra, then opus); without it,
+`spawn.sh` refuses those spawns and tells you to write a claude-only table at
+`~/.claude/model-tiers.json`. (Trivial issues never reach `spawn.sh` — they run as a
+subagent on the chain's top cell, which is always claude.)
 
 > **Note:** ponytail's intensity level is set per *machine*, not per project (it has no
 > per-project setting). The non-developer setup sets the machine default to `lite`.
