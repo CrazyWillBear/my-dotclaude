@@ -25,10 +25,10 @@ plugins/workflow/
 ├── agents/
 │   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
-│   └── planner.md                    # opus, high effort — complex-tier planning only, read-only
+│   └── planner.md                    # opus, high effort — the plan contract; in the session lane consult.sh runs it on the planner cell and posts **Plan** to the issue
 ├── scripts/
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision
+│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
@@ -153,8 +153,11 @@ Workers **commit after every green sub-step**. That is the *recovery mechanism*,
 the loss from a kill at one sub-step, which is what makes killing on **suspicion** affordable and
 resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
 respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
-onto a worktree whose previous session is still alive. **Respawn once, escalate on the second**; the
-count comes from `run-log.sh`, because nothing in git or GitHub records that a session was killed.
+onto a worktree whose previous session is still alive. A **codex** worker is replaced along its
+tier's implementer chain (luna → terra → opus) by `escalate.sh`, from countable evidence — a
+`failed` report, a third deviation, a second review round with findings, a stall, a full context
+— never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
+because nothing in git or GitHub records that a session was killed or a model changed.
 
 An escalating worker messages the orchestrator, which **offers both** mediation and
 `claude attach <id>` (column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the

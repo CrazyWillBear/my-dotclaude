@@ -7,13 +7,17 @@ See [`docs/swarm-design.md` § Plugin split](../../docs/swarm-design.md).
 plugins/infra/
 ├── .claude-plugin/plugin.json   # manifest
 ├── hooks/hooks.json             # SessionStart → scripts/link-kit.sh
-├── model-tiers.json             # tier → {model, effort, backend} roster, read by resolve-tier.sh
+├── model-tiers.json             # tier → {planner, implementer CHAIN, reviewer} roster, read by resolve-tier.sh
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
-│   ├── spawn.sh                 # start (or print) a worker (one issue) or a peer (one role): `claude --bg`, or `codex exec` when the tier says codex
+│   ├── spawn.sh                 # start (or print) a worker (one issue, at a chain --attempt) or a peer (one role): `claude --bg`, or `codex exec` when the cell says codex
 │   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
-│   └── resolve-tier.sh          # resolve a complexity tier → its {model, effort, backend} roster (awk, no jq; standard fallback)
+│   ├── resolve-tier.sh          # resolve a tier + attempt → its {model, effort, backend} roster and chain length (awk, no jq; claude-only fallback)
+│   ├── consult.sh               # plan | consult: one-shot claude -p on the planner cell, posts **Plan** / **Consult N** to the issue
+│   ├── escalate.sh              # should this codex worker be replaced, and why — from the run dir, the thread and the rollout; posts **Handoff**
+│   ├── review-cmd.sh            # the independent reviewer's argv: claude -p on the reviewer cell, spawning my-review
+│   └── worker-report.sh, worker-resume.sh, review-counts.sh, common-git-dir.sh   # the codex worker's report, resume and review plumbing
 ├── tests/                       # one bash test per script
 └── README.md                    # this file
 ```
@@ -35,19 +39,27 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
      --brief b.md --charter c.md --model opus --effort high [--handoff h.md] [--autocompact 400k]
 ```
 
+## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
+
+| tier | planner | implementer (chain, cheapest first) | reviewer |
+|---|---|---|---|
+| trivial | none run (cell kept valid) | luna xhigh → terra xhigh → opus medium | opus low |
+| standard | opus medium | luna xhigh → terra xhigh → opus medium | opus medium |
+| complex | fable medium | opus medium | opus high |
+
+The expensive model spends one bounded pass planning (`consult.sh plan`, posted to the issue as
+the `**Plan**` comment); a cheap one loops on it; a script (`escalate.sh`) replaces the worker
+with the next model in the chain when it is out of its depth. `resolve-tier.sh <tier> [attempt]`
+prints the attempt-th cell plus `implementer_chain=<len>`; `spawn.sh --attempt N` launches it and
+refuses past the top. The chain is codex-first, so **a machine without the codex CLI needs a user
+table**: `resolve-tier.sh` reads `$RESOLVE_TIER_ROOT` (the test seam), then
+`${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` if it exists, then the shipped table — and a
+user table survives kit updates. A single `implementer` object is a chain of one. The
+**fallback** roster (any broken table) is opus medium in every role, claude-only, so a typo can
+never make a run depend on a CLI that may not be installed; a malformed user table takes that
+loud fallback rather than quietly reverting to the shipped one.
+
 ## Two backends, for the worker form only
-
-**Nothing routes to codex by default, and that is deliberate.** `model-tiers.json` ships
-`backend: claude` in all nine cells, so a fresh install works with no codex CLI and no codex
-subscription — `spawn.sh` has no preflight check for the binary, so a shipped codex default would
-surface as a generic `failed` worker with no hint that codex is simply not installed.
-
-**Opting in is per user.** `resolve-tier.sh` reads, in order: `$RESOLVE_TIER_ROOT` (the test
-seam), then `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` if that file exists, then the
-shipped table. So writing your own table turns on the codex roster for you alone, and survives
-kit updates — the shipped file is overwritten on update, a user file is not. A user table that is
-malformed takes the same loud fallback any bad config takes (one WARN plus the claude standard
-roster) rather than quietly reverting to the shipped table.
 
 One guardrail gap recorded on #96 remains open and accepted: the codex path carries no
 `--disallowedTools` equivalent, so `gh pr merge` and `gh issue close` are reachable with only
@@ -81,7 +93,13 @@ its own diff cannot: a nested `codex exec` dies inside its sandbox (`~/.codex` i
 writable root), and the one that did substituted its own assessment and reported it as an
 independent review (#96). It now runs after the worker exits, against a base pinned to a
 SHA before the worker started — `refs/` is writable, so a base named by branch could be
-moved by the worker to empty its own diff.
+moved by the worker to empty its own diff. **It is the claude reviewer** (`review-cmd.sh`:
+`claude -p` at the reviewer cell's model and effort, spawning `personal-tools:my-review` on the
+commit range, in the disposable clone) — `codex exec review` could not honour a claude reviewer
+cell, so "reviewer: opus" was silently false for every codex-built branch (#104). It emits
+`- [Pn] title — path:line` items or the literal `No findings.`; `review-counts.sh` refuses
+anything else, and the wrapper posts the `**Review round N**` comment exactly as before.
+Reviews never run on fable and never on a codex model.
 
 `session-status.sh <runid>` reports those alongside the claude sessions, in the same
 vocabulary, with the PID in column 2. The spawn returns immediately and prints the run dir.
@@ -157,16 +175,24 @@ lost when it exits.** Every `codex exec` run persists at
 `thread.started` event with `thread_id` (the rollout whose `session_meta.cwd` is the issue
 worktree is the recovery path if that capture is ever missing).
 
-So an escalation is a pause, not an ending: the worker reports `issue <N> escalate <question>`
-and exits, the orchestrator surfaces the question, and the answer is delivered by resuming that
-thread — which `worker-resume.sh` does:
+So an escalation is a pause, not an ending: the worker reports `issue <N> escalate <note>`
+and exits, and the answer is delivered by resuming that thread — which `worker-resume.sh` does:
 
 ```bash
 bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktree> \
      --base <base-branch> \
      --answer "the retry budget is per-request"        # or --answer-file FILE
-     # --round N  numbers the review comment this posts (default 1)
+     # --round N    numbers the review comment this posts (default 1)
+     # --attempt N  the chain position the worker was spawned at, so -m is the same model
 ```
+
+**Two kinds of escalation (#104).** A note beginning `deviation:` is a false plan assumption:
+the worker posted a `**Deviation**` comment, and the orchestrator answers it with
+`consult.sh consult` — a one-shot `claude -p` on the planner cell that reads the thread and the
+worktree read-only and posts `**Consult N**` — then resumes the worker with a pointer to that
+comment as the answer, so no decision prose enters the orchestrator. Anything else is a question
+for a human, surfaced as before. `consult.sh plan` is the same script in its other role, run
+before the build spawn for standard and complex issues.
 
 `--base` is required: the resumed turn ends with an independent review, and without a base
 branch there is nothing to review against — a resume that quietly skipped it would land an
@@ -391,16 +417,33 @@ ambiguous the moment a respawn happens — which is exactly when you are asking.
   recovery path itself.
 - The respawned session picks up from the **last commit**, not from the top of the issue.
 
-**Respawn once. Escalate on the second failure.** A task that wedges two sessions gets a human, not
-a third 40k-token spawn. The count comes from the run log:
+**A codex worker is replaced along its chain, by script; a claude worker tops the chain and
+drains.** "Respawn once, escalate to a human on the second" is superseded for codex workers by
+`escalate.sh` (PRD #104): on every wake the orchestrator runs
+
+```bash
+bash ~/.claude/kit/infra/scripts/escalate.sh <runid> <N> <tier> <worktree> --base <base> --attempt <A>
+```
+
+which prints `<reason>: <detail>` or nothing, from artifacts that already exist — a `failed`
+report or crash, a third `**Deviation**` comment (consults are capped at two), a second
+`**Review round**` still carrying high or medium findings, a context at or past 256K (read from
+the worker's own rollout under `~/.codex/sessions`, joined by the thread id in `events.jsonl`;
+the event log's `turn.completed` usage is the turn's cumulative total, not the context size),
+or an event log untouched for 20 minutes while the pid lives. On a hit it posts the mechanical
+`**Handoff**` comment (reason, commits since base, last event-log activity); the orchestrator
+group-kills the worker, logs `escalated`, and respawns `spawn.sh --attempt <A+1>` onto the same
+worktree. Nothing is resumed across a model change. At the top of the chain `spawn.sh` refuses
+and the run drains as `failed` does. Thresholds: `ESCALATE_STALL_MINUTES=20`,
+`ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`. The counts come from the run log:
 
 ```bash
 # run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" state "$RUNID"    # respawned=12:2,13:1
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" state "$RUNID"    # respawned=12:2 escalated=13:1 consulted=13:2
 ```
 
-Nothing else records it — git and GitHub have no idea a session was killed — which is why
-`respawned` is one of the run log's four events.
+Nothing else records a kill or a model change — git and GitHub have no idea — which is why
+`respawned`, `planned`, `consulted` and `escalated` are run-log events.
 
 ## The bus
 
