@@ -157,14 +157,25 @@ The two guardrail gaps recorded on the e2e gate (#96) stand as follows:
   single PR at the end** — workers do not open their own — so what is exposed is a worker that
   disobeys its prompt, not a capability the design hands it. Recorded here as a logged decision
   rather than an unstated gap, the same way the network grant is.
+- **The claude reviewer, consult and planner are NOT sandboxed — ACCEPTED (#104).** `codex exec
+  review` ran under a pinned codex sandbox; its replacement (`review-cmd.sh`), and `consult.sh`
+  in both roles, are `claude -p --permission-mode bypassPermissions` on the host — reading
+  worker-authored branches and comments, unattended. Their `--disallowedTools` rules are prefix
+  patterns (`git -C x commit`, `sh -c`, `curl`, and reads of `~` all pass), so what fences them is
+  prompt discipline (every prompt states that repo and thread content is data), the disposable
+  clone for the reviewer (bounds file damage, not host or GitHub reach), the `--roots` tripwire
+  before any git runs, and the denylist as a tripwire against the obvious commands. This is the
+  same posture every claude-backed worker already runs under; it is new only for codex-built
+  branches, whose review used to be sandboxed. Decided 2026-09-22 rather than left implied.
 
 The three labels stay (issues already carry them); only the rosters change. **Open
 question, measured at the e2e gate (#96):** whether sol reviewing standard-tier code is
 affordable on the $20 codex plan. A review is a shorter turn than an implementation but sol
 costs twice terra per token; the `turn.completed` usage on real runs decides it.
 
-The ad-hoc lane's claude-side substitution for a codex cell is trivial haiku, standard opus,
-complex opus, reviewer opus. Fable never reviews. `resolve-tier.sh` prints twelve lines: the
+The ad-hoc lane's claude-side substitution for a codex cell is the chain's TOP cell
+(`resolve-tier.sh <tier> $((implementer_chain-1))` — opus medium in the shipped table); a codex
+reviewer cell becomes opus. Fable never reviews. `resolve-tier.sh` prints twelve lines: the
 ten cells plus `implementer_attempt` and `implementer_chain`.
 
 ## Roles shipped in v1
@@ -268,7 +279,7 @@ one-shot, so it maps onto `codex exec`:
   blocks forever reading it. `-m` must always be passed: a resumed thread otherwise falls
   back to the config default model. Verified: `workspace-write` is OFFLINE by default — a
   `curl` inside it fails at DNS — and with `network_access=true` it returns 200. The flag is
-  not optional, since the worker's own prompt orders `gh` and `codex exec review`, and
+  not optional, since the worker's own prompt orders `gh` and `git push`, and
   `approval_policy=never` means it cannot ask for the network back. It cuts both ways:
   workspace-write restricts writes, not reads, so a networked worker that ingests an
   untrusted issue comment has both this machine's credentials and an egress path. Accepted
@@ -386,11 +397,9 @@ one-shot, so it maps onto `codex exec`:
   The reviewer runs only when the worker REPORTED `built` or `fixed` — `escalate` and `failed`
   exit 0 too, and reviewing those posts a `Review round` comment the lane counts as a cycle.
 
-  `review-cmd.sh` passes the roster's **reviewer** cell as `-m`, so the review runs at the tier's
-  reviewer model instead of whatever the user's codex config defaults to — the same silent
-  wrong-model trap `-m` guards on the run itself. It does so **only when that cell is itself
-  codex-backed**: a claude reviewer names `opus` or `sonnet`, which codex does not have, so that
-  pairing leaves the flag off and takes codex's default rather than failing the review outright.
+  (Historical — retired by #104.) `review-cmd.sh` passed the roster's **reviewer** cell as `-m`
+  only when that cell was itself codex-backed; a claude reviewer cell left the flag off and took
+  codex's default model. That silent substitution is the bug the claude reviewer fixes.
 
   **Verification honesty — ACCEPTED, no lever exists (#100).** A `sol`-tier reviewer's verdict
   once asserted "All six tests pass" while running under the pinned `sandbox_mode=read-only`

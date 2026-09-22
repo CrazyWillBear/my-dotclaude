@@ -23,8 +23,11 @@
 #   failed         the worker reported `failed`, exited non-zero, or died with no exit code
 #   deviation-cap  more `**Deviation**` comments than the consult cap allows (cap 2: the
 #                  third deviation escalates rather than drawing a third consult)
-#   review-cap     the latest `**Review round N**` with N >= 2 still has high or medium
-#                  findings — the fix session is spawned at the next chain position
+#   review-cap     a SECOND review round within this attempt still has high or medium
+#                  findings — the fix session is spawned at the next chain position. The
+#                  rounds are counted inside the attempt's window, not read off the
+#                  run-wide `N` in the heading, which a respawn inherits: every position
+#                  gets its own two rounds.
 #
 # THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
 # deviation would otherwise fire on every wake forever and walk the whole chain in three
@@ -187,10 +190,10 @@ if reason is None:
         m = re.search(r"(?m)^\*\*Review round (\d+)\*\*\s*[—-]+\s*(\d+) high, (\d+) medium", c)
         if m:
             rounds.append(tuple(int(x) for x in m.groups()))
-    if rounds:
+    if len(rounds) >= 2:
         n, h, med = max(rounds)
-        if n >= 2 and (h > 0 or med > 0):
-            reason = ("review-cap", "review round %d still has %d high, %d medium" % (n, h, med))
+        if h > 0 or med > 0:
+            reason = ("review-cap", "review round %d (this attempt's %d) still has %d high, %d medium" % (n, len(rounds), h, med))
 
 # --- the rollout: live context occupancy ------------------------------------------------
 reviewing = os.path.exists(os.path.join(rundir, "reviewing"))

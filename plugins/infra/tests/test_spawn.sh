@@ -350,6 +350,9 @@ cat >"$CODEX_BIN/claude" <<'STUB'
 printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
 pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+# The `reviewing` marker must exist WHILE the review runs (escalate.sh reads it to hold the
+# stall signal off); the run dir is the clone's parent.
+[ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
 printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
 rj="${STUB_REVIEW_TEXT:-}"
 [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
@@ -591,7 +594,7 @@ assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LE
 # would be, never that the wrapper actually runs it, in the right order, or cleans up.
 echo "test: the wrapper runs the reviewer after the worker and writes exit LAST"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
-STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc" \
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc" STUB_REVIEW_MARKER="$WORK/review-marker" \
     STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
     STUB_REVIEW_TEXT='- [P1] one — a:1
 - [P1] two — b:2
@@ -605,6 +608,8 @@ else no "no $RUNDIR/review.txt — the wrapper did not run the reviewer"; fi
 # THE SECURITY PROPERTY (#99): the review ran somewhere that is NOT the real worktree, and
 # a test runner inside it would find its tempfiles pointed at the scratch root the argv
 # granted — not at whatever the worktree's own sandbox default would have been.
+assert_equals "the reviewing marker existed while the review ran (round 4's producer)" \
+    "$(cat "$WORK/review-marker" 2>/dev/null)" "yes"
 assert_equals "the review ran in the disposable checkout" \
     "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR/review-checkout"
 assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"
@@ -618,7 +623,7 @@ else
     ok "the disposable checkout and scratch dir are cleaned up after the review"
 fi
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
-# 25 = -p, --model M, --effort E, --permission-mode X, --disallowedTools + 14 rules, --, and
+# 25 = -p, --model M, --effort E, --permission-mode X, --disallowedTools + 15 rules, --, and
 # the prompt as ONE argument. A newline-split reader hands claude 52 and it keeps line one.
 assert_equals "the multi-line prompt reached claude as ONE argument" \
     "$(cat "$WORK/review-argc" 2>/dev/null)" "25"

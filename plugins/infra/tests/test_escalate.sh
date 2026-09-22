@@ -176,7 +176,18 @@ echo "test: review-cap — a second round with high or medium findings"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 R2='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low\n\n- x"},{"body":"**Review round 2** — 0 high, 1 medium, 3 low\n\n- y"}]}'
 STUB_GH_COMMENTS="$R2" run r1 12 standard "$REPO" --base base --attempt 0
-assert_contains "round 2 with a medium escalates" "$OUT" "review-cap: review round 2 still has 0 high, 1 medium"
+assert_contains "round 2 with a medium escalates" "$OUT" "review-cap: review round 2 (this attempt's 2) still has 0 high, 1 medium"
+# The round number in the heading is run-wide and a respawn inherits it: attempt 1's FIRST
+# round may be headed "round 3". Rounds are counted inside the attempt's window instead.
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '{"attempt": 0, "mark": 3}\n' >"$RUNDIR/handoff.json"
+R3ONLY='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"},{"body":"**Review round 2** — 1 high, 0 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low"}]}'
+STUB_GH_COMMENTS="$R3ONLY" run r1 12 standard "$REPO" --base base --attempt 1
+assert_empty "a respawn's FIRST round (headed round 3) is not its second — no escalation" "$OUT"
+R34='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low"},{"body":"**Review round 2** — 1 high, 0 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low"},{"body":"**Review round 4** — 0 high, 1 medium, 0 low"}]}'
+STUB_GH_COMMENTS="$R34" run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "its own second round with findings does escalate" "$OUT" "review round 4 (this attempt's 2)"
+rm -f "$RUNDIR/handoff.json"
 R2L='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low"},{"body":"**Review round 2** — 0 high, 0 medium, 3 low"}]}'
 STUB_GH_COMMENTS="$R2L" run r1 12 standard "$REPO" --base base
 assert_empty "lows alone never escalate" "$OUT"

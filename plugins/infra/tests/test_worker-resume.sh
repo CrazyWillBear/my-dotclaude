@@ -41,6 +41,7 @@ if [ "${1:-}" = -p ]; then
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
     pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+    [ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
     printenv TMPDIR >"${STUB_REVIEW_TMPDIR:-/dev/null}" 2>/dev/null || true
     rj="${STUB_REVIEW_TEXT:-}"
     [ -n "$rj" ] || rj='- [P2] a finding — src/f:1'
@@ -212,7 +213,7 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"${STUB_GH_ARGV:-/dev/null}"
 chmod +x "$BIN/gh"
 
 export STUB_CWD="$WORK/cwd" STUB_ARGV="$WORK/argv"
-export STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc"
+export STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_ARGC="$WORK/review-argc" STUB_REVIEW_MARKER="$WORK/review-marker"
 mkrun 81 '{"issue":81,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
 STUB_REPORT='{"issue":81,"status":"built","round":0,"head":"9c2b4d1","review":"0 high, 1 medium, 0 low","note":""}' \
     run r1 81 standard "$REPO" --answer "per-request"
@@ -331,6 +332,7 @@ assert_not_contains "never the implementer's" \
 # a disposable clone instead — with TMPDIR pointed at the one scratch root the sandbox
 # actually granted.
 RUNDIR86="$CODEX_ROOT/r1/issue-86"
+assert_equals "the reviewing marker existed while the review ran" "$(cat "$WORK/review-marker" 2>/dev/null)" "yes"
 assert_equals "the review ran in the disposable checkout" \
     "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR86/review-checkout"
 assert_not_contains "never in the real worktree" "$(cat "$WORK/review-cwd" 2>/dev/null)" "$REPO"

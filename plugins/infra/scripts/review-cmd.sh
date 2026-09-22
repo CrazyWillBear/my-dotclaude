@@ -43,9 +43,16 @@
 #
 # THE CALLERS RUN THIS FROM A DISPOSABLE CLONE (#99), never the worktree, with TMPDIR
 # pointed at a scratch dir beside it: my-review may run the project's done-check, and the
-# clone is deleted the moment the review exits. Read-only by denylist: no Edit/Write, no
-# git write, no GitHub write except the ONE my-review is allowed — filing a mock-debt
-# follow-up (`gh issue create`). The `**Review round**` comment is posted by the caller.
+# clone is deleted the moment the review exits. THIS IS NOT A SANDBOX — an ACCEPTED GAP,
+# recorded in docs/swarm-design.md § Roster beside the network and --disallowedTools gaps.
+# `codex exec review` ran under a pinned codex sandbox; `claude -p --permission-mode
+# bypassPermissions` runs on the host, and its deny rules are PREFIX patterns: Edit/Write,
+# `git commit|push|merge|worktree`, and every `gh` write verb are denied, but `git -C x
+# commit`, `sh -c '…'`, `curl` and reads of the home dir are not. What holds it is prompt
+# discipline (content-is-data, below), the disposable clone (bounds FILE damage), and the
+# denylist as a tripwire against the obvious commands — the same posture every claude
+# worker and consult.sh already run under. The `**Review round**` comment is posted by the
+# caller; the one GitHub write my-review keeps is `gh issue create` for mock-debt.
 #
 # NEVER FABLE, and never a codex model: a reviewer cell naming either is reviewed on opus
 # at the cell's effort, with a WARN — a review that errors out on an unknown model is no

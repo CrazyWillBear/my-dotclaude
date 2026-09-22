@@ -643,7 +643,8 @@ bash -c '
         # longer passes, before any git runs there.
         if bash "$roots" --roots "$worktree" >/dev/null 2>>"$rundir/review-stderr.log"; then
             # THE REVIEW NEVER RUNS FROM $worktree ITSELF (#99): the reviewer may run the
-            # project'\''s done-check, and it is fenced by a tool denylist, not a sandbox, so
+            # project'\''s done-check, and it is fenced by a prefix-pattern tool denylist and
+            # its prompt, NOT a sandbox (an accepted gap — docs/swarm-design.md § Roster), so
             # it runs in a DISPOSABLE clone instead — `--shared` costs no object copy, and the
             # commit range diffs identically there. TMPDIR points a test runner at the
             # scratch dir beside it. The verdict is the reviewer'\''s STDOUT, captured to
