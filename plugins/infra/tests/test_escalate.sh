@@ -178,6 +178,11 @@ STUB_GH_COMMENTS="$THREE" run r1 12 standard "$REPO" --base base
 assert_contains "the third is the signal" "$OUT" "deviation-cap: a deviation after 2 consults"
 STUB_GH_COMMENTS="$THREE" ESCALATE_CONSULT_CAP=3 run r1 12 standard "$REPO" --base base
 assert_empty "the cap is configurable" "$OUT"
+# `run` is a shell FUNCTION, not an external command: on bash < 4.4 a var assigned in front
+# of a function call can leak into the CURRENT shell rather than staying scoped to that one
+# call (fixed in 4.4; this repo still promises macOS's bash 3.2 — spawn.sh, review-cmd.sh).
+# Unset explicitly rather than trust it died with the command.
+unset ESCALATE_CONSULT_CAP
 # A **Consult N** heading counts only on a comment's FIRST line (review round 13): a
 # deviation that QUOTES an earlier consult would otherwise burn a chain position one
 # deviation early. Here the second "consult" is only a quotation, so the cap is not reached.
@@ -185,11 +190,6 @@ mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"d
 QUOTED='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\n**Consult 1** said f() exists; it does not"}]}'
 STUB_GH_COMMENTS="$QUOTED" run r1 12 standard "$REPO" --base base
 assert_empty "a deviation quoting a consult heading is not counted as a consult" "$OUT"
-# `run` is a shell FUNCTION, not an external command: on bash < 4.4 a var assigned in front
-# of a function call can leak into the CURRENT shell rather than staying scoped to that one
-# call (fixed in 4.4; this repo still promises macOS's bash 3.2 — spawn.sh, review-cmd.sh).
-# Unset explicitly rather than trust it died with the command.
-unset ESCALATE_CONSULT_CAP
 
 echo "test: thread signals are scoped to THIS attempt by a mark in the RUN DIR (review fixes 1, 2)"
 # Comments are permanent. Without the scope, the three deviations that escalated attempt 0
