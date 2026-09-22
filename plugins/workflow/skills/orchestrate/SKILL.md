@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>`, spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
-argument-hint: "[--max N=5] [--max-cycles K=2] [--merge-split-at K=5] [--prd N] [--issues N,N,...] [--skip-unknown]"
+argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
 ---
@@ -21,7 +21,7 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
 
 - **`--max N`** — **concurrent issues in flight** (default **5**), not a batch size. A slot frees
   when its issue merges, and the freed slot takes the next ready issue.
-- **`--max-cycles K`** — the per-issue fix-round cap (default **2**). The initial review is free;
+- **`--max-cycles K`** — the per-issue fix-round cap (default **5**). The initial review is free;
   the cap counts **re-reviews**.
 - **`--merge-split-at K`** — the conflicted remainder above which the merge is split (default
   **5**). See [Merge](#merge).

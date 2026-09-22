@@ -118,7 +118,7 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
    prompt tells it to report with `SendMessage` — miss that line and the orchestrator waits forever.
 5. **Fix rounds are fresh sessions** (`--role fix`), told to work from the issue's latest review-round
    comment. Nothing compounds, and the fixer is not defending its own code. Capped by `--max-cycles`
-   (default 2); **cycles are counted from the authoritative source per backend** — the thread's
+   (default 5); **cycles are counted from the authoritative source per backend** — the thread's
    review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a codex-backed one
    (its worker can post that comment too) — never a field kept separately.
 6. **Merge is a fold first.** `merge-fold.sh` lands every conflict-free branch with plain git, testing
