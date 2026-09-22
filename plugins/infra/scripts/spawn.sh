@@ -364,7 +364,12 @@ Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
    Those findings are your work order; the review already names file and line. Fix the
    highs and mediums; lows are listed, not fixed.
-2. Fix them, TDD-first, committing after every green sub-step.
+2. Fix them, TDD-first, committing after every green sub-step. If a finding names a
+   fact that's true anywhere else in the codebase too — not a mistake local to this
+   line — grep the repo for other instances of the same pattern and fix those in the
+   same round. If that fact isn't already written down where the project's CLAUDE.md
+   says such facts live (a schema doc, a \`## Decisions\` section), add a one-line note
+   there in the same commit, so the next issue that touches it doesn't relearn it.
 3. Run the project's done-check. It must be green.
 $FIX_REVIEW_STEP
 $FIX_REPORT_STEP

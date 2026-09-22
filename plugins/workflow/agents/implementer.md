@@ -39,6 +39,12 @@ Add anything a later reader genuinely needs — a constraint you discovered, an 
 ruled out and why. **Keep it short.** Verbose comments are read by every future run of every
 agent that touches this issue; brevity here is a correctness property, not a style preference.
 
+If what you found generalizes beyond this issue — a fact about a named concept (a field,
+column, table), or a decision that rules out an approach for good — also add a one-line note
+wherever the project's `CLAUDE.md` says such facts live (a schema doc, a `## Decisions`
+section), in the same commit. The issue comment is this issue's memory; the doc is everyone
+else's.
+
 **If `CONTEXT-MAP.md` exists in your worktree, read it.** It is a flat path-plus-one-line map
 written for you at admission. It is a **hint, not a contract** — where it disagrees with the
 code in front of you, the code wins, and a pointer to a file that moved costs you one failed

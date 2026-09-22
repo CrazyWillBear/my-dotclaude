@@ -433,6 +433,19 @@ src/billing/client.py — calls it; owns the idempotency key
 tests/test_retry.py — the existing coverage
 ```
 
+**Also grep the project's own docs for concepts these files already use.** If the
+project's `CLAUDE.md` names a doc where table/column/field semantics live (a schema
+doc) or keeps a `## Decisions` section (typically in an architecture doc), grep it for
+any identifier that also appears in the files just listed, and fold a hit in as its own
+line, quoting the doc directly:
+
+```
+docs/SCHEMA.md:893 — "Gmail's thread ids are per-mailbox, not globally unique"
+```
+
+Same file, same flat format, same "hint not contract" rule below — this just widens the
+grep from files to the concepts those files use, which a path-only list would miss.
+
 **It is a hint, not a contract.** A pointer to a file that moved costs the implementer one failed
 `Read`. There are **no sha stamps and no staleness protocol** — if a session doubts the map, it
 deletes it and re-runs `Explore`. Anything more is a synchronization problem invented to serve a

@@ -78,6 +78,21 @@ repo has no such docs, hold this **correctness floor**:
 - Race conditions and concurrency hazards.
 - Tests that don't actually assert what they claim to.
 
+## Cross-cutting facts — check the project's own docs
+
+Some bugs aren't local to the diff: they violate a fact about a named concept (a field,
+column, table) or a decision the project already settled elsewhere. For every new or
+changed identifier in the diff, check whether the project's schema/architecture docs —
+whatever `CLAUDE.md` names as where table/column/field semantics live (e.g.
+`docs/SCHEMA.md`) — or its `## Decisions` section (typically in `ARCHITECTURE.md`), if
+one exists, already say something about it. A new usage that contradicts a documented
+fact or an already-settled decision is a finding like any other, at the severity the
+contradiction deserves.
+
+When a finding **is** such a fact — true beyond this one line, not a mistake local to
+it — say so in the finding text. That is what tells the fix round to grep the rest of
+the repo for the same pattern instead of patching just the line you named.
+
 ## Central-mechanism audit — mock-drift (issue branches)
 
 When your target is an **issue's branch** — you're handed the issue number, or the branch is
