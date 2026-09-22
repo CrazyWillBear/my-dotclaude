@@ -466,4 +466,4 @@ posts the comment. The number of those comments on an issue *is* how many review
 has had. A codex-backed issue's worker is explicitly allowed `gh issue comment` too, so its
 comment is not the authoritative count: `$RUNDIR/rounds` (one line per reviewer wrapper run,
 appended beside the comment, never read back by the worker's own logic) is — see
-[`escalate.sh`](#escalation-by-script)'s review-cap.
+[`escalate.sh`](#recovery)'s review-cap.

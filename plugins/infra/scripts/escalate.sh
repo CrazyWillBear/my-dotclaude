@@ -9,8 +9,10 @@
 #
 # Output: ONE line on stdout — `<reason>: <detail>` — when a signal fires, NOTHING when
 # none does. Exit 0 either way. Exit 1 only when it cannot read what it needs (bad usage,
-# an unreadable worktree, a thread it could not fetch). A claude-backed worker has no run
-# dir and is never escalated (claude tops every chain), so that prints nothing, exit 0.
+# an unreadable worktree, a thread it could not fetch). A claude-backed worker (resolve-tier.sh
+# says so for THIS --attempt) tops its chain and is never escalated, so that prints nothing,
+# exit 0 — checked by ASKING resolve-tier.sh, never by a codex run dir's existence, which can
+# survive from an earlier, codex, attempt of the same run (#104 review round 11).
 #
 # On a hit it also POSTS the mechanical `**Handoff**` comment — the reason, the commits on
 # the branch since base, and the worker's last activity from its event log — unless one for
@@ -113,8 +115,18 @@ case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9.
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
-if [ ! -d "$RUNDIR" ]; then
-    echo "note: no codex run dir for issue $ISSUE — a claude worker tops its chain and is never escalated" >&2
+
+# The IMPLEMENTER's backend at THIS attempt (round-11 fix): "no codex run dir" is not a valid
+# proxy for "claude-backed" — a run dir left over from an earlier, codex, attempt of the SAME
+# run survives (nothing deletes it), so testing the filesystem would read a healthy
+# claude-backed attempt as codex-backed and subject it to signals no claude worker can ever
+# clear (it never respawns, never writes a rollout, never updates the run dir again). Ask
+# resolve-tier.sh, the one source of truth for what backend an attempt runs on, instead.
+INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
+IMPL_BACKEND="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null | sed -n 's/^implementer_backend=//p' | head -1)"
+if [ "$IMPL_BACKEND" = claude ]; then
+    echo "note: attempt $ATTEMPT of issue $ISSUE is claude-backed — a claude worker tops its chain and is never escalated" >&2
     exit 0
 fi
 
@@ -122,7 +134,6 @@ fi
 # in the worker's worktree below, on every wake, while the worker may still be writing it.
 # A rewritten `commondir` would also silently empty the commit list, so the handoff would
 # tell the replacement that nothing landed. Refuse loudly instead.
-INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$INFRA/common-git-dir.sh" ] || die "missing infra sibling: $INFRA/common-git-dir.sh"
 bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
     || die "containment check refused the worktree $WORKTREE — not reading it"

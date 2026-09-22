@@ -165,6 +165,7 @@ echo "test: deviation → consult → resume, never a human and never prose in t
 assert_contains "the deviation report shape" "$BODY" "escalate deviation:"
 assert_matches "told apart by the note's first word, not by reading" "$BODY" "first word.*never by reading"
 assert_contains "the consult role" "$BODY" "consult.sh consult"
+assert_contains "consult.sh carries the attempt too (review round 11: it resolves the implementer's backend from resolve-tier.sh, not a codex run dir)" "$BODY" 'consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>'
 assert_contains "and it is logged" "$BODY" "consulted '{\"n\":<N>}'"
 assert_contains "the resume carries the attempt and the round" "$BODY" '--base "$BASE" --attempt <A> --round <K> --answer'
 assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'

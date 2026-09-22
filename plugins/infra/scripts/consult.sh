@@ -13,16 +13,17 @@
 #            can disagree by design after a handoff: N=3 on the thread can be this
 #            attempt's first.
 #
-#            A CLAUDE-BACKED WORKER HAS NO escalate.sh CHECK AT ALL (no run dir — it tops
-#            its chain and a script never escalates it), so nothing else stops a repeated
-#            consult past the cap. It also never respawns, so the thread-wide N IS this
-#            (only) attempt's count — none of escalate.sh's cross-attempt scoping applies.
-#            THIS SCRIPT refuses past the cap in exactly that case (below); a codex
-#            worker's own deviation-cap already prevents reaching a third consult call.
+#            A CLAUDE-BACKED WORKER (resolve-tier.sh says so for THIS --attempt — it tops
+#            its chain) HAS NO escalate.sh CHECK AT ALL, so nothing else stops a repeated
+#            consult past the cap. It also never respawns, so the count since the newest
+#            **Plan** heading IS this (only) attempt's count — none of escalate.sh's
+#            cross-attempt scoping applies. THIS SCRIPT refuses past the cap in exactly that
+#            case (below); a codex worker's own deviation-cap already prevents reaching a
+#            third consult call.
 #
 # Usage:
-#   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--dry-run]
-#   bash consult.sh consult <runid> <issue> <tier> <worktree> [--dry-run]
+#   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--attempt N] [--dry-run]
+#   bash consult.sh consult <runid> <issue> <tier> <worktree> [--attempt N] [--dry-run]
 #
 # Output: one line on stdout naming what was posted (`**Plan** posted on #N` /
 # `**Consult N** posted on #N`). Exit 1, NOTHING posted, when the model produced no text,
@@ -50,12 +51,13 @@ set -uo pipefail
 INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "error: $*" >&2; exit 1; }
 
-USAGE="usage: consult.sh plan|consult <runid> <issue> <tier> <worktree> [--dry-run]"
+USAGE="usage: consult.sh plan|consult <runid> <issue> <tier> <worktree> [--attempt N] [--dry-run]"
 ROLE="${1:-}"; RUNID="${2:-}"; ISSUE="${3:-}"; ISSUE="${ISSUE#\#}"; TIER="${4:-}"; WORKTREE="${5:-}"
 shift 5 2>/dev/null || die "$USAGE"
-DRY=""
+ATTEMPT=0; DRY=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --attempt) [ $# -ge 2 ] || die "--attempt needs a value"; ATTEMPT="$2"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         *) die "unknown flag $1" ;;
     esac
@@ -63,6 +65,7 @@ done
 case "$ROLE" in plan|consult) ;; *) die "$USAGE" ;; esac
 [ -n "$RUNID" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
+case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 # $TIER reaches the model's prompt verbatim, and it came off a GitHub label via a model.
 case "$TIER" in trivial|standard|complex) ;; *) die "unknown tier '$TIER'" ;; esac
 case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
@@ -75,6 +78,13 @@ EFFORT="$(printf '%s\n'  "$ROSTER" | sed -n 's/^planner_effort=//p'  | head -1)"
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^planner_backend=//p' | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a planner cell for tier '$TIER'"
 [ "$BACKEND" = claude ] || die "tier '$TIER' planner is backend '$BACKEND' — consult.sh is a claude -p call and needs a claude planner cell"
+
+# The IMPLEMENTER's backend at THIS attempt (round-11 fix): "no codex run dir" is not a valid
+# proxy for "claude-backed" — the shipped roster's claude cell sits at chain position 2, reached
+# only after codex attempts already ran and left a run dir behind (nothing deletes it). Ask
+# resolve-tier.sh, the one source of truth for what backend an attempt runs on, instead.
+IMPL_ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null)"
+IMPL_BACKEND="$(printf '%s\n' "$IMPL_ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
 
 # TRIPWIRE, as in spawn.sh's wrapper and worker-resume.sh: this is a host process about
 # to run git (gh resolves the repo by running git here; the consult prompt orders `git log` / `git diff`) in a worktree a worker
@@ -90,30 +100,43 @@ bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE" >/dev/null \
 # what escalate.sh counts — within THIS ATTEMPT's window, so N on the thread and the cap
 # can disagree by design after a handoff (see the header above). `gh` resolves the repo from the
 # worktree. A plan has no number — there is one per issue.
-N=""
+#
+# THE CAP, separately, floors at the NEWEST **Plan** heading (round-11 fix): consult.sh
+# plan posts exactly one per run per standard/complex issue, before the build spawn, so it
+# is already a natural per-run anchor. Without this floor a claude-backed issue that spent
+# its cap in one run and drained would compute N=3 on its very first consult of the NEXT
+# run (the thread is permanent) and drain again, forever, since nothing else ever resets it.
+N=""; N_SINCE_PLAN=""
 if [ "$ROLE" = consult ]; then
     THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null </dev/null)" \
         || die "could not read issue #$ISSUE's comments"
-    N="$(printf '%s' "$THREAD" | python3 -c '
+    COUNTS="$(printf '%s' "$THREAD" | python3 -c '
 import json, re, sys
 try:
     doc = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
-n = 0
-for c in doc.get("comments") or []:
-    if re.search(r"(?m)^\*\*Consult \d+\*\*", str(c.get("body") or "")):
-        n += 1
-print(n + 1)
+comments = [str(c.get("body") or "") for c in (doc.get("comments") or [])]
+is_consult = lambda c: re.search(r"(?m)^\*\*Consult \d+\*\*", c)
+total = sum(1 for c in comments if is_consult(c))
+plan_idx = 0
+for i, c in enumerate(comments):
+    if re.search(r"(?m)^\*\*Plan\*\*", c):
+        plan_idx = i
+since_plan = sum(1 for c in comments[plan_idx:] if is_consult(c))
+print(total + 1)
+print(since_plan + 1)
 ')" || die "could not parse issue #$ISSUE's comments"
-    # THE CLAUDE-BACKED BACKSTOP (see the role comment above): no run dir here means no
-    # escalate.sh check ever ran for this worker, and it never respawns, so N is safely
-    # this attempt's whole count. A codex issue always HAS a run dir, so this never fires
-    # for one — escalate.sh's own, attempt-scoped deviation-cap already governs it.
-    if [ ! -d "${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE" ]; then
+    N="$(printf '%s\n' "$COUNTS" | sed -n '1p')"
+    N_SINCE_PLAN="$(printf '%s\n' "$COUNTS" | sed -n '2p')"
+    # THE CLAUDE-BACKED BACKSTOP (see the role comment above): resolve-tier.sh says this
+    # attempt's implementer is claude-backed, which tops its chain and gets no escalate.sh
+    # check at all, so nothing else stops a repeated consult past the cap. A codex attempt
+    # is already governed by escalate.sh's own, attempt-scoped deviation-cap.
+    if [ "$IMPL_BACKEND" = claude ]; then
         CONSULT_CAP="${ESCALATE_CONSULT_CAP:-2}"
-        [ "$N" -le "$CONSULT_CAP" ] \
-            || die "consult $N is past the cap ($CONSULT_CAP) for issue #$ISSUE — this claude-backed worker has no run dir and no escalate.sh check; drain the issue instead of consulting again"
+        [ "$N_SINCE_PLAN" -le "$CONSULT_CAP" ] \
+            || die "consult $N_SINCE_PLAN is past the cap ($CONSULT_CAP) for issue #$ISSUE since the newest **Plan** — this claude-backed worker (attempt $ATTEMPT) has no escalate.sh check; drain the issue instead of consulting again"
     fi
 fi
 

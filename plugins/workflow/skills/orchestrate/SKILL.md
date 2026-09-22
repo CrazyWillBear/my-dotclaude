@@ -483,7 +483,7 @@ The worker posted a `**Deviation**` comment and paused. Run `escalate.sh` first 
 deviation is an escalation, not a consult); if it prints nothing:
 
 ```bash
-bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree>
+bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" consulted '{"n":<N>}'
 bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> \
      --base "$BASE" --attempt <A> --round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."

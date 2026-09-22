@@ -151,35 +151,68 @@ STUB_GH_COMMENTS='{"comments":[{"body":"a comment mentioning **Consult 9** mid-l
     run consult r1 12 standard "$WT"
 assert_equals "only a heading at line start counts" "$OUT" "**Consult 1** posted on #12"
 
-echo "test: consult refuses PAST THE CAP for a claude-backed worker (review round 10)"
-# No run dir for this issue (this test's HOME has none) = claude-backed by consult.sh's own
-# check. escalate.sh never runs for such a worker at all, so nothing else stops a third
-# consult — this script's own backstop is the only thing that can.
+echo "test: consult refuses PAST THE CAP for a claude-backed worker (review round 10/11)"
+# This suite's fixture standard chain is codex-luna @attempt 0, claude-opus @attempt 1 — the
+# BACKEND for the cap check comes from resolve-tier.sh at --attempt, never a codex run dir's
+# existence (round 11: a run dir left over from attempt 0 must not make attempt 1 read as
+# codex-backed). escalate.sh never runs for a claude-backed worker at all, so nothing else
+# stops a third consult — this script's own backstop is the only thing that can.
 reset
 AT_CAP='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}'
-STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT" --attempt 1
 assert_equals "the third consult (N=3) is refused" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "says why" "$ERR" "past the cap"
 if grep -qx comment "$WORK/gh-argv" 2>/dev/null; then no "and no comment was posted (a read to compute N is expected)"; else ok "and no comment was posted (a read to compute N is expected)"; fi
 reset
 UNDER_CAP='{"comments":[{"body":"**Consult 1**"}]}'
-STUB_GH_COMMENTS="$UNDER_CAP" run consult r1 12 standard "$WT"
+STUB_GH_COMMENTS="$UNDER_CAP" run consult r1 12 standard "$WT" --attempt 1
 assert_equals "the SECOND consult (N=2, at the cap) still goes through" "$RC" "0"
 assert_equals "posted normally" "$OUT" "**Consult 2** posted on #12"
 reset
-ESCALATE_CONSULT_CAP=5 STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+ESCALATE_CONSULT_CAP=5 STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT" --attempt 1
 assert_equals "the cap is configurable" "$RC" "0"
 unset ESCALATE_CONSULT_CAP   # `run` is a shell function — see the note elsewhere in this suite
-# With a REAL codex run dir present, the cap is NOT enforced here — escalate.sh's own,
-# attempt-scoped deviation-cap already governs a codex worker before this script is ever
-# reached a third time in the same attempt.
+# At attempt 0 (this fixture's codex cell) the cap is NOT enforced here, REGARDLESS of any
+# stale codex run dir on disk — escalate.sh's own, attempt-scoped deviation-cap already
+# governs a codex worker before this script is ever reached a third time in the same attempt.
 reset
 CODEX_RUN_ROOT="$WORK/codexruns"
 mkdir -p "$CODEX_RUN_ROOT/r1/issue-12"
-CODEX_RUN_ROOT="$CODEX_RUN_ROOT" STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
-assert_equals "a codex-backed issue's third consult is NOT refused here" "$RC" "0"
+CODEX_RUN_ROOT="$CODEX_RUN_ROOT" STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT" --attempt 0
+unset CODEX_RUN_ROOT
+assert_equals "a codex-backed attempt's third consult is NOT refused here" "$RC" "0"
 assert_equals "posted normally" "$OUT" "**Consult 3** posted on #12"
+reset
+# Same AT_CAP thread, but now the SAME run dir survives from attempt 0 while attempt 1 (the
+# claude cell) is being evaluated (round 11's exact bug: the run dir is never deleted). The
+# cap must still fire — backend comes from resolve-tier.sh, not the filesystem.
+CODEX_RUN_ROOT="$WORK/codexruns"
+CODEX_RUN_ROOT="$CODEX_RUN_ROOT" STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT" --attempt 1
+unset CODEX_RUN_ROOT
+assert_equals "a stale codex run dir does not exempt the claude attempt from the cap" "$RC" "1"
+assert_contains "says why" "$ERR" "past the cap"
+reset
+STUB_GH_COMMENTS="$AT_CAP" run consult r1 12 standard "$WT"
+assert_equals "no --attempt defaults to 0 (codex here) — not refused" "$RC" "0"
+
+echo "test: the consult cap floors at the NEWEST **Plan** heading (review round 11)"
+# Two Consults from a PREVIOUS run (before this run's Plan) plus one from THIS run (after
+# it) — only the one after the Plan counts toward the CAP. The heading number stays
+# thread-wide by design (see the header comment), so this still posts as Consult 4.
+reset
+PAST_PLAN='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**"}]}'
+STUB_GH_COMMENTS="$PAST_PLAN" run consult r1 12 standard "$WT" --attempt 1
+assert_equals "not refused — only 2 consults counted since the Plan, at the cap" "$RC" "0"
+assert_equals "the heading number stays thread-wide" "$OUT" "**Consult 4** posted on #12"
+reset
+# A third consult SINCE the Plan is refused, even though a prior run left two more before it
+# that a non-floored count would have wrongly folded in (review round 11's exact bug: a
+# drained issue's next run computes N past the cap on its very first consult).
+PAST_PLAN_OVER='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"},{"body":"**Plan**\n\n1. x"},{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}'
+STUB_GH_COMMENTS="$PAST_PLAN_OVER" run consult r1 12 standard "$WT" --attempt 1
+assert_equals "a third consult since the Plan is refused" "$RC" "1"
+assert_contains "says why" "$ERR" "past the cap"
 
 echo "test: empty output is NEVER posted"
 reset

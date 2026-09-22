@@ -32,6 +32,29 @@ assert_contains()     { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' 
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got '$2')"; fi; }
 
+# resolve-tier.sh fixture (round 11): escalate.sh now asks IT for the implementer's
+# backend at --attempt, never a codex run dir's existence. Standard's chain mirrors the
+# SHIPPED table's shape — codex, codex, then claude tops it at position 2 — so every
+# existing --attempt 0 / --attempt 1 case below still exercises a codex-backed signal, and
+# a dedicated position-2 case below exercises the claude-backed "never escalated" path.
+CFG="$WORK/cfg"; mkdir -p "$CFG"
+cat >"$CFG/model-tiers.json" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "implementer": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "xhigh" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "low" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna",  "effort": "xhigh" },
+                                 { "backend": "codex", "model": "gpt-5.6-terra", "effort": "xhigh" },
+                                 { "backend": "claude", "model": "opus",         "effort": "medium" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "medium" } },
+  "complex":  { "planner": { "backend": "claude", "model": "fable", "effort": "medium" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } }
+}
+JSON
+export RESOLVE_TIER_ROOT="$CFG"
+
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -342,10 +365,19 @@ for f in handoff-comment.md handoff.json escalate-stderr.log; do
     if [ -e "$RUNDIR/$f" ]; then no "dry run wrote $f"; else ok "dry run did not write $f"; fi
 done
 
-echo "test: a claude worker (no run dir) is never escalated"
-rm -rf "$RUNDIR"
-run r1 12 standard "$REPO" --base base
+echo "test: a claude-backed attempt (chain position 2) is never escalated (review round 11)"
+# The exact round-11 bug: a run dir left over from an earlier CODEX attempt of the SAME run
+# survives (nothing deletes it) and must not make attempt 2 (this fixture's claude cell)
+# read as codex-backed — the backend comes from resolve-tier.sh, never the filesystem.
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"stale, from attempt 1"}' 3
+run r1 12 standard "$REPO" --base base --attempt 2
 assert_equals "exit 0" "$RC" "0"
+assert_empty "nothing on stdout — a stale failed-looking run dir is not read at all" "$OUT"
+assert_contains "and says why on stderr" "$ERR" "never escalated"
+assert_equals "and nothing posted" "$(posted)" "no"
+rm -rf "$RUNDIR"
+run r1 12 standard "$REPO" --base base --attempt 2
+assert_equals "exit 0 with truly no run dir either" "$RC" "0"
 assert_empty "nothing on stdout" "$OUT"
 assert_contains "and says why on stderr" "$ERR" "never escalated"
 
