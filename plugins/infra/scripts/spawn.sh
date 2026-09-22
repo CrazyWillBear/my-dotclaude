@@ -520,6 +520,13 @@ fi
 
 mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 
+# Written ONCE, at the FIRST spawn of a run, and never rewritten by a respawn (that is
+# what "if absent" means — the dir and this file both survive every attempt of the same
+# issue in the same run). escalate.sh floors its very-first-evaluation comment window
+# here, so a PERMANENT thread comment left by an earlier /orchestrate run on this same
+# issue cannot be read as evidence produced by this one.
+[ -f "$RUNDIR/.started" ] || date +%s >"$RUNDIR/.started"
+
 # THE RUN DIR IS REUSED. Its path carries the runid and the issue but NOT the round, so a
 # fix round — and any recovery respawn — lands on the previous turn's `exit` and
 # `last-message.txt`. The wrapper below truncates events.jsonl and stderr.log with `>`,

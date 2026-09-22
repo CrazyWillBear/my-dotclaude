@@ -7,9 +7,9 @@
 #            cheaper implementer executes near-mechanically, posted as `**Plan**`.
 #   consult  AFTER a worker paused on a `**Deviation**` comment: decide what the worker
 #            does next, with revised steps if the plan is wrong from that step on, posted
-#            as `**Consult N**` — N counts the consults already on the thread. (The cap
-#            is enforced by escalate.sh counting `**Deviation**` comments, not this
-#            heading; N is for the humans and the worker reading the thread.)
+#            as `**Consult N**` — N counts the consults already on the thread. escalate.sh
+#            counts THIS SAME heading (never `**Deviation**`) against the cap, so N here
+#            and the cap there can never disagree about how many consults happened.
 #
 # Usage:
 #   bash consult.sh plan    <runid> <issue> <tier> <worktree> [--dry-run]

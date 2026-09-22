@@ -317,8 +317,9 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
-   **Keep the attempt per issue** (a number in your notes, like the round); every later spawn
-   for it passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
+   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the
+   thread or the ledger; every later spawn passes the same `--attempt` unless
+   [escalation](#escalation-by-script) moved it.
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
    (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
    `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
@@ -350,11 +351,10 @@ happened** (a timeout, or a worker that finished without a readable report) and 
 Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
 so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
 
-**With more than one codex worker in flight, wait on the SET, not on one of them:**
-`worker-report.sh --any "$RUNID" <N> <N> ...` returns the first to reach a terminal state, in
-the same one line with the same exit split; the single form would serialise SCHEDULING behind
-the slowest worker. **Pass only the issues still in flight, and drop each one as it reports** —
-a reported worker stays terminal forever and would be handed back a second time.
+**With more than one codex worker in flight, wait on the SET:** `worker-report.sh --any "$RUNID"
+<N> <N> ...` returns the first to reach a terminal state, in the same one line with the same exit
+split; the single form serialises SCHEDULING behind the slowest worker. **Pass only the issues
+still in flight, and drop each one as it reports** — a reported worker stays terminal forever.
 
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
@@ -377,12 +377,16 @@ is how you confirm which round just landed):
   reviewed branches that had already earned their merge.
 - **`issue <N> escalate deviation: ...`** → a consult, not a human — see [Escalation](#escalation).
 
-**On every wake** (any report, any idle notice, any `worker-report.sh` return) run
-`escalate.sh` for each codex worker still in flight; a stall or a full context is visible only
-from outside. Claude-backed workers top their chain and are never escalated.
+**On every wake** (any report, idle notice, or `worker-report.sh` return) run `escalate.sh`
+for each codex worker in flight; a stall or full context is only visible from outside. Claude
+claude-backed workers top their chain and are never escalated.
 
-**Cycles are counted by reading the issue** — the number of `**Review round N**` comments on it —
-never by a field you keep. See [The bus](#the-bus).
+**Cycles are counted from the AUTHORITATIVE source, never by a field you keep.** A claude
+worker posts its own `**Review round N**` comment, so a claude-backed issue's count is that
+comment count — see [The bus](#the-bus). A codex worker can also post comments, so a
+codex-backed issue's count is `wc -l` of
+`${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds` instead (one line per
+reviewer wrapper run) when that file exists, falling back to the thread when it does not.
 
 **Failure is drain-then-stop, not kill.**
 
@@ -444,12 +448,12 @@ a reviewer a map would widen its scope, which is the opposite of what it is for.
 # The planner
 
 **Standard and complex issues get a plan, written by a script on the planner cell's model and
-posted to the issue thread before the build worker is spawned.** (PRD #104.) The implementer
-chain starts on a cheap model — luna — and a cheap model executes a good plan well and recovers
-from a bad one badly. So the expensive model spends one bounded pass planning and the cheap one
-loops; the plan reaches the worker the way everything does, by reading the thread. Trivial
-issues **self-plan**. The old rule (complex only, spawned inside the build session, measured at
-26% of all work as a second exploration) is superseded: the cost is one `claude -p` call.
+posted to the issue thread before the build worker is spawned** (PRD #104). The implementer
+chain starts on a cheap model — luna — which executes a good plan well and recovers from a bad
+one badly, so the expensive model spends one bounded pass planning and the cheap one loops; the
+plan reaches the worker by reading the thread, like everything else. Trivial issues **self-plan**.
+The old rule (complex only, spawned inside the build session, measured at 26% of all work as a
+second exploration) is superseded: the cost is one `claude -p` call.
 
 **The orchestrator still never reads it.** `consult.sh` posts the `**Plan**` comment and hands
 you one line; the graph was frozen before any plan existed. Only workers, consults and
@@ -488,14 +492,14 @@ bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree>
 The decision stays on the thread; the answer you pass is a pointer to it, so no prose enters
 your context. A claude session is resumed the same way by `SendMessage` with that pointer.
 
-**Anything else — a question only a human can answer.** A codex worker escalates by ending
-its turn: no inbox, nothing to attach to, but **its context survives** — the answer goes back
-by resuming its thread with `worker-resume.sh ... --answer "..."` (same flags as above; pass
-the issue's current `--attempt`). It prints the resumed turn's report in the same one line as
-any other worker. **Do not hand-assemble a `codex exec resume`**: the sandbox does not carry
-over and there is no `-C`, so a hand-written one comes back offline and fails its own `gh`
-protocol silently ([infra's README](../../../infra/README.md#escalation-on-a-codex-worker)).
-For a claude session, **offer both routes. Recommend one.**
+**Anything else — a question only a human can answer.** A codex worker escalates by ending its
+turn: no inbox, nothing to attach to, but **its context survives** — resume its thread with
+`worker-resume.sh ... --answer "..."` (same flags as above; pass the current `--attempt`), which
+prints the resumed turn's report in the same one line. **Do not hand-assemble a `codex exec
+resume`**: the sandbox does not carry over and there is no `-C`, so a hand-written one comes back
+offline and fails its own `gh` protocol silently ([infra's
+README](../../../infra/README.md#escalation-on-a-codex-worker)). For a claude session, **offer
+both routes. Recommend one.**
 
 > #14's session is asking whether the retry budget is per-request or per-session. I can relay the
 > answer, or you can `claude attach 7f3a1c04` and talk to it directly. Recommend attaching — this
@@ -512,18 +516,18 @@ is blocked while #14 is three commits past it.
 ---
 # Escalation by script
 
-**A script decides that a worker is out of its depth — never the worker, never you.** Each tier's
-implementer cell is an ordered **chain** (luna → terra → opus for trivial and standard; opus alone
-for complex), and `spawn.sh --attempt <A>` selects the position:
+**A script decides a worker is out of its depth — never the worker, never you.** Each tier's
+implementer cell is an ordered **chain** (luna → terra → opus for trivial/standard; opus alone
+for complex); `spawn.sh --attempt <A>` selects the position:
 
 ```bash
 bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A>
 ```
 
-It prints **one line** — `<reason>: <detail>` — or **nothing**, from artifacts that already
-exist: a `failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with
-high or medium findings, a context past 256K, or an event log untouched for 20 minutes while the
-process lives. On a hit it has already posted the `**Handoff**` comment. Then:
+It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
+`failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
+medium findings, a context past 256K, or an event log untouched for 20 minutes while alive. On a
+hit it has already posted the `**Handoff**` comment. Then:
 
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
    for a codex row; verify nothing is still busy.
@@ -560,8 +564,8 @@ resolution corrupts the base branch for every issue in the run.
 ## The split
 
 **`--merge-split-at`, default 5.** `K` — the conflicted remainder — is **measured** by the fold,
-every run, for free. **The two-at-a-time path is not built**; build it when real runs report
-`K > 5` (crossover `C·K²/4 > S` with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
+every run. **Not built**; build it when real runs report `K > 5` (crossover `C·K²/4 > S`
+with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
 
 ## What is gated and what is not
 
@@ -687,13 +691,9 @@ instead of buried under a success table:
 Each of these is something a fresh session will reasonably want to add. Each was argued down:
 
 - **Two-at-a-time conflict resolution** — until a real run reports `K > 5`; the fold measures it.
-- **Recon to predict file overlap** — the fold *observes* conflicts, so predicting them is solving
-  a problem we can now just measure. (The context-map form of recon survives.)
-- **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already
-  prevents concurrent work on an interface that does not exist.
+- **Recon to predict file overlap** — the fold *observes* conflicts, so measuring beats predicting.
+- **A frozen "contract" commit of stubs / type signatures** — the `## Blocked by` DAG already prevents concurrent work on an interface that does not exist.
 - **Waves / round barriers** — continuous scheduling with slot refill is strictly better.
-- **Watch tables, claim tables, notification queues** — the issue thread replaces all three.
-- **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
+- **Watch/claim tables, notification queues** — the issue thread replaces all three. **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
 - **A worker-scoped context nudge** — nothing compounds; `escalate.sh` reads occupancy from outside.
-- **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate
-  gate only.
+- **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate gate only.

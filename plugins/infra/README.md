@@ -459,5 +459,9 @@ discovered mid-build, an approach ruled out and why. Not a progress log.
 The build session's first comment is one line: `Tackled #N on branch issue-N`, plus anything of
 note.
 
-**`**Review round N**` is the counter.** The number of those comments on an issue *is* how many
-review cycles it has had. Nothing stores it; nothing can disagree with it.
+**`**Review round N**` is the counter — for a CLAUDE-backed issue**, where the worker itself
+posts the comment. The number of those comments on an issue *is* how many review cycles it
+has had. A codex-backed issue's worker is explicitly allowed `gh issue comment` too, so its
+comment is not the authoritative count: `$RUNDIR/rounds` (one line per reviewer wrapper run,
+appended beside the comment, never read back by the worker's own logic) is — see
+[`escalate.sh`](#escalation-by-script)'s review-cap.

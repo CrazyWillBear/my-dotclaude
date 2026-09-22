@@ -136,7 +136,8 @@ assert_matches "the fixer is not defending its own code" "$BODY" "not defending 
 echo "test: the bus — the issue thread is the coordination medium"
 assert_matches "issue thread is the medium" "$BODY" "issue thread is the coordination medium"
 assert_matches "findings never pass through the orchestrator" "$BODY" "never (pass|handed) through the orchestrator"
-assert_matches "cycles are counted from the comments" "$BODY" "counted by reading the issue|number of those comments"
+assert_matches "cycles are counted from the AUTHORITATIVE source" "$BODY" "AUTHORITATIVE source"
+assert_matches "claude-backed counts the comments, codex-backed counts the ledger" "$BODY" "codex-backed issue.s count is"
 # The regenerable/not-regenerable table, brevity rationale and the review-comment example
 # moved to infra's README; the issue thread's brevity mandate itself lives in and is pinned
 # by agents/implementer.md (the contract every build session actually reads).

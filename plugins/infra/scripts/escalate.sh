@@ -69,7 +69,21 @@
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
+#   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts).
+#
+# `$RUNDIR/.started` is written once by spawn.sh, at the FIRST spawn of a run, and never
+# rewritten by a respawn — it floors the deviation/consult window for an issue's very first
+# evaluation (no `handoff.json` yet) at when THIS run began, so `**Consult**` comments a
+# PREVIOUS /orchestrate run left on the thread (permanent, unlike the run dir) cannot count
+# against this one. Every later evaluation is scoped by `handoff.json`'s own mark instead.
+#
+# `$RUNDIR/rounds` is a residual, accepted: a worker able to reach the run dir (the
+# non-default CODEX_RUN_ROOT threat model this script's siblings already name) could
+# truncate it and hide a review's findings from review-cap. It is never cleared or
+# re-verified, unlike review.txt, because — unlike review.txt — it must SURVIVE across fix
+# rounds; on the default run root it sits outside every writable root, the same acceptance
+# spawn.sh's wrapper gives review-checkout/review-scratch's parent directory.
 
 set -uo pipefail
 
@@ -119,6 +133,7 @@ COMMITS="$(git -C "$WORKTREE" log --oneline "$BASE..HEAD" 2>/dev/null)" || COMMI
 export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMMITS="$COMMITS" ESC_DRY="$DRY" \
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
+       ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
@@ -127,13 +142,25 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
 # python block skips the comment file and the mark.
 ESC_ERR="$RUNDIR/escalate-stderr.log"; [ -z "$DRY" ] || ESC_ERR=/dev/stderr
 REASON="$(python3 2>"$ESC_ERR" <<'PY'
-import glob, json, os, re, sys, time
+import datetime, glob, json, os, re, sys, time
 
 rundir  = os.environ["ESC_RUNDIR"]
 attempt = int(os.environ["ESC_ATTEMPT"])
 stall_s = float(os.environ["ESC_STALL"]) * 60
+review_s = float(os.environ["ESC_REVIEW"]) * 60
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
+
+def comment_time(c):
+    # ISO-8601 UTC, as `gh issue view --json comments` prints createdAt. A comment with no
+    # parseable timestamp is treated as arbitrarily old — never lets a stale comment count
+    # as fresh, only the reverse (fail toward excluding it, never toward trusting it).
+    try:
+        return datetime.datetime.strptime(
+            str(c.get("createdAt") or ""), "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
 
 def read(name):
     try:
@@ -143,7 +170,8 @@ def read(name):
         return None
 
 try:
-    comments = [str(c.get("body") or "") for c in (json.loads(os.environ["ESC_THREAD"]).get("comments") or [])]
+    raw_comments = json.loads(os.environ["ESC_THREAD"]).get("comments") or []
+    comments = [str(c.get("body") or "") for c in raw_comments]
 except Exception:
     print("error: the issue's comment listing is not the JSON gh returns", file=sys.stderr)
     sys.exit(2)
@@ -187,6 +215,22 @@ try:
         rounds_mark = int(m.get("rounds_mark", 0))
 except (OSError, ValueError, TypeError):
     pass
+if marked_attempt is None:
+    # No **Handoff** yet: this is the CURRENT attempt's first-ever evaluation, so there is
+    # no run-dir mark to trust — comments[0:] would include anything a PREVIOUS run left on
+    # this same issue. Floor the window at when THIS run started instead.
+    run_started = 0.0
+    try:
+        with open(os.path.join(rundir, ".started")) as fh:
+            run_started = float(fh.read().strip())
+    except (OSError, ValueError):
+        pass
+    if run_started:
+        mark = len(comments)
+        for i, c in enumerate(raw_comments):
+            if comment_time(c) >= run_started:
+                mark = i
+                break
 this_attempt = comments[mark:]
 ledger = [l for l in (read("rounds") or "").splitlines() if l.strip()]
 if reason is None:
@@ -208,8 +252,14 @@ if reason is None:
 # The marker holds the stall signal off only for as long as a review may reasonably run:
 # past the stall window a wedged `claude -p` reviewer is a stall like any other (the
 # marker has no other bound, and a hung review would otherwise be invisible forever).
+# ITS OWN BUDGET, not the stall window: `claude -p` spawning my-review may run the
+# project's done-check, and 20 minutes is not generous for that (this repo already budgets
+# 10 minutes for a single opus PLAN pass — SKILL.md). Borrowing stall_s made a slow but
+# healthy review indistinguishable from a stall, and the orchestrator's response to a stall
+# is a group kill — which takes the in-flight reviewer, and the build it was reviewing,
+# down with it.
 try:
-    reviewing = time.time() - os.stat(os.path.join(rundir, "reviewing")).st_mtime < stall_s
+    reviewing = time.time() - os.stat(os.path.join(rundir, "reviewing")).st_mtime < review_s
 except OSError:
     reviewing = False
 running = code == "" and alive and not reviewing

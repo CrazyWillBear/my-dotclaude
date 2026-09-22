@@ -90,6 +90,17 @@ posted() { grep -qx comment "$WORK/gh-argv" 2>/dev/null && echo yes || echo no; 
 
 BUILT='{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}'
 
+# age_file <path> <minutes> — set mtime <minutes> minutes in the past, portably. GNU
+# `touch -d` first; BSD/macOS `date -v` for the relative math otherwise (its `touch` has
+# no `-d`); an arbitrarily old absolute stamp if neither exists. Exact minutes only matter
+# relative to the window under test, and the last fallback errs generously old rather than
+# risking "not stale enough".
+age_file() {
+    local f="$1" mins="$2"
+    touch -d "${mins} minutes ago" "$f" 2>/dev/null \
+        || touch -t "$(date -v-"${mins}"M +%Y%m%d%H%M 2>/dev/null || echo 200001010000)" "$f" 2>/dev/null
+}
+
 # ---------------------------------------------------------------------------
 echo "test: a healthy running worker escalates NOTHING"
 mkrun "" ""
@@ -241,22 +252,27 @@ assert_empty "no rollout found: no occupancy signal, no crash" "$OUT"
 echo "test: stall — alive, unfinished, event log untouched for the window"
 sleep 120 & SLEEPER=$!
 mkrun "" "" "$SLEEPER"
-touch -d '30 minutes ago' "$RUNDIR/events.jsonl"
+age_file "$RUNDIR/events.jsonl" 30
 run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "escalates as a stall" "$OUT" "stall: no event-log activity for 30 minutes"
 assert_contains "the handoff names attempt 1" "$(cat "$WORK/body")" "attempt 1 replaced: stall"
 touch "$RUNDIR/events.jsonl"
 run r1 12 standard "$REPO" --base base
 assert_empty "a fresh event log is not a stall" "$OUT"
-touch -d '30 minutes ago' "$RUNDIR/events.jsonl"
+age_file "$RUNDIR/events.jsonl" 30
 ESCALATE_STALL_MINUTES=45 run r1 12 standard "$REPO" --base base
 assert_empty "the window is configurable" "$OUT"
 : >"$RUNDIR/reviewing"
 run r1 12 standard "$REPO" --base base
 assert_empty "the post-worker REVIEW phase (reviewing marker, no exit yet) is not a stall" "$OUT"
-touch -d '30 minutes ago' "$RUNDIR/reviewing"
-run r1 12 standard "$REPO" --base base
-assert_contains "but a review older than the stall window IS a stall — a hung reviewer is not invisible" "$OUT" "stall"
+age_file "$RUNDIR/reviewing" 30
+run r1 12 standard "$REPO" --base base --attempt 1
+assert_empty "but 30 minutes into review is still WITHIN the review's own (longer) budget" "$OUT"
+age_file "$RUNDIR/reviewing" 50
+run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "past the review budget, a hung reviewer is not invisible" "$OUT" "stall"
+ESCALATE_REVIEW_MINUTES=5 run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "the review budget is configurable, independent of the stall window" "$OUT" "stall"
 rm -f "$RUNDIR/reviewing"
 printf '0\n' >"$RUNDIR/exit"
 run r1 12 standard "$REPO" --base base

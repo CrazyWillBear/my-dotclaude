@@ -38,6 +38,16 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '
 assert_empty()    { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got '$2')"; fi; }
 assert_arg() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then ok "$1"; else no "$1 (no arg line '$3')"; fi; }
 
+# age_file <path> <minutes> — set mtime <minutes> minutes in the past, portably. GNU
+# `touch -d` first; BSD/macOS `date -v` for the relative math otherwise; an arbitrarily
+# old absolute stamp if neither exists. Exact minutes only matter relative to the window
+# under test, and the last fallback errs generously old rather than "not stale enough".
+age_file() {
+    local f="$1" mins="$2"
+    touch -d "${mins} minutes ago" "$f" 2>/dev/null \
+        || touch -t "$(date -v-"${mins}"M +%Y%m%d%H%M 2>/dev/null || echo 200001010000)" "$f" 2>/dev/null
+}
+
 # The SHIPPED table, read through the real resolver: no fixture roster here — the chain
 # under test is the one users get.
 export CLAUDE_CONFIG_DIR="$WORK/nousercfg"; mkdir -p "$CLAUDE_CONFIG_DIR"
@@ -147,7 +157,7 @@ sleep 0.5   # let the stub finish streaming before the mtime is aged
 assert_contains "session-status reads the live worker as busy" "$(bash "$INFRA/session-status.sh" r1 12 2>/dev/null)" "codex busy"
 escalate --attempt 1
 assert_empty "a fresh event log: no signal" "$OUT"
-touch -d '30 minutes ago' "$RUNDIR/events.jsonl"
+age_file "$RUNDIR/events.jsonl" 30
 escalate --attempt 1
 assert_contains "aged log + live pid = stall" "$OUT" "stall: no event-log activity for 30 minutes"
 assert_contains "handoff names attempt 1" "$(cat "$WORK/body")" "attempt 1 replaced: stall"
