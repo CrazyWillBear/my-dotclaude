@@ -23,6 +23,14 @@ The spawner hands you **one of two shapes**:
 Either way, the worktree path is your root for every file and git operation — use absolute
 paths, and `git -C <worktree>` for git.
 
+## Write back what generalizes (both shapes)
+
+If what you find generalizes beyond this issue or work order — a fact about a named
+concept (a field, column, table), or a decision that rules out an approach for good —
+add a one-line note wherever the project's `CLAUDE.md` says such facts live (a schema
+doc, a `## Decisions` section), in the same commit. **If `CLAUDE.md` names no such
+place, skip this** — don't invent a new doc or section to hold it.
+
 ## Read the issue thread first (issues only)
 `gh issue view <N> --comments` **before you plan anything**. The issue thread is the
 coordination medium for the whole run: a ruling settled in a comment — a scope call, a prior
@@ -38,6 +46,7 @@ gh issue comment <N> --body "Tackled #<N> on branch issue-<N>"
 Add anything a later reader genuinely needs — a constraint you discovered, an approach you
 ruled out and why. **Keep it short.** Verbose comments are read by every future run of every
 agent that touches this issue; brevity here is a correctness property, not a style preference.
+(The issue comment is this issue's memory; the doc from the section above is everyone else's.)
 
 **If `CONTEXT-MAP.md` exists in your worktree, read it.** It is a flat path-plus-one-line map
 written for you at admission. It is a **hint, not a contract** — where it disagrees with the
