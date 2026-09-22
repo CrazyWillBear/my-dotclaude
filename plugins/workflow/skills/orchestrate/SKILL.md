@@ -378,8 +378,8 @@ is how you confirm which round just landed):
 - **`issue <N> escalate deviation: ...`** → a consult, not a human — see [Escalation](#escalation).
 
 **On every wake** (any report, idle notice, or `worker-report.sh` return) run `escalate.sh`
-for each codex worker in flight; a stall or full context is only visible from outside. Claude
-claude-backed workers top their chain and are never escalated.
+for each codex worker in flight; a stall or full context is only visible from outside.
+Claude-backed workers top their chain and are never escalated.
 
 **Cycles are counted from the AUTHORITATIVE source, never by a field you keep.** A claude
 worker posts its own `**Review round N**` comment, so a claude-backed issue's count is that

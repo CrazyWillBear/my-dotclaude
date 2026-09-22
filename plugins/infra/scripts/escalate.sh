@@ -69,7 +69,8 @@
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
-#   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below)
+#   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
+#   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts).
 #
 # `$RUNDIR/.started` is written once by spawn.sh, at the FIRST spawn of a run, and never
@@ -78,12 +79,14 @@
 # PREVIOUS /orchestrate run left on the thread (permanent, unlike the run dir) cannot count
 # against this one. Every later evaluation is scoped by `handoff.json`'s own mark instead.
 #
-# `$RUNDIR/rounds` is a residual, accepted: a worker able to reach the run dir (the
-# non-default CODEX_RUN_ROOT threat model this script's siblings already name) could
-# truncate it and hide a review's findings from review-cap. It is never cleared or
-# re-verified, unlike review.txt, because — unlike review.txt — it must SURVIVE across fix
-# rounds; on the default run root it sits outside every writable root, the same acceptance
-# spawn.sh's wrapper gives review-checkout/review-scratch's parent directory.
+# `$RUNDIR/rounds` AND `$RUNDIR/.started` are residuals, accepted: a worker able to reach the
+# run dir (the non-default CODEX_RUN_ROOT threat model this script's siblings already name)
+# could truncate `rounds` to hide a review's findings from review-cap, or future-date
+# `.started` to make every comment on the thread read as pre-run and permanently empty the
+# deviation-cap window. Neither is cleared or re-verified, unlike review.txt, because —
+# unlike review.txt — both must SURVIVE across fix rounds/respawns; on the default run root
+# both sit outside every writable root, the same acceptance spawn.sh's wrapper gives
+# review-checkout/review-scratch's parent directory.
 
 set -uo pipefail
 

@@ -268,16 +268,51 @@ assert_empty "the post-worker REVIEW phase (reviewing marker, no exit yet) is no
 age_file "$RUNDIR/reviewing" 30
 run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "but 30 minutes into review is still WITHIN the review's own (longer) budget" "$OUT"
-age_file "$RUNDIR/reviewing" 50
-run r1 12 standard "$REPO" --base base --attempt 1
-assert_contains "past the review budget, a hung reviewer is not invisible" "$OUT" "stall"
+# Same 30-minute-old marker: only a SHORTER configured budget can make this fire, so this
+# is the one case that actually exercises ESC_REVIEW rather than just outliving the default.
 ESCALATE_REVIEW_MINUTES=5 run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "the review budget is configurable, independent of the stall window" "$OUT" "stall"
+age_file "$RUNDIR/reviewing" 50
+run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "past the DEFAULT review budget too, a hung reviewer is not invisible" "$OUT" "stall"
 rm -f "$RUNDIR/reviewing"
 printf '0\n' >"$RUNDIR/exit"
 run r1 12 standard "$REPO" --base base
 assert_empty "a FINISHED worker with an old log is not a stall" "$OUT"
 kill "$SLEEPER" 2>/dev/null; SLEEPER=""
+
+echo "test: comments from a PREVIOUS run do not leak into a fresh run's caps (review round 7/8)"
+# No handoff.json yet (this attempt's very first evaluation) and a .started marker AFTER
+# every comment's createdAt: everything on the thread belongs to a run that already ended.
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 2"}' 0
+printf '9999999999\n' >"$RUNDIR/.started"
+OLD='{"comments":[{"body":"**Consult 1**","createdAt":"2020-01-01T00:00:00Z"},{"body":"**Consult 2**","createdAt":"2020-01-01T00:00:01Z"}]}'
+STUB_GH_COMMENTS="$OLD" run r1 12 standard "$REPO" --base base
+assert_empty "consults from a stale prior run, all older than .started, do not count" "$OUT"
+# The identical two comments, with a .started BEFORE their createdAt, count normally —
+# proving the exclusion above is the timestamp comparison, not an empty ledger by accident.
+printf '1\n' >"$RUNDIR/.started"
+STUB_GH_COMMENTS="$OLD" run r1 12 standard "$REPO" --base base
+assert_contains "but consults created during THIS run's window do" "$OUT" "deviation-cap"
+# A comment with NO createdAt at all is treated as arbitrarily old — excluded, never
+# trusted as fresh — so a malformed or stubbed thread fails toward under-counting.
+printf '1\n' >"$RUNDIR/.started"
+NOTS='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**","createdAt":"2020-01-01T00:00:01Z"}]}'
+STUB_GH_COMMENTS="$NOTS" run r1 12 standard "$REPO" --base base
+assert_empty "a comment missing createdAt is excluded rather than trusted as fresh" "$OUT"
+# With NO .started at all (the fixtures' usual case, matching every other test in this
+# file), the old behavior holds: everything on the thread counts.
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 2"}' 0
+STUB_GH_COMMENTS="$OLD" run r1 12 standard "$REPO" --base base
+assert_contains "with no .started marker at all, nothing new is excluded" "$OUT" "deviation-cap"
+# Once a handoff HAS happened, the run-dir mark governs and .started is never consulted —
+# even a far-future .started must not re-exclude comments the mark already includes.
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"deviation: step 2"}' 0
+printf '9999999999\n' >"$RUNDIR/.started"
+printf '{"attempt": 0, "mark": 0, "rounds_mark": 0}\n' >"$RUNDIR/handoff.json"
+STUB_GH_COMMENTS="$OLD" run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "a real mark of 0 is honored even past a far-future .started" "$OUT" "deviation-cap"
+rm -f "$RUNDIR/handoff.json" "$RUNDIR/.started"
 
 echo "test: the handoff is posted ONCE per attempt — this runs on every wake"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0

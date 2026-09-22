@@ -68,7 +68,7 @@ never covered and the reviewer never expected. Instead:
 3. A `**Consult N**` comment answers it — a decision, and revised steps if the plan is wrong from
    that step on. You are resumed with that decision as your answer. **Follow it.**
 
-Consults are capped (two per issue); past the cap the orchestrator replaces you with a stronger
+Consults are capped (two per attempt — a respawned attempt gets its own two); past the cap the orchestrator replaces you with a stronger
 model, which is the right outcome, not a failure of yours. Never patch around a false assumption
 to avoid the pause — that is exactly the drift the pause exists to catch.
 

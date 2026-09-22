@@ -20,7 +20,8 @@
 #   ----------          --------------
 #   spawned             session-status.sh / `claude agents --json`
 #   merged              git log <base>..orchestrate-<ts>
-#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS ON THE ISSUE — never a field
+#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS (claude-backed) OR $RUNDIR/rounds
+#                       (codex-backed, whose worker can also post that comment) — never a field
 #   escalated + fix     the issue comment the escalation protocol requires
 #
 # `respawned` is genuinely underivable: nothing in git or GitHub records that a
