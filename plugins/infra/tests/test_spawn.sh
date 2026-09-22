@@ -52,7 +52,7 @@ err() { cat "$WORK/err"; }
 # pin one instead of riding whatever the shipped table happens to say this week. The
 # claude-path assertions below run against CFG_CLAUDE; the codex section further down
 # swaps in CFG_CODEX, which is what proves a codex-routed tier reaches the codex path.
-# One test deliberately uses the REAL shipped table — to pin that it is still claude.
+# One test deliberately uses the REAL shipped table — to pin the luna → terra → opus chain.
 CFG_CLAUDE="$WORK/cfg-claude"
 mkdir -p "$CFG_CLAUDE"
 cat >"$CFG_CLAUDE/model-tiers.json" <<'JSON'
@@ -161,6 +161,8 @@ assert_arg "no git worktree" "$out" "Bash(git worktree:*)"
 assert_arg "no gh pr" "$out" "Bash(gh pr:*)"
 assert_arg "no gh issue close" "$out" "Bash(gh issue close:*)"
 assert_arg "no gh issue edit" "$out" "Bash(gh issue edit:*)"
+assert_arg "no gh api — it can close, edit and merge around every other rule" "$out" "Bash(gh api:*)"
+assert_arg "no gh repo" "$out" "Bash(gh repo:*)"
 
 echo "test: push and issue comment stay ALLOWED — the thread is the bus"
 assert_not_contains "push not denied" "$out" "Bash(git push"
@@ -844,6 +846,26 @@ CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     >/dev/null 2>"$WORK/err"
 assert_equals "exits 1 on a traversal runid" "$?" "1"
 assert_contains "names the value and what is allowed" "$(err)" "runid may only contain"
+
+echo "test: a real codex spawn with NO codex CLI fails loud, naming the user-table fix (review fix 3)"
+# Every binary the real PATH has, EXCEPT codex — so the only thing this run lacks is the CLI.
+NOCODEX="$WORK/nocodex"; mkdir -p "$NOCODEX"
+IFS=: read -ra _dirs <<<"$PATH"
+for d in "${_dirs[@]}"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+        n="$(basename "$f")"
+        [ "$n" = codex ] && continue
+        [ -e "$NOCODEX/$n" ] || ln -s "$f" "$NOCODEX/$n" 2>/dev/null
+    done
+done
+rm -rf "$CODEX_ROOT/nocodex"
+PATH="$NOCODEX" CODEX_RUN_ROOT="$CODEX_ROOT/nocodex" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    "$(command -v bash)" "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "says the CLI is missing" "$(err)" "codex CLI is not installed"
+assert_contains "and how to route around it" "$(err)" "model-tiers.json"
+if [ -e "$CODEX_ROOT/nocodex" ]; then no "left a run dir behind"; else ok "and leaves no run dir behind"; fi
 
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"

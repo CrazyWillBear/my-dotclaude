@@ -41,7 +41,7 @@ INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "error: $*" >&2; exit 1; }
 
 USAGE="usage: consult.sh plan|consult <runid> <issue> <tier> <worktree> [--dry-run]"
-ROLE="${1:-}"; RUNID="${2:-}"; ISSUE="${3#\#}"; TIER="${4:-}"; WORKTREE="${5:-}"
+ROLE="${1:-}"; RUNID="${2:-}"; ISSUE="${3:-}"; ISSUE="${ISSUE#\#}"; TIER="${4:-}"; WORKTREE="${5:-}"
 shift 5 2>/dev/null || die "$USAGE"
 DRY=""
 while [ $# -gt 0 ]; do
@@ -143,6 +143,7 @@ CMD=(claude -p
                        "Bash(git commit:*)" "Bash(git push:*)" "Bash(git merge:*)"
                        "Bash(git worktree:*)" "Bash(gh issue comment:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)" "Bash(gh pr:*)"
+                       "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)"
      -- "$PROMPT")
 
 if [ -n "$DRY" ]; then

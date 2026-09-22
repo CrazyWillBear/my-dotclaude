@@ -14,8 +14,11 @@ inspection.
 ## Where the plan goes, and who reads it
 
 **Session lane (`/orchestrate --issues` / `--prd`): standard and complex issues get a plan,
-and it lives on the issue thread.** `consult.sh plan` runs this contract as a one-shot call on
-the tier's **planner cell** (opus medium for standard, fable medium for complex) **before the
+and it lives on the issue thread.** `consult.sh plan` (in the infra plugin) carries its own
+copy of this output contract as a one-shot `claude -p` prompt — infra cannot address this file
+by path (a marketplace install caches each plugin separately; docs/swarm-design.md § Plugin
+split), so the two are kept in step by hand and both grep tests pin the same section names —
+on the tier's **planner cell** (opus medium for standard, fable medium for complex) **before the
 build worker is spawned**, and posts the output as the `**Plan**` comment. The implementer —
 a cheaper model (luna, then terra, then opus as the chain escalates) — reads the thread before
 doing anything, so it receives the plan the way it receives everything else. That is the

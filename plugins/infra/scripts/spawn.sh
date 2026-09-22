@@ -78,8 +78,11 @@
 #                               worker was killed by a safety classifier, correctly).
 #                               `git push` and `gh issue comment` are deliberately
 #                               ALLOWED — a comment is additive, and the issue thread
-#                               is the coordination medium. IDENTICAL for both forms:
-#                               a peer has more standing, not more reach.
+#                               is the coordination medium. `gh api` / `gh repo` /
+#                               `gh workflow` / `gh release` are denied too: `gh api`
+#                               can close, edit and merge, so denying `gh pr` alone
+#                               fenced nothing. IDENTICAL for both forms: a peer has
+#                               more standing, not more reach.
 #   --model / --effort          a worker is routed by the issue's persisted tier, via
 #                               resolve-tier.sh. A PEER IS NOT TIER-ROUTED — its roster
 #                               row carries the model, so it passes them explicitly.
@@ -423,6 +426,13 @@ if [ "$BACKEND" = codex ]; then
 # ---------------------------------------------------------------------------
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 
+# THE SHIPPED TABLE IS CODEX-FIRST (#104), and this kit installs on other machines. Without
+# this check a missing CLI surfaces as a generic `failed` worker with no hint why. On the
+# real path only: a dry run must build its argv without the binary, as the tests do.
+if [ -z "$DRY" ] && ! command -v codex >/dev/null 2>&1; then
+    die "tier '$TIER' attempt $ATTEMPT routes to codex but the codex CLI is not installed — write a claude-only table at \${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json"
+fi
+
 # Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
 # issue and then cannot commit — and says so only in its final message. Fail here
@@ -686,6 +696,7 @@ CMD=(claude --bg -n "$NAME"
      "${EXTRA[@]}"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
+                       "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)"
      -- "$TASK")
 
 # --dry-run prints ONE ARGUMENT PER LINE, unquoted — that is what makes the flag set

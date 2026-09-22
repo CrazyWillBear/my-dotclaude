@@ -6,8 +6,9 @@
 # and, above all, that the obligations the run depends on are all still stated
 # (this test is the structural regression lock for the issue contract):
 #
-#   1. File exists at the expected discovery path; model pins to sonnet and
-#      effort stays max.
+#   1. File exists at the expected discovery path; model pins to opus (the
+#      fallback for a spawn that omits an override — sonnet left the roster in
+#      #104) and effort stays max.
 #   2. Both input shapes are described: issue (number + body + worktree +
 #      issue-<N> branch) and work order (plan text + worktree + branch +
 #      commit-scope hint).
@@ -46,9 +47,10 @@ if [ -f "$AGENT_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter — name, model: sonnet pin, and max effort survive"
+echo "test: frontmatter — name, model: opus pin, and max effort survive"
 assert_contains "name field present" "$content" "name: implementer"
-assert_contains "model pinned to sonnet" "$content" "model: sonnet"
+assert_contains "model pinned to opus (sonnet is out of the roster, #104)" "$content" "model: opus"
+assert_not_contains "no sonnet fallback" "$content" "model: sonnet"
 assert_contains "effort stays max" "$content" "effort: max"
 
 # ---------------------------------------------------------------------------

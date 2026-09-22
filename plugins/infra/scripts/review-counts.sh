@@ -57,8 +57,9 @@ if not marks:
               "its format has drifted and an unreadable review is not a clean one",
               file=sys.stderr)
         sys.exit(1)
-    if re.search(r"(?mi)^\s*no findings\.?\s*$", text):
-        # A genuinely clean review: the reviewer said so in the one shape it was given.
+    if text.strip() == "No findings.":
+        # A genuinely clean review: the ENTIRE output is the one literal it was given.
+        # Anything around it is a reviewer that ignored its format, and that is refused.
         print("0 high, 0 medium, 0 low")
         sys.exit(0)
     print("error: the review has no finding list items and no 'No findings.' line — "

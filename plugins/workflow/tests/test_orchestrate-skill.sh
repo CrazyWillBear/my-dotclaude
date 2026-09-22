@@ -102,6 +102,11 @@ else
         "backend: .?claude.? in every cell"
 fi
 
+echo "test: a subagent runs the chain's TOP cell — the Agent tool takes no codex model (review fix 2)"
+assert_matches "trivial's subagent is spawned at the top cell" "$BODY" "trivial [$][(][(]chain-1"
+assert_matches "never the frontmatter default" "$BODY" "never the frontmatter default"
+assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*implementer_chain-1"
+
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
 

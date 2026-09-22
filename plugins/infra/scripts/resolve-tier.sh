@@ -84,9 +84,9 @@ if [ -z "$PLUGIN_ROOT" ]; then
 fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
 
-# A USER table wins over the shipped one. The shipped table is claude in every cell so a fresh
-# install works with no codex CLI; anyone who wants codex workers writes their own table instead
-# of editing a plugin file that the next kit update overwrites.
+# A USER table wins over the shipped one. The shipped table is codex-first (#104); a machine
+# without the codex CLI writes its own claude-only table instead of editing a plugin file that
+# the next kit update overwrites (spawn.sh refuses a codex spawn with no CLI and says so).
 #
 # Only when RESOLVE_TIER_ROOT is UNSET: that variable is the test seam and stays authoritative,
 # so a test asking for a specific table never silently reads the developer's real ~/.claude one.

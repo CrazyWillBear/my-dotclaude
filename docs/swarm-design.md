@@ -316,7 +316,8 @@ one-shot, so it maps onto `codex exec`:
   must be re-passed through `-c` and the resume launched from the worktree directory. `-m` must
   be re-passed for the same reason it must on a fresh run.
 - **Review.** **Superseded by #104: a codex-built branch is reviewed by the CLAUDE reviewer** —
-  `review-cmd.sh` builds a `claude -p` call at the reviewer cell's model and effort that spawns
+  `review-cmd.sh` builds a `claude -p` call at the reviewer cell's model (its effort reaches only
+  the launcher; the my-review agent's frontmatter pins its own) that spawns
   `personal-tools:my-review` on the commit range, in the disposable clone, and emits
   `- [Pn] title — path:line` items or the literal `No findings.` for `review-counts.sh`.
   `codex exec review` was a working reviewer, but it could not be pointed at a claude model, so

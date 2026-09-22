@@ -23,7 +23,7 @@ plugins/workflow/
 │   ├── to-prd/SKILL.md               # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   └── to-issues/SKILL.md            # /to-issues <#> — slice a PRD into vertical-slice issues, tiered for /orchestrate
 ├── agents/
-│   ├── implementer.md                # sonnet, max effort — builds one issue in one worktree
+│   ├── implementer.md                # opus, max effort (fallback; spawns pass the chain's top cell) — builds one issue in one worktree
 │   ├── merger.md                     # opus, xhigh effort — resolves the fold's conflicted remainder
 │   └── planner.md                    # opus, high effort — the plan contract; in the session lane consult.sh runs it on the planner cell and posts **Plan** to the issue
 ├── scripts/

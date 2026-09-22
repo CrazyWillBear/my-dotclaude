@@ -131,9 +131,10 @@ One unit of work, you are present, nothing to schedule. This is what `/pipeline`
 `resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is `backend: codex` in some
 cells (the trivial and standard implementer chains start on luna — PRD #104), and a user table
 at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
-look. **If a cell does say `codex`, do not pass its model to `Agent`** — substitute the
-claude-side roster: trivial `haiku` (reviewer `opus`), standard `opus` (reviewer `opus`),
-complex `opus`. The chain, the plan comment and the escalation script are session-lane only.
+look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
+**top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
+(opus medium in the shipped table); a codex reviewer cell becomes `opus`. The plan comment
+and the escalation script are session-lane only.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -307,7 +308,9 @@ model can, and historically did, hallucinate.
    ```
    It posts the `**Plan**` comment and prints one line. A non-zero exit is a failed plan: do
    not spawn a worker onto an issue with no plan — report it and skip the issue.
-4. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**;
+4. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**
+   at the chain's **top cell** (`resolve-tier.sh trivial $((chain-1))` — always claude, since
+   the `Agent` tool takes no codex model; never the frontmatter default);
    `standard`/`complex` → a **session**, at **attempt 0** of the tier's implementer chain:
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
@@ -453,8 +456,7 @@ you one line; the graph was frozen before any plan existed. Only workers, consul
 `escalate.sh` read the thread ([Context discipline](#context-discipline)).
 
 **Consults are the same script in its other role:** a worker that hits a false plan assumption
-posts a `**Deviation**` and pauses; `consult.sh consult` answers on the planner's model. Two per
-issue; the third deviation escalates.
+posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's model. Two per issue.
 
 ---
 
@@ -531,9 +533,8 @@ process lives. On a hit it has already posted the `**Handoff**` comment. Then:
    handoff — nothing is relayed.
 4. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
-Nothing is resumed across a model change. The thresholds are environment-configurable
-(`ESCALATE_STALL_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); the run log's
-`planned` / `consulted` / `escalated` counts are the data that decides whether they move.
+Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
+`ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); the run log's counts decide if they move.
 
 ---
 
@@ -693,7 +694,6 @@ Each of these is something a fresh session will reasonably want to add. Each was
 - **Waves / round barriers** — continuous scheduling with slot refill is strictly better.
 - **Watch tables, claim tables, notification queues** — the issue thread replaces all three.
 - **Per-slice PRs** — see [What is gated](#what-is-gated-and-what-is-not).
-- **A worker-scoped context nudge** — nothing compounds: every fix round is a fresh session, and
-  a codex worker's occupancy is read by `escalate.sh` from outside.
+- **A worker-scoped context nudge** — nothing compounds; `escalate.sh` reads occupancy from outside.
 - **A periodic wrap-and-handoff nudge** — deliberately deleted; `watchdog.sh` is the orchestrate
   gate only.

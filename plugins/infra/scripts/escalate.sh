@@ -25,6 +25,12 @@
 #                  third deviation escalates rather than drawing a third consult)
 #   review-cap     the latest `**Review round N**` with N >= 2 still has high or medium
 #                  findings — the fix session is spawned at the next chain position
+#
+# THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
+# deviation would otherwise fire on every wake forever and walk the whole chain in three
+# wakes without the replacement ever working. Only comments AFTER the most recent
+# `**Handoff**` count: each attempt is judged on evidence it produced. (`failed` needs no
+# such scoping — spawn.sh clears `exit` and `last-message.txt` on every respawn.)
 #   occupancy      the worker's context is at or above the threshold (256K)
 #   stall          the process is alive, no exit code, and the EVENT LOG has not changed
 #                  for the stall window (20 min). Event-log staleness, not worktree mtime:
@@ -48,7 +54,7 @@ set -uo pipefail
 die() { echo "error: $*" >&2; exit 1; }
 
 USAGE="usage: escalate.sh <runid> <issue> <tier> <worktree> --base BRANCH [--attempt N] [--dry-run]"
-RUNID="${1:-}"; ISSUE="${2#\#}"; TIER="${3:-}"; WORKTREE="${4:-}"
+RUNID="${1:-}"; ISSUE="${2:-}"; ISSUE="${ISSUE#\#}"; TIER="${3:-}"; WORKTREE="${4:-}"
 shift 4 2>/dev/null || die "$USAGE"
 BASE=""; ATTEMPT=0; DRY=""
 while [ $# -gt 0 ]; do
@@ -137,14 +143,16 @@ elif code == "0" and status == "failed":
 elif code == "" and pid and not alive:
     reason = ("failed", "the worker died with no exit code (pid %s is gone)" % pid)
 
-# --- the thread: deviations and review rounds -----------------------------------------
+# --- the thread: deviations and review rounds, THIS attempt's only ------------------------
+last_handoff = max((i for i, c in enumerate(comments) if re.search(r"(?m)^\*\*Handoff\*\*", c)), default=-1)
+this_attempt = comments[last_handoff + 1:]
 if reason is None:
-    devs = sum(1 for c in comments if re.search(r"(?m)^\*\*Deviation\*\*", c))
+    devs = sum(1 for c in this_attempt if re.search(r"(?m)^\*\*Deviation\*\*", c))
     if devs > cap:
         reason = ("deviation-cap", "%d deviations on the thread; the consult cap is %d" % (devs, cap))
 if reason is None:
     rounds = []
-    for c in comments:
+    for c in this_attempt:
         m = re.search(r"(?m)^\*\*Review round (\d+)\*\*\s*[—-]+\s*(\d+) high, (\d+) medium", c)
         if m:
             rounds.append(tuple(int(x) for x in m.groups()))

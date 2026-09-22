@@ -96,7 +96,7 @@ assert_not_contains "never the implementer's model" "$OUT" "gpt-5.6-luna"
 assert_arg "the planner cell's effort" "$OUT" "medium"
 assert_arg "unattended: bypassPermissions" "$OUT" "bypassPermissions"
 assert_arg "fenced to the worktree" "$OUT" "$WT"
-for t in Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)" "Bash(gh issue comment:*)" "Bash(gh issue close:*)" "Bash(gh pr:*)"; do
+for t in Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)" "Bash(gh issue comment:*)" "Bash(gh issue close:*)" "Bash(gh pr:*)" "Bash(gh api:*)" "Bash(gh repo:*)"; do
     assert_arg "denies $t" "$OUT" "$t"
 done
 assert_contains "the prompt reads the thread first" "$OUT" "gh issue view 12 --comments"

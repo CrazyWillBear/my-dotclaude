@@ -134,6 +134,22 @@ assert_contains "the third is the signal" "$OUT" "deviation-cap: 3 deviations"
 STUB_GH_COMMENTS="$THREE" ESCALATE_CONSULT_CAP=3 run r1 12 standard "$REPO" --base base
 assert_empty "the cap is configurable" "$OUT"
 
+echo "test: thread signals are scoped to THIS attempt — after the last **Handoff** (review fix 1)"
+# Comments are permanent. Without the scope, the three deviations that escalated attempt 0
+# would fire again on attempt 1's first wake, and again on attempt 2's, walking the whole
+# chain in three wakes with no replacement ever doing a minute of work.
+AFTER='{"comments":[{"body":"**Plan**\n\n1."},{"body":"**Deviation**\n\nstep 2"},{"body":"**Consult 1**\n\ngo"},{"body":"**Deviation**\n\nstep 3"},{"body":"**Consult 2**\n\ngo"},{"body":"**Deviation**\n\nstep 4"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap: 3 deviations"},{"body":"**Deviation**\n\nstep 5"}]}'
+STUB_GH_COMMENTS="$AFTER" run r1 12 standard "$REPO" --base base --attempt 1
+assert_empty "attempt 1 sees ONE deviation, not four" "$OUT"
+AFTER3='{"comments":[{"body":"**Deviation**\n\n1"},{"body":"**Deviation**\n\n2"},{"body":"**Deviation**\n\n3"},{"body":"**Handoff** — attempt 0 replaced: deviation-cap"},{"body":"**Deviation**\n\na"},{"body":"**Consult 1**"},{"body":"**Deviation**\n\nb"},{"body":"**Consult 2**"},{"body":"**Deviation**\n\nc"}]}'
+STUB_GH_COMMENTS="$AFTER3" run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "and escalates again only on its OWN third" "$OUT" "deviation-cap: 3 deviations"
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+R2H='{"comments":[{"body":"**Review round 2** — 0 high, 1 medium, 0 low"},{"body":"**Handoff** — attempt 0 replaced: review-cap"}]}'
+STUB_GH_COMMENTS="$R2H" run r1 12 standard "$REPO" --base base --attempt 1
+assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
+mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
+
 echo "test: review-cap — a second round with high or medium findings"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 R2='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low\n\n- x"},{"body":"**Review round 2** — 0 high, 1 medium, 3 low\n\n- y"}]}'

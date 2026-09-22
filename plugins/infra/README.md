@@ -94,8 +94,9 @@ writable root), and the one that did substituted its own assessment and reported
 independent review (#96). It now runs after the worker exits, against a base pinned to a
 SHA before the worker started — `refs/` is writable, so a base named by branch could be
 moved by the worker to empty its own diff. **It is the claude reviewer** (`review-cmd.sh`:
-`claude -p` at the reviewer cell's model and effort, spawning `personal-tools:my-review` on the
-commit range, in the disposable clone) — `codex exec review` could not honour a claude reviewer
+`claude -p` at the reviewer cell's model, spawning `personal-tools:my-review` on the commit
+range, in the disposable clone; the cell's effort reaches only the launcher session — the
+agent's frontmatter pins its own, since the Agent tool has no effort parameter) — `codex exec review` could not honour a claude reviewer
 cell, so "reviewer: opus" was silently false for every codex-built branch (#104). It emits
 `- [Pn] title — path:line` items or the literal `No findings.`; `review-counts.sh` refuses
 anything else, and the wrapper posts the `**Review round N**` comment exactly as before.
@@ -143,28 +144,6 @@ branches, so anything this script cannot characterise must not look like one. `f
 State comes from `session-status.sh` rather than a second copy of the pid/exit rules, whose
 subtleties (mid-launch is `busy`; a dead pid with no exit file is `failed`, never a quiet `done`)
 are exactly the half that would silently rot in a private reimplementation.
-
-### `review-tokens.sh` — the reviewer's real token cost
-
-`codex exec review --json`'s own `turn.completed` event reports an ALL-ZERO usage block —
-ground-truthed on two independent runs (#98). The review itself runs as a `subagent` thread
-forked from the reviewer's own top-level thread, and THAT subagent is what accumulates real
-`token_usage_record` entries, in its own rollout file under `~/.codex/sessions`. No `--json`
-needed: every `codex exec` invocation prints `session id: <uuid>` in its plain banner, already
-captured, unconditionally, in `review-stderr.log` — that uuid is the reviewer's own thread id,
-and it joins to the subagent's rollout by `session_id` (the subagent's own `id` differs, which
-is what tells it apart from the reviewer's own rollout).
-
-```bash
-bash ~/.claude/kit/infra/scripts/review-tokens.sh <review-stderr-log>
-```
-
-Prints the subagent's LAST `token_usage_record`'s `turn_token_usage` as one line of compact
-JSON, or refuses (exit 1, nothing on stdout) if the banner or the join is missing — the same
-discipline `review-counts.sh` uses: cost visibility is not a merge gate, but an invented number
-is still an invented number. `worker-report.sh` calls it best-effort and prints the result to
-**stderr only**, right after the independent review is confirmed present — the one-line stdout
-contract the orchestrator parses never changes.
 
 ### Escalation on a codex worker
 
