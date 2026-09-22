@@ -200,8 +200,11 @@ EFFORT="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_effort=//p' | head -1
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
 CHAIN="$(printf '%s\n' "$ROSTER"   | sed -n 's/^implementer_chain=//p'   | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
-[ "$ATTEMPT" -lt "${CHAIN:-1}" ] \
-    || die "attempt $ATTEMPT is past the top of tier '$TIER' implementer chain (length ${CHAIN:-1}) — drain, do not respawn"
+if [ "$ATTEMPT" -ge "${CHAIN:-1}" ]; then
+    # The refused resolve fell back (chain=1); name the REAL length from the chain head.
+    REAL="$(bash "$INFRA/resolve-tier.sh" "$TIER" 0 2>/dev/null | sed -n 's/^implementer_chain=//p' | head -1)"
+    die "attempt $ATTEMPT is past the top of tier '$TIER' implementer chain (length ${REAL:-1}) — drain, do not respawn"
+fi
 # resolve-tier.sh validates the backend against the model and falls back rather than
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
