@@ -127,6 +127,8 @@ while : ; do
         BEGIN { plen = length(pre) }
         $3 == "codex" && ($4 == "done" || $4 == "failed" || $4 == "blocked") && substr($1, 1, plen) == pre {
             n = substr($1, plen + 1)
+            if (n !~ /^[0-9]+(-a[0-9]+(-r[0-9]+)?)?$/) next
+            sub(/-a[0-9]+(-r[0-9]+)?$/, "", n)
             if (index(want, " " n " ") > 0) { print n " " $4; exit }
         }')"
     if [ -n "$HIT" ]; then

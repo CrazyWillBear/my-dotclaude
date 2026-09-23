@@ -108,6 +108,16 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "the exact report line" "$OUT" \
     "issue 41 built head=abc1234 review=1 high, 2 medium, 3 low"
 
+echo "test: worker-report resolves an attempt and fix-round suffix back to its issue"
+mkrun r1 48 "$(dead)" 0 \
+  '{"issue":48,"status":"fixed","round":3,"head":"feed123","review":"","note":""}'
+mkreview r1 48 0 0 0
+printf '%s\n' 'orch-r1-issue-48-a2-r3' >"$CODEX_ROOT/r1/issue-48/session-name"
+run r1 48 --interval 1 --timeout 3
+assert_equals "exit 0" "$RC" "0"
+assert_equals "suffix maps to the base issue report" "$OUT" \
+    "issue 48 fixed round=3 head=feed123 review=0 high, 0 medium, 0 low"
+
 
 echo "test: a fix round carries its round number, so the orchestrator knows which landed"
 mkrun r1 42 "$(dead)" 0 \
