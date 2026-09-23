@@ -335,7 +335,9 @@ if [ "$BACKEND" = codex ]; then
    count you made up:
       {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
    or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
-   on something only a human can answer? \"status\": \"escalate\", question in \"note\"."
+   on something only a human can answer? \"status\": \"escalate\", question in \"note\". Missing
+   infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
+   with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
     FIX_REVIEW_STEP="4. Do NOT re-review the delta yourself. The independent reviewer runs again after
    you exit and posts the next round's comment"
     FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
@@ -343,7 +345,9 @@ if [ "$BACKEND" = codex ]; then
    required; send \"\" for any that does not apply, \"review\" included — the reviewer
    fills that in, not you:
       {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
-   or the same shape with \"status\": \"failed\" and the reason in \"note\"."
+   or the same shape with \"status\": \"failed\" and the reason in \"note\". Missing
+   infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
+   with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
 else
     REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
    my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
@@ -366,14 +370,18 @@ else
 
 Never merge, never open a PR, never close or edit the issue. If you are stuck on
 something only a human can answer, SendMessage \"$ORCH\" with \"issue $ISSUE escalate
-<question>\" and wait."
+<question>\" and wait. Or, if infrastructure you cannot create is missing (a database, a
+service, a credential), send: issue $ISSUE blocked infra: <what is missing> — never an
+escalate deviation."
     FIX_REVIEW_STEP="4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
    review, then POST its findings YOURSELF as the next \"**Review round**\" comment, in
    the same shape as the previous one, incrementing the round number. The reviewer
    POSTS NOTHING itself, and that comment is the run's cycle counter."
     FIX_REPORT_STEP="5. REPORT, THEN STOP — plain output is invisible. SendMessage to \"$ORCH\":
       issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
-   or \"issue $ISSUE failed <one short line why>\"."
+   or \"issue $ISSUE failed <one short line why>\". Or, if infrastructure you cannot create is
+   missing (a database, a service, a credential): issue $ISSUE blocked infra: <what is missing>
+   — never an escalate deviation."
 fi
 
 if [ "$ROLE" = build ]; then
@@ -576,7 +584,7 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot 
   "type": "object",
   "properties": {
     "issue":  { "type": "integer" },
-    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate"] },
+    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate", "blocked"] },
     "round":  { "type": "integer" },
     "head":   { "type": "string" },
     "review": { "type": "string" },
