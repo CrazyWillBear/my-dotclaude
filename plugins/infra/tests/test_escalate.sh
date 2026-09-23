@@ -401,6 +401,7 @@ if [ -e "$RUNDIR/handoff.json" ]; then no "no-progress wrote handoff.json"; else
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
 printf '0\t2\tsrc/a.py\n' >"$RUNDIR/recurrence"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**\n\n**Decision** — x"}]}' \
 run r1 12 standard "$REPO" --base base --attempt 0
 assert_not_contains "a reduction from 2 to 1 is not no-progress" "$OUT" "no-progress"
 assert_contains "the lower count still reaches the per-attempt review-cap" "$OUT" "review-cap"
