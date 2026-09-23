@@ -4,6 +4,7 @@
 #
 # Usage:
 #   bash follow-up.sh <runid> <issue> <tier> <graph.json> [--attempt N]
+#   bash follow-up.sh --integration <runid> <base-sha> <head-sha> <graph.json>
 #
 # A merge that lands capped (findings remained at --max-cycles) leaves work behind.
 # Instead of holding its dependents by hand, this files one `ready-for-agent` issue
@@ -29,6 +30,8 @@
 # Only lows open → nothing filed, nothing touched, exit 0.
 #
 # Output: `follow-up: #<N> → #<child> (tier:<tier>) re-blocked #85, #95` on stdout.
+# The end-of-run integration mode (#121) reviews the folded SHA range, files one
+# high/medium cross-issue follow-up on the highest graph tier, and leaves the graph alone.
 #
 # Seams (env): CODEX_RUN_ROOT (as spawn.sh), FOLLOWUP_INFRA (review-counts.sh's and
 # resolve-tier.sh's dir, default ~/.claude/kit/infra/scripts), RESOLVE_TIER_ROOT, HOME / CLAUDE_PROJECT_DIR (run-log keying).
@@ -38,13 +41,31 @@ set -uo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
-USAGE="usage: follow-up.sh <runid> <issue> <tier> <graph.json> [--attempt N]"
-[ $# -eq 4 ] || { [ $# -eq 6 ] && [ "$5" = --attempt ]; } || die "$USAGE"
-RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; GRAPH="$4"; ATTEMPT="${6:-0}"
-case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
+USAGE="usage: follow-up.sh <runid> <issue> <tier> <graph.json> [--attempt N] | --integration <runid> <base-sha> <head-sha> <graph.json>"
+MODE=cap
+if [ "${1:-}" = --integration ]; then
+    MODE=integration
+    [ "$#" -eq 5 ] || die "$USAGE"
+    RUNID="$2"; BASE="$3"; HEAD="$4"; GRAPH="$5"
+    ISSUE=""; TIER=""; ATTEMPT=0
+else
+    [ $# -eq 4 ] || { [ $# -eq 6 ] && [ "$5" = --attempt ]; } || die "$USAGE"
+    RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; GRAPH="$4"; ATTEMPT="${6:-0}"
+    case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
+fi
 case "$RUNID" in .|..|''|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-]" ;; esac
-case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$2'" ;; esac
-case "$TIER" in trivial|standard|complex) ;; *) die "tier must be trivial|standard|complex, got '$TIER'" ;; esac
+if [ "$MODE" = cap ]; then
+    case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$2'" ;; esac
+    case "$TIER" in trivial|standard|complex) ;; *) die "tier must be trivial|standard|complex, got '$TIER'" ;; esac
+else
+    need_sha() {
+        local label="$1" value="$2"
+        case "$value" in *[!0-9a-f]*|"") die "$label must be a resolved SHA, not a ref: '$value'" ;; esac
+        [ "${#value}" -ge 7 ] || die "$label sha is too short to be unambiguous: '$value'"
+    }
+    need_sha base "$BASE"
+    need_sha head "$HEAD"
+fi
 [ -f "$GRAPH" ] || die "no such graph file: $GRAPH"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
@@ -56,6 +77,125 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 keep_open() { awk -F'\t' -v r="$1" '$1=="finding" && $2==r && ($3=="high"||$3=="medium")'; }
+
+file_issue() {
+    local title="$1" intro="$2" tier="$3" round="$4"
+    {
+        echo "## What to build"
+        echo "$intro"
+        echo
+        if [ "$MODE" = integration ]; then
+            cat "$TMP/body-findings"
+        else
+            awk -F'\t' -v r="$round" '{ printf "- [%s] %s", $3, $4; if ($5 != "") printf " — %s", $5
+                if ($2 != r) printf " (round %s — may already be fixed; verify first)", $2; print "" }' "$TMP/findings"
+        fi
+        echo
+        if [ "$MODE" = integration ]; then
+            echo "End-of-run integration review (no dependents)."
+        else
+            echo "Follow-up of #$ISSUE (merged; not a blocker)."
+        fi
+        echo
+        echo "## Blocked by"
+        echo "None"
+    } >"$TMP/body.md"
+
+    URL="$(gh issue create --title "$title" --body-file "$TMP/body.md" \
+        --label "tier:$tier" --label ready-for-agent | tail -1)" \
+        || die "gh issue create failed"
+    CHILD="${URL##*/}"
+    case "$CHILD" in ''|*[!0-9]*) die "gh issue create returned no issue number (got '$URL')" ;; esac
+}
+
+integration_review() {
+    local a counts h m l payload
+    local -a argv=()
+
+    export FOLLOWUP_GRAPH="$GRAPH"
+    TIER="$(FOLLOWUP_GRAPH="$GRAPH" python3 <<'PY'
+import json, os, sys
+
+rank = {"trivial": 1, "standard": 2, "complex": 3}
+try:
+    graph = json.load(open(os.environ["FOLLOWUP_GRAPH"]))
+except Exception as exc:
+    print("error: cannot read graph JSON: %s" % exc, file=sys.stderr)
+    sys.exit(1)
+tiers = []
+for issue in graph.get("issues") or []:
+    tier = issue.get("tier")
+    if tier is not None:
+        if tier not in rank:
+            print("error: unknown issue tier %r" % tier, file=sys.stderr)
+            sys.exit(1)
+        tiers.append(tier)
+if not tiers:
+    print("error: graph has no tiered issues", file=sys.stderr)
+    sys.exit(1)
+print(max(tiers, key=rank.get))
+PY
+)" || die "cannot choose a reviewer tier from $GRAPH"
+
+    while IFS= read -r -d '' a; do argv+=("$a"); done \
+        < <(bash "$INFRA/review-cmd.sh" integration "$BASE" "$HEAD" "$TIER" \
+            2>"$TMP/review-cmd-stderr")
+    [ "${#argv[@]}" -gt 0 ] || die "could not build integration review command: $(cat "$TMP/review-cmd-stderr")"
+
+    mkdir -p "$TMP/scratch" \
+        && git clone --quiet --shared -- "$PWD" "$TMP/checkout" \
+        && git -C "$TMP/checkout" checkout --quiet --detach "$HEAD" \
+        || die "could not create a detached integration review checkout at $HEAD"
+    (cd "$TMP/checkout" && TMPDIR="$TMP/scratch" "${argv[@]}") \
+        >"$TMP/review.txt" </dev/null \
+        || die "integration reviewer failed"
+
+    counts="$(bash "$INFRA/review-counts.sh" "$TMP/review.txt")" \
+        || die "integration review verdict could not be parsed"
+    read -r h _ m _ l _ <<<"$counts"
+    bash "$INFRA/review-counts.sh" "$TMP/review.txt" --findings 1 \
+        | keep_open 1 >"$TMP/findings" \
+        || die "integration review findings could not be parsed"
+
+    CHILD=""
+    if [ -s "$TMP/findings" ]; then
+        # review-counts.sh has validated and classified the review; retain its original
+        # P0/P1/P2 lines in the issue body while excluding low-severity findings.
+        awk '/^[ \t]*[-*][ \t]*\[P[012]\][ \t]*/ { print }' "$TMP/review.txt" >"$TMP/body-findings"
+        file_issue "Follow-up: run $RUNID — integration review findings" \
+            "Cross-issue findings from the end-of-run integration review of $BASE..$HEAD. Fix exactly these, nothing else:" \
+            "$TIER" 1
+    fi
+
+    payload="$(FOLLOWUP_BASE="$BASE" FOLLOWUP_HEAD="$HEAD" FOLLOWUP_TIER="$TIER" \
+        FOLLOWUP_HIGH="$h" FOLLOWUP_MEDIUM="$m" FOLLOWUP_LOW="$l" \
+        FOLLOWUP_CHILD="$CHILD" python3 <<'PY'
+import json, os
+
+child = os.environ["FOLLOWUP_CHILD"]
+print(json.dumps({"base": os.environ["FOLLOWUP_BASE"],
+                  "head": os.environ["FOLLOWUP_HEAD"],
+                  "tier": os.environ["FOLLOWUP_TIER"],
+                  "high": int(os.environ["FOLLOWUP_HIGH"]),
+                  "medium": int(os.environ["FOLLOWUP_MEDIUM"]),
+                  "low": int(os.environ["FOLLOWUP_LOW"]),
+                  "child": int(child) if child else None}))
+PY
+    )" || die "could not build integration-review log payload"
+    bash "$RUNLOG" append "$RUNID" integration-review "$payload" \
+        || die "integration review finished, but the run-log append failed"
+
+    if [ -n "$CHILD" ]; then
+        echo "integration-review: $h high, $m medium, $l low → #$CHILD"
+    else
+        echo "integration-review: $h high, $m medium, $l low → nothing filed"
+    fi
+}
+
+if [ "$MODE" = integration ]; then
+    integration_review
+    exit $?
+fi
 
 # --- scope check, before anything is written -------------------------------------
 TITLE="Follow-up: #$ISSUE — open review findings"
@@ -160,23 +300,9 @@ if [ ! -s "$TMP/findings" ]; then
 fi
 
 # --- file it ------------------------------------------------------------------------
-{
-    echo "## What to build"
-    echo "Open review findings left when #$ISSUE ($PARENT_TITLE) merged at its review cap. Fix exactly these, nothing else:"
-    echo
-    awk -F'\t' -v r="$R" '{ printf "- [%s] %s", $3, $4; if ($5 != "") printf " — %s", $5
-        if ($2 != r) printf " (round %s — may already be fixed; verify first)", $2; print "" }' "$TMP/findings"
-    echo
-    echo "Follow-up of #$ISSUE (merged; not a blocker)."
-    echo
-    echo "## Blocked by"
-    echo "None"
-} >"$TMP/body.md"
-
-URL="$(gh issue create --title "$TITLE" --body-file "$TMP/body.md" --label "tier:$TIER" --label ready-for-agent | tail -1)" \
-    || die "gh issue create failed"
-CHILD="${URL##*/}"
-case "$CHILD" in ''|*[!0-9]*) die "gh issue create returned no issue number (got '$URL')" ;; esac
+file_issue "$TITLE" \
+    "Open review findings left when #$ISSUE ($PARENT_TITLE) merged at its review cap. Fix exactly these, nothing else:" \
+    "$TIER" "$R"
 # Printed before the graph is touched: a failed amend leaves an orphan issue, recoverable by hand.
 echo "follow-up: filed #$CHILD for #$ISSUE" >&2
 
