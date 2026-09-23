@@ -72,12 +72,12 @@ def sev(p):
 
 items = re.findall(r"(?m)^[ \t]*[-*][ \t]*\[(P[0-9]|fixed)\][ \t]*(.*)$", text)
 marks = [m[1:] for m, _ in items if m != "fixed"]
+if len(re.findall(r"\[P[0-9]\]", text)) != len(marks):
+    print("error: the review mentions a [Pn] severity but not as a finding list item — "
+          "its format has drifted and an unreadable review is not a clean one",
+          file=sys.stderr)
+    sys.exit(1)
 if not items:
-    if re.search(r"\[P[0-9]\]", text):
-        print("error: the review mentions a [Pn] severity but not as a finding list item — "
-              "its format has drifted and an unreadable review is not a clean one",
-              file=sys.stderr)
-        sys.exit(1)
     if text.strip() == "No findings.":
         # A genuinely clean review: the ENTIRE output is the one literal it was given.
         # Anything around it is a reviewer that ignored its format, and that is refused.

@@ -138,6 +138,16 @@ run "$WORK/fixed-only.txt" --findings 3
 assert_equals "all-fixed ledger entry preserves the original identity" "$OUT" \
     "$(printf 'finding\t3\tfixed\tone\ta:1')"
 
+echo "test: [fixed] items do not hide malformed numbered findings"
+cat >"$WORK/fixed-with-drift.txt" <<'EOF'
+- [fixed] resolved finding — a:1
+1. [P1] malformed new finding — b:2
+EOF
+run "$WORK/fixed-with-drift.txt"
+assert_equals "mixed valid and malformed output is refused" "$RC" "1"
+assert_equals "nothing is counted from drifted output" "$OUT" ""
+assert_contains "explains the format drift" "$ERR" "drifted"
+
 # ---------------------------------------------------------------------------
 # THE REFUSALS. Each one must print NOTHING on stdout: the callers read any output as a
 # verdict, and a verdict is what decides whether unreviewed code reaches the merge queue.
