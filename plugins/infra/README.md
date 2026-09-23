@@ -175,6 +175,10 @@ comment as the answer, so no decision prose enters the orchestrator. Anything el
 for a human, surfaced as before. `consult.sh plan` is the same script in its other role, run
 before the build spawn for standard and complex issues.
 
+Each one-shot call disables settings and plugin hooks with `--settings
+'{"disableAllHooks":true}'` and refuses to post output without `**Decision**` (consult) or
+`## Acceptance criteria` (plan). It avoids `--bare`, which requires API-key authentication.
+
 `--base` is required: the resumed turn ends with an independent review, and without a base
 branch there is nothing to review against — a resume that quietly skipped it would land an
 unreviewed branch wearing the same report shape as a reviewed one.
