@@ -176,12 +176,22 @@ assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reas
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 
-echo "test: a provisioned infra resource is passed only to the replacement worker"
+echo "test: provisioned infra resources survive later worker turns"
 assert_contains "the blocked infra report is named" "$BODY" "blocked infra:"
 assert_contains "the replacement spawn carries --env" "$BODY" "--env DATABASE_URL=postgres://..."
 assert_contains "the resume accepts the same env flag" "$BODY" '`worker-resume.sh` takes the same flag'
 assert_contains "the run log records the env name only" "$BODY" '"env":["DATABASE_URL"]'
 assert_matches "the log rule says names, never the values" "$BODY" "names, never the values"
+assert_contains "provisioned pairs stay in per-issue orchestrator state" "$BODY" \
+    "Keep the exact env pairs per issue in the orchestrator's live context"
+assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
+    '--role fix --round <K> --attempt <A> --env DATABASE_URL=postgres://...'
+assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \
+    'spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> --env DATABASE_URL=postgres://...'
+assert_contains "consult-answer resumes re-pass the provisioned env" "$BODY" \
+    '--round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." --env DATABASE_URL=postgres://...'
+assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
+    '--answer "..." --attempt <A> --env DATABASE_URL=postgres://...'
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
