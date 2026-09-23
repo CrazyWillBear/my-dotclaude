@@ -200,8 +200,8 @@ Resolve an **explicit issue allowlist** first:
 
 **The allowlist is frozen at launch** and never re-queried. That freeze does two jobs:
 
-- **Nothing the run files can be built by the run** — save ONE exception: `follow-up.sh`'s follow-up
-  enters the frozen graph as a scoped node and is built through `ready.sh` like any other issue.
+- **Nothing the run files can be built by the run** except a capped merge's `follow-up.sh` issue:
+  it enters the frozen graph as a scoped node and is admitted through `ready.sh`.
 - It bounds the blast radius to the work you named.
 
 An **empty allowlist** stops the run. An empty scope is never a reason to widen the query.
@@ -569,13 +569,17 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on its follow-up:
+A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium
+findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on that follow-up:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>
 ```
 
-It files ONE `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed. If `follow-up.sh` exits non-zero, nothing re-blocks them: log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
+It files one `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH`
+as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a
+`follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed.
+If `follow-up.sh` exits non-zero, log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
 
 ---
 

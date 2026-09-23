@@ -86,8 +86,8 @@ the prefix one run can see, wake and **stop** another run's workers.
 walks PRD #N's child slices (`prd-children.sh`), and with neither flag the skill infers the open PRD
 (asking if there's more than one). The loop **never runs a repo-wide `ready-for-agent` query** — one
 that did swept an unrelated issue into a PRD's branch (#77). The allowlist is **frozen at launch**, so
-**nothing the run files can be built by the run**: a `review-fix` follow-up filed mid-run — including a
-cap-remainder — waits for a future run instead of bypassing the cap that parked it.
+**nothing the run files can be built by the run** except the capped merge's `follow-up.sh` issue:
+it enters the frozen graph and blocks the capped issue's dependents until it merges.
 
 **The tier is a label, not a guess.** `tier:trivial` / `tier:standard` / `tier:complex`, set by
 `/to-issues` at slice time, **read** at launch and **backfilled** when missing (real `classify-task`,
