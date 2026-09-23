@@ -9,7 +9,7 @@
 #   bash run-log.sh path   <runid>        # where the log lives
 #
 # Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
-# planned · consulted · escalated · follow-up. An unknown event is an error, so the
+# planned · consulted · escalated · follow-up · integration-review. An unknown event is an error, so the
 # vocabulary cannot drift by accident. `follow-up` (#117) records the one place the run
 # adds to its own scope: parent, child, re-blocked.
 #
@@ -82,9 +82,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|held|respawned|decision|planned|consulted|escalated|follow-up) ;;
-            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated | follow-up" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated | follow-up" ;;
+            scope|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review) ;;
+            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
