@@ -15,7 +15,7 @@
       { "backend": "codex",  "model": "gpt-6-sol",     "effort": "xhigh" },
       { "backend": "claude", "model": "opus",          "effort": "medium" }
     ],
-    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
+    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "medium" }
   },
   "complex": {
     "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },

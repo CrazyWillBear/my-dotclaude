@@ -44,13 +44,14 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 | tier | planner | implementer (chain, cheapest first) | reviewer |
 |---|---|---|---|
 | trivial | none run (cell kept valid) | 6-luna xhigh → 6-sol xhigh → opus medium (no plan; starts on codex like standard) | opus low |
-| standard | opus medium | 6-luna xhigh → 6-sol xhigh → opus medium | opus high |
+| standard | opus medium | 6-luna xhigh → 6-sol xhigh → opus medium | opus medium |
 | complex | fable medium | opus medium | opus high |
 
 The expensive model spends one bounded pass planning (`consult.sh plan`, posted to the issue as
 the `**Plan**` comment); a cheap one loops on it; a script (`escalate.sh`) replaces the worker
 with the next model in the chain when it is out of its depth. `resolve-tier.sh <tier> [attempt]`
-prints the attempt-th cell plus `implementer_chain=<len>`; `spawn.sh --attempt N` launches it and
+prints the table source (`source=user|shipped|fallback`), the attempt-th cell and
+`implementer_chain=<len>`; `spawn.sh --attempt N` launches it and
 refuses past the top. The chain is codex-first, so **a machine without the codex CLI needs a user
 table**: `resolve-tier.sh` reads `$RESOLVE_TIER_ROOT` (the test seam), then
 `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` if it exists, then the shipped table — and a

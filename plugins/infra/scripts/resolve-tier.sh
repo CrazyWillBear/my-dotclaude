@@ -15,7 +15,8 @@
 # when escalate.sh says the worker is out of its depth, respawns at attempt+1 on the same
 # worktree. `planner` and `reviewer` are always single cells — an array there is a miss.
 #
-# Contract: prints EXACTLY twelve key=value lines to stdout and ALWAYS exits 0 —
+# Contract: prints EXACTLY thirteen key=value lines to stdout and ALWAYS exits 0 —
+#   source=user|shipped|fallback — the table that supplied the returned roster
 #   tier=<tier>
 #   planner_model=<m>      planner_effort=<e>      planner_backend=<b>
 #   implementer_model=<m>  implementer_effort=<e>  implementer_backend=<b>
@@ -59,6 +60,7 @@ ATTEMPT="${2:-0}"
 # chain of one. A codex model here would make a broken table fail on machines without codex.
 fallback() {
     printf '%s\n' "${1:-WARN: model-tiers.json missing or invalid — falling back to standard tier defaults}" >&2
+    printf 'source=fallback\n'
     printf 'tier=standard\n'
     printf 'planner_model=opus\n'
     printf 'planner_effort=medium\n'
@@ -84,6 +86,7 @@ if [ -z "$PLUGIN_ROOT" ]; then
     PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)"
 fi
 CONFIG="$PLUGIN_ROOT/model-tiers.json"
+SOURCE="shipped"
 
 # A USER table wins over the shipped one. The shipped table is codex-first (#104); a machine
 # without the codex CLI writes its own claude-only table instead of editing a plugin file that
@@ -100,7 +103,13 @@ if [ -z "${RESOLVE_TIER_ROOT:-}" ]; then
     # it, and an unbound expansion under `set -u` would abort with no roster at all —
     # breaking the "always exits 0" contract both callers depend on (spawn.sh:181).
     USER_CONFIG="${CLAUDE_CONFIG_DIR:-${HOME:-/nonexistent}/.claude}/model-tiers.json"
-    [ -f "$USER_CONFIG" ] && CONFIG="$USER_CONFIG"
+    if [ -f "$USER_CONFIG" ]; then
+        CONFIG="$USER_CONFIG"
+        SOURCE="user"
+    fi
+else
+    # An explicit alternate root overrides the shipped table just like a user table.
+    SOURCE="user"
 fi
 
 # cell <tier> <role> <field> [idx] — print the cell's string value, or nothing on any
@@ -258,6 +267,7 @@ case "$ATTEMPT" in ''|*[!0-9]*) fallback "WARN: attempt '$ATTEMPT' is not a numb
 [ "$ATTEMPT" -lt "$CHAIN" ] || fallback "WARN: attempt $ATTEMPT is past the top of tier $TIER's implementer chain (length $CHAIN) — falling back to standard tier defaults"
 
 # Emit the confirmed roster for the requested tier.
+printf 'source=%s\n' "$SOURCE"
 printf 'tier=%s\n' "$TIER"
 for r in planner implementer reviewer; do
     i=0; [ "$r" = implementer ] && i="$ATTEMPT"

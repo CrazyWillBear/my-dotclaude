@@ -87,7 +87,7 @@ gains a backend column:
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
 | trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
-| standard | claude opus medium | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium | claude opus high |
+| standard | claude opus medium | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium | claude opus medium |
 | complex | claude fable medium | claude opus medium | claude opus high |
 
 **Updated 2026-09-22 (GPT-6, Opus 5.5):** 6-luna and 6-sol replace 5.6-luna and 5.6-terra
@@ -96,6 +96,8 @@ small cost for a large benchmark gain). `opus` is an alias, so every opus cell i
 Fable stays the complex planner until #106 measures it against opus/high as a planner.
 Trivial now spawns through `spawn.sh` on codex instead of as an opus subagent: 6-luna fits
 that size of issue, and a `codex exec` worker pays no claude-session startup cost.
+As of 2026-09-23, the shipped standard reviewer effort is medium.
+At launch, the dispatcher prints the resolver's `source=` row on its main thread and copies it into the announcement; shell variables do not persist across Bash calls.
 
 **Decided 2026-09-22 (PRD #104), superseding 2026-09-17's claude-only shipped table:** the roster
 spends the expensive model on one bounded planning pass and the cheap model on the build loop.

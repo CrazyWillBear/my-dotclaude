@@ -108,6 +108,16 @@ assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*
 
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
+assert_contains "resolver source labels are documented" "$BODY" "source=user|shipped|fallback"
+assert_matches "the launch line reports the selected source" "$BODY" "launch line.{0,100}source=|source=.{0,100}launch line"
+assert_matches "the source is copied from resolver stdout" "$BODY" "resolver.{0,50}stdout|stdout.{0,50}resolver"
+ANNOUNCE_BLOCK="$(sed -n '/^\*\*Announce the lane/,/^---$/p' "$SKILL_FILE")"
+assert_contains "resolver is run before the launch announcement" "$ANNOUNCE_BLOCK" 'bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard'
+assert_contains "resolver prints the source row to the Bash output" "$ANNOUNCE_BLOCK" "| sed -n '/^source=/p'"
+assert_not_contains "source is not hidden in a shell assignment" "$ANNOUNCE_BLOCK" 'TIER_SOURCE='
+assert_matches "launch uses the row visible in Bash output" "$ANNOUNCE_BLOCK" 'printed .?source=.? row.{0,60}Bash output'
+assert_contains "launch examples use the resolver's source value" "$ANNOUNCE_BLOCK" 'source=<source>'
+assert_not_contains "launch examples do not hardcode the shipped source" "$ANNOUNCE_BLOCK" 'source=shipped'
 
 # ---------------------------------------------------------------------------
 echo "test: workers — every tier spawns through spawn.sh; trivial starts on codex, never a subagent"
@@ -354,7 +364,8 @@ assert_matches "per-slice PRs" "$BODY" "[Pp]er-slice PRs"
 # ---------------------------------------------------------------------------
 echo "test: it stays smaller than the thing it replaced"
 lines=$(wc -l <"$SKILL_FILE")
-if [ "$lines" -lt 700 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
+# Keep one line of headroom for integration changes before the <700 merged-file gate.
+if [ "$lines" -lt 699 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
 for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do
