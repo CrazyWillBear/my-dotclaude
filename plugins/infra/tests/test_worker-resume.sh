@@ -175,6 +175,7 @@ run r1 80 standard "$REPO" --answer "the budget is per-request" --dry-run
 assert_contains "answer is in the prompt" "$OUT" "the budget is per-request"
 assert_contains "and it is told to continue, not restart" "$OUT" "do not start over"
 assert_contains "and how to report" "$OUT" "output schema"
+assert_contains "and how to report missing infrastructure" "$OUT" "infra: <what is missing>"
 
 echo "test: --answer-file is the same thing for a long answer"
 printf 'a long\nmulti-line answer\n' >"$WORK/ans.txt"
