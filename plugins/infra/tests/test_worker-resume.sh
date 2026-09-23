@@ -392,6 +392,22 @@ assert_equals "round 2 records the fixed finding without counting it" \
     "$(printf '2 0 high, 0 medium, 0 low\nfinding\t2\tfixed\tone\ta:1')"
 rm -rf "$RUNDIR87"
 
+echo "test: a resumed FIX review that drops a prior finding is refused"
+mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+RUNDIR88="$CODEX_ROOT/r1/issue-88"
+printf 'fix\n' >"$RUNDIR88/role"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR88/reviewed-head"
+printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\n' >"$RUNDIR88/rounds"
+STUB_REPORT='{"issue":88,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1' \
+    run r1 88 standard "$REPO" --answer "x" --base base
+assert_equals "omitted finding adds no ledger round" "$(cat "$RUNDIR88/rounds")" \
+    "$(printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2')"
+if [ -e "$RUNDIR88/review.txt" ]; then no "incomplete resumed review remained readable"
+else ok "incomplete resumed review was removed"; fi
+assert_contains "resume records the refusal" "$(cat "$RUNDIR88/review-stderr.log" 2>/dev/null)" "REVIEW_UNREADABLE"
+rm -rf "$RUNDIR88"
+
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
 # THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER
 # the worker's turn, not before it — clearing before leaves the window between "before the

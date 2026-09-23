@@ -685,7 +685,11 @@ bash -c '
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
                 # the report the merge queue acts on can never disagree.
-                counts="$(bash "$counter" "$rundir/review.txt" 2>>"$rundir/review-stderr.log")"
+                prior=()
+                [ "$(head -1 "$rundir/role" 2>/dev/null)" = fix ] \
+                    && prior=(--prior "$rundir")
+                counts="$(bash "$counter" "$rundir/review.txt" "${prior[@]}" \
+                    2>>"$rundir/review-stderr.log")"
                 if [ -n "$counts" ]; then
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
                     # which the worker cannot write; the thread copy is for humans and
@@ -707,6 +711,7 @@ bash -c '
                         || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
                 else
                     printf "REVIEW_UNREADABLE\n" >>"$rundir/review-stderr.log"
+                    rm -f "$rundir/review.txt"
                 fi
             else
                 printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"

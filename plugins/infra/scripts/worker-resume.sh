@@ -258,7 +258,9 @@ if [ "$CODE" -eq 0 ] \
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
             # report the merge queue acts on can never disagree.
-            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
+            PRIOR=()
+            [ -z "$SCOPED" ] || PRIOR=(--prior "$RUNDIR")
+            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" "${PRIOR[@]}" \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
                 # The run-dir ledger escalate.sh counts rounds from: round lines start
@@ -277,6 +279,7 @@ if [ "$CODE" -eq 0 ] \
                     || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
             else
                 printf 'REVIEW_UNREADABLE\n' >>"$RUNDIR/review-stderr.log"
+                rm -f "$RUNDIR/review.txt"
             fi
         else
             printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"

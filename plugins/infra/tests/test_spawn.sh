@@ -727,6 +727,21 @@ done <<EOF
 $FIXED_PAIRS
 EOF
 assert_equals "the role is now fix" "$(cat "$RUNDIR/role" 2>/dev/null)" "fix"
+
+echo "test: an incomplete scoped review cannot become a clean merge-gate verdict"
+ROUND_TWO="$(cat "$RUNDIR/rounds")"
+rm -f "$WORK/gh-argv"
+STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_TEXT='- [fixed] three — c:3' \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 2 --orchestrator orch-main \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "an omitted prior finding adds no ledger round" "$(cat "$RUNDIR/rounds")" "$ROUND_TWO"
+if [ -e "$RUNDIR/review.txt" ]; then no "incomplete review remained readable by worker-report"
+else ok "incomplete review was removed before worker-report"; fi
+assert_contains "rejection is recorded" "$(cat "$RUNDIR/review-stderr.log" 2>/dev/null)" "REVIEW_UNREADABLE"
+if [ -e "$WORK/gh-argv" ]; then no "incomplete review was posted"
+else ok "incomplete review was not posted"; fi
 rm -rf "$CODEX_ROOT"
 
 echo "test: four reviews across two attempts are numbered 1..4 from the ledger"
