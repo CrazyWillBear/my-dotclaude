@@ -130,6 +130,10 @@ assert_contains "terminal reasons survive replay" "$(r replay run5)" '"reason": 
 echo "test: follow-up folds parent:child (#117)"
 r append run6 follow-up '{"n":84,"child":131,"reblocked":[85,95]}'
 assert_contains "followups fold" "$(r state run6)" "followups=84:131"
+assert_contains "follow-up lists its waiting dependents" "$(r state run6)" "follow-up=84:131 waited=85,95"
+r append run6 follow-up '{"n":90,"child":132,"reblocked":[]}'
+assert_contains "a follow-up with no dependents" "$(r state run6)" "follow-up=90:132 waited="
+assert_contains "followups summary keeps both" "$(r state run6)" "followups=84:131,90:132"
 
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'

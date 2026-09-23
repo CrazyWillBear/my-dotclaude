@@ -5,7 +5,8 @@
 # Usage:
 #   bash run-log.sh append <runid> <event> ['{"json":"payload"}']
 #   bash run-log.sh replay <runid>        # every event, in order, as JSONL
-#   bash run-log.sh state  <runid>        # the folded state, as key=value lines
+#   bash run-log.sh state  <runid>        # the folded state, as key=value lines, plus one
+#                                         # follow-up=<n>:<child> waited=<deps> per follow-up
 #   bash run-log.sh path   <runid>        # where the log lives
 #
 # Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
@@ -26,8 +27,9 @@
 #   escalated + fix     the issue comment the escalation protocol requires
 #
 # `respawned` is genuinely underivable: nothing in git or GitHub records that a
-# session was killed and restarted. `held` is stored because a capped merge's hold is
-# an in-run judgment, not a fact on the issue. `planned` / `consulted` / `escalated`
+# session was killed and restarted. `held` is stored because a user's hold (or a failed
+# `follow-up.sh`'s fallback hold) is an in-run judgment, not a fact on the issue. A
+# capped merge no longer holds anything. `planned` / `consulted` / `escalated`
 # (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
 # they are stored here anyway, per issue with the attempt and the reason, because the
 # deviation rate is the DATA that later decides whether a cheaper model can take the
@@ -126,7 +128,7 @@ import json, os, sys
 
 scope, held, respawns, decisions = [], [], {}, []
 planned, consulted, escalated = [], {}, {}
-followups = []
+followups, followup_rows = [], []
 bad = 0
 
 with open(os.environ["RUNLOG_FILE"]) as fh:
@@ -165,6 +167,7 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
                 d[n] = d.get(n, 0) + 1
         elif event == "follow-up":
             followups.append("%s:%s" % (rec.get("n"), rec.get("child")))
+            followup_rows.append((rec.get("n"), rec.get("child"), rec.get("reblocked") or []))
 
 out = ["runid=%s" % os.environ["RUNLOG_RUNID"]]
 out.append("scope=%s" % ",".join(str(n) for n in scope))
@@ -176,6 +179,8 @@ out.append("escalated=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(escalat
 out.append("followups=%s" % ",".join(followups))
 for d in decisions:
     out.append("decision=%s" % d)
+for n, child, reblocked in followup_rows:
+    out.append("follow-up=%s:%s waited=%s" % (n, child, ",".join(str(x) for x in reblocked)))
 if bad:
     out.append("unparseable_lines=%d" % bad)
 print("\n".join(out))
