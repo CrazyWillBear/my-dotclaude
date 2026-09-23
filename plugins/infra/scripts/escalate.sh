@@ -22,6 +22,9 @@
 # the chain it drains, as `failed` does today.
 #
 # Signals, any one sufficient, checked in this order:
+#   backstop      terminal safety net for this issue's loop: every round line in the run-dir
+#                  ledger, across attempts. Prints `backstop: …` and exits before all other
+#                  signals. It should never trigger in normal use; no handoff, mark or respawn.
 #   failed         the worker reported `failed`, exited non-zero, or died with no exit code
 #   quota          a failed exit carries a usage-limit error in events.jsonl; every codex
 #                  model shares that quota, so the orchestrator skips remaining codex positions
@@ -31,6 +34,10 @@
 #                  are counted from the thread's `**Consult N**` headings, which
 #                  consult.sh posts; a worker forging one only escalates itself sooner and
 #                  cannot remove one, so the thread is safe to read for THIS signal.
+#   no-progress   NOT an escalation: after a recurrence fire and a `**Consult N**` containing
+#                  `**Decision**`, a later review that does not reduce high + medium findings
+#                  from the prior round prints `no-progress: …` and ends the issue loop — no
+#                  handoff, mark or respawn.
 #   blocked        never a signal; missing infrastructure is handled by the orchestrator
 #   recurrence     NOT an escalation: the same high/medium area in each of the newest
 #                  ESCALATE_RECURRENCE_WINDOW rounds of this attempt (the ledger past
@@ -90,7 +97,7 @@
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
-#   ESCALATE_RECURRENCE_WINDOW=2
+#   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=20 (safety net; should never trigger)
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
@@ -132,6 +139,8 @@ done
 [ -n "$BASE" ] || die "--base BRANCH is required — the handoff lists the commits since it"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
+ESC_BACKSTOP="${ESCALATE_ROUND_BACKSTOP:-20}"
+case "$ESC_BACKSTOP" in ''|*[!0-9]*) die "ESCALATE_ROUND_BACKSTOP must be a number, got '$ESC_BACKSTOP'" ;; esac
 # An UNKNOWN tier must not reach resolve-tier.sh: it answers one with the claude-only
 # FALLBACK roster (exit 0, its WARN discarded below), which reads here as "claude-backed,
 # never escalated" — silently switching every signal off for that worker for the rest of
@@ -184,6 +193,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
+       ESC_BACKSTOP="$ESC_BACKSTOP" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
 # A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
@@ -199,6 +209,7 @@ review_s = float(os.environ["ESC_REVIEW"]) * 60
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
 window  = int(os.environ["ESC_WINDOW"])
+backstop = int(os.environ["ESC_BACKSTOP"])
 dry     = bool(os.environ.get("ESC_DRY"))
 
 def comment_time(c):
@@ -228,6 +239,9 @@ try:
 except Exception:
     print("error: the issue's comment listing is not the JSON gh returns", file=sys.stderr)
     sys.exit(2)
+ledger = [l for l in (read("rounds") or "").splitlines() if re.match(r"\d", l)]
+if backstop > 0 and len(ledger) >= backstop:
+    print("backstop: %d review rounds on this issue, backstop %d — a safety net that should never trigger" % (len(ledger), backstop)); sys.exit(0)
 
 # --- the worker's final status ---------------------------------------------------------
 status, note = "", ""
@@ -301,7 +315,6 @@ if marked_attempt is None:
                 mark = i
                 break
 this_attempt = comments[mark:]
-ledger = [l for l in (read("rounds") or "").splitlines() if re.match(r"\d", l)]
 # FIRST line only (consult.sh writes it there): a **Deviation** quoting an earlier
 # "**Consult 2** said..." at a line start would otherwise count as a consult and
 # burn a chain position one deviation early.
@@ -309,11 +322,16 @@ consults = sum(1 for c in this_attempt if re.match(r"\*\*Consult \d+\*\*", c.lst
 if reason is None:
     if status == "escalate" and note.lower().startswith("deviation:") and consults >= cap:
         reason = ("deviation-cap", "a deviation after %d consults this attempt; the cap is %d" % (consults, cap))
+fires = [l.split("\t", 2) for l in (read("recurrence") or "").splitlines()]
+fires = [f for f in fires if len(f) == 3 and f[0] == str(attempt)]
+decided = [int(f[1]) for f in fires if f[1].isdigit()]
+hm = [(int(m.group(1)), int(m.group(2)) + int(m.group(3))) for m in (re.match(r"(\d+) (\d+) high, (\d+) medium", l) for l in ledger[rounds_mark:]) if m]
+decision = any(re.match(r"\*\*Consult \d+\*\*", c.lstrip()) and "**Decision**" in c for c in this_attempt)
+if reason is None and decided and decision and len(hm) >= 2 and hm[-1][0] > max(decided) and hm[-1][1] >= hm[-2][1]:
+    print("no-progress: review %d has %d high+medium, review %d had %d — no reduction after the planner decision" % (hm[-1][0], hm[-1][1], hm[-2][0], hm[-2][1])); sys.exit(0)
 # --- recurrence: the same high/medium area in the newest W rounds of this attempt ----
 # A design decision, not a stronger fixer (#116). Not an escalation: no handoff, no mark.
 attempt_rounds = [int(m.group(1)) for m in (re.match(r"(\d+) ", l) for l in ledger[rounds_mark:]) if m]
-fires = [l.split("\t", 2) for l in (read("recurrence") or "").splitlines()]
-fires = [f for f in fires if len(f) == 3 and f[0] == str(attempt)]
 # A fire USES UP its round: until the fix round it asked for lands a new review, a later
 # wake on the same ledger is quiet — neither review-cap (a Handoff would kill that fix
 # round) nor a second area's decide (a double spawn). Checked outside the cap gate: the

@@ -390,6 +390,64 @@ run r1 12 standard "$REPO" --base base --attempt 2
 assert_empty "a claude-backed attempt is exempt — the ledger is the codex wrapper's" "$OUT"
 assert_contains "and says why" "$ERR" "never escalated"
 
+echo "test: no-progress — a round after a planner decision that reduces nothing ends the loop (#118)"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 1 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '0\t2\tsrc/a.py\n' >"$RUNDIR/recurrence"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**\n\n**Decision** — x"}]}' run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "decision followed by a non-reducing round starts with no-progress" "${OUT%%:*}" "no-progress"
+assert_equals "no-progress posts no handoff" "$(posted)" "no"
+if [ -e "$RUNDIR/handoff.json" ]; then no "no-progress wrote handoff.json"; else ok "no-progress writes no handoff mark"; fi
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '0\t2\tsrc/a.py\n' >"$RUNDIR/recurrence"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_not_contains "a reduction from 2 to 1 is not no-progress" "$OUT" "no-progress"
+assert_contains "the lower count still reaches the per-attempt review-cap" "$OUT" "review-cap"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 1 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '0\t2\tsrc/a.py\n' >"$RUNDIR/recurrence"
+unset STUB_GH_COMMENTS
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_not_contains "without a Decision consult no-progress does not fire" "$OUT" "no-progress"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 1 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**\n\n**Decision** — x"}]}' run r1 12 standard "$REPO" --base base --attempt 0
+assert_not_contains "without a recurrence fire no-progress does not fire" "$OUT" "no-progress"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 1 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '0\t3\tsrc/a.py\n' >"$RUNDIR/recurrence"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**\n\n**Decision** — x"}]}' run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "a fire in round 3 is spent before a following round" "$OUT"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n2 0 high, 2 medium, 0 low\n3 1 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+printf '0\t2\tsrc/a.py\n' >"$RUNDIR/recurrence"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**\n\n**Decision** — x"}]}' run r1 12 standard "$REPO" --base base --attempt 0 --dry-run
+assert_equals "dry-run still reports no-progress" "${OUT%%:*}" "no-progress"
+unset STUB_GH_COMMENTS
+
+echo "test: backstop — the round backstop ends the loop regardless of anything else (#118)"
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"failed"}' 1
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+ESCALATE_ROUND_BACKSTOP=3 run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "backstop precedes failed" "${OUT%%:*}" "backstop"
+assert_equals "backstop posts no handoff" "$(posted)" "no"
+mkrun '{"issue":12,"status":"blocked","round":0,"head":"","review":"","note":"blocked"}' 1
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+ESCALATE_ROUND_BACKSTOP=3 run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "backstop precedes blocked" "${OUT%%:*}" "backstop"
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"failed"}' 1
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+ESCALATE_ROUND_BACKSTOP=3 run r1 12 standard "$REPO" --base base --attempt 2
+assert_empty "a claude-backed attempt remains exempt from backstop" "$OUT"
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"failed"}' 1
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_not_contains "the default 20-round backstop does not fire at 3" "$OUT" "backstop"
+ESCALATE_ROUND_BACKSTOP=x run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "a non-numeric backstop fails with exit 1" "$RC" "1"
+unset ESCALATE_ROUND_BACKSTOP
+
 echo "test: occupancy — read from the rollout's LAST per-request usage, not the turn total"
 mkrun "" ""
 mkrollout 300000
