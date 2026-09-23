@@ -189,6 +189,7 @@ assert_matches "the top of the chain drains" "$BODY" "past the top of.*chain.*(d
 assert_matches "nothing is resumed across a model change" "$BODY" "Nothing is resumed across a model change"
 assert_matches "fix rounds carry the attempt" "$BODY" "--role fix --round <K> --attempt <A>"
 assert_matches "claude workers are never escalated" "$BODY" "[Cc]laude-backed workers .{0,30}never escalated"
+assert_matches "a quota reason skips the remaining codex positions" "$BODY" "quota.{0,120}skip.{0,40}codex"
 
 # ---------------------------------------------------------------------------
 echo "test: liveness — subscribe, never poll"
