@@ -110,8 +110,8 @@ The ad-hoc lane is unaffected — subagents are not cross-session.
 
 Any one missing → **discuss**. Don't assume: ambiguity risks building the wrong thing well.
 
-**Announce the lane, run id, and resolver source in one line; do not ask.** Before announcing, capture the table-wide source on the main thread with `TIER_SOURCE="$(bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard | sed -n 's/^source=//p')"`; `standard` is a valid probe for either lane, while later calls still resolve actual tiers.
-Since `spawn.sh` hides its resolver output, put `source=$TIER_SOURCE` in the announcement—the announcement is the veto window:
+**Announce the lane, run id, and resolver source in one line; do not ask.** Before announcing, run `bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard | sed -n '/^source=/p'` on the main thread; `standard` probes the table for either lane.
+Read the printed `source=` row from the resolver stdout in the Bash output and copy that exact row into the announcement. Shell variables do not persist across Bash calls; `spawn.sh` hides its resolver output. The announcement is the veto window:
 
 > Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`, source=<source>. Starting.
 
@@ -217,7 +217,7 @@ Read each scoped issue's labels; take its tier from `tier:trivial` / `tier:stand
 `tier:complex`.
 
 - **Missing → backfill.** Run `/classify-task <N> --no-confirm` (Explore-grounded), then persist with `gh label create tier:<t> --description "complexity tier: <t>" 2>/dev/null || true` and `gh issue edit <N> --add-label tier:<t>`; the next run reads the label.
-- **Auto-accept.** **Never prompt** to confirm or override a tier. Report backfills in the launch line; also copy the resolver's `source=user|shipped|fallback` row from stdout there.
+- **Auto-accept.** **Never prompt** to confirm or override a tier. Report backfills in the launch line; use the `source=user|shipped|fallback` row printed by the Step 0 probe there.
 - **Conflicting labels** → the **highest tier wins** (complex > standard > trivial); warn because under-tiering wastes an attempt on a model too cheap for the work.
 
 ## Step 3 — the graph, fetched once

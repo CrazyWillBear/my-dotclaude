@@ -97,6 +97,7 @@ Fable stays the complex planner until #106 measures it against opus/high as a pl
 Trivial now spawns through `spawn.sh` on codex instead of as an opus subagent: 6-luna fits
 that size of issue, and a `codex exec` worker pays no claude-session startup cost.
 As of 2026-09-23, the shipped standard reviewer effort is medium.
+At launch, the dispatcher prints the resolver's `source=` row on its main thread and copies it into the announcement; shell variables do not persist across Bash calls.
 
 **Decided 2026-09-22 (PRD #104), superseding 2026-09-17's claude-only shipped table:** the roster
 spends the expensive model on one bounded planning pass and the cheap model on the build loop.

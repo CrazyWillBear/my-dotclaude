@@ -113,6 +113,9 @@ assert_matches "the launch line reports the selected source" "$BODY" "launch lin
 assert_matches "the source is copied from resolver stdout" "$BODY" "resolver.{0,50}stdout|stdout.{0,50}resolver"
 ANNOUNCE_BLOCK="$(sed -n '/^\*\*Announce the lane/,/^---$/p' "$SKILL_FILE")"
 assert_contains "resolver is run before the launch announcement" "$ANNOUNCE_BLOCK" 'bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard'
+assert_contains "resolver prints the source row to the Bash output" "$ANNOUNCE_BLOCK" "| sed -n '/^source=/p'"
+assert_not_contains "source is not hidden in a shell assignment" "$ANNOUNCE_BLOCK" 'TIER_SOURCE='
+assert_matches "launch uses the row visible in Bash output" "$ANNOUNCE_BLOCK" 'printed .?source=.? row.{0,60}Bash output'
 assert_contains "launch examples use the resolver's source value" "$ANNOUNCE_BLOCK" 'source=<source>'
 assert_not_contains "launch examples do not hardcode the shipped source" "$ANNOUNCE_BLOCK" 'source=shipped'
 
