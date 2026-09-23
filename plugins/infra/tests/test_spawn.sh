@@ -22,6 +22,7 @@ unset DATABASE_URL FOO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
+ENV_PAIRS="$(dirname "$SPAWN")/env-pairs.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -687,6 +688,37 @@ PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator or
     --env >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "bare --env exits 1" "$rc" "1"
+
+echo "test: shared --env validation rejects host-steering and infra-owned names"
+for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
+    RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
+    CODEX_RUN_ROOT CODEX_HOME HOME GH_CONFIG_DIR; do
+    bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
+    rc=$?
+    assert_equals "$name is rejected" "$rc" "1"
+    assert_contains "$name rejection says reserved" "$(err)" "reserved"
+    assert_not_contains "$name rejection never echoes its value" "$(err)" "private-canary"
+done
+
+STUB_ENV_OUT="$WORK/env-reserved" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env BASH_ENV=private-canary >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Claude spawn rejects a reserved shell variable" "$rc" "1"
+assert_contains "Claude spawn explains the reserved name" "$(err)" "reserved"
+assert_not_contains "Claude spawn never echoes the value" "$(err)" "private-canary"
+if [ ! -e "$WORK/env-reserved" ]; then ok "Claude spawn starts nothing for a reserved name"
+else no "Claude spawn started with a reserved name"; fi
+
+rm -rf "$CODEX_ROOT/reserved-git"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/reserved-git" \
+    RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env GIT_CONFIG_COUNT=1 >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Codex spawn rejects a Git routing variable" "$rc" "1"
+assert_contains "Codex spawn explains the reserved name" "$(err)" "reserved"
+if [ ! -d "$CODEX_ROOT/reserved-git" ]; then ok "Codex spawn creates no run dir for a reserved name"
+else no "Codex spawn created a run dir for a reserved name"; fi
 
 # ---------------------------------------------------------------------------
 # THE WRAPPER'S REVIEW STAGE. This is the path EVERY codex build takes, and it had no

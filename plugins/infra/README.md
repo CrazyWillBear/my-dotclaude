@@ -40,6 +40,10 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
      --brief b.md --charter c.md --model opus --effort high [--handoff h.md] [--autocompact 400k]
 ```
 
+`--env` pairs are checked by `env-pairs.sh` before launch; shell controls, Git routing/config
+and infra-owned names are reserved for both spawn and resume. Claude workers receive values in
+per-session settings because `claude --bg` does not reliably inherit arbitrary launcher exports.
+
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
 | tier | planner | implementer (chain, cheapest first) | reviewer |

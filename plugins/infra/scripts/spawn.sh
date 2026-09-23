@@ -28,7 +28,7 @@
 #                           script refuses — the orchestrator drains there, it never wraps.
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
-#     --env NAME=VALUE      repeatable; exported into the worker's process, never logged
+#     --env NAME=VALUE      repeatable; passed to the worker launch, never logged
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same

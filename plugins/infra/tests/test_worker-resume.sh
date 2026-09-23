@@ -324,6 +324,13 @@ assert_not_contains "malformed --env never echoes its argument" "$ERR" "NOEQUALS
 assert_equals "malformed --env leaves the old exit file untouched" \
     "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
 
+run r1 80 standard "$REPO" --answer x --env PATH=private-canary
+assert_equals "resume rejects a reserved command-path variable" "$RC" "1"
+assert_contains "resume explains the reserved name" "$ERR" "reserved"
+assert_not_contains "resume never echoes the value" "$ERR" "private-canary"
+assert_equals "reserved --env leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
 # ---------------------------------------------------------------------------
 # THE INDEPENDENT REVIEWER. A resumed worker's branch is as unreviewed as a freshly built
 # one, and this script used to end by asking the WORKER for a review count it produced by

@@ -275,6 +275,7 @@ Nothing rotates automatically. The context plugin's watchdog advises; the orches
 
 Claude background sessions do not reliably inherit arbitrary launcher variables; worker `--env`
 values travel in per-session settings to avoid daemon filtering or cross-session leakage.
+The shared validator reserves shell launch controls, Git routing/configuration names and infra-owned variables before export.
 
 ## Codex backend
 
