@@ -338,7 +338,12 @@ run r1 12 standard "$REPO" --base base --attempt 0
 assert_equals "the first area fires" "$OUT" "recurrence: src/a.py"
 run r1 12 standard "$REPO" --base base --attempt 0
 assert_empty "the second area in the same round does not double-spawn" "$OUT"
-rm -f "$RUNDIR/recurrence"
+assert_contains "every recurring area in the fired round is recorded" "$(cat "$RUNDIR/recurrence")" "$(printf '0\t2\tsrc/b.py')"
+printf '%s' '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' >"$RUNDIR/last-message.txt"
+printf '3 1 high, 0 medium, 0 low\nfinding\t3\thigh\ty\tsrc/b.py:3\n' >>"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the decide covered src/b.py too: round 3 is review-cap, not a second decide" "$OUT" "review-cap"
+rm -f "$RUNDIR/recurrence" "$RUNDIR/handoff.json"
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf "$RECUR" >"$RUNDIR/rounds"
 ESCALATE_RECURRENCE_WINDOW=3 run r1 12 standard "$REPO" --base base --attempt 0
