@@ -9,8 +9,9 @@
 #   bash run-log.sh path   <runid>        # where the log lives
 #
 # Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
-# planned · consulted · escalated. An unknown event is an error, so the vocabulary
-# cannot drift by accident.
+# planned · consulted · escalated · follow-up. An unknown event is an error, so the
+# vocabulary cannot drift by accident. `follow-up` (#117) records the one place the run
+# adds to its own scope: parent, child, re-blocked.
 #
 # The issue thread is the coordination medium (decision 12), which makes almost
 # everything a run log would traditionally store redundant — and a stored copy is
@@ -81,9 +82,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|held|respawned|decision|planned|consulted|escalated) ;;
-            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated" ;;
+            scope|held|respawned|decision|planned|consulted|escalated|follow-up) ;;
+            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated | follow-up" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated | follow-up" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
@@ -123,6 +124,7 @@ import json, os, sys
 
 scope, held, respawns, decisions = [], [], {}, []
 planned, consulted, escalated = [], {}, {}
+followups = []
 bad = 0
 
 with open(os.environ["RUNLOG_FILE"]) as fh:
@@ -159,6 +161,8 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
             if n is not None:
                 d = consulted if event == "consulted" else escalated
                 d[n] = d.get(n, 0) + 1
+        elif event == "follow-up":
+            followups.append("%s:%s" % (rec.get("n"), rec.get("child")))
 
 out = ["runid=%s" % os.environ["RUNLOG_RUNID"]]
 out.append("scope=%s" % ",".join(str(n) for n in scope))
@@ -167,6 +171,7 @@ out.append("respawned=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(respawn
 out.append("planned=%s" % ",".join(str(n) for n in sorted(planned)))
 out.append("consulted=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(consulted.items())))
 out.append("escalated=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(escalated.items())))
+out.append("followups=%s" % ",".join(followups))
 for d in decisions:
     out.append("decision=%s" % d)
 if bad:

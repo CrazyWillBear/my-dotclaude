@@ -125,6 +125,10 @@ assert_contains "consult counts per issue" "$out" "consulted=12:2"
 assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2"
 assert_contains "the escalation reasons survive replay for the pilot's numbers" "$(r replay run5)" '"reason": "deviation-cap"'
 
+echo "test: follow-up folds parent:child (#117)"
+r append run6 follow-up '{"n":84,"child":131,"reblocked":[85,95]}'
+assert_contains "followups fold" "$(r state run6)" "followups=84:131"
+
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'
 out=$(r state run3)
@@ -133,6 +137,7 @@ assert_contains "empty held" "$out" "held="
 assert_contains "empty planned" "$out" "planned="
 assert_contains "empty consulted" "$out" "consulted="
 assert_contains "empty escalated" "$out" "escalated="
+assert_contains "empty followups" "$out" "followups="
 
 echo "test: a torn line is COUNTED, never silently dropped"
 printf 'not json\n' >>"$(r path run2)"
@@ -142,7 +147,7 @@ assert_contains "and still folds the good ones" "$(r state run2)" "scope=12,13,1
 # ---------------------------------------------------------------------------
 echo "test: the vocabulary is closed"
 r append run1 spawned '{"n":12}' >/dev/null; assert_equals "unknown event exits 1" "$?" "1"
-assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated"
+assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated | follow-up"
 assert_not_contains "and did not write it" "$(r replay run1)" '"event": "spawned"' 
 r append run1 >/dev/null; assert_equals "no event exits 1" "$?" "1"
 
