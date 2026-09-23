@@ -28,6 +28,7 @@
 #
 # Output: one line on stdout naming what was posted (`**Plan** posted on #N` /
 # `**Consult N** posted on #N`). Exit 1, NOTHING posted, when the model produced no text,
+# its text lacks the role's required section (`## Acceptance criteria` / `**Decision**`),
 # the call failed, or the comment could not be posted — an empty plan on the thread would
 # read to the worker as "there is no plan", which is worse than no comment at all.
 #
@@ -43,6 +44,11 @@
 # is what lets an unattended `-p` call run Read/Grep/Bash at all — the same reasoning as
 # spawn.sh, and the same accepted limit: Bash is fenced by the denylist, not a sandbox.
 # ponytail: read-only is a denylist, not a sandbox; a codex-style sandbox if a plan ever edits.
+#
+# HOOKS OFF (#123): `--settings '{"disableAllHooks":true}'` — on #83 the context plugin's
+# docs Stop hook fired inside this call and `-p` printed the model's reply to the hook's
+# nudge instead of the decision. `--bare` also skips hooks but forces API-key auth, so it
+# is not used.
 #
 # The planner cell must be claude-backed: this is a `claude -p` call. A user table that
 # points the planner at codex is refused here rather than half-honoured.
@@ -184,6 +190,7 @@ fi
 
 if [ "$ROLE" = plan ]; then
     HEADING="**Plan**"
+    REQUIRED='## Acceptance criteria'
     PROMPT="You are the PLANNER for issue #$ISSUE (tier $TIER), run $RUNID. You plan; you never edit.
 A CHEAPER model will execute your plan near-mechanically, so make every decision it would
 otherwise have to make.
@@ -212,6 +219,7 @@ worktree is a worker's. Smallest plan that fully satisfies the issue. No specula
 Post nothing yourself — the caller posts your output to the issue."
 else
     HEADING="**Consult $N**"
+    REQUIRED='**Decision**'
     PROMPT="You are CONSULT $N for issue #$ISSUE (tier $TIER), run $RUNID. A worker executing the
 **Plan** on this issue hit a false plan assumption, posted a **Deviation** comment, and
 paused. You decide what it does next; you never edit.
@@ -238,6 +246,7 @@ fi
 # full story). `-p` prints the final text to stdout, which is the whole point.
 CMD=(claude -p
      --model "$MODEL" --effort "$EFFORT"
+     --settings '{"disableAllHooks":true}'
      --permission-mode bypassPermissions
      --add-dir "$WORKTREE"
      --disallowedTools Edit Write NotebookEdit
@@ -261,6 +270,8 @@ RC=$?
 if [ "$RC" -ne 0 ] || [ -z "$(tr -d '[:space:]' <"$TMP/out.md")" ]; then
     die "the $ROLE call on $MODEL produced no text (exit $RC): $(tail -c 300 "$TMP/err.log" | tr '\n' ' ')"
 fi
+grep -qF -- "$REQUIRED" "$TMP/out.md" \
+    || die "the $ROLE output on $MODEL has no $REQUIRED section — not posting: $(head -c 300 "$TMP/out.md" | tr '\n' ' ')"
 
 { printf '%s\n\n' "$HEADING"; cat "$TMP/out.md"; } >"$TMP/comment.md"
 ( cd "$WORKTREE" && gh issue comment "$ISSUE" --body-file "$TMP/comment.md" ) \
