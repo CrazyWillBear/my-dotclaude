@@ -110,11 +110,12 @@ The ad-hoc lane is unaffected — subagents are not cross-session.
 
 Any one missing → **discuss**. Don't assume: ambiguity risks building the wrong thing well.
 
-**Announce the lane, run id, and resolver source in one line; do not ask.** Put `source=user|shipped|fallback` from resolver stdout in that line—the announcement is the veto window:
+**Announce the lane, run id, and resolver source in one line; do not ask.** Before announcing, capture the table-wide source on the main thread with `TIER_SOURCE="$(bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard | sed -n 's/^source=//p')"`; `standard` is a valid probe for either lane, while later calls still resolve actual tiers.
+Since `spawn.sh` hides its resolver output, put `source=$TIER_SOURCE` in the announcement—the announcement is the veto window:
 
-> Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`, source=shipped. Starting.
+> Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`, source=<source>. Starting.
 
-> Session lane: 6 slices of PRD #41, 5 in flight, source=shipped, run `orchestrate-20260906-141500`. Starting.
+> Session lane: 6 slices of PRD #41, 5 in flight, source=<source>, run `orchestrate-20260906-141500`. Starting.
 
 ---
 
