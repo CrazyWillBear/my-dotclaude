@@ -377,9 +377,10 @@ Claude-backed workers top their chain and are never escalated.
 **Cycles are counted from the AUTHORITATIVE source, never by a field you keep.** A claude
 worker posts its own `**Review round N**` comment, so a claude-backed issue's count is that
 comment count — see [The bus](#the-bus). A codex worker can also post comments, so a
-codex-backed issue's count is `wc -l` of
-`${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds` instead (one line per
-reviewer wrapper run) when that file exists, falling back to the thread when it does not.
+codex-backed issue's count is the count of round lines (those starting with a digit —
+`grep -c '^[0-9]'`) in `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds`
+instead (one per reviewer wrapper run; the `finding` entries beside them are per-finding
+detail, not rounds) when that file exists, falling back to the thread when it does not.
 
 **Failure is drain-then-stop, not kill.**
 

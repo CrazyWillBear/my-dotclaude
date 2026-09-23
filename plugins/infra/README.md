@@ -99,7 +99,8 @@ range, in the disposable clone; the cell's effort reaches only the launcher sess
 agent's frontmatter pins its own, since the Agent tool has no effort parameter) — `codex exec review` could not honour a claude reviewer
 cell, so "reviewer: opus" was silently false for every codex-built branch (#104). It emits
 `- [Pn] title — path:line` items or the literal `No findings.`; `review-counts.sh` refuses
-anything else, and the wrapper posts the `**Review round N**` comment exactly as before.
+anything else, and the wrapper posts the `**Review round N**` comment exactly as before —
+and `review-counts.sh --findings N` turns the same items into the ledger's per-finding entries.
 Its rubric marks silent data loss, corruption, and denial-of-service that stalls or exhausts
 a shared worker as P1 regardless of apparent size.
 Reviews never run on fable and never on a codex model.
@@ -469,6 +470,7 @@ note.
 **`**Review round N**` is the counter — for a CLAUDE-backed issue**, where the worker itself
 posts the comment. The number of those comments on an issue *is* how many review cycles it
 has had. A codex-backed issue's worker is explicitly allowed `gh issue comment` too, so its
-comment is not the authoritative count: `$RUNDIR/rounds` (one line per reviewer wrapper run,
-appended beside the comment, never read back by the worker's own logic) is — see
+comment is not the authoritative count: `$RUNDIR/rounds` (one round line per reviewer wrapper run,
+plus one `finding<TAB>round<TAB>severity<TAB>title<TAB>path:line` entry per finding, both
+written by the wrapper from `review-counts.sh`'s output and appended beside the comment, never read back by the worker's own logic) is — see
 [`escalate.sh`](#recovery)'s review-cap.
