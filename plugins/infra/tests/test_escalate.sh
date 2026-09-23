@@ -324,7 +324,7 @@ if [ -e "$RUNDIR/handoff.json" ]; then no "recurrence wrote handoff.json"; else 
 assert_equals "the fire is recorded per attempt and area" "$(cat "$RUNDIR/recurrence")" "$(printf '0\tsrc/a.py')"
 run r1 12 standard "$REPO" --base base --attempt 0
 assert_contains "the second wake falls through to review-cap: once per area per attempt" "$OUT" "review-cap: review 3 (3rd this attempt)"
-rm -f "$RUNDIR/recurrence"
+rm -f "$RUNDIR/recurrence" "$RUNDIR/handoff.json"   # the review-cap handoff above marked the ledger
 ESCALATE_RECURRENCE_WINDOW=3 run r1 12 standard "$REPO" --base base --attempt 0
 assert_contains "the window is configurable: 3 rounds of src/a.py fires at 3" "$OUT" "recurrence: src/a.py"
 unset ESCALATE_RECURRENCE_WINDOW   # `run` is a shell function — same note as ESCALATE_CONSULT_CAP

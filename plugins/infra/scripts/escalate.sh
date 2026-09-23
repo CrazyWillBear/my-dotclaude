@@ -32,6 +32,19 @@
 #                  consult.sh posts; a worker forging one only escalates itself sooner and
 #                  cannot remove one, so the thread is safe to read for THIS signal.
 #   blocked        never a signal; missing infrastructure is handled by the orchestrator
+#   recurrence     NOT an escalation: the same high/medium area in each of the newest
+#                  ESCALATE_RECURRENCE_WINDOW rounds of this attempt (the ledger past
+#                  rounds_mark). Area = the finding's path without its `:line`, or its
+#                  title (whitespace-collapsed, lowercased) when it has no path; lows are
+#                  listed, not fixed, so they recur by design and never count. Prints
+#                  `recurrence: <area>` and exits: no handoff, no mark, no respawn — the
+#                  orchestrator runs `consult.sh decide`, then the next fix round at the
+#                  SAME attempt (#116). Fires once per area per attempt (`$RUNDIR/recurrence`,
+#                  one `<attempt><TAB><area>` line per fire) and is skipped once this
+#                  attempt's consults reach the cap — a decide is a consult — so review-cap
+#                  takes over. A claude-backed attempt stays exempt: the ledger is written
+#                  only by the codex review wrapper, so a claude attempt has no rounds of its
+#                  own, and any in the file belong to earlier codex attempts behind rounds_mark.
 #   review-cap     a SECOND review round within this attempt still has high or medium
 #                  findings — the fix session is spawned at the next chain position.
 #                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append
@@ -75,6 +88,7 @@
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
+#   ESCALATE_RECURRENCE_WINDOW=2
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
@@ -87,7 +101,7 @@
 # PREVIOUS /orchestrate run left on the thread (permanent, unlike the run dir) cannot count
 # against this one. Every later evaluation is scoped by `handoff.json`'s own mark instead.
 #
-# `$RUNDIR/rounds` AND `$RUNDIR/.started` are residuals, accepted: a worker able to reach the
+# `$RUNDIR/rounds`, `$RUNDIR/recurrence` AND `$RUNDIR/.started` are residuals, accepted: a worker able to reach the
 # run dir (the non-default CODEX_RUN_ROOT threat model this script's siblings already name)
 # could truncate `rounds` to hide a review's findings from review-cap, or future-date
 # `.started` to make every comment on the thread read as pre-run and permanently empty the
@@ -167,6 +181,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
+       ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
 # A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
@@ -181,6 +196,8 @@ stall_s = float(os.environ["ESC_STALL"]) * 60
 review_s = float(os.environ["ESC_REVIEW"]) * 60
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
+window  = int(os.environ["ESC_WINDOW"])
+dry     = bool(os.environ.get("ESC_DRY"))
 
 def comment_time(c):
     # ISO-8601 UTC, as `gh issue view --json comments` prints createdAt. A comment with no
@@ -283,13 +300,35 @@ if marked_attempt is None:
                 break
 this_attempt = comments[mark:]
 ledger = [l for l in (read("rounds") or "").splitlines() if re.match(r"\d", l)]
+# FIRST line only (consult.sh writes it there): a **Deviation** quoting an earlier
+# "**Consult 2** said..." at a line start would otherwise count as a consult and
+# burn a chain position one deviation early.
+consults = sum(1 for c in this_attempt if re.match(r"\*\*Consult \d+\*\*", c.lstrip()))
 if reason is None:
-    # FIRST line only (consult.sh writes it there): a **Deviation** quoting an earlier
-    # "**Consult 2** said..." at a line start would otherwise count as a consult and
-    # burn a chain position one deviation early.
-    consults = sum(1 for c in this_attempt if re.match(r"\*\*Consult \d+\*\*", c.lstrip()))
     if status == "escalate" and note.lower().startswith("deviation:") and consults >= cap:
         reason = ("deviation-cap", "a deviation after %d consults this attempt; the cap is %d" % (consults, cap))
+# --- recurrence: the same high/medium area in the newest W rounds of this attempt ----
+# A design decision, not a stronger fixer (#116). Not an escalation: no handoff, no mark.
+if reason is None and window > 0 and consults < cap:
+    attempt_rounds = [int(m.group(1)) for m in (re.match(r"(\d+) ", l) for l in ledger[rounds_mark:]) if m]
+    areas = {}
+    for l in (read("rounds") or "").splitlines():
+        f = l.split("\t")
+        if len(f) == 5 and f[0] == "finding" and f[1].isdigit() and f[2] in ("high", "medium"):
+            area = re.sub(r":[0-9][0-9-]*$", "", f[4].strip()) or " ".join(f[3].split()).lower()
+            if area:
+                areas.setdefault(int(f[1]), []).append(area)
+    newest = attempt_rounds[-window:]
+    if len(newest) == window:
+        fired = {l.split("\t", 1)[1] for l in (read("recurrence") or "").splitlines()
+                 if l.split("\t", 1)[0] == str(attempt) and "\t" in l}
+        for area in areas.get(newest[-1], []):
+            if area not in fired and all(area in areas.get(r, []) for r in newest[:-1]):
+                if not dry:
+                    with open(os.path.join(rundir, "recurrence"), "a", encoding="utf-8") as fh:
+                        fh.write("%d\t%s\n" % (attempt, area))
+                print("recurrence: %s" % area)
+                sys.exit(0)
 if reason is None:
     rounds = []
     for l in ledger[rounds_mark:]:
@@ -353,7 +392,6 @@ if reason is None:
 
 # --- the mechanical handoff -------------------------------------------------------------
 already = marked_attempt == attempt
-dry = bool(os.environ.get("ESC_DRY"))
 tail = []
 for line in (read("events.jsonl") or "").splitlines()[-40:]:
     try:
@@ -388,7 +426,7 @@ RC=$?
 [ "$RC" -eq 0 ] || { [ -n "$DRY" ] || cat "$RUNDIR/escalate-stderr.log" >&2; exit 1; }
 [ -n "$REASON" ] || exit 0
 
-if [ -z "$DRY" ] && ! grep -qx POSTED "$RUNDIR/escalate-stderr.log"; then
+if [ -z "$DRY" ] && grep -qx POST "$RUNDIR/escalate-stderr.log"; then
     ( cd "$WORKTREE" && gh issue comment "$ISSUE" --body-file "$RUNDIR/handoff-comment.md" ) \
         >/dev/null 2>>"$RUNDIR/escalate-stderr.log" </dev/null \
         || echo "warning: could not post the **Handoff** comment on #$ISSUE (the reason still stands)" >&2
