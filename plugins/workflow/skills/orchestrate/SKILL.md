@@ -126,9 +126,7 @@ cells (the trivial and standard implementer chains start on 6-luna — PRD #104)
 at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
 look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
 **top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
-(opus medium in the shipped table), never the frontmatter default; a codex reviewer cell
-becomes `opus`. The plan comment
-and the escalation script are session-lane only.
+(opus medium in the shipped table), never the frontmatter default; a codex reviewer cell becomes `opus`. The plan comment and the escalation script are session-lane only.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -146,15 +144,13 @@ and the escalation script are session-lane only.
    implementer that wrote the code.
 7. **Merge** — `merge-fold.sh`, then **offer** the merge back to `dev`/`main`. Offered, never taken.
 
-The ad-hoc lane never spawns a session, never writes a run log, and never opens a PR. It is a
-chain, and when it ends you are still holding the context.
+The ad-hoc lane never spawns a session, never writes a run log, and never opens a PR. It is a chain, and when it ends you are still holding the context.
 
 ---
 
 # The session lane
 
-One **real `claude --bg` session per issue**, spawned by you, working in its own git worktree,
-reporting back over `SendMessage`.
+One **real `claude --bg` session per issue**, spawned by you, working in its own git worktree, reporting back over `SendMessage`.
 
 **Why sessions and not subagents:** a session can be attached to, killed and respawned; it can
 spawn its own subagents (a subagent cannot); and it carries a real context window sized for a whole
@@ -162,9 +158,7 @@ issue. **A claude session costs ≈40k tokens to start**; a `codex exec` worker 
 `tier:trivial` starts on codex (6-luna) like `standard`, and a claude session is paid for only
 when a chain escalates to its top cell or the tier is `complex`.
 
-**One session per issue. Never a reused per-slot session.** A reused slot carries the previous
-issue's context into the next build — which is precisely the poisoning the fresh-context reviewer
-exists to prevent. When an issue is done, its session exits.
+**One session per issue. Never a reused per-slot session.** A reused slot carries the previous issue's context into the next build — which is precisely the poisoning the fresh-context reviewer exists to prevent. When an issue is done, its session exits.
 
 ## Names and paths
 
@@ -176,9 +170,7 @@ exists to prevent. When an issue is done, its session exits.
 | issue worktree | `<baseRepo>/.worktrees/<runid>/issue-<N>` |
 | issue branch | `issue-<N>` |
 
-**The run prefix is load-bearing.** `claude agents --json` is **global**, and multiple concurrent
-orchestrator sessions are the *intended* usage — a PRD run in one terminal, ad-hoc work in another.
-Without the prefix one orchestrator can see, wake and **stop** another run's workers.
+**The run prefix is load-bearing.** `claude agents --json` is **global**, and multiple concurrent orchestrator sessions are the *intended* usage — a PRD run in one terminal, ad-hoc work in another. Without the prefix one orchestrator can see, wake and **stop** another run's workers.
 
 ## Step 1 — the allowlist
 
@@ -265,7 +257,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/ready.sh" "$GRAPH" \
      --merged <each merged issue> --held <each user or run-log-held issue> --in-flight <each in flight>
 ```
 
-`--held` includes the user's explicit holds and every issue in `run-log.sh state`'s `held=` field. Pass those issue numbers on every readiness check. It is never "waiting on a blocker": ready.sh works that out from the graph itself.
+`--held` means **a dependent the user chose to hold** (their explicit holds), plus any issue in `run-log.sh state`'s `held=` field (only a failed `follow-up.sh` writes one, for the user to decide). Pass those issue numbers on every readiness check. It is never "waiting on a blocker" and never a capped merge's dependent: ready.sh works out blockers, including a follow-up, from the graph itself.
 
 - **numbers on stdout** → admissible, ascending. Admit the lowest-numbered ones until `--max` slots
   are full.
@@ -443,12 +435,9 @@ posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's 
 # Liveness
 
 Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
-For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session
-ends (respawn, escalation, superseded by a fix-round session, or its issue merged), verify the stop, then remove its settings file and private directory per infra's README.
+For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session ends (respawn, escalation, superseded by a fix-round session, or its issue merged), verify the stop, then remove its settings file and private directory per infra's README.
 
-After spawning, wait on worker messages and idle notices and handle each wake immediately. Do not
-poll on a timer; the long idle tick is a fallback only when the event wait is unavailable, not the
-normal interval between checks.
+After spawning, wait on worker messages and idle notices and handle each wake immediately. Do not poll on a timer; the long idle tick is a fallback only when the event wait is unavailable, not the normal interval between checks.
 
 ---
 
@@ -567,7 +556,7 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on that follow-up:
+A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open) joins the merge queue as usual. After it lands, run `follow-up.sh` on the main thread; capped-merge dependents are re-blocked on that follow-up:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>
@@ -575,6 +564,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" -
 
 It files one `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a
 `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed. If `follow-up.sh` exits non-zero, log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
+Then keep scheduling from the amended `$GRAPH`: the dependents wait on the follow-up through `ready.sh`, exactly like any blocker — a capped merge no longer holds anything, and you never ask the user what to do with a capped issue.
 
 ---
 
@@ -584,8 +574,7 @@ It files one `ready-for-agent` issue with the open high/medium findings, adds it
 never opens a findings file.** Workers report a fixed-shape status line; artifacts go to files or
 issue comments; the orchestrator passes **paths and numbers**.
 
-Target: **~50 tokens per issue, not 800.** A dispatcher that reads the work it dispatches stops
-being able to dispatch.
+Target: **~50 tokens per issue, not 800.** A dispatcher that reads the work it dispatches stops being able to dispatch.
 
 **On-demand summaries only — never automatic.** When you ask about an issue, spawn an agent to
 answer; a summary nobody asked for is context nobody chose to spend:
@@ -660,10 +649,11 @@ instead of buried under a success table:
    | merged? closed? | the fold's output + the close verification |
    | merge commit | the fold's output |
    | review outcome | the issue's **last review-round comment** — read it now, on demand, not during the run |
-   | notes | `run-log.sh state` (held, respawns, plans, consults, escalations, decisions) + `ready.sh`'s classification |
+   | notes | `run-log.sh state` (held, respawns, plans, consults, escalations, follow-ups, decisions) + `ready.sh`'s classification |
 
-   Below the table: the stop reason if it drained; the **held** dependents and why; the **unbuilt**
-   issues (scoped, admissible, never admitted); any respawns; the `.git/info/exclude` line Step 4
+   Below the table: the stop reason if it drained; the **follow-ups filed** and which dependents waited on them
+   (each `follow-up=<parent>:<child> waited=<deps>` line of `run-log.sh state`); any **held** issues (user holds,
+   or a failed `follow-up.sh`) and why; the **unbuilt** issues (scoped, admissible, never admitted); any respawns; the `.git/info/exclude` line Step 4
    added to the user's real repo; and, if any `mock-debt` is open, a one-line ledger summary
    (`mock-debt: N open — #A, #B`) naming any `e2e-gate` it held.
 
