@@ -143,7 +143,7 @@ done
 RUNDIR="$CODEX_ROOT/issue-$ISSUE"
 
 # Terminal. The report is the schema'd final message; on a crash there may be none, and
-# then stderr.log is the only place the reason lands (README § Two backends).
+# then the event log is checked first, with stderr.log as the fallback (README § Two backends).
 REPORT_ISSUE="$ISSUE" REPORT_STATE="$STATE" REPORT_DIR="$RUNDIR" REPORT_INFRA="$INFRA" \
     python3 <<"PY"
 import json, os, re, subprocess, sys
@@ -196,12 +196,17 @@ def independent_review():
 
 if not raw:
     # No report at all. If codex exited non-zero this is the expected shape of a crash,
-    # and the run is still reportable: `failed` plus whatever stderr caught. If it exited
-    # CLEAN with no report, something is wrong we cannot characterise — refuse to invent
+    # and the run is still reportable: `failed` plus the event-log reason, then stderr.
+    # If it exited cleanly with no report, something is wrong we cannot characterise — refuse to invent
     # a result, because the caller would read any line here as a real outcome.
     if state == "failed":
-        tail = flat(read("stderr.log")[-500:]) if read("stderr.log") else "no reason recorded"
-        print("issue %d failed %s" % (issue, tail))
+        try:
+            out = subprocess.run(["bash", os.path.join(infra, "codex-failure.sh"), rundir],
+                                 capture_output=True, text=True, timeout=30)
+            why = out.stdout.strip() or "no reason recorded"
+        except (OSError, subprocess.SubprocessError):
+            why = "no reason recorded"
+        print("issue %d failed %s" % (issue, why))
         sys.exit(0)
     print("error: issue %d finished clean but wrote no report to last-message.txt" % issue,
           file=sys.stderr)
