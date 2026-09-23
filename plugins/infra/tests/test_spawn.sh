@@ -671,6 +671,68 @@ assert_equals "and the run-dir rounds ledger escalate.sh reads carries the same 
     "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 2 high, 1 medium, 0 low"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
 
+echo "test: four reviews across two attempts are numbered 1..4 from the ledger"
+# CFG_CODEX is a single-position chain, so attempt 1 resolves to claude. Keep this central
+# mechanism test on the real codex wrapper by supplying a two-position codex chain for its
+# attempt-1 runs.
+CFG_CODEX_CHAIN="$WORK/cfg-codex-chain"
+mkdir -p "$CFG_CODEX_CHAIN"
+cat >"$CFG_CODEX_CHAIN/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna",  "effort": "max" },
+                     { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } ],
+    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "low" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
+    "implementer": [ { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
+                     { "backend": "codex", "model": "gpt-5.6-sol",   "effort": "high" } ],
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "medium" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "xhigh" }
+  }
+}
+JSON
+attempt1_roster=$(RESOLVE_TIER_ROOT="$CFG_CODEX_CHAIN" \
+    bash "$SCRIPT_DIR/../scripts/resolve-tier.sh" standard 1)
+assert_contains "the local attempt-1 roster stays codex-backed" "$attempt1_roster" \
+    "implementer_backend=codex"
+
+rm -rf "$CODEX_ROOT"
+run_numbered_review() {
+    local number="$1" tier_root="$2"
+    shift 2
+    STUB_REVIEW_TEXT='- [P1] x — a:1' \
+        PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$tier_root" \
+        bash "$SPAWN" "$@" >/dev/null 2>"$WORK/err"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+    if [ -f "$RUNDIR/review-comment.md" ]; then
+        cp "$RUNDIR/review-comment.md" "$WORK/review-comment-$number.md"
+    else
+        no "review $number did not write its issue comment"
+    fi
+}
+run_numbered_review 1 "$CFG_CODEX" \
+    r9 12 standard "$REPO" base --orchestrator orch-main
+run_numbered_review 2 "$CFG_CODEX" \
+    r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main
+run_numbered_review 3 "$CFG_CODEX_CHAIN" \
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+run_numbered_review 4 "$CFG_CODEX_CHAIN" \
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+assert_equals "four reviews append ledger numbers 1..4" \
+    "$(cut -d' ' -f1 "$RUNDIR/rounds" | tr '\n' ',')" "1,2,3,4,"
+for review_number in 1 2 3 4; do
+    assert_contains "saved comment $review_number is numbered from the ledger" \
+        "$(cat "$WORK/review-comment-$review_number.md" 2>/dev/null)" \
+        "**Review round $review_number**"
+done
+
 echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/gh-argv"
 STUB_REVIEW_EXIT=3 STUB_GH_ARGV="$WORK/gh-argv" \

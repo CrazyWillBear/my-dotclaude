@@ -308,12 +308,15 @@ assert_contains "names it" "$ERR" "unknown flag"
 echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own review"
 rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+mkdir -p "$CODEX_ROOT/r1/issue-86"
+printf '1 0 high, 0 medium, 0 low\n2 0 high, 0 medium, 0 low\n3 0 high, 0 medium, 0 low\n' \
+    >"$CODEX_ROOT/r1/issue-86/rounds"
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     STUB_REVIEW_TEXT='- [P1] a finding — src/f:1
 - [P1] another — src/g:2
 - [P3] a nit — src/h:3' \
     STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
-    run r1 86 standard "$REPO" --answer "x" --base base --round 4
+    run r1 86 standard "$REPO" --answer "x" --base base
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
@@ -351,12 +354,17 @@ assert_contains "on the right issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "86"
 # and passing it as --body would put it at the mercy of shell quoting.
 assert_contains "as a --body-file" "$(cat "$WORK/gh-argv" 2>/dev/null)" "--body-file"
 COMMENT="$(cat "$CODEX_ROOT/r1/issue-86/review-comment.md" 2>/dev/null)"
-assert_contains "carrying the round number it was given" "$COMMENT" "**Review round 4**"
+assert_contains "numbered from the ledger" "$COMMENT" "**Review round 4**"
 assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
-assert_equals "the rounds ledger records round 4's verdict" "$(cat "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
+assert_equals "the last ledger line records round 4's verdict" \
+    "$(tail -1 "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
+
+run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
+assert_equals "resume refuses the removed --round flag" "$RC" "1"
+assert_contains "and reports an unknown flag" "$ERR" "unknown flag"
 
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
 # THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER

@@ -10,15 +10,14 @@
 #
 # Usage:
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
-#        [--round N] [--attempt N] [--dry-run]
+#        [--attempt N] [--dry-run]
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer-file FILE \
-#        [--round N] [--attempt N] [--dry-run]
+#        [--attempt N] [--dry-run]
 #
 #     --base BRANCH  REQUIRED. What the post-resume review diffs against. The resumed
 #                    worker does not review itself (§ the reviewer, below), so without
 #                    this there is nothing to review against and the run would be landed
 #                    unreviewed.
-#     --round N      the round number quoted in the review comment this posts (default 1)
 #     --attempt N    the chain position the worker was SPAWNED at (default 0), so the
 #                    re-passed `-m` is the same model — a resume on a different model is
 #                    a stranger on the thread (#104). The answer is normally a consult's
@@ -52,7 +51,6 @@ ANSWER=""
 ANSWER_SET=0
 DRY=""
 BASE=""
-ROUND=1
 ATTEMPT=0
 
 while [ $# -gt 0 ]; do
@@ -64,8 +62,6 @@ while [ $# -gt 0 ]; do
                        ANSWER="$(cat "$2")"; ANSWER_SET=1; shift 2 ;;
         --base)        [ $# -ge 2 ] || die "--base needs a value"
                        BASE="$2"; shift 2 ;;
-        --round)       [ $# -ge 2 ] || die "--round needs a value"
-                       ROUND="$2"; shift 2 ;;
         --attempt)     [ $# -ge 2 ] || die "--attempt needs a value"
                        ATTEMPT="$2"; shift 2 ;;
         --dry-run)     DRY=1; shift ;;
@@ -73,7 +69,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--round N] [--dry-run]"
+USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--dry-run]"
 [ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 # --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
 # independent review (below) and the reviewer's commit range cannot be built without one —
@@ -82,7 +78,6 @@ USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH -
 # Guessing a base here (`main`, the current branch) would be the same silence with extra
 # steps: wrong on any repo whose default differs, and undetectable when it is.
 [ -n "$BASE" ] || die "--base BRANCH is required — the post-resume review cannot run without it"
-case "$ROUND" in ''|*[!0-9]*) die "--round must be a number, got '$ROUND'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "--attempt must be a number, got '$ATTEMPT'" ;; esac
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 # Same guard as spawn.sh, worker-report.sh and run-log.sh: it is joined into a path.
@@ -265,6 +260,7 @@ if [ "$CODE" -eq 0 ] \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
                 # The run-dir ledger escalate.sh counts rounds from (see spawn.sh's wrapper).
+                ROUND=$(( $(cat "$RUNDIR/rounds" 2>/dev/null | grep -c .) + 1 ))
                 printf '%s %s\n' "$ROUND" "$COUNTS" >>"$RUNDIR/rounds"
                 { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
                   cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"

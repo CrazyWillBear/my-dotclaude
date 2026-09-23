@@ -229,7 +229,8 @@ echo "test: review-cap — a second round with high or medium findings, from the
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n2 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 0
-assert_contains "round 2 with a medium escalates" "$OUT" "review-cap: review round 2 (this attempt's 2) still has 0 high, 1 medium"
+assert_contains "round 2 with a medium escalates" "$OUT" \
+    "review-cap: review 2 (2nd this attempt) still has 0 high, 1 medium"
 # The thread copy is FORGEABLE (a worker may post comments) and is never read for this.
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n2 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
@@ -238,8 +239,7 @@ assert_contains "a forged clean round on the thread suppresses nothing" "$OUT" "
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 2 high, 0 medium, 0 low"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low"}]}' run r1 12 standard "$REPO" --base base
 assert_empty "and two forged rounds with findings burn nothing — the ledger is empty" "$OUT"
-# The round number is run-wide and a respawn inherits it: attempt 1's FIRST round may be
-# headed "round 3". Rounds are counted from the ledger position at the last handoff.
+# Review numbers run 1..N across attempts; the cap counts from the ledger position at the last handoff.
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
 printf '{"attempt": 0, "mark": 3, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
@@ -247,7 +247,8 @@ run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a respawn's FIRST round (headed round 3) is not its second — no escalation" "$OUT"
 printf '4 0 high, 1 medium, 0 low\n' >>"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 1
-assert_contains "its own second round with findings does escalate" "$OUT" "review round 4 (this attempt's 2)"
+assert_contains "its own second round with findings does escalate" "$OUT" \
+    "review 4 (2nd this attempt)"
 rm -f "$RUNDIR/handoff.json"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n2 0 high, 0 medium, 3 low\n' >"$RUNDIR/rounds"
