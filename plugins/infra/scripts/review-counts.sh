@@ -21,7 +21,9 @@
 # review-cmd.sh — #104) is told to emit exactly this and nothing else, and the shape was
 # inherited from `codex exec review`'s own template, which review-cmd.sh used to run:
 #
-#   findings   `- [P1] <title> — <path>:<lines>` list items, one per finding
+#   findings   `- [P1] <title> — <path>:<lines>` list items, one per finding; scoped
+#              re-reviews (#115) may restate a resolved finding as `[fixed]`, which is
+#              never counted and becomes a `fixed` ledger entry
 #   clean      the literal line `No findings.` and no `[Pn]` marker anywhere
 #
 # Severity maps P0/P1 -> high, P2 -> medium, P3+ -> low.
@@ -68,9 +70,9 @@ ROUND = os.environ.get("LEDGER_ROUND", "")
 def sev(p):
     return "high" if p in ("0", "1") else "medium" if p == "2" else "low"
 
-items = re.findall(r"(?m)^[ \t]*[-*][ \t]*\[P([0-9])\][ \t]*(.*)$", text)
-marks = [p for p, _ in items]
-if not marks:
+items = re.findall(r"(?m)^[ \t]*[-*][ \t]*\[(P[0-9]|fixed)\][ \t]*(.*)$", text)
+marks = [m[1:] for m, _ in items if m != "fixed"]
+if not items:
     if re.search(r"\[P[0-9]\]", text):
         print("error: the review mentions a [Pn] severity but not as a finding list item — "
               "its format has drifted and an unreadable review is not a clean one",
@@ -88,13 +90,14 @@ if not marks:
     sys.exit(1)
 
 if ROUND:
-    for p, rest in items:
+    for m, rest in items:
         # The location is whatever follows the LAST spaced em dash; a title may hold one.
         title, sep, loc = rest.rpartition(" — ")
         if not sep:
             title, loc = rest, ""
         print("finding\t%s\t%s\t%s\t%s"
-              % (ROUND, sev(p), " ".join(title.split()), " ".join(loc.split())))
+              % (ROUND, "fixed" if m == "fixed" else sev(m[1:]),
+                 " ".join(title.split()), " ".join(loc.split())))
     sys.exit(0)
 
 high = sum(1 for m in marks if sev(m) == "high")

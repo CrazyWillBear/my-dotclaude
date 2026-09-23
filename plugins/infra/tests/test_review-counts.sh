@@ -116,6 +116,28 @@ printf '* [P1] a finding — a.py:1\n' >"$WORK/star.txt"
 run "$WORK/star.txt"
 assert_equals "counted" "$OUT" "1 high, 0 medium, 0 low"
 
+echo "test: [fixed] items are ledger entries but never counted"
+printf '%s\n' \
+    '- [fixed] one — a:1' \
+    '- [fixed] two — b:2' \
+    '- [P2] three — c:3' \
+    '- [P1] four — d:4' >"$WORK/fixed-mixed.txt"
+run "$WORK/fixed-mixed.txt"
+assert_equals "fixed items are excluded from counts" "$RC" "0"
+assert_equals "only open findings are counted" "$OUT" "1 high, 1 medium, 0 low"
+run "$WORK/fixed-mixed.txt" --findings 2
+assert_equals "fixed items retain ledger identity without counting" "$OUT" \
+    "$(printf 'finding\t2\tfixed\tone\ta:1\nfinding\t2\tfixed\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\nfinding\t2\thigh\tfour\td:4')"
+
+echo "test: an all-fixed re-review is a clean count, not drift"
+printf '%s\n' '- [fixed] one — a:1' >"$WORK/fixed-only.txt"
+run "$WORK/fixed-only.txt"
+assert_equals "all-fixed review exits 0" "$RC" "0"
+assert_equals "all-fixed review counts zero" "$OUT" "0 high, 0 medium, 0 low"
+run "$WORK/fixed-only.txt" --findings 3
+assert_equals "all-fixed ledger entry preserves the original identity" "$OUT" \
+    "$(printf 'finding\t3\tfixed\tone\ta:1')"
+
 # ---------------------------------------------------------------------------
 # THE REFUSALS. Each one must print NOTHING on stdout: the callers read any output as a
 # verdict, and a verdict is what decides whether unreviewed code reaches the merge queue.
