@@ -31,7 +31,9 @@
 # (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
 # they are stored here anyway, per issue with the attempt and the reason, because the
 # deviation rate is the DATA that later decides whether a cheaper model can take the
-# complex implementer slot — and that is a question across runs, not one thread.
+# complex implementer slot — and that is a question across runs, not one thread. The
+# escalation reasons include failed, quota, deviation-cap, review-cap, occupancy, stall,
+# no-progress and backstop; the last two end the issue loop without posting a Handoff.
 #
 # Append-only means no read-modify-write: no lost updates, and no format drift
 # after a compact. Each line gets a `ts` and the event name; the rest is yours.
