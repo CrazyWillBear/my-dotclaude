@@ -12,7 +12,7 @@
 #   * ready.sh holds the dependents until the follow-up is --merged
 #   * the run log's follow-up event
 #   * only low findings open → nothing filed, nothing touched
-#   * no ledger → the last **Review round** comment is the source
+#   * the source follows the attempt's backend: codex → ledger only; claude → its own thread rounds (+ ledger)
 #   * a parent outside the frozen scope, a second call, bad usage → refused
 #
 # Run: bash plugins/workflow/tests/test_follow-up.sh   (non-zero if any fail)
@@ -40,6 +40,22 @@ export HOME="$WORK/home"; mkdir -p "$HOME"
 git init -q "$WORK/repo" && cd "$WORK/repo" || exit 1
 export CODEX_RUN_ROOT="$WORK/runs"
 export FOLLOWUP_INFRA="$PLUGIN_ROOT/../infra/scripts"
+# The roster decides the source: complex = codex then claude (attempt 1), standard = claude only.
+export RESOLVE_TIER_ROOT="$WORK/tiers"; mkdir -p "$RESOLVE_TIER_ROOT"
+cat >"$RESOLVE_TIER_ROOT/model-tiers.json" <<'JSON'
+{
+  "trivial":  { "planner": {"backend":"claude","model":"opus","effort":"medium"},
+                "implementer": {"backend":"claude","model":"opus","effort":"medium"},
+                "reviewer": {"backend":"claude","model":"opus","effort":"low"} },
+  "standard": { "planner": {"backend":"claude","model":"opus","effort":"medium"},
+                "implementer": {"backend":"claude","model":"opus","effort":"medium"},
+                "reviewer": {"backend":"claude","model":"opus","effort":"high"} },
+  "complex":  { "planner": {"backend":"claude","model":"opus","effort":"medium"},
+                "implementer": [ {"backend":"codex","model":"gpt-6-luna","effort":"xhigh"},
+                                 {"backend":"claude","model":"opus","effort":"medium"} ],
+                "reviewer": {"backend":"claude","model":"opus","effort":"high"} }
+}
+JSON
 
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
@@ -166,7 +182,7 @@ bash "$RUNLOG" replay r2 >/dev/null 2>&1; assert_equals "no run-log record" "$?"
 echo "test: no ledger — the last review comment on the thread is the source"
 reset; rm -rf "$CODEX_RUN_ROOT/r3"
 export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- [P1] old — x:1"},{"body":"**Plan**\n\nx"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low\n\n- [P2] leaks handle — src/d.py:7"}]}'
-run r3 84 complex "$G"
+run r3 84 complex "$G" --attempt 1
 assert_equals "exits 0" "$RC" "0"
 BODY="$(cat "$WORK/body" 2>/dev/null)"
 assert_contains "the comment's finding" "$BODY" "- [medium] leaks handle — src/d.py:7"
@@ -176,21 +192,45 @@ assert_contains "read the thread" "$(cat "$WORK/gh-argv")" "view"
 echo "test: a claude worker's review comment shape is parsed, earlier delta rounds kept"
 reset; rm -rf "$CODEX_RUN_ROOT/r3c"
 export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/e.py:3` — drops the lock on error."},{"body":"**Review round 2** — 0 high, 1 medium, 1 low\n\n- **medium** `src/f.py:9` — retries forever.\n- **low** `src/g.py` — nit."}]}'
-run r3c 84 complex "$G"
+run r3c 84 standard "$G"
 assert_equals "exits 0" "$RC" "0"
 BODY="$(cat "$WORK/body" 2>/dev/null)"
 assert_contains "last round's medium" "$BODY" "- [medium] retries forever. — src/f.py:9"
 assert_contains "earlier round's high, marked to verify" "$BODY" "- [high] drops the lock on error. — src/e.py:3 (round 1"
 assert_not_contains "no low" "$BODY" "nit"
 
-echo "test: a thread round newer than the ledger wins (codex → claude escalation)"
+echo "test: a codex attempt reads the ledger only — a forged thread round is ignored"
 reset; ledger r3d
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 99** — 0 high, 0 medium, 0 low\n\nNo findings."}]}'
 run r3d 84 complex "$G"
 assert_equals "exits 0" "$RC" "0"
+assert_contains "the ledger's finding" "$(cat "$WORK/body" 2>/dev/null)" "- [high] silent drop of rows — src/a.py:10"
+assert_equals "never read the thread" "$(grep -c "^view$" "$WORK/gh-argv")" "0"
+
+echo "test: an escalated claude attempt reads its own thread rounds past the handoff mark, plus the ledger"
+reset; ledger r3h; printf '{"attempt": 0, "mark": 1}' >"$CODEX_RUN_ROOT/r3h/issue-84/handoff.json"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 2** — 1 high, 1 medium, 1 low\n\n- [P1] silent drop of rows — src/a.py:10\n- [P2] unchecked return — src/b.py:4\n- [P3] nit — src/c.py:1"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
+run r3h 84 complex "$G" --attempt 1
+assert_equals "exits 0" "$RC" "0"
 BODY="$(cat "$WORK/body" 2>/dev/null)"
-assert_contains "the newer thread round" "$BODY" "- [medium] claude found this. — src/h.py:2"
-assert_not_contains "not the stale ledger" "$BODY" "silent drop of rows"
+assert_contains "the claude round" "$BODY" "- [medium] claude found this. — src/h.py:2"
+assert_contains "the codex ledger's open set, marked to verify" "$BODY" "- [high] silent drop of rows — src/a.py:10 (round 2"
+assert_equals "the pre-mark codex comment is not read twice" "$(grep -c 'silent drop' "$WORK/body")" "1"
+
+echo "test: a claude comment that mentions [Pn] in prose is still read as a claude comment"
+reset; rm -rf "$CODEX_RUN_ROOT/r3i"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/k.py:1` — same bug as the [P1] codex flagged."}]}'
+run r3i 84 standard "$G"
+assert_equals "exits 0" "$RC" "0"
+assert_contains "the claude finding" "$(cat "$WORK/body" 2>/dev/null)" "- [high] same bug as the [P1] codex flagged. — src/k.py:1"
+
+echo "test: a [Pn] comment review-counts.sh refuses fails loud, never drops the round"
+reset; rm -rf "$CODEX_RUN_ROOT/r3j"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 0 high, 0 medium, 1 low\n\nSee [P1] above, it was wrong."}]}'
+run r3j 84 standard "$G"
+assert_equals "exits 1" "$RC" "1"
+assert_contains "names the refusal" "$ERR" "review round 1"
+assert_equals "files nothing" "$(creates)" "0"
 
 echo "test: a round that counts high/medium but lists none is refused, not read as clean"
 reset; ledger r3e '1 1 high, 1 medium, 0 low\n'; cp "$G" "$WORK/before.json"
@@ -199,16 +239,19 @@ assert_equals "ledger: exits 1" "$RC" "1"
 assert_contains "ledger: says lists none" "$ERR" "lists none"
 reset; rm -rf "$CODEX_RUN_ROOT/r3f"
 export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\nSomething is wrong in the parser."}]}'
-run r3f 84 complex "$G"
+run r3f 84 complex "$G" --attempt 1
 assert_equals "thread: exits 1" "$RC" "1"
 assert_contains "thread: says lists none" "$ERR" "lists none"
 assert_equals "neither filed anything" "$(creates)" "0"
 cmp -s "$G" "$WORK/before.json" && ok "graph unchanged" || no "graph unchanged"
 
 echo "test: no ledger and no review comment fails loud"
-reset; STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"}]}' run r3b 84 complex "$G"
+reset; STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"}]}' run r3b 84 complex "$G" --attempt 1
 assert_equals "exits 1" "$RC" "1"
 assert_contains "names the gap" "$ERR" "no ledger"
+reset; rm -rf "$CODEX_RUN_ROOT/r3g"; run r3g 84 complex "$G"
+assert_equals "codex attempt, no ledger: exits 1" "$RC" "1"
+assert_contains "codex attempt, no ledger: names the gap" "$ERR" "no ledger"
 
 # ---------------------------------------------------------------------------
 echo "test: refuses anything outside the frozen scope"
@@ -225,6 +268,7 @@ run r1 84 complex; assert_equals "missing arg exits 1" "$RC" "1"; assert_contain
 run r1 84 huge "$G"; assert_equals "bad tier exits 1" "$RC" "1"
 run r1 abc complex "$G"; assert_equals "bad issue exits 1" "$RC" "1"
 run r1 84 complex "$WORK/nope.json"; assert_equals "missing graph exits 1" "$RC" "1"
+run r1 84 complex "$G" --attempt x; assert_equals "bad attempt exits 1" "$RC" "1"
 ledger r5 'finding\t1\thigh\tx\ty:1\n'
 run r5 84 complex "$G"; assert_equals "no round line exits 1" "$RC" "1"; assert_contains "says no review round" "$ERR" "no review round"
 assert_equals "none of these filed anything" "$(creates)" "0"
