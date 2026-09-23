@@ -88,7 +88,7 @@ assert_matches "announces the lane and proceeds without asking" "$BODY" "Announc
 
 echo "test: the ad-hoc lane's claim about the shipped roster is TRUE of the shipped roster"
 # The lane spawns through `Agent`, which takes claude model names only, so what it says
-# about `model-tiers.json` decides whether it passes a usable model or a `gpt-5.6-*` one.
+# about `model-tiers.json` decides whether it passes a usable model or a `gpt-*` one.
 # Prose alone cannot stay honest here: assert it against the table it describes.
 assert_not_matches "no stale 'every cell is codex' claim" "$BODY" "every worker cell.{0,40}codex"
 assert_matches "the substitution is conditional on the cell" "$BODY" "[Ii]f a cell does say .?codex"

@@ -448,7 +448,7 @@ a reviewer a map would widen its scope, which is the opposite of what it is for.
 
 **Standard and complex issues get a plan, written by a script on the planner cell's model and
 posted to the issue thread before the build worker is spawned** (PRD #104). The implementer
-chain starts on a cheap model — luna — which executes a good plan well and recovers from a bad
+chain starts on a cheap model — 6-luna — which executes a good plan well and recovers from a bad
 one badly, so the expensive model spends one bounded pass planning and the cheap one loops; the
 plan reaches the worker by reading the thread, like everything else. Trivial issues **self-plan**.
 The old rule (complex only, spawned inside the build session, measured at 26% of all work as a
