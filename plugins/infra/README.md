@@ -100,6 +100,8 @@ agent's frontmatter pins its own, since the Agent tool has no effort parameter) 
 cell, so "reviewer: opus" was silently false for every codex-built branch (#104). It emits
 `- [Pn] title — path:line` items or the literal `No findings.`; `review-counts.sh` refuses
 anything else, and the wrapper posts the `**Review round N**` comment exactly as before.
+Its rubric marks silent data loss, corruption, and denial-of-service that stalls or exhausts
+a shared worker as P1 regardless of apparent size.
 Reviews never run on fable and never on a codex model.
 
 `session-status.sh <runid>` reports those alongside the claude sessions, in the same

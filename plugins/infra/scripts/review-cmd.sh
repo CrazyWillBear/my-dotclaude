@@ -110,6 +110,8 @@ Then output its findings — and NOTHING else — in EXACTLY this shape, one lis
 finding, severity P0 critical, P1 high, P2 medium, P3 low (critical and high both count as
 high downstream):
 
+Silent data loss, data corruption, and any denial-of-service (an input that stalls or exhausts a shared worker) are ALWAYS high (P1), whatever their apparent size.
+
 - [P1] <one-line title> — <path>:<line>
   <one line: what is wrong and why it matters>
 
