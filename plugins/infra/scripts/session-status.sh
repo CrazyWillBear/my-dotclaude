@@ -41,7 +41,7 @@
 #   busy     working
 #   idle     waiting — for a background worker that is the DONE signal (it finished
 #            its turn); pair it with the issue's comments to see what it did
-#   blocked  a permission wedge — it is asking for something and nobody is there
+#   blocked  a permission wedge; for codex, it exited clean reporting blocked infra:
 #   done     the session reported itself finished/completed
 #   stopped  killed by `claude stop` — the state a respawn waits for. NOT `gone`: the
 #            session and its transcript still exist, and the worktree is untouched
@@ -51,7 +51,8 @@
 # A CODEX-backed worker is in no agent list — it is a process. It is read instead from
 # `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/`, where spawn.sh leaves a
 # pid file and an exit file beside the event log, and it reports in the SAME vocabulary
-# (live pid -> busy, exit 0 -> done, anything else -> failed) with the PID in column 2.
+# (live pid -> busy, exit 0 -> done or blocked, anything else -> failed) with the PID in
+# column 2. For codex, blocked means it exited clean reporting blocked infra:.
 #
 # NEVER parse `claude logs`: it is a raw ANSI screen dump, cursor moves and spinner
 # frames, not a transcript.
@@ -238,7 +239,14 @@ if not (self_mode or peers_mode) and os.path.isdir(codex_root):
                 return None
         pid, code = read("pid"), read("exit")
         if code is not None:
-            raw = "completed" if code == "0" else "failed"
+            if code == "0":
+                try:
+                    report = json.loads(read("last-message.txt") or "")
+                    raw = "blocked" if report.get("status") == "blocked" else "completed"
+                except Exception:
+                    raw = "completed"
+            else:
+                raw = "failed"
         elif pid is None:
             # spawn.sh makes the run dir, backgrounds codex, THEN records $!. A poll
             # landing in that window sees no pid file. The two wrong answers are not
