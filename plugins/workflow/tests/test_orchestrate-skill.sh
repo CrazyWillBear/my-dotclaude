@@ -253,6 +253,7 @@ assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|a
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
 assert_matches "a capped merge holds its dependents" "$BODY" "capped.*holds its dependents|holds its dependents"
+assert_contains "capped-merge dependents are an orchestrator hold" "$BODY" "capped-merge dependents"
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"

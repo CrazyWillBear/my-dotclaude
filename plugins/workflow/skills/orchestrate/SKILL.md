@@ -275,10 +275,10 @@ This is the whole scheduler. It is a loop **you** run on the main thread, delibe
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/ready.sh" "$GRAPH" \
-     --merged <each merged issue> --held <each held> --in-flight <each in flight>
+     --merged <each merged issue> --held <each user or run-log-held issue> --in-flight <each in flight>
 ```
 
-`--held` is the user's explicit hold on an issue, never "waiting on a blocker": ready.sh works out blocked-behind from the graph itself, so pass only issues you were told to hold.
+`--held` includes the user's explicit holds and every issue in `run-log.sh state`'s `held=` field, including capped-merge dependents. Pass those issue numbers on every readiness check. It is never "waiting on a blocker": ready.sh works that out from the graph itself.
 
 - **numbers on stdout** → admissible, ascending. Admit the lowest-numbered ones until `--max` slots
   are full.
@@ -582,6 +582,8 @@ rest of the run — they would be building on known debt:
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" held '{"n":15,"why":"blocker #12 merged capped"}'
 ```
+
+Pass that dependent in `--held` on every later Step-5 readiness check; capped-merge dependents are run-log-held issues.
 
 ---
 
