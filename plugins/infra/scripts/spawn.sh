@@ -761,5 +761,26 @@ if [ -n "$WORKTREE" ]; then
 fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
-[ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
+    # export can instead contaminate a daemon that it starts. Put this worker's values in
+    # per-session settings, which Claude carries with the dispatch. The file is private,
+    # outside the run dir, and removed as soon as --bg has accepted the session.
+    _env_umask="$(umask)"
+    umask 077
+    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.XXXXXX")" \
+        || die "could not create private Claude session settings"
+    CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
+    jq -n --args '{"env": reduce $ARGS.positional[] as $pair ({};
+        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])})}' \
+        -- "${ENVS[@]}" >"$CLAUDE_SETTINGS_FILE" 2>/dev/null \
+        || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
+    umask "$_env_umask"
+
+    trap 'rm -rf -- "$CLAUDE_SETTINGS_DIR"' EXIT
+    CLAUDE_CMD=("${CMD[0]}" --settings "$CLAUDE_SETTINGS_FILE" "${CMD[@]:1}")
+    "${CLAUDE_CMD[@]}" </dev/null
+    _claude_rc=$?
+    exit "$_claude_rc"
+fi
 exec "${CMD[@]}" </dev/null

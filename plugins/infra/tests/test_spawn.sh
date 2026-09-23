@@ -107,6 +107,20 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
+settings=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --settings) settings="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+# A running --bg daemon does not inherit arbitrary variables from this launcher.
+unset DATABASE_URL FOO
+if [ -n "$settings" ]; then
+    DATABASE_URL="$(jq -r '.env.DATABASE_URL // ""' "$settings")"
+    FOO="$(jq -r '.env.FOO // ""' "$settings")"
+fi
+[ -n "${STUB_SETTINGS_OUT:-}" ] && printf '%s\n' "$settings" >"$STUB_SETTINGS_OUT"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 STUB
 chmod +x "$BIN/claude"
@@ -612,10 +626,18 @@ assert_contains "stdin is closed — codex blocks forever on an open one" \
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
 
 echo "test: --env reaches real Claude and Codex workers without entering argv or run files"
-argv=$(STUB_ENV_OUT="$WORK/env-claude" PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
+argv=$(STUB_ENV_OUT="$WORK/env-claude" STUB_SETTINGS_OUT="$WORK/settings-claude" \
+    PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
     "$WORK/wt" base --orchestrator orch-main --env DATABASE_URL=postgres://x --env FOO=bar)
 assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
+assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
 assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
+claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
+if [ -n "$claude_settings" ] && [ ! -e "$claude_settings" ]; then
+    ok "private Claude settings are removed after dispatch"
+else
+    no "private Claude settings remain after dispatch: $claude_settings"
+fi
 
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
