@@ -339,6 +339,12 @@ assert_not_contains "resume never echoes the value" "$ERR" "private-canary"
 assert_equals "reserved --env leaves the old exit file untouched" \
     "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
 
+run r1 80 standard "$REPO" --answer x --env LD_AUDIT=private-canary
+assert_equals "resume rejects loader variables" "$RC" "1"
+assert_contains "loader rejection explains the reserved name" "$ERR" "reserved"
+assert_equals "loader rejection leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
 # ---------------------------------------------------------------------------
 # THE INDEPENDENT REVIEWER. A resumed worker's branch is as unreviewed as a freshly built
 # one, and this script used to end by asking the WORKER for a review count it produced by
