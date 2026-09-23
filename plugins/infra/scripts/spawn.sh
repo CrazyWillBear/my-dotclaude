@@ -58,10 +58,11 @@
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
-#   -n orch-<runid>-issue-<N>   worker only: the run prefix. `claude agents --json` is
-#                               global and concurrent runs are intended; without it one
-#                               run can stop another run's workers. A peer is named by
-#                               its role instead — see --name above.
+#   -n orch-<runid>-issue-<N>-a<attempt>[-r<round>]   worker only: the run prefix and
+#                               attempt/round. `claude agents --json` is global and
+#                               concurrent runs are intended; without the prefix one run
+#                               can stop another run's workers. A peer is named by its
+#                               role instead — see --name above.
 #   --permission-mode bypassPermissions
 #                               an unattended session in manual or acceptEdits mode
 #                               deadlocks on its FIRST prompt with nobody to answer.
@@ -225,7 +226,8 @@ fi
 # not here. It used to be read here to interpolate `-m` into the worker's own review
 # step, and that step is gone (§ CODEX below): the worker no longer reviews anything.
 
-NAME="orch-$RUNID-issue-$ISSUE"
+NAME="orch-$RUNID-issue-$ISSUE-a$ATTEMPT"
+[ "$ROLE" = fix ] && NAME="$NAME-r$ROUND"
 BRANCH="issue-$ISSUE"
 fi
 
@@ -556,6 +558,7 @@ if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
     printf '%s\n' --REVIEW--
     printf '%s\n' "${REVIEW_CMD[@]}"
+    printf 'session name: %s\n' "$NAME" >&2
     exit 0
 fi
 
@@ -592,6 +595,8 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
 # worker-resume.sh reads this because it has no --role flag.
 printf '%s\n' "$ROLE" >"$RUNDIR/role"
+printf '%s\n' "$NAME" >"$RUNDIR/session-name" \
+    || die "cannot record worker session name in $RUNDIR/session-name"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -771,6 +776,7 @@ if [ "${#ENV_NAMES[@]}" -gt 0 ]; then
     for _name in "${ENV_NAMES[@]}"; do unset "$_name"; done
 fi
 printf '%s\n' "$!" >"$RUNDIR/pid"
+printf 'session name: %s\n' "$NAME" >&2
 printf '%s\n' "$RUNDIR"
 exit 0
 fi
@@ -798,6 +804,7 @@ CMD=(claude --bg -n "$NAME"
 # prompt is the last argument, so its own newlines land after everything else.
 if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
+    printf 'session name: %s\n' "$NAME" >&2
     exit 0
 fi
 
@@ -809,6 +816,7 @@ if [ -n "$WORKTREE" ]; then
 fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
+printf 'session name: %s\n' "$NAME" >&2
 if [ "${#ENVS[@]}" -gt 0 ]; then
     # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
     # export can instead contaminate a daemon that it starts. Put this worker's values in

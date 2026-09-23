@@ -2,7 +2,8 @@
 #
 # session-status.sh — the state of one run's `claude --bg` worker sessions.
 #
-# /orchestrate spawns one background session per issue, named `orch-<runid>-issue-<N>`.
+# /orchestrate gives each worker attempt a distinct name:
+# `orch-<runid>-issue-<N>-a<attempt>` (fix rounds add `-r<round>`).
 # The run-prefix is not cosmetic: `claude agents --json` is GLOBAL, and concurrent
 # orchestrator runs are the intended usage. Without the prefix filter one run can see,
 # wake and stop another run's workers.
@@ -102,10 +103,11 @@ export STATUS_RUNID="$RUNID" STATUS_EXPECT="$EXPECT" \
        STATUS_CODEX_ROOT="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}"
 
 python3 <<"PY"
-import json, os, subprocess, sys
+import json, os, re, subprocess, sys
 
 runid  = os.environ["STATUS_RUNID"]
 prefix = "orch-%s-" % runid
+worker_name = re.compile(re.escape(prefix) + r"issue-(\d+)(?:-a\d+(?:-r\d+)?)?\Z")
 self_mode  = runid == "--self"
 peers_mode = runid == "--peers"
 expect = [int(t) for t in os.environ.get("STATUS_EXPECT", "").split()]
@@ -201,14 +203,22 @@ if peers_mode:
     sys.exit(0)
 
 seen = set()
+seen_issues = set()
 lines = []
+
+def issue_number(name):
+    match = worker_name.fullmatch(name)
+    return int(match.group(1)) if match else None
+
 for agent in agents:
     if not isinstance(agent, dict):
         continue
     name = agent.get("name") or ""
-    if not name.startswith(prefix):
+    issue = issue_number(name)
+    if issue is None:
         continue
     seen.add(name)
+    seen_issues.add(issue)
     lines.append("%s %s %s %s" % (name, agent.get("id") or "-",
                                   agent.get("kind") or "-", state_of(agent)))
 
@@ -228,7 +238,19 @@ if not (self_mode or peers_mode) and os.path.isdir(codex_root):
     for entry in sorted(os.listdir(codex_root)):
         if not entry.startswith("issue-"):
             continue
+        try:
+            issue = int(entry[len("issue-"):])
+        except ValueError:
+            continue
         name = prefix + entry
+        candidate = None
+        try:
+            with open(os.path.join(codex_root, entry, "session-name")) as fh:
+                candidate = fh.read().strip()
+        except OSError:
+            pass
+        if issue_number(candidate or "") == issue:
+            name = candidate
         if name in seen:
             continue
         def read(fname):
@@ -268,12 +290,12 @@ if not (self_mode or peers_mode) and os.path.isdir(codex_root):
                 alive = False
             raw = "working" if alive else "failed"
         seen.add(name)
+        seen_issues.add(issue)
         lines.append("%s %s codex %s" % (name, pid or "-", state_of({"state": raw})))
 
 for n in expect:
-    name = "%sissue-%d" % (prefix, n)
-    if name not in seen:
-        lines.append("%s - - gone" % name)
+    if n not in seen_issues:
+        lines.append("%sissue-%d - - gone" % (prefix, n))
 
 lines.sort()
 if lines:

@@ -53,6 +53,11 @@ the file and its private directory with `rm -f -- "$settings_file"` then
 directory is named `claude-env.<runid>.issue-<N>.*` under `$TMPDIR`, so a run's end sweeps any
 leftovers with `rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*`.
 
+Workers are named `orch-<runid>-issue-<N>-a<attempt>`; fix rounds append `-r<round>`.
+`spawn.sh` prints the complete name it used to stderr while retaining its existing stdout
+result, and `session-status.sh <runid> <N>` treats any such attempt name as that issue's
+session.
+
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
 | tier | planner | implementer (chain, cheapest first) | reviewer |
@@ -129,6 +134,10 @@ vocabulary, with the PID in column 2. The spawn returns immediately and prints t
 A claude worker reports with `SendMessage`. A codex worker cannot: it is a process, with no
 inbox. Its report is the schema'd final message in `last-message.txt`, and this script is what
 reads it.
+
+The status name includes the worker's `-a<attempt>` suffix and optional `-r<round>` fix
+suffix. `worker-report.sh` maps that full address back to the numeric issue while reading the
+same issue run directory.
 
 ```bash
 bash ~/.claude/kit/infra/scripts/worker-report.sh <runid> <issue> [--interval S] [--timeout S]

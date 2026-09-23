@@ -77,7 +77,8 @@ the next build — the exact poisoning the fresh-context reviewer exists to prev
 **≈40k tokens** to start, which only pays for long parallel work, so `tier:trivial` issues get a
 subagent instead and only `standard` / `complex` get a session.
 
-Names carry the run: sessions are `orch-<runid>-issue-<N>`, worktrees `.worktrees/<runid>/issue-<N>`.
+Names carry the run and worker position: sessions are `orch-<runid>-issue-<N>-a<attempt>`
+(fix rounds append `-r<round>`), and worktrees are `.worktrees/<runid>/issue-<N>`.
 `claude agents --json` is **global** and concurrent orchestrator runs are the intended usage — without
 the prefix one run can see, wake and **stop** another run's workers.
 

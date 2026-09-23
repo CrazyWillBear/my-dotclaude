@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>`, spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
+description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>-a<attempt>` (fix rounds append `-r<round>`), spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
 argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
@@ -172,7 +172,7 @@ exists to prevent. When an issue is done, its session exits.
 |---|---|
 | run id | `<ts>` — the same timestamp as the orchestration branch, e.g. `20260906-141500` |
 | orchestration branch / worktree | `orchestrate-<runid>` |
-| worker session | `orch-<runid>-issue-<N>` |
+| worker session | `orch-<runid>-issue-<N>-a<attempt>`; fix rounds append `-r<round>` |
 | issue worktree | `<baseRepo>/.worktrees/<runid>/issue-<N>` |
 | issue branch | `issue-<N>` |
 
@@ -307,8 +307,9 @@ model can, and historically did, hallucinate.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
-5. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
-   `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
+5. **Subscribe** — immediately after the spawn, `SendMessage` to the exact full name printed by
+   `spawn.sh` (for example, `orch-<runid>-issue-<N>-a0`) with `notify_when_idle: true` and
+   **no message**. See [Liveness](#liveness).
 
 **The session is the implementer.** `spawn.sh`'s prompt points it at
 `plugins/workflow/agents/implementer.md` and names the obligation that cannot be lost: build the
