@@ -14,7 +14,7 @@ plugins/infra/
 │   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   ├── resolve-tier.sh          # resolve a tier + attempt → its {model, effort, backend} roster and chain length (awk, no jq; claude-only fallback)
-│   ├── consult.sh               # plan | consult: one-shot claude -p on the planner cell, posts **Plan** / **Consult N** to the issue
+│   ├── consult.sh               # plan | consult | decide: one-shot claude -p on the planner cell, posts **Plan** / **Consult N** to the issue
 │   ├── escalate.sh              # should this codex worker be replaced, and why — from the run dir, the thread and the rollout; posts **Handoff**
 │   ├── review-cmd.sh            # the independent reviewer's argv: claude -p on the reviewer cell, spawning my-review
 │   └── worker-report.sh, worker-resume.sh, review-counts.sh, common-git-dir.sh   # the codex worker's report, resume and review plumbing
@@ -172,8 +172,9 @@ the worker posted a `**Deviation**` comment, and the orchestrator answers it wit
 `consult.sh consult` — a one-shot `claude -p` on the planner cell that reads the thread and the
 worktree read-only and posts `**Consult N**` — then resumes the worker with a pointer to that
 comment as the answer, so no decision prose enters the orchestrator. Anything else is a question
-for a human, surfaced as before. `consult.sh plan` is the same script in its other role, run
-before the build spawn for standard and complex issues.
+for a human, surfaced as before. `consult.sh plan` is the same script in another role, run
+before the build spawn for standard and complex issues; `consult.sh decide` is the third, run on
+`recurrence:` to post a design decision as the next `**Consult N**`.
 
 Each one-shot call disables settings and plugin hooks with `--settings
 '{"disableAllHooks":true}'` and refuses to post output without `**Decision**` (consult) or
@@ -419,8 +420,12 @@ or an event log untouched for 20 minutes while the pid lives. On a hit it posts 
 `**Handoff**` comment (reason, commits since base, last event-log activity); the orchestrator
 group-kills the worker, logs `escalated`, and respawns `spawn.sh --attempt <A+1>` with the same `--role` and `--round`
 values onto the same worktree. Nothing is resumed across a model change. At the top of the chain `spawn.sh` refuses
-and the run drains as `failed` does. Thresholds: `ESCALATE_STALL_MINUTES=20`,
-`ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_REVIEW_MINUTES=45` (the
+and the run drains as `failed` does. The same high/medium area in the newest
+`ESCALATE_RECURRENCE_WINDOW=2` rounds prints `recurrence: <area>` — no handoff, no respawn; the
+orchestrator runs `consult.sh decide` and then the next fix round at the same attempt. The fire
+uses up its round: later wakes stay quiet (no review-cap, no second decide) until that fix round's
+review lands a new one. Thresholds: `ESCALATE_STALL_MINUTES=20`,
+`ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_RECURRENCE_WINDOW=2`, `ESCALATE_REVIEW_MINUTES=45` (the
 post-build review's own, longer budget — an event log untouched for the STALL window is not a
 stall while the sibling reviewer is running and younger than this). A `quota` reason (a usage-limit
 error in the event log) skips the remaining codex positions and goes to the claude cell or drains.

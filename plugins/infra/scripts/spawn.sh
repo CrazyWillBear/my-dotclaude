@@ -422,7 +422,10 @@ ${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
    Those findings are your work order; the review already names file and line. Fix the
-   highs and mediums; lows are listed, not fixed.
+   highs and mediums; lows are listed, not fixed. If a "Consult" comment NEWER than that
+   review carries a "Decision", the findings kept coming back and a design decision was
+   made for them: implement the decision (its Revised steps) instead of patching the same
+   findings again.
 2. Fix them, TDD-first, committing after every green sub-step. If a finding names a
    fact that's true anywhere else in the codebase too — not a mistake local to this
    line — grep the repo for other instances of the same pattern and fix those in the

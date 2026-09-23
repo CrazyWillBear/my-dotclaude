@@ -361,7 +361,7 @@ that nobody owns is a stage that silently does not happen.
 is how you confirm which round just landed):
 
 - **`H > 0` or `M > 0`, and rounds remain** → run [`escalate.sh`](#escalation-by-script) first
-  (a second round with findings moves the attempt up), then spawn a **fix round**:
+  (a second round with findings moves the attempt up). **If it prints `recurrence: <area>`** the same finding keeps coming back: not an escalation — no handoff, same attempt — run the decide before the fix round, `bash ~/.claude/kit/infra/scripts/consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>` then `run-log.sh append "$RUNID" consulted '{"n":<N>}'`; the fixer reads the newest **Consult**. If it refuses (past the cap, no **Decision**), spawn the fix round anyway — review-cap governs the next round. Then spawn a **fix round**:
   `spawn.sh ... --role fix --round <K> --attempt <A>`. A **fresh** session every round: nothing
   compounds, and the fixer is not defending its own code.
 - **clean, or the cap is spent** → the issue joins the **merge queue**.
@@ -527,7 +527,8 @@ bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --ba
 
 It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
 `failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
-medium findings, an event log untouched for 20 minutes while alive and not in its post-build
+medium findings, the same high/medium area in the newest 2 review rounds (`recurrence: <area>` —
+a decide, not a handoff; see the report handling), an event log untouched for 20 minutes while alive and not in its post-build
 review (own budget, below), or a context past 256K. On a hit it has posted `**Handoff**`. Then:
 
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
@@ -540,7 +541,7 @@ review (own budget, below), or a context past 256K. On a hit it has posted `**Ha
 5. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
 Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
-`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); run-log counts decide if they move.
+`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`, `ESCALATE_RECURRENCE_WINDOW`); run-log counts decide if they move.
 
 ---
 

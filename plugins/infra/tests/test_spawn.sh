@@ -254,6 +254,7 @@ out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fi
 assert_contains "says which round" "$out" "FIX ROUND 2"
 assert_contains "did not write this code" "$out" "You did not write this code"
 assert_contains "reads the review comment" "$out" "Review round"
+assert_contains "a newer Consult decision replaces re-patching" "$out" "implement the decision"
 assert_contains "reports the round back" "$out" "round=2"
 assert_not_contains "does not re-post the tackled comment" "$out" "Tackled #12"
 
