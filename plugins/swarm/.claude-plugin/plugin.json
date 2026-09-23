@@ -1,6 +1,6 @@
 {
   "name": "swarm",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Roster-driven multi-session teams: /init-swarm writes a project's .claude/swarm/roster.json, charter, and one brief per chosen role (orchestrator, swe-manager, performance-engineer), roster.sh validates the roster and answers the get/list queries other swarm tooling routes on, and swarm.sh runs the team: up, down, rotate, attach and brief.",
   "author": {
     "name": "William Chastain",
