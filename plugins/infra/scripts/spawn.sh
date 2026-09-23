@@ -57,10 +57,11 @@
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
-#   -n orch-<runid>-issue-<N>   worker only: the run prefix. `claude agents --json` is
-#                               global and concurrent runs are intended; without it one
-#                               run can stop another run's workers. A peer is named by
-#                               its role instead — see --name above.
+#   -n orch-<runid>-issue-<N>-a<attempt>[-r<round>]   worker only: the run prefix and
+#                               attempt/round. `claude agents --json` is global and
+#                               concurrent runs are intended; without the prefix one run
+#                               can stop another run's workers. A peer is named by its
+#                               role instead — see --name above.
 #   --permission-mode bypassPermissions
 #                               an unattended session in manual or acceptEdits mode
 #                               deadlocks on its FIRST prompt with nobody to answer.

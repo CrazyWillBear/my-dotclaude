@@ -40,8 +40,9 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 ```
 
 Workers are named `orch-<runid>-issue-<N>-a<attempt>`; fix rounds append `-r<round>`.
-`spawn.sh` prints the complete name it used, and `session-status.sh <runid> <N>` treats
-any such attempt name as that issue's session.
+`spawn.sh` prints the complete name it used to stderr while retaining its existing stdout
+result, and `session-status.sh <runid> <N>` treats any such attempt name as that issue's
+session.
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
