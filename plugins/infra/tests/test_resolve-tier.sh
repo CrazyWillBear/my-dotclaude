@@ -127,7 +127,7 @@ assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
 assert_equals "trivial: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "trivial: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "trivial: implementer_model luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "trivial: implementer_model 6-luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-6-luna"
 assert_equals "trivial: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 assert_equals "trivial: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
 assert_equals "trivial: implementer_attempt 0" "$(val "$OUT" implementer_attempt)" "0"
@@ -143,12 +143,12 @@ assert_equals "standard: tier echoed" "$(val "$OUT" tier)" "standard"
 assert_equals "standard: planner_model opus" "$(val "$OUT" planner_model)" "opus"
 assert_equals "standard: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
 assert_equals "standard: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "standard: implementer_model luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "standard: implementer_model 6-luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-6-luna"
 assert_equals "standard: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 assert_equals "standard: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
 assert_equals "standard: implementer_chain 3" "$(val "$OUT" implementer_chain)" "3"
 assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
-assert_equals "standard: reviewer_effort medium" "$(val "$OUT" reviewer_effort)" "medium"
+assert_equals "standard: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 assert_equals "standard: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier complex
@@ -177,7 +177,7 @@ done
 run_tier standard __REAL__ 1
 assert_equals "standard attempt 1: exit 0" "$RC" "0"
 assert_equals "standard attempt 1: stderr empty" "$ERR" ""
-assert_equals "standard attempt 1: terra" "$(val "$OUT" implementer_model)" "gpt-5.6-terra"
+assert_equals "standard attempt 1: 6-sol" "$(val "$OUT" implementer_model)" "gpt-6-sol"
 assert_equals "standard attempt 1: still codex" "$(val "$OUT" implementer_backend)" "codex"
 assert_equals "standard attempt 1: attempt echoed" "$(val "$OUT" implementer_attempt)" "1"
 run_tier standard __REAL__ 2
@@ -187,9 +187,9 @@ assert_equals "standard attempt 2: claude backend" "$(val "$OUT" implementer_bac
 assert_equals "standard attempt 2: chain still 3" "$(val "$OUT" implementer_chain)" "3"
 # The planner and reviewer cells do not move with the attempt.
 assert_equals "standard attempt 2: planner unchanged" "$(val "$OUT" planner_model)" "opus"
-assert_equals "standard attempt 2: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
+assert_equals "standard attempt 2: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "high"
 run_tier trivial __REAL__ 1
-assert_equals "trivial shares the standard chain: attempt 1 is terra" "$(val "$OUT" implementer_model)" "gpt-5.6-terra"
+assert_equals "trivial shares the standard chain: attempt 1 is 6-sol" "$(val "$OUT" implementer_model)" "gpt-6-sol"
 
 echo "test: an attempt past the top of the chain is a loud fallback, never a silent wrap"
 run_tier standard __REAL__ 3
@@ -458,6 +458,35 @@ assert_equals "malformed(claude backend, codex model): exit 0" "$RC" "0"
 assert_equals "malformed(claude backend, codex model): exact WARN" "$ERR" "$WARN"
 assert_equals "malformed(claude backend, codex model): standard fallback" "$(val "$OUT" tier)" "standard"
 
+# (d5) every codex model the CLI ships validates — a name missing from the allowed set would
+#      not error, it would silently reroute every tier to the claude-only fallback.
+write_cfg "$WORK/ok-gpt6" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "implementer": [ { "backend": "codex", "model": "gpt-6-luna",  "effort": "xhigh" },
+                                 { "backend": "codex", "model": "gpt-6-sol",   "effort": "xhigh" },
+                                 { "backend": "codex", "model": "gpt-6-astra", "effort": "high" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "low" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna",  "effort": "xhigh" },
+                                 { "backend": "codex", "model": "gpt-5.6-terra", "effort": "xhigh" },
+                                 { "backend": "codex", "model": "gpt-5.6-sol",   "effort": "xhigh" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } },
+  "complex":  { "planner": { "backend": "claude", "model": "fable", "effort": "medium" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } }
+}
+JSON
+for a in 0 1 2; do
+    run_tier trivial "$WORK/ok-gpt6" "$a"
+    assert_equals "gpt-6 attempt $a: no WARN" "$ERR" ""
+    assert_equals "gpt-6 attempt $a: codex backend" "$(val "$OUT" implementer_backend)" "codex"
+done
+assert_equals "gpt-6-astra resolves as itself" "$(val "$OUT" implementer_model)" "gpt-6-astra"
+run_tier standard "$WORK/ok-gpt6" 2
+assert_equals "gpt-5.6 names still validate: no WARN" "$ERR" ""
+assert_equals "gpt-5.6-sol resolves as itself" "$(val "$OUT" implementer_model)" "gpt-5.6-sol"
+
 # (e) wrong JSON type — tiers are strings, not objects (absorbs #55's intent:
 #     a wrong shape leaks NOTHING to stderr but the single WARN line).
 write_cfg "$WORK/mal-e" <<'JSON'
@@ -688,7 +717,7 @@ for t in trivial standard complex; do
         case "$e" in low|medium|high|xhigh|max) ;; *) complete=0 ;; esac
         case "$b" in
             claude) case "$m" in haiku|sonnet|opus|fable) ;; *) complete=0 ;; esac ;;
-            codex)  case "$m" in gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;; *) complete=0 ;; esac ;;
+            codex)  case "$m" in gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol|gpt-6-luna|gpt-6-sol|gpt-6-astra) ;; *) complete=0 ;; esac ;;
             *) complete=0 ;;
         esac
     done
@@ -715,7 +744,7 @@ reviewer_effort=medium
 reviewer_backend=claude"
 run_tier complex "$EMPTY"   # missing config → fallback, whatever tier was asked
 assert_equals "fallback output matches the pinned claude-only roster" "$OUT" "$EXPECTED_FALLBACK"
-assert_not_contains "the fallback never names a codex model" "$OUT" "gpt-5.6"
+assert_not_contains "the fallback never names a codex model" "$OUT" "gpt-"
 
 # ---------------------------------------------------------------------------
 echo "test: a USER table at CLAUDE_CONFIG_DIR overrides the shipped one"
@@ -746,7 +775,7 @@ assert_equals "user table: implementer model is the user's" "$(val "$UOUT" imple
 echo "test: with no user table the SHIPPED table is used"
 run_tier standard
 assert_equals "shipped: no WARN" "$ERR" ""
-assert_equals "shipped: standard's chain head is luna" "$(val "$OUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "shipped: standard's chain head is 6-luna" "$(val "$OUT" implementer_model)" "gpt-6-luna"
 
 echo "test: RESOLVE_TIER_ROOT wins over a user table — the test seam stays authoritative"
 # Without this, every test that pins a specific table would silently read the developer's own
@@ -779,7 +808,7 @@ HRC=$?
 assert_equals "unset HOME: exit 0" "$HRC" "0"
 assert_equals "unset HOME: nothing but the roster on stderr" "$(cat "$WORK/herr")" ""
 assert_equals "unset HOME: twelve key=value lines" "$(printf '%s\n' "$HOUT" | grep -c '=')" "12"
-assert_equals "unset HOME: resolves the shipped standard tier" "$(val "$HOUT" implementer_model)" "gpt-5.6-luna"
+assert_equals "unset HOME: resolves the shipped standard tier" "$(val "$HOUT" implementer_model)" "gpt-6-luna"
 
 echo "test: a MALFORMED user table is loud, not a silent revert to the shipped table"
 # A typo in your own table must not look like the shipped roster quietly winning.

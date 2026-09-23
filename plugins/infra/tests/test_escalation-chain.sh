@@ -111,22 +111,22 @@ escalate() { rm -f "$WORK/gh-argv" "$WORK/body"; OUT="$(bash "$INFRA/escalate.sh
 posted() { grep -qx comment "$WORK/gh-argv" 2>/dev/null && echo yes || echo no; }
 
 # ---------------------------------------------------------------------------
-echo "test: the shipped chain resolves luna → terra → opus for a standard issue"
+echo "test: the shipped chain resolves 6-luna → 6-sol → opus for a standard issue"
 R0="$(bash "$INFRA/resolve-tier.sh" standard 0)"; R1="$(bash "$INFRA/resolve-tier.sh" standard 1)"; R2="$(bash "$INFRA/resolve-tier.sh" standard 2)"
-assert_contains "attempt 0 luna" "$R0" "implementer_model=gpt-5.6-luna"
-assert_contains "attempt 1 terra" "$R1" "implementer_model=gpt-5.6-terra"
+assert_contains "attempt 0 6-luna" "$R0" "implementer_model=gpt-6-luna"
+assert_contains "attempt 1 6-sol" "$R1" "implementer_model=gpt-6-sol"
 assert_contains "attempt 2 opus" "$R2" "implementer_model=opus"
 assert_contains "chain length 3" "$R0" "implementer_chain=3"
 
-echo "test: attempt 0 spawns luna for real, through codex, with the plan in its prompt"
+echo "test: attempt 0 spawns 6-luna for real, through codex, with the plan in its prompt"
 out="$(spawn --attempt 0 --dry-run)"
 assert_arg "codex" "$out" "codex"
-assert_arg "luna" "$out" "gpt-5.6-luna"
+assert_arg "6-luna" "$out" "gpt-6-luna"
 assert_contains "the worker is told to follow the Plan comment" "$out" "**Plan**"
 assert_contains "and to stop on a deviation" "$out" "**Deviation**"
 
 # ---------------------------------------------------------------------------
-echo "SIGNAL 1: a failed report → escalate → respawn names terra → handoff posted"
+echo "SIGNAL 1: a failed report → escalate → respawn names 6-sol → handoff posted"
 rm -rf "$CODEX_ROOT"
 STUB_REPORT='{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"done-check red"}' \
     spawn --attempt 0 >/dev/null
@@ -141,7 +141,7 @@ assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "**Handoff** —
 assert_contains "handoff lists the branch's commit" "$(cat "$WORK/body")" "step 1: add f"
 assert_contains "handoff carries the last event-log activity" "$(cat "$WORK/body")" "pytest -q"
 out="$(spawn --attempt 1 --dry-run)"
-assert_arg "the respawn argv names the NEXT chain model" "$out" "gpt-5.6-terra"
+assert_arg "the respawn argv names the NEXT chain model" "$out" "gpt-6-sol"
 assert_arg "still codex" "$out" "codex"
 assert_contains "and the respawn is told it is one" "$out" "**Handoff**"
 assert_contains "onto the SAME worktree" "$out" "$WT"

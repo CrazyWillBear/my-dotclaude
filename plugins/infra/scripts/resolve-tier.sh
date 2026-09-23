@@ -32,8 +32,9 @@
 #
 # Each cell's backend is claude or codex, cross-validated against its own model:
 # backend claude takes a model in {haiku,sonnet,opus,fable}; backend codex takes a
-# model in {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol}. Either paired with the other's
-# model — or any other backend value — is a miss like any other bad cell. Sonnet is
+# model in {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol,gpt-6-luna,gpt-6-sol,gpt-6-astra}.
+# Either paired with the other's model — or any other backend value — is a miss like
+# any other bad cell. Sonnet is
 # gone from the shipped table but stays VALID so a user table can still name it.
 #
 # Fallback (single WARN to stderr, then the hardcoded claude-only roster to stdout,
@@ -206,8 +207,8 @@ extract() {
 
 # Structural + value validation: EVERY cell of every tier×role — every chain position
 # included — must carry an effort in {low,medium,high,xhigh,max}, a backend of claude or
-# codex, and a model from THAT backend's set (haiku,sonnet,opus,fable for claude;
-# gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol for codex). Any miss (absent cell, empty chain,
+# codex, and a model from THAT backend's set (haiku,sonnet,opus,fable for claude; the
+# gpt-5.6-* and gpt-6-* names in the header for codex). Any miss (absent cell, empty chain,
 # an array where a single cell is required, unparseable content, wrong shape, out-of-set
 # value, or a model/backend mismatch) → fallback.
 for t in trivial standard complex; do
@@ -233,7 +234,7 @@ for t in trivial standard complex; do
                     ;;
                 codex)
                     case "$m" in
-                        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol) ;;
+                        gpt-5.6-luna|gpt-5.6-terra|gpt-5.6-sol|gpt-6-luna|gpt-6-sol|gpt-6-astra) ;;
                         *) fallback ;;
                     esac
                     ;;

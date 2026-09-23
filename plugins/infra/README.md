@@ -43,8 +43,8 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 
 | tier | planner | implementer (chain, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (cell kept valid) | luna xhigh → terra xhigh → opus medium (session lane: the subagent runs the TOP cell — the Agent tool takes no codex model; luna/terra reach trivial only through `spawn.sh`) | opus low |
-| standard | opus medium | luna xhigh → terra xhigh → opus medium | opus medium |
+| trivial | none run (cell kept valid) | 6-luna xhigh → 6-sol xhigh → opus medium (session lane: the subagent runs the TOP cell — the Agent tool takes no codex model; the codex cells reach trivial only through `spawn.sh`) | opus low |
+| standard | opus medium | 6-luna xhigh → 6-sol xhigh → opus medium | opus high |
 | complex | fable medium | opus medium | opus high |
 
 The expensive model spends one bounded pass planning (`consult.sh plan`, posted to the issue as

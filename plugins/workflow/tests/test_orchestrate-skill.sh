@@ -177,7 +177,7 @@ assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
-assert_contains "the chain is named" "$BODY" "luna → terra → opus"
+assert_contains "the chain is named" "$BODY" "6-luna → 6-sol → opus"
 assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
 assert_matches "run on every wake" "$BODY" "On every wake"
 assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"

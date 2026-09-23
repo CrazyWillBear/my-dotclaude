@@ -127,9 +127,9 @@ on a confirmation you already gave; the announcement *is* the veto window:
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
 **Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
-`Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
+`Agent` tool, which accepts only claude model names, so a `gpt-*` model from
 `resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is `backend: codex` in some
-cells (the trivial and standard implementer chains start on luna — PRD #104), and a user table
+cells (the trivial and standard implementer chains start on 6-luna — PRD #104), and a user table
 at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
 look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
 **top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
@@ -520,7 +520,7 @@ is blocked while #14 is three commits past it.
 # Escalation by script
 
 **A script decides a worker is out of its depth — never the worker, never you.** Each tier's
-implementer cell is an ordered **chain** (luna → terra → opus for trivial/standard; opus alone
+implementer cell is an ordered **chain** (6-luna → 6-sol → opus for trivial/standard; opus alone
 for complex); `spawn.sh --attempt <A>` selects the position:
 
 ```bash
