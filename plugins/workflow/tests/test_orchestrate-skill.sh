@@ -176,6 +176,12 @@ assert_matches "told apart by the note's first word, not by reading" "$BODY" "fi
 assert_contains "the consult role" "$BODY" "consult.sh consult"
 assert_contains "consult.sh carries the attempt too (review round 11: it resolves the implementer's backend from resolve-tier.sh, not a codex run dir)" "$BODY" 'consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>'
 assert_contains "and it is logged" "$BODY" "consulted '{\"n\":<N>}'"
+echo "test: recurrence → consult.sh decide before any further fix round (#116)"
+assert_contains "the recurrence signal is named" "$BODY" "recurrence: <area>"
+assert_contains "routed to the decide role" "$BODY" 'consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>'
+assert_matches "the decide comes BEFORE the fix round" "$BODY" "consult.sh decide.*then.*--role fix|decide.*before.*fix round"
+assert_matches "same attempt, not an escalation" "$BODY" "recurrence.{0,200}(same attempt|no handoff|not an escalation)"
+assert_contains "the window threshold is listed" "$BODY" "ESCALATE_RECURRENCE_WINDOW"
 assert_contains "the resume carries the attempt" "$BODY" '--base "$BASE" --attempt <A> --answer'
 assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
