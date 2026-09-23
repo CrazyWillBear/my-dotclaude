@@ -273,6 +273,8 @@ assert_matches "an empty allowlist stops the run" "$BODY" "empty allowlist stops
 
 echo "test: readiness is a script, not the model's arithmetic"
 assert_contains "ready.sh is called with the graph" "$BODY" "ready.sh"
+assert_matches "--held is defined beside its usage as the user's explicit hold" "$BODY" "--held.*explicit hold"
+assert_matches "--held is never 'waiting on a blocker'" "$BODY" "never .?waiting on a blocker"
 assert_matches "never compute readiness yourself" "$BODY" "Never compute readiness yourself"
 assert_matches "the three ready.sh outcomes are all handled" "$BODY" "nothing-to-do"
 assert_matches "an unexplained empty stops the run" "$BODY" "[Nn]ever treat it as .?finished"

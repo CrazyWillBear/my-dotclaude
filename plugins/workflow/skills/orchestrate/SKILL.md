@@ -278,9 +278,12 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/ready.sh" "$GRAPH" \
      --merged <each merged issue> --held <each held> --in-flight <each in flight>
 ```
 
+`--held` is the user's explicit hold on an issue, never "waiting on a blocker": ready.sh works out blocked-behind from the graph itself, so pass only issues you were told to hold.
+
 - **numbers on stdout** → admissible, ascending. Admit the lowest-numbered ones until `--max` slots
   are full.
-- **`nothing-to-do:` on stderr, exit 0** → a designed empty. If nothing is in flight, the run is
+- **`nothing-to-do:` on stderr, exit 0** → a designed empty (scope complete, in flight, held — with
+  everything blocked behind it — hitl/prd skips, or gate-held). If nothing is in flight, the run is
   done. Report the reason verbatim.
 - **`error:` on stderr, exit 1** → an *unexplained* empty (all-`hitl`, blocked on an unclosed
   out-of-scope issue, a `## Blocked by` ref aimed at a PR number, which never resolves to
