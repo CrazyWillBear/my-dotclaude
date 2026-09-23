@@ -84,8 +84,8 @@ Values are `accept` / `hold` / `refuse`; **unset means mode parity**, which is e
 the **user** level — a repo's settings may only *tighten* it — and **before** the run.
 **Say what it costs first:** `accept` delivers messages from *any* local Claude session without
 review, a machine-wide relaxation in exchange for an unattended loop. Without it the session
-lane still works, it just stops for an approval on every report — **tell them that up front**.
-The ad-hoc lane is unaffected — subagents are not cross-session.
+lane still works but stops for an approval on every report — **tell them up front**. The ad-hoc
+lane is unaffected — subagents are not cross-session.
 
 ---
 
@@ -117,8 +117,6 @@ exists because building the wrong thing well is the expensive outcome.
 on a confirmation you already gave; the announcement *is* the veto window:
 
 > Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`. Starting.
-
-> Session lane: 6 slices of PRD #41, 5 in flight, run `orchestrate-20260906-141500`. Starting.
 
 ---
 
@@ -187,11 +185,9 @@ Without the prefix one orchestrator can see, wake and **stop** another run's wor
 
 ## Step 1 — the allowlist
 
-**This is #77's defect A, and it runs first.** The loop used to pick its work with a repo-wide
-`ready-for-agent` query. That is a correctness bug: on a real run it swept in an unrelated issue
-from a different PRD and built it into that PRD's branch.
-
-So the run **never queries for work**. Resolve an **explicit issue allowlist** first:
+**This is #77's defect A, and it runs first.** A repo-wide `ready-for-agent` query once swept an
+unrelated issue from a different PRD into this PRD's branch. So the run **never queries for work**.
+Resolve an **explicit issue allowlist** first:
 
 - **`--issues N,N,...`** → that literal list *is* the allowlist. Highest precedence.
 - **`--prd N`** → PRD #N's child slices, via
@@ -225,8 +221,7 @@ Read each scoped issue's labels; take its tier from `tier:trivial` / `tier:stand
 - **Auto-accept.** **Never prompt** to confirm or override a tier. Report the backfills in the
   launch line; that is the whole interaction.
 - **Conflicting labels** → the **highest tier wins** (complex > standard > trivial), and warn.
-  Under-tiering routes real work to a model too cheap for it; the chain then escalates it anyway,
-  at the cost of a wasted attempt.
+  Under-tiering sends real work to a model too cheap for it, at the cost of a wasted attempt.
 
 ## Step 3 — the graph, fetched once
 
@@ -334,21 +329,19 @@ never reads the implementer contract would never declare one.
 **Then wait.** Do not poll. The next thing that happens is a message.
 
 **Unless the worker is codex-backed — then there is no message.** A `codex exec` worker is a
-process, not a session: no inbox, no `SendMessage`. For a worker whose tier's backend is `codex`,
-skip the subscribe and make one blocking call instead:
+process, not a session: no inbox, no `SendMessage`. Skip the subscribe and make one blocking call:
 
 ```bash
 bash ~/.claude/kit/infra/scripts/worker-report.sh "$RUNID" <N>
 ```
 
 It returns the **same one-line report** — `built`, `fixed`, `failed`, `escalate`, `blocked` — so every branch below is unchanged.
-**Exit 0 means a real result; exit 1 means the outcome is unknown and prints nothing** (timeout or no readable report).
-Never read exit 1 as a result: admit nothing new for that issue; report that it has no outcome. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
+**Exit 0 means a real result; exit 1 means the outcome is unknown and prints nothing** (timeout or no readable report): never read it as a result — admit nothing new for that issue and report that it has no outcome. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
 
 **With more than one codex worker in flight, wait on the SET:** `worker-report.sh --any "$RUNID"
-<N> <N> ...` returns the first to reach a terminal state, in the same one line with the same exit
-split; the single form serialises SCHEDULING behind the slowest worker. **Pass only the issues
-still in flight, and drop each one as it reports** — a reported worker stays terminal forever.
+<N> <N> ...` returns the first to reach a terminal state, same one line and exit split (the single form
+serialises SCHEDULING behind the slowest worker). **Pass only the issues still in flight, dropping
+each as it reports** — a reported worker stays terminal forever.
 
 **`my-review` reports; the SESSION posts.** my-review is **report-only** — it never comments, never
 edits, and its one write carve-out is filing a `mock-debt` issue from its audit. So the worker
@@ -378,11 +371,10 @@ Claude-backed workers top their chain and are never escalated.
 
 **Cycles are counted from the AUTHORITATIVE source, never by a field you keep.** A claude
 worker posts its own `**Review round N**` comment, so a claude-backed issue's count is that
-comment count — see [The bus](#the-bus). A codex worker can also post comments, so a
-codex-backed issue's count is the count of round lines (those starting with a digit —
-`grep -c '^[0-9]'`) in `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds`
-instead (one per reviewer wrapper run; the `finding` entries beside them are per-finding
-detail, not rounds) when that file exists, falling back to the thread when it does not.
+comment count — see [The bus](#the-bus). A codex-backed issue's count is instead the round lines
+(those starting with a digit — `grep -c '^[0-9]'`, one per reviewer wrapper run; `finding` entries
+are not rounds) in `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds` when that
+file exists, falling back to the thread when it does not.
 
 **Failure is drain-then-stop, not kill.**
 
@@ -427,17 +419,12 @@ line, quoting the doc directly:
 docs/SCHEMA.md:893 — "Gmail's thread ids are per-mailbox, not globally unique"
 ```
 
-Same file, same flat format, same "hint not contract" rule below — this just widens the
-grep from files to the concepts those files use, which a path-only list would miss.
-
 **It is a hint, not a contract.** A pointer to a file that moved costs the implementer one failed
-`Read`. There are **no sha stamps and no staleness protocol** — if a session doubts the map, it
-deletes it and re-runs `Explore`. Anything more is a synchronization problem invented to serve a
-convenience.
+`Read`. **No sha stamps, no staleness protocol** — a session that doubts the map deletes it and
+re-runs `Explore`.
 
-**The map is for the implementer only.** The reviewer has the **diff**, which already names every
-changed file, and `my-review`'s scope is explicitly the change plus its grepped neighbours. Handing
-a reviewer a map would widen its scope, which is the opposite of what it is for.
+**The map is for the implementer only.** The reviewer has the **diff**, and `my-review`'s scope is
+the change plus its grepped neighbours; a map would widen it.
 
 ---
 
@@ -489,9 +476,8 @@ bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree>
 
 **If `consult.sh` refuses instead** ("past the cap", only for a claude-backed worker — it
 has no `escalate.sh` check and never respawns): treat it as `failed` — drain, since claude
-already tops its chain. Otherwise the decision stays on the thread; the answer you pass is a
-pointer to it, so no prose enters your context. A claude session resumes the same way, by
-`SendMessage` with that pointer.
+already tops its chain. Otherwise the decision stays on the thread and the answer you pass is a
+pointer to it, so no prose enters your context. A claude session resumes by `SendMessage` with it.
 
 **Anything else — a question only a human can answer.** A codex worker escalates by ending its
 turn: no inbox, nothing to attach to, but **its context survives** — resume its thread with
@@ -508,8 +494,8 @@ both routes. Recommend one.**
 
 Give the **id**, not the name — `claude attach` takes an id, and you kept it at spawn.
 **Mediate** for short calls (a scope question, a yes/no); **attach** for back-and-forth about code,
-which relaying would drag into the orchestrator's context. Detaching (`←` or `Ctrl+Z`) leaves
-the session running. **An escalated session is exempt from the deadline** while you are engaged
+which relaying would drag into the orchestrator's context. Detaching (`←` or `Ctrl+Z`) leaves it
+running. **An escalated session is exempt from the deadline** while you are engaged
 with it, and one that resolves an escalation directly with you **MUST report the resolution** —
 a `SendMessage` back *and* an issue comment — before continuing, or the orchestrator thinks #14
 is blocked while #14 is three commits past it.
@@ -586,8 +572,6 @@ rest of the run — they would be building on known debt:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" held '{"n":15,"why":"blocker #12 merged capped"}'
 ```
 
-Pass that dependent in `--held` on every later Step-5 readiness check; capped-merge dependents are run-log-held issues.
-
 ---
 
 # Context discipline
@@ -599,15 +583,13 @@ issue comments; the orchestrator passes **paths and numbers**.
 Target: **~50 tokens per issue, not 800.** A dispatcher that reads the work it dispatches stops
 being able to dispatch.
 
-**On-demand summaries only.** When you ask about an issue, spawn an agent to answer — never
-accumulate the answer in advance:
+**On-demand summaries only — never automatic.** When you ask about an issue, spawn an agent to
+answer; a summary nobody asked for is context nobody chose to spend:
 
 | you ask | who answers |
 |---|---|
 | "what happened on #14?" | a **haiku** agent: read its comments + `git diff base..issue-14`, return a paragraph |
 | "is #14's code right?" | `Explore`, or a reviewer-model agent — a different question, a different model |
-
-Never automatic. A summary nobody asked for is context nobody chose to spend.
 
 **Deterministic logic lives in scripts, not in this file.** Prose can only be grep-tested. The
 readiness rules, session state, the spawn flags, the run log and the merge fold are all scripts
@@ -626,9 +608,6 @@ with real tests:
 | `resolve-tier.sh` | tier + attempt → {model, effort, backend}, and the chain length |
 | `consult.sh` | the plan and the consult, posted to the thread |
 | `escalate.sh` | whether a codex worker is replaced, and the handoff comment |
-
-`spawn.sh`, `session-status.sh`, `check-inbound.sh`, `resolve-tier.sh`, `consult.sh` and
-`escalate.sh` live in the **infra** plugin and are always called at `~/.claude/kit/infra/scripts/`.
 
 ---
 
@@ -651,8 +630,6 @@ instead of buried under a success table:
    ```bash
    gh issue close <N> --comment "Merged in <sha> by /orchestrate."
    ```
-   An irreversible outward-facing write belongs on the main thread, where the conversational context
-   can account for it.
 3. **Verify every close (#77 fix 2).** Re-read each with `gh issue view <N> --json state`. Any issue
    **still open after its close** → stop and report it loudly, naming the issue and the merge commit.
    Do not run the PRD reap on an unverified close: the reap would read a still-open child and draw
