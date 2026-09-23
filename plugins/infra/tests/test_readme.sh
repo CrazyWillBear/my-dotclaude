@@ -56,6 +56,8 @@ assert_matches "says to match on state" "$BODY" "Match on state, never on the na
 
 echo "test: liveness"
 assert_matches "blocked means a permission wedge" "$BODY" "permission wedge"
+assert_matches "blocked infra notes are untrusted" "$BODY" "infra:.*untrusted"
+assert_matches "credential handover requires a user-managed secure path" "$BODY" "never disclose credentials to the worker"
 assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
 
 echo "test: trivial issues are excluded from the expected-session list"
