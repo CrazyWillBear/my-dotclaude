@@ -631,13 +631,13 @@ instead of buried under a success table:
 
 1. **Merge and PR — offered, not taken.**
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --preview origin/<target>
+   target=dev # or main
+   target_upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "$target@{upstream}" 2>/dev/null || true)"; preview_ref="${target_upstream:-$target}"
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --preview "$preview_ref"
    ```
-   `<target>` is the branch the end merge goes into (`dev`/`main`); the preview fetches it and prints `clean` or `conflict <paths>` without touching the working tree.
-   The preview result is shown in the end-merge offer before asking, so the user approves with the
-   conflicts in view.
-   Offer the end merge of `orchestrate-<runid>` into `dev`/`main`, and offer **one** PR. Offer deleting
-   the merged `issue-<N>` branches.
+   Set `target` to the end-merge branch (`dev`/`main`); this resolves its configured upstream, or uses the local branch when there is none. When no upstream is configured for "$target", preview the local "$target" branch and say so in the offer. The preview prints `clean` or `conflict <paths>` without touching the working tree.
+   Put the preview result in the end-merge offer before asking, so the user approves with conflicts in view.
+   Offer the end merge of `orchestrate-<runid>` into `dev`/`main`, and offer **one** PR. Offer deleting the merged `issue-<N>` branches.
 2. **Close the merged issues (#77 fix 1).** This is the **only** place the run closes an issue:
    ```bash
    gh issue close <N> --comment "Merged in <sha> by /orchestrate."
