@@ -78,6 +78,34 @@ run() {
 }
 
 SHA=0123456789abcdef0123456789abcdef01234567
+HEAD=abcdef0123456789abcdef0123456789abcdef01
+
+echo "test: integration mode targets the whole range, cross-issue only"
+# The shipped standard reviewer is opus; keep the existing fixture below unchanged for
+# the full and scoped tests, which intentionally pin a sonnet reviewer.
+unset RESOLVE_TIER_ROOT
+run integration "$SHA" "$HEAD" standard
+assert_equals "integration mode exits 0" "$RC" "0"
+assert_equals "integration argv begins claude -p --model opus" \
+    "${ARGS[0]:-} ${ARGS[1]:-} ${ARGS[2]:-} ${ARGS[3]:-}" "claude -p --model opus"
+assert_contains "prompt names the full commit range" "$OUT" "$SHA..$HEAD"
+assert_contains "prompt says per-issue reviews already happened" "$OUT" "Per-issue reviews already happened"
+assert_contains "prompt asks only for cross-issue problems" "$OUT" "cross-issue"
+assert_contains "prompt carries the clean literal" "$OUT" "No findings."
+assert_contains "prompt carries the finding shape" "$OUT" "- [P1]"
+assert_not_contains "prompt omits issue-specific review" "$OUT" "issue #"
+assert_not_contains "prompt omits mock-debt" "$OUT" "mock-debt"
+export RESOLVE_TIER_ROOT="$CFG"
+
+echo "test: integration mode rejects a branch name as its head"
+run integration "$SHA" main standard
+assert_equals "branch head exits 1" "$RC" "1"
+assert_equals "branch head prints no argv" "$OUT" ""
+
+echo "test: integration mode requires a tier"
+run integration "$SHA" "$HEAD"
+assert_equals "missing tier exits 1" "$RC" "1"
+assert_equals "missing tier prints no argv" "$OUT" ""
 
 echo "test: it builds a claude -p call at the tier's REVIEWER cell, never the implementer's"
 run standard "$SHA" 12
