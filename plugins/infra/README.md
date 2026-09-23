@@ -362,7 +362,7 @@ esac
 [ -z "$("$S" <runid> <N> | awk '$4 == "busy"')" ] || exit 1
 # run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>}'
-bash ~/.claude/kit/infra/scripts/spawn.sh ...                         # same worktree, same branch
+bash ~/.claude/kit/infra/scripts/spawn.sh ... # same worktree, same branch, same --role, --round, --attempt
 ```
 
 **One issue can have several rows.** Every session a run ever started keeps its row (the list
@@ -411,8 +411,8 @@ the worker's own rollout under `~/.codex/sessions`, joined by the thread id in `
 the event log's `turn.completed` usage is the turn's cumulative total, not the context size),
 or an event log untouched for 20 minutes while the pid lives. On a hit it posts the mechanical
 `**Handoff**` comment (reason, commits since base, last event-log activity); the orchestrator
-group-kills the worker, logs `escalated`, and respawns `spawn.sh --attempt <A+1>` onto the same
-worktree. Nothing is resumed across a model change. At the top of the chain `spawn.sh` refuses
+group-kills the worker, logs `escalated`, and respawns `spawn.sh --attempt <A+1>` with the same `--role` and `--round`
+values onto the same worktree. Nothing is resumed across a model change. At the top of the chain `spawn.sh` refuses
 and the run drains as `failed` does. Thresholds: `ESCALATE_STALL_MINUTES=20`,
 `ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_REVIEW_MINUTES=45` (the
 post-build review's own, longer budget — an event log untouched for the STALL window is not a

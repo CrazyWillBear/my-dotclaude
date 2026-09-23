@@ -41,6 +41,8 @@ assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
 assert_matches "a codex worker is replaced along its chain by script (#104)" "$BODY" "replaced along its chain"
 assert_matches "the old respawn-once rule is recorded as superseded" "$BODY" "[Rr]espawn once.*superseded"
 assert_contains "escalate.sh is the decider" "$BODY" "escalate.sh <runid> <N> <tier> <worktree> --base <base> --attempt <A>"
+assert_contains "recovery respawn keeps role, round, and attempt" "$BODY" 'same worktree, same branch, same --role, --round, --attempt'
+assert_contains "escalation respawn keeps role and round" "$BODY" 'spawn.sh --attempt <A+1>` with the same `--role` and `--round`'
 assert_matches "occupancy is read from the rollout, not the turn total" "$BODY" "rollout.*joined by the thread id"
 assert_matches "the top of the chain drains" "$BODY" "drains as .?failed.? does"
 assert_matches "the reviewer is claude on the reviewer cell" "$BODY" "It is the claude reviewer"
