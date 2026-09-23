@@ -346,6 +346,8 @@ assert_contains "scheduling continues from the amended graph" "$BODY" "keep sche
 assert_contains "a capped merge holds nothing" "$BODY" "a capped merge no longer holds anything"
 assert_not_contains "the old capped hold text is gone" "$BODY" "holds its dependents for the rest of the run"
 assert_not_matches "no held example for a capped blocker" "$BODY" "held.*capped blocker"
+assert_contains "report lists follow-ups filed" "$BODY" "follow-ups filed"
+assert_matches "report names the dependents that waited" "$BODY" "follow-up=.*waited"
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"

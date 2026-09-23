@@ -660,10 +660,11 @@ instead of buried under a success table:
    | merged? closed? | the fold's output + the close verification |
    | merge commit | the fold's output |
    | review outcome | the issue's **last review-round comment** — read it now, on demand, not during the run |
-   | notes | `run-log.sh state` (held, respawns, plans, consults, escalations, decisions) + `ready.sh`'s classification |
+   | notes | `run-log.sh state` (held, respawns, plans, consults, escalations, follow-ups, decisions) + `ready.sh`'s classification |
 
-   Below the table: the stop reason if it drained; the **held** dependents and why; the **unbuilt**
-   issues (scoped, admissible, never admitted); any respawns; the `.git/info/exclude` line Step 4
+   Below the table: the stop reason if it drained; the **follow-ups filed** and which dependents waited on them
+   (each `follow-up=<parent>:<child> waited=<deps>` line of `run-log.sh state`); any **held** issues (user holds,
+   or a failed `follow-up.sh`) and why; the **unbuilt** issues (scoped, admissible, never admitted); any respawns; the `.git/info/exclude` line Step 4
    added to the user's real repo; and, if any `mock-debt` is open, a one-line ledger summary
    (`mock-debt: N open — #A, #B`) naming any `e2e-gate` it held.
 
