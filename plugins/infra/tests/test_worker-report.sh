@@ -261,6 +261,46 @@ assert_equals "exit 0 — a crash is still characterisable" "$RC" "0"
 assert_contains "failed line" "$OUT" "issue 60 failed"
 assert_contains "carries the stderr reason" "$OUT" "model refused the sandbox"
 
+echo "test: a usage-limit crash reports quota from events.jsonl, not the stderr banner"
+d="$CODEX_ROOT/r3/issue-67"
+mkrun r3 67 "$(dead)" 1
+cat >"$d/events.jsonl" <<'JSON'
+{"type":"thread.started"}
+{"type":"turn.started"}
+{"type":"error","message":"You've hit your usage limit. Try again at 3:05 PM."}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. Try again at 3:05 PM."}}
+JSON
+printf 'Reading additional input from stdin...\n' >"$d/stderr.log"
+run r3 67 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+case "$OUT" in "issue 67 failed quota: "*) ok "starts with the quota reason" ;; *) no "does not start with the quota reason ('$OUT')" ;; esac
+assert_contains "quotes the usage-limit event" "$OUT" "usage limit"
+assert_not_contains "does not quote the stdin banner" "$OUT" "Reading additional input"
+
+echo "test: a non-quota crash reports the last event-log error, not the stderr banner"
+d="$CODEX_ROOT/r3/issue-68"
+mkrun r3 68 "$(dead)" 1
+printf '%s\n' \
+    '{"type":"thread.started"}' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}' \
+    >"$d/events.jsonl"
+printf 'Reading additional input from stdin...\n' >"$d/stderr.log"
+run r3 68 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_contains "quotes the event-log reason" "$OUT" "issue 68 failed stream disconnected before completion"
+assert_not_contains "does not include quota" "$OUT" "quota:"
+assert_not_contains "does not quote the stdin banner" "$OUT" "Reading additional input"
+
+echo "test: a crash with no error event falls back to the stderr tail"
+d="$CODEX_ROOT/r3/issue-69"
+mkrun r3 69 "$(dead)" 1
+printf '%s\n' '{"type":"thread.started"}' '{"type":"turn.started"}' >"$d/events.jsonl"
+printf 'codex: fatal: boom\n' >"$d/stderr.log"
+run r3 69 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_contains "uses the stderr fallback" "$OUT" "issue 69 failed codex: fatal: boom"
+
 echo "test: a CLEAN exit with no report is loud and prints nothing — never a fake success"
 mkrun r3 61 "$(dead)" 0
 run r3 61 --interval 1 --timeout 20

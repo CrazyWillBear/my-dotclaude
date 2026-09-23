@@ -23,6 +23,8 @@
 #
 # Signals, any one sufficient, checked in this order:
 #   failed         the worker reported `failed`, exited non-zero, or died with no exit code
+#   quota          a failed exit carries a usage-limit error in events.jsonl; every codex
+#                  model shares that quota, so the orchestrator skips remaining codex positions
 #   deviation-cap  the worker is paused on a deviation (status `escalate`, note beginning
 #                  `deviation:`) and this attempt already used its consults (cap 2): the
 #                  third deviation escalates rather than drawing a third consult. Consults
@@ -157,6 +159,7 @@ THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null <
 COMMITS="$(git -C "$WORKTREE" log --oneline "$BASE..HEAD" 2>/dev/null)" || COMMITS=""
 
 export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMMITS="$COMMITS" ESC_DRY="$DRY" \
+       ESC_INFRA="$INFRA" \
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
        ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
@@ -168,7 +171,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
 # python block skips the comment file and the mark.
 ESC_ERR="$RUNDIR/escalate-stderr.log"; [ -z "$DRY" ] || ESC_ERR=/dev/stderr
 REASON="$(python3 2>"$ESC_ERR" <<'PY'
-import datetime, glob, json, os, re, sys, time
+import datetime, glob, json, os, re, subprocess, sys, time
 
 rundir  = os.environ["ESC_RUNDIR"]
 attempt = int(os.environ["ESC_ATTEMPT"])
@@ -233,6 +236,17 @@ elif code == "0" and status == "failed":
     reason = ("failed", "the worker reported failed: %s" % (note or "(no reason given)"))
 elif code == "" and pid and not alive:
     reason = ("failed", "the worker died with no exit code (pid %s is gone)" % pid)
+
+if reason and reason[0] == "failed":
+    try:
+        why = subprocess.run(["bash", os.path.join(os.environ["ESC_INFRA"], "codex-failure.sh"), rundir],
+                             capture_output=True, text=True, timeout=30).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        why = ""
+    if why.startswith("quota: "):
+        reason = ("quota", why[len("quota: "):])
+    elif why and code not in ("", "0"):
+        reason = ("failed", "%s: %s" % (reason[1], why))
 
 # --- the thread: deviations and review rounds, THIS attempt's only ------------------------
 mark_path = os.path.join(rundir, "handoff.json")

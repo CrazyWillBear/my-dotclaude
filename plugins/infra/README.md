@@ -73,7 +73,7 @@ Codex has no agent list, so the run dir **is** the session:
 ```
 ${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/
 ├── events.jsonl        # the --json event stream
-├── stderr.log          # codex's progress, and the ONLY place a failure's reason lands
+├── stderr.log          # codex's progress; a failure's reason falls back here when events.jsonl has no error event
 ├── last-message.txt    # -o: the final message, shaped by --output-schema
 ├── status-schema.json  # the worker's fixed-shape status report
 ├── review.txt          # the INDEPENDENT reviewer's output. The ONLY source of the
@@ -421,7 +421,9 @@ worktree. Nothing is resumed across a model change. At the top of the chain `spa
 and the run drains as `failed` does. Thresholds: `ESCALATE_STALL_MINUTES=20`,
 `ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_REVIEW_MINUTES=45` (the
 post-build review's own, longer budget — an event log untouched for the STALL window is not a
-stall while the sibling reviewer is running and younger than this). The counts come from the run log:
+stall while the sibling reviewer is running and younger than this). A `quota` reason (a usage-limit
+error in the event log) skips the remaining codex positions and goes to the claude cell or drains.
+The counts come from the run log:
 
 ```bash
 # run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.

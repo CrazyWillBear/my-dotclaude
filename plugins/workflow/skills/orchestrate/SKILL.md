@@ -364,10 +364,10 @@ is how you confirm which round just landed):
   `spawn.sh ... --role fix --round <K> --attempt <A>`. A **fresh** session every round: nothing
   compounds, and the fixer is not defending its own code.
 - **clean, or the cap is spent** → the issue joins the **merge queue**.
-- **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top of
-  the chain it respawns at the next model; **at the top → drain**: admit nothing new, let the
-  in-flight work finish, then stop and report. Killing the loop mid-flight strands built,
-  reviewed branches that had already earned their merge.
+- **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top it
+  respawns; **at the top → drain**: finish in-flight work, then stop and report. `failed quota:
+  …` follows the same path; its `quota:` reason skips remaining codex positions to the claude
+  cell or drains. Killing the loop mid-flight strands reviewed branches.
 - **`issue <N> escalate deviation: ...`** → a consult, not a human — see [Escalation](#escalation).
 
 **On every wake** (any report, idle notice, or `worker-report.sh` return) run `escalate.sh`
@@ -531,7 +531,8 @@ review (own budget, below), or a context past 256K. On a hit it has posted `**Ha
 3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`). The
    worktree carries every commit; the thread carries the plan, consults, deviations and the
    handoff — nothing is relayed.
-4. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
+4. **On a `quota:` reason, skip the remaining codex positions.** The next codex model shares the quota; respawn at the first `A' > A` where `resolve-tier.sh <tier> <A'>` prints `implementer_backend=claude` (the claude cell), or **drain** if there is none.
+5. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
 Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
 `ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`); run-log counts decide if they move.
