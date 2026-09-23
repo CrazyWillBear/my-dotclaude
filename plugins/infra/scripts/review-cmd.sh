@@ -178,6 +178,9 @@ Restate EVERY finding above, its title and <path>:<line> copied EXACTLY as liste
 
 - [fixed] <title> — <path>:<line>     if the fix resolved it
 - [P1] <title> — <path>:<line>        if it is still open, at its severity now
+  <one line: why it is still open — what the fix missed>
+
+Keep the title line exactly as listed; any note goes on the indented line below it, never on the title line.
 
 Then one item per NEW problem the fix introduced:
 
