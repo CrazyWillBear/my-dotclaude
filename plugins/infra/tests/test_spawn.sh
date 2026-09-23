@@ -554,6 +554,19 @@ assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
     "opus"
 
+echo "test: only a FIX dry run is scoped, even when the run dir is seeded"
+mkdir -p "$RUNDIR"
+printf '1 2 high, 1 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\nfinding\t1\tmedium\tthree\tc:3\n' \
+    >"$RUNDIR/rounds"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR/reviewed-head"
+assert_contains "a FIX dry run gets the scoped prompt" \
+    "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
+    "RE-REVIEW"
+assert_not_contains "a BUILD dry run remains full with the same seeded dir" \
+    "$(review_argv "$(codex_dry r9 12 standard "$REPO" base)")" \
+    "RE-REVIEW"
+rm -rf "$CODEX_ROOT"
+
 echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
 assert_contains "the finding shape" "$rv" "- [P1]"
 assert_contains "the clean literal" "$rv" "No findings."
@@ -671,6 +684,50 @@ assert_equals "and the run-dir ledger holds the round line plus one entry per fi
     "$(cat "$RUNDIR/rounds" 2>/dev/null)" \
     "$(printf '1 2 high, 1 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\nfinding\t1\tmedium\tthree\tc:3')"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
+assert_equals "the reviewed head is recorded for the next round's fix range" \
+    "$(cat "$RUNDIR/reviewed-head" 2>/dev/null)" "$(git -C "$REPO" rev-parse HEAD)"
+assert_equals "the role is recorded" "$(cat "$RUNDIR/role" 2>/dev/null)" "build"
+assert_not_contains "a BUILD review is a full review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
+
+echo "test: a fix round is a SCOPED re-review, and its ledger round matches the last"
+rm -f "$WORK/review-argv" "$WORK/gh-argv"
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1
+- [fixed] two — b:2
+- [P2] three — c:3
+- [P1] four — d:4' \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+FIX_REVIEW_ARGV="$(cat "$WORK/review-argv" 2>/dev/null)"
+assert_contains "fix review is scoped" "$FIX_REVIEW_ARGV" "RE-REVIEW"
+assert_contains "first prior high finding reaches the re-review" "$FIX_REVIEW_ARGV" "- high: one — a:1"
+assert_contains "prior medium finding reaches the re-review" "$FIX_REVIEW_ARGV" "- medium: three — c:3"
+assert_contains "the fix range starts at the reviewed HEAD" "$FIX_REVIEW_ARGV" \
+    "$(git -C "$REPO" rev-parse HEAD)..HEAD"
+assert_equals "round 2 has the expected counts and all four ledger entries" \
+    "$(sed -n '/^2 /,$p' "$RUNDIR/rounds" 2>/dev/null)" \
+    "$(printf '2 1 high, 1 medium, 0 low\nfinding\t2\tfixed\tone\ta:1\nfinding\t2\tfixed\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\nfinding\t2\thigh\tfour\td:4')"
+ROUND_ONE_PAIRS="$(awk -F'\t' '$1=="finding"&&$2==1{print $4"\t"$5}' "$RUNDIR/rounds")"
+FIXED_PAIRS="$(awk -F'\t' '$1=="finding"&&$2==2&&$3=="fixed"{print $4"\t"$5}' "$RUNDIR/rounds")"
+FIXED_COUNT="$(awk -F'\t' '$1=="finding"&&$2==2&&$3=="fixed"{n++} END{print n+0}' "$RUNDIR/rounds")"
+assert_equals "both fixed findings retain their identities" "$FIXED_COUNT" "2"
+TAB="$(printf '\t')"
+while IFS="$TAB" read -r fixed_title fixed_path; do
+    [ -n "$fixed_title" ] || continue
+    pair="$(printf '%s\t%s' "$fixed_title" "$fixed_path")"
+    if printf '%s\n' "$ROUND_ONE_PAIRS" | grep -qxF -- "$pair"; then
+        ok "fixed finding '$fixed_title' keeps its prior title and path"
+    else
+        no "fixed finding '$fixed_title' lost its prior title or path"
+    fi
+done <<EOF
+$FIXED_PAIRS
+EOF
+assert_equals "the role is now fix" "$(cat "$RUNDIR/role" 2>/dev/null)" "fix"
+rm -rf "$CODEX_ROOT"
 
 echo "test: four reviews across two attempts are numbered 1..4 from the ledger"
 # CFG_CODEX is a single-position chain, so attempt 1 resolves to claude. Keep this central
