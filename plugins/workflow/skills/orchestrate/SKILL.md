@@ -583,7 +583,7 @@ A merge that lands **capped** (findings remained at `--max-cycles`) runs `follow
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH"
 ```
 
-It files ONE `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed.
+It files ONE `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed. If `follow-up.sh` exits non-zero, nothing re-blocks them: log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
 
 ---
 
