@@ -10,9 +10,9 @@
 #
 # Usage:
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
-#        [--attempt N] [--dry-run]
+#        [--attempt N] [--env NAME=VALUE]... [--dry-run]
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer-file FILE \
-#        [--attempt N] [--dry-run]
+#        [--attempt N] [--env NAME=VALUE]... [--dry-run]
 #
 #     --base BRANCH  REQUIRED. What the post-resume review diffs against. The resumed
 #                    worker does not review itself (§ the reviewer, below), so without
@@ -52,6 +52,7 @@ ANSWER_SET=0
 DRY=""
 BASE=""
 ATTEMPT=0
+ENVS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -64,12 +65,14 @@ while [ $# -gt 0 ]; do
                        BASE="$2"; shift 2 ;;
         --attempt)     [ $# -ge 2 ] || die "--attempt needs a value"
                        ATTEMPT="$2"; shift 2 ;;
+        --env)         [ $# -ge 2 ] || die "--env needs NAME=VALUE"
+                       ENVS+=("$2"); shift 2 ;;
         --dry-run)     DRY=1; shift ;;
         *)             die "unknown flag $1" ;;
     esac
 done
 
-USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--dry-run]"
+USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--attempt N] [--env NAME=VALUE]... [--dry-run]"
 [ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 # --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
 # independent review (below) and the reviewer's commit range cannot be built without one —
@@ -84,6 +87,7 @@ case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$ANSWER_SET" -eq 1 ] || die "an answer is required: --answer TEXT or --answer-file FILE"
 [ -n "${ANSWER//[[:space:]]/}" ] || die "the answer is empty — resuming with nothing to say wastes the thread"
+[ "${#ENVS[@]}" -eq 0 ] || bash "$INFRA/env-pairs.sh" "${ENVS[@]}" || exit 1
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
 
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
@@ -142,8 +146,14 @@ CMD=(codex exec resume "$THREAD"
      -c "approval_policy=never"
      -c "sandbox_mode=workspace-write"
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Resume does not inherit the spawn's shell environment policy. Re-pass the
+# name-filter override when an explicitly provisioned value needs it.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    _policy="$(bash "$INFRA/env-pairs.sh" --codex-policy "$WORKTREE" "${ENVS[@]}")" || exit 1
+    while IFS= read -r _c; do [ -z "$_c" ] || CMD+=(-c "$_c"); done <<<"$_policy"
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$PROMPT")
@@ -214,7 +224,10 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/re
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
-( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
+(
+    [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
+    cd "$WORKTREE" && "${CMD[@]}"
+) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
 # Anything the worker just resumed may have left at review-checkout/review-scratch is gone
 # BEFORE the clone below trusts either path (#99) — same placement and reasoning as

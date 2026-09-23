@@ -17,6 +17,7 @@
 # Run: bash plugins/infra/tests/test_worker-resume.sh   (non-zero if any fail)
 
 set -u
+unset DATABASE_URL FOO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -38,6 +39,7 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
 if [ "${1:-}" = -p ]; then
+    [ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
     pwd >"${STUB_REVIEW_CWD:-/dev/null}"
@@ -202,6 +204,7 @@ fi
 out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
@@ -225,6 +228,32 @@ assert_not_contains "and not the stale escalation it replaced" "$OUT" "old quest
 assert_equals "the new exit code is recorded" "$(cat "$CODEX_ROOT/r1/issue-81/exit")" "0"
 assert_equals "launched FROM the worktree, since resume has no -C" \
     "$(cat "$WORK/cwd")" "$REPO"
+
+echo "test: --env reaches a real resumed worker without entering run files"
+mkrun 90 '{"issue":90,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
+STUB_ENV_OUT="$WORK/env-resume" \
+    STUB_HOST_ENV_OUT="$WORK/host-env-resume" \
+    STUB_REPORT='{"issue":90,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 90 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --env FOO=bar
+assert_equals "resumed worker receives both --env values" \
+    "$(cat "$WORK/env-resume" 2>/dev/null)" "postgres://x|bar"
+assert_equals "resume host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-resume" 2>/dev/null)" '|'
+leak=$(grep -rF 'postgres://x' "$CODEX_ROOT/r1/issue-90" 2>/dev/null || true)
+assert_empty "resume run dir never contains the env value" "$leak"
+
+mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run
+assert_equals "resume dry run exits 0" "$RC" "0"
+assert_not_contains "resume dry run never prints the env value" "$OUT" "postgres://x"
+HOST_SECRET_CANARY=host-canary run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_arg "resume keeps explicitly provisioned KEY names in shell commands" "$OUT" \
+    'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$OUT" | grep '^shell_environment_policy.exclude=')
+assert_contains "resume still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "resume does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
+assert_not_contains "resume config argv never prints the KEY value" "$OUT" 'private-canary'
+assert_not_contains "resume config argv never prints a host secret value" "$OUT" 'host-canary'
 
 echo "test: a resume that crashes is reported as failed, not as the previous turn's success"
 mkrun 82 '{"issue":82,"status":"built","round":0,"head":"stale99","review":"0 high, 0 medium, 0 low","note":""}'
@@ -300,6 +329,26 @@ assert_contains "names it" "$ERR" "no such worktree"
 run r1 80 standard "$REPO" --answer "x" --bogus
 assert_equals "unknown flag exits 1" "$RC" "1"
 assert_contains "names it" "$ERR" "unknown flag"
+
+run r1 80 standard "$REPO" --answer x --env NOEQUALS
+assert_equals "malformed --env exits 1" "$RC" "1"
+assert_contains "malformed --env says NAME=VALUE" "$ERR" "NAME=VALUE"
+assert_not_contains "malformed --env never echoes its argument" "$ERR" "NOEQUALS"
+assert_equals "malformed --env leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
+run r1 80 standard "$REPO" --answer x --env PATH=private-canary
+assert_equals "resume rejects a reserved command-path variable" "$RC" "1"
+assert_contains "resume explains the reserved name" "$ERR" "reserved"
+assert_not_contains "resume never echoes the value" "$ERR" "private-canary"
+assert_equals "reserved --env leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
+run r1 80 standard "$REPO" --answer x --env LD_AUDIT=private-canary
+assert_equals "resume rejects loader variables" "$RC" "1"
+assert_contains "loader rejection explains the reserved name" "$ERR" "reserved"
+assert_equals "loader rejection leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
 
 # ---------------------------------------------------------------------------
 # THE INDEPENDENT REVIEWER. A resumed worker's branch is as unreviewed as a freshly built

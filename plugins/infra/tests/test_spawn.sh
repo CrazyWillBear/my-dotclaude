@@ -18,9 +18,11 @@
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
+unset DATABASE_URL FOO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
+ENV_PAIRS="$(dirname "$SPAWN")/env-pairs.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -106,6 +108,21 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
+settings=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --settings) settings="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+# A running --bg daemon does not inherit arbitrary variables from this launcher.
+unset DATABASE_URL FOO
+if [ -n "$settings" ]; then
+    DATABASE_URL="$(jq -r '.env.DATABASE_URL // ""' "$settings")"
+    FOO="$(jq -r '.env.FOO // ""' "$settings")"
+fi
+[ -n "${STUB_SETTINGS_OUT:-}" ] && printf '%s\n' "$settings" >"$STUB_SETTINGS_OUT"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 STUB
 chmod +x "$BIN/claude"
 
@@ -352,6 +369,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
 
@@ -364,6 +382,7 @@ cat >"$CODEX_BIN/claude" <<'STUB'
 printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
 pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+[ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
 # The `reviewing` marker must exist WHILE the review runs (escalate.sh reads it to hold the
 # stall signal off); the run dir is the clone's parent.
 [ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
@@ -596,6 +615,13 @@ assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
 assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
+# Bash 3.2 treats an empty array expansion as unbound under `set -u`. The no-env
+# launch above this check must keep the wrapper argument list guarded as well.
+if grep -Fq "\${ENV_NAMES[@]+\"\${ENV_NAMES[@]}\"} --WORKER--" "$SPAWN"; then
+    ok "Codex wrapper handles an empty env-name array on Bash 3.2"
+else
+    no "Codex wrapper expands an empty env-name array under set -u"
+fi
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
@@ -614,6 +640,145 @@ assert_contains "the schema permits blocked infrastructure reports" \
 assert_contains "stdin is closed — codex blocks forever on an open one" \
     "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
+
+echo "test: --env reaches real Claude and Codex workers without entering argv or run files"
+argv=$(STUB_ENV_OUT="$WORK/env-claude" STUB_SETTINGS_OUT="$WORK/settings-claude" \
+    PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
+    "$WORK/wt" base --orchestrator orch-main --env DATABASE_URL=postgres://x --env FOO=bar)
+assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
+assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
+assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
+claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
+case "$(basename "$(dirname "$claude_settings")")" in
+    claude-env.r1.issue-12.*) ok "settings dir is named for its run and issue, so the run end can sweep it" ;;
+    *) no "settings dir is not named claude-env.r1.issue-12.* (got '$claude_settings')" ;;
+esac
+assert_contains "successful dispatch prints the private settings path for cleanup" \
+    "$argv" "Claude settings file: $claude_settings"
+if [ -n "$claude_settings" ] && [ -f "$claude_settings" ] \
+   && [ "$(jq -r '.env.DATABASE_URL' "$claude_settings")" = 'postgres://x' ]; then
+    ok "private Claude settings remain readable after dispatch for later session requests"
+else
+    no "private Claude settings disappeared or lost the value after dispatch"
+fi
+rm -f -- "$claude_settings"
+rmdir -- "$(dirname "$claude_settings")"
+
+rm -rf "$CODEX_ROOT"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    STUB_ENV_OUT="$WORK/env-codex" STUB_HOST_ENV_OUT="$WORK/host-env-codex" \
+    bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "Codex worker receives a value containing '=' intact" \
+    "$(cat "$WORK/env-codex" 2>/dev/null)" "postgres://x?sslmode=require|bar"
+assert_equals "host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-codex" 2>/dev/null)" '|'
+leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
+assert_empty "Codex run dir never contains the env value" "$leak"
+
+out=$(dry r1 12 standard /w base --env DATABASE_URL=postgres://x)
+assert_equals "Claude dry run exits 0" "$?" "0"
+assert_not_contains "Claude dry run never prints the env value" "$out" "postgres://x"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "Codex dry run exits 0" "$?" "0"
+assert_not_contains "Codex dry run never prints the env value" "$out" "postgres://x"
+out=$(HOST_SECRET_CANARY=host-canary codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_arg "Codex keeps explicitly provisioned KEY names in shell commands" "$out" \
+    'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "Codex does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
+assert_not_contains "Codex config argv never prints the KEY value" "$out" 'private-canary'
+assert_not_contains "Codex config argv never prints a host secret value" "$out" 'host-canary'
+# Names compgen -e cannot list (not valid identifiers) and names Codex itself loads from
+# $CODEX_HOME/.env must be re-excluded too, or they pass the opened filter.
+mkdir -p "$HOME/.codex"
+printf 'export DOTENV_API_TOKEN=dotenv-canary\n# COMMENTED_TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(env 'npm_config_//reg/:_authToken=npm-canary' CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary \
+    --dry-run --orchestrator orch-main 2>"$WORK/err")
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes a non-identifier host secret name" "$excl" '"npm_config_//reg/:_authToken"'
+assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$excl" '"DOTENV_API_TOKEN"'
+assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOKEN'
+assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
+rm -f "$HOME/.codex/.env"
+# `-c shell_environment_policy.exclude` REPLACES the user's own list, so a user who set one
+# is refused rather than silently un-hidden.
+printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "user Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the user's exclude setting" "$(err)" "shell_environment_policy.exclude"
+assert_not_contains "refusal never prints the value" "$(err)" "private-canary"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "user Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$HOME/.codex/config.toml"
+
+echo "test: invalid --env values are rejected before a worker starts"
+STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Claude --env exits 1" "$rc" "1"
+assert_contains "malformed Claude --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Claude --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$WORK/env-bad" ]; then ok "malformed Claude --env spawns nothing"; else no "malformed Claude --env spawned the stub"; fi
+
+rm -rf "$CODEX_ROOT/badenv"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Codex --env exits 1" "$rc" "1"
+assert_contains "malformed Codex --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Codex --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$CODEX_ROOT/badenv" ]; then ok "malformed Codex --env creates no run dir"; else no "malformed Codex --env created a run dir"; fi
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env 1BAD=x >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "invalid env name exits 1" "$rc" "1"
+assert_contains "invalid env name is identified" "$(err)" "not a valid variable name"
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "bare --env exits 1" "$rc" "1"
+
+echo "test: shared --env validation rejects host-steering and infra-owned names"
+for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
+    GIT_TEMPLATE_DIR LD_AUDIT LD_DEBUG DYLD_FALLBACK_LIBRARY_PATH \
+    RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
+    CODEX_RUN_ROOT CODEX_HOME HOME GH_CONFIG_DIR; do
+    bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
+    rc=$?
+    assert_equals "$name is rejected" "$rc" "1"
+    assert_contains "$name rejection says reserved" "$(err)" "reserved"
+    assert_not_contains "$name rejection never echoes its value" "$(err)" "private-canary"
+done
+
+STUB_ENV_OUT="$WORK/env-reserved" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env BASH_ENV=private-canary >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Claude spawn rejects a reserved shell variable" "$rc" "1"
+assert_contains "Claude spawn explains the reserved name" "$(err)" "reserved"
+assert_not_contains "Claude spawn never echoes the value" "$(err)" "private-canary"
+if [ ! -e "$WORK/env-reserved" ]; then ok "Claude spawn starts nothing for a reserved name"
+else no "Claude spawn started with a reserved name"; fi
+
+rm -rf "$CODEX_ROOT/reserved-git"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/reserved-git" \
+    RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env GIT_CONFIG_COUNT=1 >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Codex spawn rejects a Git routing variable" "$rc" "1"
+assert_contains "Codex spawn explains the reserved name" "$(err)" "reserved"
+if [ ! -d "$CODEX_ROOT/reserved-git" ]; then ok "Codex spawn creates no run dir for a reserved name"
+else no "Codex spawn created a run dir for a reserved name"; fi
 
 # ---------------------------------------------------------------------------
 # THE WRAPPER'S REVIEW STAGE. This is the path EVERY codex build takes, and it had no

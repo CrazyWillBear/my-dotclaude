@@ -275,6 +275,10 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
 
 Nothing rotates automatically. The context plugin's watchdog advises; the orchestrator asks.
 
+Claude background sessions do not reliably inherit arbitrary launcher variables; worker `--env`
+values travel in per-session settings to avoid daemon filtering or cross-session leakage.
+The shared validator reserves shell launch controls, Git routing/configuration names and infra-owned variables before export.
+
 ## Codex backend
 
 Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A worker is

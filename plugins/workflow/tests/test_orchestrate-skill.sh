@@ -193,12 +193,42 @@ assert_matches "the decide comes BEFORE the fix round" "$BODY" "consult.sh decid
 assert_matches "same attempt, not an escalation" "$BODY" "recurrence.{0,200}(same attempt|no handoff|not an escalation)"
 assert_contains "the window threshold is listed" "$BODY" "ESCALATE_RECURRENCE_WINDOW"
 assert_contains "the resume carries the attempt" "$BODY" '--base "$BASE" --attempt <A> --answer'
+assert_not_contains "consult resume does not pass a review round" "$BODY" '--attempt <A> --round <K> --answer'
 assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
 
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
+
+echo "test: provisioned infra resources survive later worker turns"
+resource_suffix="\${resource_args[@]+\"\${resource_args[@]}\"}"
+assert_contains "the blocked infra report is named" "$BODY" "blocked infra:"
+assert_contains "the resource example shows the env flag shape" "$BODY" "--env DATABASE_URL=<actual-value>"
+assert_not_contains "generic commands never inject sample credentials" "$BODY" "--env DATABASE_URL=postgres://..."
+assert_contains "the resume accepts the same env flag" "$BODY" '`worker-resume.sh` takes the same flag'
+assert_contains "the run log records the env name only" "$BODY" '"env":["DATABASE_URL"]'
+assert_matches "the log rule says names, never the values" "$BODY" "names, never the values"
+assert_contains "provisioned pairs stay in per-issue orchestrator state" "$BODY" \
+    "Keep the exact env pairs per issue in the orchestrator's live context"
+assert_contains "empty resource args are allowed" "$BODY" 'resource_args=()'
+assert_contains "actual pairs are appended to the resource args" "$BODY" 'resource_args+=(--env "$pair")'
+assert_contains "Claude settings paths are retained for cleanup" "$BODY" \
+    "save the Claude settings file path"
+assert_contains "stopped Claude sessions have their private settings removed" "$BODY" \
+    "remove its settings file and private directory"
+assert_contains "a superseded or merged Claude worker has its settings removed too" "$BODY" \
+    "superseded by a fix-round session, or its issue merged"
+assert_contains "the run end sweeps every leftover settings dir for the run" "$BODY" \
+    'rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*'
+assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
+    "--role fix --round <K> --attempt <A> $resource_suffix"
+assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \
+    "--attempt <A+1> $resource_suffix"
+assert_contains "consult-answer resumes re-pass the provisioned env" "$BODY" \
+    "--answer \"Consult posted: read the newest **Consult** comment on #<N> and follow its decision.\" $resource_suffix"
+assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
+    "--answer \"...\" --attempt <A> $resource_suffix"
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"

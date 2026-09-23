@@ -28,6 +28,7 @@
 #                           script refuses — the orchestrator drains there, it never wraps.
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
+#     --env NAME=VALUE      repeatable; passed to the worker launch, never logged
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -118,6 +119,7 @@ need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 # (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
 NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
 EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
+ENVS=()    # validated worker environment pairs; exported only at a launch point
 
 if [ "${1:-}" = peer ]; then
 # ---------------------------------------------------------------------------
@@ -158,7 +160,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -173,10 +175,15 @@ while [ $# -gt 0 ]; do
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
         --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
+        --env)          need $# --env;          ENVS+=("$2"); shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
     esac
 done
+
+# Validate before resolving a tier or building a run directory. Values are never printed
+# by the shared validator, even on malformed input.
+[ "${#ENVS[@]}" -eq 0 ] || bash "$INFRA/env-pairs.sh" "${ENVS[@]}" || exit 1
 
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
@@ -494,8 +501,15 @@ CMD=(codex exec
      -c "approval_policy=never"
      -s workspace-write
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Some Codex configurations drop names containing KEY, SECRET or TOKEN from the
+# worker's shell commands. Override that name filter when one of those names was
+# explicitly provisioned; keep the values in the process environment, not argv.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    _policy="$(bash "$INFRA/env-pairs.sh" --codex-policy "$WORKTREE" "${ENVS[@]}")" || exit 1
+    while IFS= read -r _c; do [ -z "$_c" ] || CMD+=(-c "$_c"); done <<<"$_policy"
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$TASK")
@@ -642,15 +656,26 @@ SCHEMA
 # cannot tell that a different process wrote it. A failed POST is recorded but does not
 # fail the run: the counts still reached worker-report.sh, and a lost comment costs the
 # fix round its detail, not its correctness.
+# Only names cross argv into the wrapper; the values travel in its environment.
+# Remove them there as soon as Codex exits, before any host-side git, gh or reviewer.
+ENV_NAMES=()
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done
+    export "${ENVS[@]}"
+fi
 set -m
 bash -c '
     rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; shift 5
+    env_names=()
+    while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
+    shift
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     review=("$@")
     "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     rc=$?
+    for name in "${env_names[@]}"; do unset "$name"; done
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
     # could reach, and a planted verdict must never outlive the worker that planted it. The
@@ -727,9 +752,12 @@ bash -c '
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
-    "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
+if [ "${#ENV_NAMES[@]}" -gt 0 ]; then
+    for _name in "${ENV_NAMES[@]}"; do unset "$_name"; done
+fi
 printf '%s\n' "$!" >"$RUNDIR/pid"
 printf '%s\n' "$RUNDIR"
 exit 0
@@ -769,4 +797,32 @@ if [ -n "$WORKTREE" ]; then
 fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
+    # export can instead contaminate a daemon that it starts. Put this worker's values in
+    # per-session settings, which Claude carries with the dispatch. The file is private
+    # and outside the run dir. It must remain for the session's lifetime: --bg returns
+    # before the session has finished reading it, and later requests read it again.
+    _env_umask="$(umask)"
+    umask 077
+    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.$RUNID.issue-$ISSUE.XXXXXX")" \
+        || die "could not create private Claude session settings"
+    CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
+    jq -n --args '{"env": reduce $ARGS.positional[] as $pair ({};
+        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])})}' \
+        -- "${ENVS[@]}" >"$CLAUDE_SETTINGS_FILE" 2>/dev/null \
+        || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
+    umask "$_env_umask"
+
+    CLAUDE_CMD=("${CMD[0]}" --settings "$CLAUDE_SETTINGS_FILE" "${CMD[@]:1}")
+    "${CLAUDE_CMD[@]}" </dev/null
+    _claude_rc=$?
+    # A failed dispatch did not create a session, so its settings are no longer needed.
+    if [ "$_claude_rc" -eq 0 ]; then
+        printf 'Claude settings file: %s\n' "$CLAUDE_SETTINGS_FILE"
+    else
+        rm -rf -- "$CLAUDE_SETTINGS_DIR"
+    fi
+    exit "$_claude_rc"
+fi
 exec "${CMD[@]}" </dev/null

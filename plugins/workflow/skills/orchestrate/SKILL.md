@@ -300,14 +300,13 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
-   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the
-   thread or the ledger; every later spawn passes the same `--attempt` unless
-   [escalation](#escalation-by-script) moved it.
-   **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
-   (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
-   `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
-   the id rather than a bare id, so don't parse spawn's output: read it from
-   **`session-status.sh <runid>`, column 2**, when you need it.
+   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
+   **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values. Keep the exact env pairs per issue in the orchestrator's live context and re-append the full set to every later worker launch or resume because the run log stores names only. Before each call, rebuild `resource_args=()` for that issue, then append `resource_args+=(--env "$pair")` for each actual pair; leave it empty if none. A real pair has the shape `--env DATABASE_URL=<actual-value>`:
+   ```bash
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> ${resource_args[@]+"${resource_args[@]}"}
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
+   ```
+   **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
 5. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
    `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
 
@@ -347,8 +346,9 @@ is how you confirm which round just landed):
 
 - **`H > 0` or `M > 0`, and rounds remain** → run [`escalate.sh`](#escalation-by-script) first
   (a second round with findings moves the attempt up). **If it prints `recurrence: <area>`** the same finding keeps coming back: not an escalation — no handoff, same attempt — run the decide before the fix round, `bash ~/.claude/kit/infra/scripts/consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>` then `run-log.sh append "$RUNID" consulted '{"n":<N>}'`; the fixer reads the newest **Consult**. If it refuses (past the cap, no **Decision**), spawn the fix round anyway — review-cap governs the next round. Then spawn a **fix round**:
-  `spawn.sh ... --role fix --round <K> --attempt <A>`. A **fresh** session every round: nothing
-  compounds, and the fixer is not defending its own code.
+  `spawn.sh ... --role fix --round <K> --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat
+  every provisioned pair). A **fresh** session every round: nothing compounds, and the fixer is
+  not defending its own code.
 - **clean, or the cap is spent** → the issue joins the **merge queue**.
 - **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top it
   respawns; **at the top → drain**: finish in-flight work, then stop and report. `failed quota:
@@ -441,10 +441,9 @@ posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's 
 
 # Liveness
 
-Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; session states
-(`busy`/`idle`/`blocked`/`done`/`stopped`/`failed`/`gone`), the codex backend's PID-based control,
-and the full `stop` → verify → respawn recovery procedure are documented in
-[infra's README](../../../infra/README.md#liveness-and-recovery).
+Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
+For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session
+ends (respawn, escalation, superseded by a fix-round session, or its issue merged), verify the stop, then remove its settings file and private directory per infra's README.
 
 After spawning, wait on worker messages and idle notices and handle each wake immediately. Do not
 poll on a timer; the long idle tick is a fallback only when the event wait is unavailable, not the
@@ -466,8 +465,7 @@ deviation is an escalation, not a consult); if it prints nothing:
 ```bash
 bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" consulted '{"n":<N>}'
-bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> \
-     --base "$BASE" --attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision."
+bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." ${resource_args[@]+"${resource_args[@]}"}
 ```
 
 **If `consult.sh` refuses instead** ("past the cap", only for a claude-backed worker — it
@@ -482,7 +480,9 @@ prints the resumed turn's report in the same one line. **Do not hand-assemble a 
 resume`**: the sandbox does not carry over and there is no `-C`, so a hand-written one comes back
 offline and fails its own `gh` protocol silently ([infra's
 README](../../../infra/README.md#escalation-on-a-codex-worker)). For a claude session, **offer
-both routes. Recommend one.**
+both routes. Recommend one.** When resuming after a human answer, pass the same per-issue pairs:
+`worker-resume.sh ... --answer "..." --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat
+every provisioned pair).
 
 > #14's session is asking whether the retry budget is per-request or per-session. I can relay the
 > answer, or you can `claude attach 7f3a1c04` and talk to it directly. Recommend attaching — this
@@ -516,9 +516,9 @@ review (own budget, below), or a context past 256K. On a hit it has posted `**Ha
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
    for a codex row; verify nothing is still busy.
 2. `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"<reason>","attempt":<A>}'`.
-3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`). The
-   worktree carries every commit; the thread carries the plan, consults, deviations and the
-   handoff — nothing is relayed.
+3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`), re-passing
+   every provisioned pair: `spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> ${resource_args[@]+"${resource_args[@]}"}`.
+   The worktree carries every commit; the thread carries the plan, consults, deviations and the handoff — nothing is relayed.
 4. **On a `quota:` reason, skip the remaining codex positions.** The next codex model shares the quota; respawn at the first `A' > A` where `resolve-tier.sh <tier> <A'>` prints `implementer_backend=claude` (the claude cell), or **drain** if there is none.
 5. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
@@ -636,8 +636,9 @@ instead of buried under a success table:
 4. **Comment each conflict-stop onto its issue** — additive, never a close or an edit:
    > `/orchestrate` could not merge this: `<reason>`. The branch and its worktree are left intact at
    > `<path>` — resolve and re-run.
-5. **`ExitWorktree(keep)`** — the orchestration branch and worktree stay intact.
-6. **Report.** One row per scoped issue:
+5. **Sweep leftover plaintext env settings:** `rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*`.
+6. **`ExitWorktree(keep)`** — the orchestration branch and worktree stay intact.
+7. **Report.** One row per scoped issue:
 
    | column | source |
    |---|---|

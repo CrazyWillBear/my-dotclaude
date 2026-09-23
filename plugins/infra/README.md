@@ -11,6 +11,7 @@ plugins/infra/
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
 │   ├── spawn.sh                 # start (or print) a worker (one issue, at a chain --attempt) or a peer (one role): `claude --bg`, or `codex exec` when the cell says codex
+│   ├── env-pairs.sh             # shared NAME=VALUE validation for spawn and resume
 │   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   ├── resolve-tier.sh          # resolve a tier + attempt → its {model, effort, backend} roster and chain length (awk, no jq; claude-only fallback)
@@ -32,12 +33,25 @@ reinvention this kit replaces.
 
 ```bash
 # worker: tier-routed model, fenced to its worktree, started from it
-bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix]
+bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix] [--env NAME=VALUE]...
 
 # peer: named by its role, carrying the charter and its brief
 bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
      --brief b.md --charter c.md --model opus --effort high [--handoff h.md] [--autocompact 400k]
 ```
+
+`--env` pairs are checked by `env-pairs.sh` before launch; shell controls, Git routing/config
+and infra-owned names are reserved for both spawn and resume. On Codex, a KEY/SECRET/TOKEN
+name turns off the default secret filter and re-excludes every other such host name; that
+override replaces a user or project `shell_environment_policy.exclude`, so it is refused then. Claude workers receive values in
+per-session settings because `claude --bg` does not reliably inherit arbitrary launcher exports.
+The private settings file remains readable after dispatch because the background session reads
+it again on later requests. `spawn.sh` prints `Claude settings file: <path>` after a successful
+dispatch. Save that path with the session id. Once `claude stop <id>` has been verified, remove
+the file and its private directory with `rm -f -- "$settings_file"` then
+`rmdir -- "$(dirname "$settings_file")"`. A failed dispatch removes its file immediately. The
+directory is named `claude-env.<runid>.issue-<N>.*` under `$TMPDIR`, so a run's end sweeps any
+leftovers with `rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*`.
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
@@ -166,6 +180,7 @@ bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktr
      --base <base-branch> \
      --answer "the retry budget is per-request"        # or --answer-file FILE
      # --attempt N  the chain position the worker was spawned at, so -m is the same model
+     # --env NAME=VALUE  repeatable; re-exported on resume (values never logged)
 ```
 
 **Two kinds of escalation (#104).** A note beginning `deviation:` is a false plan assumption:
