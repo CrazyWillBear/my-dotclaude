@@ -569,8 +569,8 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium
-findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on that follow-up:
+A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open)
+joins the merge queue as usual. After it lands, run `follow-up.sh` on the main thread; capped-merge dependents are re-blocked on that follow-up:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>
@@ -580,6 +580,7 @@ It files one `ready-for-agent` issue with the open high/medium findings, adds it
 as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a
 `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed.
 If `follow-up.sh` exits non-zero, log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
+Then keep scheduling from the amended `$GRAPH`: the dependents wait on the follow-up through `ready.sh`, exactly like any blocker — a capped merge no longer holds anything, and you never ask the user what to do with a capped issue.
 
 ---
 
