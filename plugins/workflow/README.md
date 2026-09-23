@@ -29,7 +29,7 @@ plugins/workflow/
 ├── scripts/
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
 │   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated
-│   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
+│   ├── merge-fold.sh                 # deterministic model-free merge fold; refuses when the base is behind its upstream
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
 │   └── scope-graph.sh                # fetch the whole issue graph at launch (bodies, comments, tiers, blockers, mock-debt)
