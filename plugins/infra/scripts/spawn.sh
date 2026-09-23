@@ -20,7 +20,7 @@
 #
 #   worker:
 #     --role build|fix      build (default) or a fix round on an existing branch
-#     --round N             fix-round number, quoted in the fix prompt (default 1)
+#     --round N             fix-round number, quoted in the fix prompt only (default 1)
 #     --attempt N           chain position (default 0). The tier's implementer cell is an
 #                           ORDERED CHAIN (resolve-tier.sh, #104); escalate.sh decides a
 #                           worker is out of its depth and the orchestrator respawns at
@@ -180,7 +180,7 @@ done
 
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
-# $ROUND lands in the "**Review round N**" heading and the rounds ledger escalate.sh parses.
+# $ROUND is quoted in the fix prompt only; the review number comes from the rounds ledger (line count + 1).
 case "$ROUND" in ''|*[!0-9]*) die "round must be a number, got '$ROUND'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 [ -n "$RUNID" ] || die "runid is required"
@@ -633,7 +633,7 @@ SCHEMA
 # fix round its detail, not its correctness.
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; counter=$6; shift 6
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; shift 5
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
@@ -686,6 +686,7 @@ bash -c '
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
                     # which the worker cannot write; the thread copy is for humans and
                     # the fix round, and a worker can forge a comment there.
+                    round=$(( $(cat "$rundir/rounds" 2>/dev/null | grep -c .) + 1 ))
                     printf "%s %s\n" "$round" "$counts" >>"$rundir/rounds"
                     { printf "**Review round %s** — %s\n\n" "$round" "$counts"
                       cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
@@ -709,7 +710,7 @@ bash -c '
     fi
     rm -f "$rundir/reviewing"
     printf "%s\n" "$rc" >"$rundir/exit"' \
-    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
+    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
     "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
