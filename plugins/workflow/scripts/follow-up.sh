@@ -143,9 +143,11 @@ PY
     [ "${#argv[@]}" -gt 0 ] || die "could not build integration review command: $(cat "$TMP/review-cmd-stderr")"
 
     mkdir -p "$TMP/scratch" \
-        && git clone --quiet --shared -- "$PWD" "$TMP/checkout" \
-        && git -C "$TMP/checkout" checkout --quiet --detach "$HEAD" \
-        || die "could not create a detached integration review checkout at $HEAD"
+        || die "could not create an integration review scratch directory"
+    git clone --quiet --shared -- "$PWD" "$TMP/checkout" \
+        || die "could not clone the run branch for integration review"
+    git -C "$TMP/checkout" checkout --quiet --detach "$HEAD" \
+        || die "could not detach the integration review checkout at $HEAD"
     (cd "$TMP/checkout" && TMPDIR="$TMP/scratch" "${argv[@]}") \
         >"$TMP/review.txt" </dev/null \
         || die "integration reviewer failed"
