@@ -33,10 +33,12 @@
 #   issue <N> fixed round=<K> head=<sha> review=<H high, M medium, L low>
 #   issue <N> failed <one short line why>
 #   issue <N> escalate <question>
+#   issue <N> blocked infra: <what>
 #
 # Exit codes:
 #   0  a report was printed. `failed` and `escalate` ARE reports — the orchestrator has a
 #      branch for each, so they are this script succeeding, not this script failing.
+#      blocked is a report too.
 #   1  NO report could be produced: bad usage, no run dir, a timeout, or a worker that
 #      finished without a readable report. Loud on stderr, and NOTHING on stdout.
 #
@@ -123,7 +125,7 @@ while : ; do
     # single-worker form had for an unknown state spelling.
     HIT="$(printf '%s\n' "$OUT" | awk -v pre="orch-$RUNID-issue-" -v want=" $ISSUES " '
         BEGIN { plen = length(pre) }
-        $3 == "codex" && ($4 == "done" || $4 == "failed") && substr($1, 1, plen) == pre {
+        $3 == "codex" && ($4 == "done" || $4 == "failed" || $4 == "blocked") && substr($1, 1, plen) == pre {
             n = substr($1, plen + 1)
             if (index(want, " " n " ") > 0) { print n " " $4; exit }
         }')"
@@ -289,6 +291,15 @@ if status in ("built", "fixed"):
         print("issue %d fixed round=%d head=%s review=%s" % (issue, rnd, head, review))
     else:
         print("issue %d built head=%s review=%s" % (issue, head, review))
+    sys.exit(0)
+
+if status == "blocked":
+    # An infra gap, not a failure and not a plan deviation: the orchestrator supplies
+    # the resource (or asks the user). The infra: prefix is the contract.
+    if not note.lower().startswith("infra:"):
+        print("error: issue %d reported blocked without an 'infra:' note: %r" % (issue, note), file=sys.stderr)
+        sys.exit(1)
+    print("issue %d blocked %s" % (issue, note))
     sys.exit(0)
 
 if status == "failed":

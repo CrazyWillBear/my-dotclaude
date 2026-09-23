@@ -132,7 +132,9 @@ review:
    {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
 Use \"status\": \"failed\" with the reason in \"note\" if you could not finish. If you are
 STILL blocked on something only a human can answer, use \"status\": \"escalate\" again with
-the new question in \"note\" — do not guess."
+the new question in \"note\" — do not guess. Missing infrastructure you cannot create (a
+database, a service, a credential)? \"status\": \"blocked\" with \"note\" = \"infra: <what is missing>\"
+— never an escalate deviation."
 
 CMD=(codex exec resume "$THREAD"
      -m "$MODEL"

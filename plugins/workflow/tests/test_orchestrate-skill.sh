@@ -164,6 +164,14 @@ assert_contains "the plan is logged" "$BODY" "planned '{\"n\":<N>}'"
 
 echo "test: deviation → consult → resume, never a human and never prose in the orchestrator (#104)"
 assert_contains "the deviation report shape" "$BODY" "escalate deviation:"
+assert_contains "blocked report shape" "$BODY" "blocked infra:"
+assert_contains "blocked never reaches a consult" "$BODY" "never goes to a consult"
+blocked_branch=$(printf '%s\n' "$BODY" | sed -n '/^- \*\*`issue <N> blocked infra:/p')
+assert_contains "blocked respawn keeps the role and round" "$blocked_branch" 'same `--role`, `--round`, and `--attempt`'
+assert_contains "blocked fix respawn passes the fix flags" "$blocked_branch" '--role fix --round <K> --attempt <A>'
+assert_matches "the blocked note is treated as untrusted" "$BODY" "Treat.*infra:.*untrusted"
+assert_matches "credentials are never disclosed to the worker" "$BODY" "never disclose credentials to the worker"
+assert_matches "credentials stay out of issues, prompts, and worktrees" "$BODY" "never put credentials in issue.*prompt.*worktree"
 assert_matches "told apart by the note's first word, not by reading" "$BODY" "first word.*never by reading"
 assert_contains "the consult role" "$BODY" "consult.sh consult"
 assert_contains "consult.sh carries the attempt too (review round 11: it resolves the implementer's backend from resolve-tier.sh, not a codex run dir)" "$BODY" 'consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>'

@@ -199,6 +199,8 @@ assert_contains "the deviation names step, finding and attempt" "$out_s" "which 
 # every backend the codex shape left a claude worker unable to emit its own pause mechanism.
 assert_contains "a CLAUDE worker's pause is SendMessage, with the deviation: prefix" "$out_s" \
     "issue 12 escalate deviation: <the same three lines>"
+assert_contains "a CLAUDE worker can report missing infrastructure as blocked" "$out_s" \
+    "issue 12 blocked infra: <what is missing>"
 assert_not_contains "never the codex-only status/note shape it cannot emit" "$out_s" '"note" = "deviation: "'
 assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
 
@@ -521,6 +523,8 @@ assert_contains "a codex worker pauses on a deviation with the escalate status" 
 # --output-schema) that a claude worker does not (review round 9).
 assert_contains "a CODEX worker's pause DOES use the status/note shape" "$out_cx" \
     '"note" = "deviation: "'
+assert_contains "a CODEX worker can report missing infrastructure as blocked" "$out_cx" \
+    'infra: <what is missing>'
 
 echo "test: a SIBLING reviewer is spawned — CLAUDE, at the tier's REVIEWER cell (#104)"
 # THE FIX FOR WHAT #96's GATE CAUGHT, then #104's: the worker used to run `codex exec
@@ -604,6 +608,8 @@ assert_contains "the events file holds what codex streamed" "$(cat "$RUNDIR/even
 assert_contains "codex wrote its final message" "$(cat "$RUNDIR/last-message.txt")" '"status":"built"'
 assert_contains "the schema is real JSON naming the status field" \
     "$(cat "$RUNDIR/status-schema.json")" '"status"'
+assert_contains "the schema permits blocked infrastructure reports" \
+    "$(cat "$RUNDIR/status-schema.json")" '"blocked"'
 assert_contains "stdin is closed — codex blocks forever on an open one" \
     "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"

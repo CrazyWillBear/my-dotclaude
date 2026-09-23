@@ -212,19 +212,23 @@ sleep 300 & LIVE_PID=$!
 # Real, reaped pids rather than made-up numbers: a guessed "surely nothing owns that
 # number" is exactly the kind of assumption that fails on one machine and nowhere else.
 dead() { sleep 0 & local p=$!; wait "$p" 2>/dev/null; printf '%s' "$p"; }
-D1=$(dead); D2=$(dead); D3=$(dead)
+D1=$(dead); D2=$(dead); D3=$(dead); D4=$(dead)
 mkcodex 21 "$LIVE_PID" -          # still running
 mkcodex 22 "$D1" 0                # exited clean
 mkcodex 23 "$D2" 3                # exited non-zero
 mkcodex 24 "$D3" -                # died without recording a code
+mkcodex 26 "$D4" 0                # exited clean after reporting blocked infrastructure
+printf '%s' '{"issue":26,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}' \
+    >"$CODEX_ROOT/rc1/issue-26/last-message.txt"
 stub_claude 0 '[]'
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>"$WORK/err")
 assert_contains "a live pid is busy" "$out" "orch-rc1-issue-21 $LIVE_PID codex busy"
 assert_contains "exit 0 is done" "$out" "orch-rc1-issue-22 $D1 codex done"
+assert_contains "a clean blocked report stays blocked" "$out" "orch-rc1-issue-26 $D4 codex blocked"
 assert_contains "a non-zero exit is failed" "$out" "orch-rc1-issue-23 $D2 codex failed"
 assert_contains "a dead pid with no exit code is failed, never silently fine" \
     "$out" "orch-rc1-issue-24 $D3 codex failed"
-assert_equals "four lines" "$(printf '%s\n' "$out" | wc -l)" "4"
+assert_equals "five lines" "$(printf '%s\n' "$out" | wc -l)" "5"
 assert_equals "sorted with everything else" "$(printf '%s\n' "$out" | sort)" "$out"
 kill "$LIVE_PID" 2>/dev/null
 

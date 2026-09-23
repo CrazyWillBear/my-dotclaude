@@ -31,6 +31,7 @@
 #                  are counted from the thread's `**Consult N**` headings, which
 #                  consult.sh posts; a worker forging one only escalates itself sooner and
 #                  cannot remove one, so the thread is safe to read for THIS signal.
+#   blocked        never a signal; missing infrastructure is handled by the orchestrator
 #   review-cap     a SECOND review round within this attempt still has high or medium
 #                  findings — the fix session is spawned at the next chain position.
 #                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append
@@ -248,6 +249,11 @@ if reason and reason[0] == "failed":
         reason = ("quota", why[len("quota: "):])
     elif why and code not in ("", "0"):
         reason = ("failed", "%s: %s" % (reason[1], why))
+
+# blocked infra is a missing resource, not a failure or deviation. The orchestrator
+# supplies the resource or asks the user; do not signal even if a review cap is present.
+if reason is None and status == "blocked":
+    sys.exit(0)
 
 # --- the thread: deviations and review rounds, THIS attempt's only ------------------------
 mark_path = os.path.join(rundir, "handoff.json")
