@@ -170,8 +170,40 @@ run r3 84 complex "$G"
 assert_equals "exits 0" "$RC" "0"
 BODY="$(cat "$WORK/body" 2>/dev/null)"
 assert_contains "the comment's finding" "$BODY" "- [medium] leaks handle — src/d.py:7"
-assert_not_contains "not the earlier round" "$BODY" "old"
+assert_contains "an earlier round's finding, marked to verify" "$BODY" "- [high] old — x:1 (round 1"
 assert_contains "read the thread" "$(cat "$WORK/gh-argv")" "view"
+
+echo "test: a claude worker's review comment shape is parsed, earlier delta rounds kept"
+reset; rm -rf "$CODEX_RUN_ROOT/r3c"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/e.py:3` — drops the lock on error."},{"body":"**Review round 2** — 0 high, 1 medium, 1 low\n\n- **medium** `src/f.py:9` — retries forever.\n- **low** `src/g.py` — nit."}]}'
+run r3c 84 complex "$G"
+assert_equals "exits 0" "$RC" "0"
+BODY="$(cat "$WORK/body" 2>/dev/null)"
+assert_contains "last round's medium" "$BODY" "- [medium] retries forever. — src/f.py:9"
+assert_contains "earlier round's high, marked to verify" "$BODY" "- [high] drops the lock on error. — src/e.py:3 (round 1"
+assert_not_contains "no low" "$BODY" "nit"
+
+echo "test: a thread round newer than the ledger wins (codex → claude escalation)"
+reset; ledger r3d
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
+run r3d 84 complex "$G"
+assert_equals "exits 0" "$RC" "0"
+BODY="$(cat "$WORK/body" 2>/dev/null)"
+assert_contains "the newer thread round" "$BODY" "- [medium] claude found this. — src/h.py:2"
+assert_not_contains "not the stale ledger" "$BODY" "silent drop of rows"
+
+echo "test: a round that counts high/medium but lists none is refused, not read as clean"
+reset; ledger r3e '1 1 high, 1 medium, 0 low\n'; cp "$G" "$WORK/before.json"
+run r3e 84 complex "$G"
+assert_equals "ledger: exits 1" "$RC" "1"
+assert_contains "ledger: says lists none" "$ERR" "lists none"
+reset; rm -rf "$CODEX_RUN_ROOT/r3f"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\nSomething is wrong in the parser."}]}'
+run r3f 84 complex "$G"
+assert_equals "thread: exits 1" "$RC" "1"
+assert_contains "thread: says lists none" "$ERR" "lists none"
+assert_equals "neither filed anything" "$(creates)" "0"
+cmp -s "$G" "$WORK/before.json" && ok "graph unchanged" || no "graph unchanged"
 
 echo "test: no ledger and no review comment fails loud"
 reset; STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"}]}' run r3b 84 complex "$G"
