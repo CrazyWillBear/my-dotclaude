@@ -44,6 +44,8 @@ assert_contains "escalate.sh is the decider" "$BODY" "escalate.sh <runid> <N> <t
 assert_contains "recovery respawn keeps role, round, and attempt" "$BODY" 'same worktree, same branch, same --role, --round, --attempt'
 assert_contains "escalation respawn keeps role and round" "$BODY" 'spawn.sh --attempt <A+1>` with the same `--role` and `--round`'
 assert_contains "the recurrence window is documented" "$BODY" "ESCALATE_RECURRENCE_WINDOW=2"
+assert_contains "no-progress is documented" "$BODY" "no-progress:"
+assert_contains "the round backstop default is documented" "$BODY" "ESCALATE_ROUND_BACKSTOP=20"
 assert_matches "occupancy is read from the rollout, not the turn total" "$BODY" "rollout.*joined by the thread id"
 assert_matches "the top of the chain drains" "$BODY" "drains as .?failed.? does"
 assert_matches "the reviewer is claude on the reviewer cell" "$BODY" "It is the claude reviewer"
