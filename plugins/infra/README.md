@@ -422,7 +422,9 @@ group-kills the worker, logs `escalated`, and respawns `spawn.sh --attempt <A+1>
 values onto the same worktree. Nothing is resumed across a model change. At the top of the chain `spawn.sh` refuses
 and the run drains as `failed` does. The same high/medium area in the newest
 `ESCALATE_RECURRENCE_WINDOW=2` rounds prints `recurrence: <area>` — no handoff, no respawn; the
-orchestrator runs `consult.sh decide` and then the next fix round at the same attempt. Thresholds: `ESCALATE_STALL_MINUTES=20`,
+orchestrator runs `consult.sh decide` and then the next fix round at the same attempt. The fire
+uses up its round: later wakes stay quiet (no review-cap, no second decide) until that fix round's
+review lands a new one. Thresholds: `ESCALATE_STALL_MINUTES=20`,
 `ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_RECURRENCE_WINDOW=2`, `ESCALATE_REVIEW_MINUTES=45` (the
 post-build review's own, longer budget — an event log untouched for the STALL window is not a
 stall while the sibling reviewer is running and younger than this). A `quota` reason (a usage-limit

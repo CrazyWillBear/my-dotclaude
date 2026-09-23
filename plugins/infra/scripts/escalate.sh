@@ -40,9 +40,11 @@
 #                  `recurrence: <area>` and exits: no handoff, no mark, no respawn — the
 #                  orchestrator runs `consult.sh decide`, then the next fix round at the
 #                  SAME attempt (#116). Fires once per area per attempt (`$RUNDIR/recurrence`,
-#                  one `<attempt><TAB><area>` line per fire) and is skipped once this
-#                  attempt's consults reach the cap — a decide is a consult — so review-cap
-#                  takes over. A claude-backed attempt stays exempt: the ledger is written
+#                  one `<attempt><TAB><round><TAB><area>` line per fire) and uses up its
+#                  round: later wakes on the same newest round stay quiet (no review-cap
+#                  Handoff, no second area's decide) until the fix round's review lands a
+#                  new one. Skipped once this attempt's consults reach the cap — a decide is
+#                  a consult — so review-cap takes over. A claude-backed attempt stays exempt: the ledger is written
 #                  only by the codex review wrapper, so a claude attempt has no rounds of its
 #                  own, and any in the file belong to earlier codex attempts behind rounds_mark.
 #   review-cap     a SECOND review round within this attempt still has high or medium
@@ -309,8 +311,15 @@ if reason is None:
         reason = ("deviation-cap", "a deviation after %d consults this attempt; the cap is %d" % (consults, cap))
 # --- recurrence: the same high/medium area in the newest W rounds of this attempt ----
 # A design decision, not a stronger fixer (#116). Not an escalation: no handoff, no mark.
-if reason is None and window > 0 and consults < cap:
-    attempt_rounds = [int(m.group(1)) for m in (re.match(r"(\d+) ", l) for l in ledger[rounds_mark:]) if m]
+attempt_rounds = [int(m.group(1)) for m in (re.match(r"(\d+) ", l) for l in ledger[rounds_mark:]) if m]
+fires = [l.split("\t", 2) for l in (read("recurrence") or "").splitlines()]
+fires = [f for f in fires if len(f) == 3 and f[0] == str(attempt)]
+# A fire USES UP its round: until the fix round it asked for lands a new review, a later
+# wake on the same ledger is quiet — neither review-cap (a Handoff would kill that fix
+# round) nor a second area's decide (a double spawn). Checked outside the cap gate: the
+# decide itself may be the consult that reaches the cap.
+spent = bool(attempt_rounds) and str(attempt_rounds[-1]) in {f[1] for f in fires}
+if reason is None and window > 0 and consults < cap and not spent:
     areas = {}
     for l in (read("rounds") or "").splitlines():
         f = l.split("\t")
@@ -320,16 +329,15 @@ if reason is None and window > 0 and consults < cap:
                 areas.setdefault(int(f[1]), []).append(area)
     newest = attempt_rounds[-window:]
     if len(newest) == window:
-        fired = {l.split("\t", 1)[1] for l in (read("recurrence") or "").splitlines()
-                 if l.split("\t", 1)[0] == str(attempt) and "\t" in l}
+        fired = {f[2] for f in fires}
         for area in areas.get(newest[-1], []):
             if area not in fired and all(area in areas.get(r, []) for r in newest[:-1]):
                 if not dry:
                     with open(os.path.join(rundir, "recurrence"), "a", encoding="utf-8") as fh:
-                        fh.write("%d\t%s\n" % (attempt, area))
+                        fh.write("%d\t%d\t%s\n" % (attempt, newest[-1], area))
                 print("recurrence: %s" % area)
                 sys.exit(0)
-if reason is None:
+if reason is None and not spent:
     rounds = []
     for l in ledger[rounds_mark:]:
         m = re.match(r"(\d+) (\d+) high, (\d+) medium", l)

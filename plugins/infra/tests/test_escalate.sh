@@ -321,10 +321,26 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "rounds 2 and 3 share src/a.py: the signal names the path, not the line" "$OUT" "recurrence: src/a.py"
 assert_equals "no handoff is posted — this is not an escalation" "$(posted)" "no"
 if [ -e "$RUNDIR/handoff.json" ]; then no "recurrence wrote handoff.json"; else ok "recurrence writes no handoff mark"; fi
-assert_equals "the fire is recorded per attempt and area" "$(cat "$RUNDIR/recurrence")" "$(printf '0\tsrc/a.py')"
+assert_equals "the fire is recorded per attempt, round and area" "$(cat "$RUNDIR/recurrence")" "$(printf '0\t3\tsrc/a.py')"
 run r1 12 standard "$REPO" --base base --attempt 0
-assert_contains "the second wake falls through to review-cap: once per area per attempt" "$OUT" "review-cap: review 3 (3rd this attempt)"
+assert_empty "the fire uses up round 3: a second wake on the unchanged ledger is quiet, not review-cap" "$OUT"
+assert_equals "and posts no handoff that would kill the fix round" "$(posted)" "no"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}' run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "still quiet once the decide brought consults to the cap" "$OUT"
+printf '4 0 high, 1 medium, 0 low\nfinding\t4\tmedium\tagain\tsrc/a.py:3\n' >>"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the fix round's own review is a new round: once per area per attempt, review-cap" "$OUT" "review-cap: review 4 (4th this attempt)"
 rm -f "$RUNDIR/recurrence" "$RUNDIR/handoff.json"   # the review-cap handoff above marked the ledger
+# two areas recurring in the same round: ONE decide covers the round, never two
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tx\tsrc/a.py:1\nfinding\t1\thigh\ty\tsrc/b.py:1\n2 2 high, 0 medium, 0 low\nfinding\t2\thigh\tx\tsrc/a.py:2\nfinding\t2\thigh\ty\tsrc/b.py:2\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "the first area fires" "$OUT" "recurrence: src/a.py"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "the second area in the same round does not double-spawn" "$OUT"
+rm -f "$RUNDIR/recurrence"
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
 ESCALATE_RECURRENCE_WINDOW=3 run r1 12 standard "$REPO" --base base --attempt 0
 assert_contains "the window is configurable: 3 rounds of src/a.py fires at 3" "$OUT" "recurrence: src/a.py"
 unset ESCALATE_RECURRENCE_WINDOW   # `run` is a shell function — same note as ESCALATE_CONSULT_CAP
