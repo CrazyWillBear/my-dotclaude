@@ -218,6 +218,8 @@ assert_matches "a quota reason skips the remaining codex positions" "$BODY" "quo
 # ---------------------------------------------------------------------------
 echo "test: liveness — subscribe, never poll"
 assert_contains "notify_when_idle subscription" "$BODY" "notify_when_idle"
+assert_contains "waits on worker messages and idle notices" "$BODY" "wait on worker messages and idle notices"
+assert_contains "long idle tick is a fallback only" "$BODY" "long idle tick is a fallback only"
 assert_matches "no message at spawn" "$BODY" "no message"
 assert_matches "never poll" "$BODY" "never poll"
 assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"

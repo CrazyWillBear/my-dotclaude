@@ -446,6 +446,10 @@ Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; sessio
 and the full `stop` → verify → respawn recovery procedure are documented in
 [infra's README](../../../infra/README.md#liveness-and-recovery).
 
+After spawning, wait on worker messages and idle notices and handle each wake immediately. Do not
+poll on a timer; the long idle tick is a fallback only when the event wait is unavailable, not the
+normal interval between checks.
+
 ---
 
 # Escalation
