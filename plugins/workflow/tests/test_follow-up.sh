@@ -346,6 +346,9 @@ assert_equals "unparseable review exits non-zero" "$RC" "1"
 assert_equals "unparseable review creates nothing" "$(creates)" "0"
 (cd "$INTEGRATION_REPO" && bash "$RUNLOG" replay int_bad >/dev/null 2>&1); replay_rc=$?
 assert_equals "unparseable review logs no event" "$replay_rc" "1"
+assert_equals "unparseable review output is kept in the run dir" \
+    "$(cat "$CODEX_RUN_ROOT/int_bad/integration-review.txt" 2>/dev/null)" "Looks fine to me."
+assert_contains "the failure names the kept review" "$ERR" "$CODEX_RUN_ROOT/int_bad/integration-review.txt"
 
 echo "test: integration mode refuses a graph without tiered issues and bad arg counts"
 NO_TIER_GRAPH="$WORK/no-tier.json"

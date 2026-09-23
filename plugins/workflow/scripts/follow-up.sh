@@ -32,6 +32,7 @@
 # Output: `follow-up: #<N> → #<child> (tier:<tier>) re-blocked #85, #95` on stdout.
 # The end-of-run integration mode (#121) reviews the folded SHA range, files one
 # high/medium cross-issue follow-up on the highest graph tier, and leaves the graph alone.
+# Its raw review is kept at $CODEX_RUN_ROOT/<runid>/integration-review.txt.
 #
 # Seams (env): CODEX_RUN_ROOT (as spawn.sh), FOLLOWUP_INFRA (review-counts.sh's and
 # resolve-tier.sh's dir, default ~/.claude/kit/infra/scripts), RESOLVE_TIER_ROOT, HOME / CLAUDE_PROJECT_DIR (run-log keying).
@@ -71,7 +72,8 @@ command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
 INFRA="${FOLLOWUP_INFRA:-${HOME:-/nonexistent}/.claude/kit/infra/scripts}"
 export FOLLOWUP_INFRA_DIR="$INFRA"
-RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+RUNROOT="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID"
+RUNDIR="$RUNROOT/issue-$ISSUE"
 RUNLOG="$(dirname "$0")/run-log.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -110,6 +112,8 @@ file_issue() {
 
 integration_review() {
     local a counts h m l payload
+    # kept in the run dir, not $TMP: a failed whole-run review must stay diagnosable
+    local review="$RUNROOT/integration-review.txt"
     local -a argv=()
 
     export FOLLOWUP_GRAPH="$GRAPH"
@@ -142,20 +146,20 @@ PY
             2>"$TMP/review-cmd-stderr")
     [ "${#argv[@]}" -gt 0 ] || die "could not build integration review command: $(cat "$TMP/review-cmd-stderr")"
 
-    mkdir -p "$TMP/scratch" \
+    mkdir -p "$TMP/scratch" "$RUNROOT" \
         || die "could not create an integration review scratch directory"
     git clone --quiet --shared -- "$PWD" "$TMP/checkout" \
         || die "could not clone the run branch for integration review"
     git -C "$TMP/checkout" checkout --quiet --detach "$HEAD" \
         || die "could not detach the integration review checkout at $HEAD"
     (cd "$TMP/checkout" && TMPDIR="$TMP/scratch" "${argv[@]}") \
-        >"$TMP/review.txt" </dev/null \
-        || die "integration reviewer failed"
+        >"$review" </dev/null \
+        || die "integration reviewer failed (output kept in $review)"
 
-    counts="$(bash "$INFRA/review-counts.sh" "$TMP/review.txt")" \
-        || die "integration review verdict could not be parsed"
+    counts="$(bash "$INFRA/review-counts.sh" "$review")" \
+        || die "integration review verdict could not be parsed (review kept in $review)"
     read -r h _ m _ l _ <<<"$counts"
-    bash "$INFRA/review-counts.sh" "$TMP/review.txt" --findings 1 \
+    bash "$INFRA/review-counts.sh" "$review" --findings 1 \
         | keep_open 1 >"$TMP/findings" \
         || die "integration review findings could not be parsed"
 
@@ -163,7 +167,7 @@ PY
     if [ -s "$TMP/findings" ]; then
         # review-counts.sh has validated and classified the review; retain its original
         # P0/P1/P2 lines in the issue body while excluding low-severity findings.
-        awk '/^[ \t]*[-*][ \t]*\[P[012]\][ \t]*/ { print }' "$TMP/review.txt" >"$TMP/body-findings"
+        awk '/^[ \t]*[-*][ \t]*\[P[012]\][ \t]*/ { print }' "$review" >"$TMP/body-findings"
         file_issue "Follow-up: run $RUNID — integration review findings" \
             "Cross-issue findings from the end-of-run integration review of $BASE..$HEAD. Fix exactly these, nothing else:" \
             "$TIER" 1
