@@ -344,11 +344,9 @@ skip the subscribe and make one blocking call instead:
 bash ~/.claude/kit/infra/scripts/worker-report.sh "$RUNID" <N>
 ```
 
-It returns the **same one-line report** — `built`, `fixed`, `failed`, `escalate` — so every branch
-below is unchanged. **Exit 0 means that line is a real result; exit 1 means it could not tell what
-happened** (a timeout, or a worker that finished without a readable report) and prints nothing.
-Never read an exit 1 as a result: that issue has no outcome, so admit nothing new for it and say
-so. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
+It returns the **same one-line report** — `built`, `fixed`, `failed`, `escalate`, `blocked` — so every branch below is unchanged.
+**Exit 0 means a real result; exit 1 means the outcome is unknown and prints nothing** (timeout or no readable report).
+Never read exit 1 as a result: admit nothing new for that issue; report that it has no outcome. See [infra's README](../../../infra/README.md#worker-reportsh--reading-a-codex-workers-report).
 
 **With more than one codex worker in flight, wait on the SET:** `worker-report.sh --any "$RUNID"
 <N> <N> ...` returns the first to reach a terminal state, in the same one line with the same exit
@@ -375,6 +373,7 @@ is how you confirm which round just landed):
   in-flight work finish, then stop and report. Killing the loop mid-flight strands built,
   reviewed branches that had already earned their merge.
 - **`issue <N> escalate deviation: ...`** → a consult, not a human — see [Escalation](#escalation).
+- **`issue <N> blocked infra: <what>`** → the worker needs a resource (a database, a service, a credential), not a better plan. It **never goes to a consult** and is never escalated. Supply the resource and respawn the worker (`spawn.sh`, same `--attempt`); if you cannot supply it, ask the user. The kit does not provision anything.
 
 **On every wake** (any report, idle notice, or `worker-report.sh` return) run `escalate.sh`
 for each codex worker in flight; a stall or full context is only visible from outside.
@@ -476,6 +475,8 @@ and the full `stop` → verify → respawn recovery procedure are documented in
 
 A worker that pauses `SendMessage`s the orchestrator: `issue <N> escalate <note>`. Two kinds,
 told apart by the note's first word — never by reading the thread:
+
+`blocked infra:` is not an escalation at all — see the report handling above; it never goes to a consult.
 
 **`escalate deviation: ...` — a false plan assumption. A consult answers it, not a human.**
 The worker posted a `**Deviation**` comment and paused. Run `escalate.sh` first (the third
