@@ -18,6 +18,7 @@
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
+unset DATABASE_URL FOO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
@@ -106,6 +107,7 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 STUB
 chmod +x "$BIN/claude"
 
@@ -349,6 +351,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
 
@@ -607,6 +610,61 @@ assert_contains "the schema is real JSON naming the status field" \
 assert_contains "stdin is closed — codex blocks forever on an open one" \
     "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
+
+echo "test: --env reaches real Claude and Codex workers without entering argv or run files"
+argv=$(STUB_ENV_OUT="$WORK/env-claude" PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
+    "$WORK/wt" base --orchestrator orch-main --env DATABASE_URL=postgres://x --env FOO=bar)
+assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
+assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
+
+rm -rf "$CODEX_ROOT"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    STUB_ENV_OUT="$WORK/env-codex" bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "Codex worker receives a value containing '=' intact" \
+    "$(cat "$WORK/env-codex" 2>/dev/null)" "postgres://x?sslmode=require|bar"
+leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
+assert_empty "Codex run dir never contains the env value" "$leak"
+
+out=$(dry r1 12 standard /w base --env DATABASE_URL=postgres://x)
+assert_equals "Claude dry run exits 0" "$?" "0"
+assert_not_contains "Claude dry run never prints the env value" "$out" "postgres://x"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "Codex dry run exits 0" "$?" "0"
+assert_not_contains "Codex dry run never prints the env value" "$out" "postgres://x"
+
+echo "test: invalid --env values are rejected before a worker starts"
+STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Claude --env exits 1" "$rc" "1"
+assert_contains "malformed Claude --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Claude --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$WORK/env-bad" ]; then ok "malformed Claude --env spawns nothing"; else no "malformed Claude --env spawned the stub"; fi
+
+rm -rf "$CODEX_ROOT/badenv"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Codex --env exits 1" "$rc" "1"
+assert_contains "malformed Codex --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Codex --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$CODEX_ROOT/badenv" ]; then ok "malformed Codex --env creates no run dir"; else no "malformed Codex --env created a run dir"; fi
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env 1BAD=x >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "invalid env name exits 1" "$rc" "1"
+assert_contains "invalid env name is identified" "$(err)" "not a valid variable name"
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "bare --env exits 1" "$rc" "1"
 
 # ---------------------------------------------------------------------------
 # THE WRAPPER'S REVIEW STAGE. This is the path EVERY codex build takes, and it had no

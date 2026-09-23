@@ -28,6 +28,7 @@
 #                           script refuses — the orchestrator drains there, it never wraps.
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
+#     --env NAME=VALUE      repeatable; exported into the worker's process, never logged
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -118,6 +119,7 @@ need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 # (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
 NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
 EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
+ENVS=()    # validated worker environment pairs; exported only at a launch point
 
 if [ "${1:-}" = peer ]; then
 # ---------------------------------------------------------------------------
@@ -158,7 +160,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -173,10 +175,15 @@ while [ $# -gt 0 ]; do
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
         --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
+        --env)          need $# --env;          ENVS+=("$2"); shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
     esac
 done
+
+# Validate before resolving a tier or building a run directory. Values are never printed
+# by the shared validator, even on malformed input.
+[ "${#ENVS[@]}" -eq 0 ] || bash "$INFRA/env-pairs.sh" "${ENVS[@]}" || exit 1
 
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
@@ -631,6 +638,7 @@ SCHEMA
 # cannot tell that a different process wrote it. A failed POST is recorded but does not
 # fail the run: the counts still reached worker-report.sh, and a lost comment costs the
 # fix round its detail, not its correctness.
+[ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
 set -m
 bash -c '
     rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; counter=$6; shift 6
@@ -753,4 +761,5 @@ if [ -n "$WORKTREE" ]; then
 fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
+[ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
 exec "${CMD[@]}" </dev/null
