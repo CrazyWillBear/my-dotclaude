@@ -121,8 +121,6 @@ Read the printed `source=` row from the resolver stdout in the Bash output and c
 
 # The ad-hoc lane
 
-One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
-
 **Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
 `Agent` tool, which accepts only claude model names, so a `gpt-*` model from
 `resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is `backend: codex` in some

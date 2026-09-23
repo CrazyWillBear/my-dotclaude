@@ -358,7 +358,8 @@ assert_matches "per-slice PRs" "$BODY" "[Pp]er-slice PRs"
 # ---------------------------------------------------------------------------
 echo "test: it stays smaller than the thing it replaced"
 lines=$(wc -l <"$SKILL_FILE")
-if [ "$lines" -lt 700 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
+# Keep one line of headroom for integration changes before the <700 merged-file gate.
+if [ "$lines" -lt 699 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
 for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do
