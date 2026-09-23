@@ -200,6 +200,14 @@ assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$R
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
 
+echo "test: no-progress replaces --max""-cycles (#118)"
+assert_not_contains "--max""-cycles is gone" "$BODY" "--max""-cycles"
+assert_contains "the no-progress signal is named" "$BODY" "no-progress: "
+assert_contains "the backstop signal is named" "$BODY" "backstop: "
+assert_contains "the round backstop threshold is listed" "$BODY" "ESCALATE_ROUND_BACKSTOP"
+assert_matches "no-progress ends the loop, no respawn" "$BODY" "no-progress.{0,300}(no respawn|loop ends|ends the loop)"
+assert_matches "review-cap is per attempt" "$BODY" "review-cap.{0,200}attempt"
+
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 

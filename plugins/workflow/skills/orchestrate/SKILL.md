@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>-a<attempt>` (fix rounds append `-r<round>`), spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
-argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
+argument-hint: "[--max N=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
 ---
@@ -16,12 +16,10 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
 
 **It absorbs `/pipeline`.** There is one front door. Two front doors to the same room rot apart.
 
-`$ARGUMENTS` = `[--max N] [--max-cycles K] [--merge-split-at K] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]`
+`$ARGUMENTS` = `[--max N] [--merge-split-at K] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]`
 
 - **`--max N`** — **concurrent issues in flight** (default **5**), not a batch size. A slot frees
   when its issue merges, and the freed slot takes the next ready issue.
-- **`--max-cycles K`** — the per-issue fix-round cap (default **5**). The initial review is free;
-  the cap counts **re-reviews**.
 - **`--merge-split-at K`** — the conflicted remainder above which the merge is split (default
   **5**). See [Merge](#merge).
 - **`--allow-behind`** — proceed even when the base is behind its upstream; passed through to `merge-fold.sh`.
@@ -142,8 +140,10 @@ and the escalation script are session-lane only.
 5. **Review** — spawn `personal-tools:my-review` at the tier's reviewer roster. **Always a
    subagent**, spawned by you: a subagent never inherits the parent conversation, so the
    adversarial fresh-context property holds.
-6. **Fix rounds** — a **fresh** implementer per round, handed the review's findings, capped by
-   `--max-cycles`. Never the implementer that wrote the code.
+6. **Fix rounds** — a **fresh** implementer per round, handed the review's findings. The loop ends
+   when a round does not reduce high + medium below the round before, or at
+   `ESCALATE_ROUND_BACKSTOP` (default **20**) rounds, counted from my-review's reports. Never the
+   implementer that wrote the code.
 7. **Merge** — `merge-fold.sh`, then **offer** the merge back to `dev`/`main`. Offered, never taken.
 
 The ad-hoc lane never spawns a session, never writes a run log, and never opens a PR. It is a
@@ -345,12 +345,12 @@ that nobody owns is a stage that silently does not happen.
 `issue <N> fixed round=<K> head=<sha> review=…` from a fix round — same handling, and `round=K`
 is how you confirm which round just landed):
 
-- **`H > 0` or `M > 0`, and rounds remain** → run [`escalate.sh`](#escalation-by-script) first
-  (a second round with findings moves the attempt up). **If it prints `recurrence: <area>`** the same finding keeps coming back: not an escalation — no handoff, same attempt — run the decide before the fix round, `bash ~/.claude/kit/infra/scripts/consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>` then `run-log.sh append "$RUNID" consulted '{"n":<N>}'`; the fixer reads the newest **Consult**. If it refuses (past the cap, no **Decision**), spawn the fix round anyway — review-cap governs the next round. Then spawn a **fix round**:
-  `spawn.sh ... --role fix --round <K> --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat
-  every provisioned pair). A **fresh** session every round: nothing compounds, and the fixer is
-  not defending its own code.
-- **clean, or the cap is spent** → the issue joins the **merge queue**.
+- **`H > 0` or `M > 0`, and `escalate.sh` printed no stop** → run [`escalate.sh`](#escalation-by-script) first
+  (a second round with findings moves the attempt up). **If it prints `recurrence: <area>`** the same finding keeps coming back: not an escalation — no handoff, same attempt — run the decide before the fix round, `bash ~/.claude/kit/infra/scripts/consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>` then `run-log.sh append "$RUNID" consulted '{"n":<N>}'`; the fixer reads the newest **Consult**. If it refuses (past the cap, no **Decision**), spawn the fix round anyway — the per-attempt `review-cap` is the model escalation on the next round.
+  - **If it prints `no-progress: …` or `backstop: …`**, the loop for this issue ends: no handoff, no respawn, no further fix round. Run `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"no-progress","attempt":<A>}'` (or `"backstop"`); the issue joins the merge queue capped.
+  - `escalate.sh` exempts claude-backed attempts, so stop at `ESCALATE_ROUND_BACKSTOP` counted from the thread's `**Review round**` comments.
+  If the loop continues, spawn a **fix round**: `spawn.sh ... --role fix --round <K> --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat every provisioned pair). A **fresh** session every round: nothing compounds, and the fixer is not defending its own code.
+- **clean, or `no-progress:` / `backstop:` ended the loop** → the issue joins the **merge queue**.
 - **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top it
   respawns; **at the top → drain**: finish in-flight work, then stop and report. `failed quota:
   …` follows the same path; its `quota:` reason skips remaining codex positions to the claude
@@ -509,10 +509,14 @@ bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --ba
 ```
 
 It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts that already exist: a
-`failed` report or crash, a third `**Deviation**`, a second `**Review round**` still with high or
-medium findings, the same high/medium area in the newest 2 review rounds (`recurrence: <area>` —
-a decide, not a handoff; see the report handling), an event log untouched for 20 minutes while alive and not in its post-build
-review (own budget, below), or a context past 256K. On a hit it has posted `**Handoff**`. Then:
+`failed` report or crash, a third `**Deviation**`; `review-cap` is the per-attempt model escalation
+when the second review in this attempt still has high or medium findings; the same high/medium area
+in the newest 2 review rounds (`recurrence: <area>` — a decide, not a handoff; see the report
+handling); `no-progress` after a planner decision when a later round does not reduce high + medium,
+or `backstop` at `ESCALATE_ROUND_BACKSTOP` rounds for the issue. It also catches an event log
+untouched for 20 minutes while alive and not in its post-build review (own budget, below), or a
+context past 256K. `no-progress:` and `backstop:` end the loop with no handoff or respawn. On other
+signals it has posted `**Handoff**`. Then:
 
 1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
    for a codex row; verify nothing is still busy.
@@ -524,7 +528,9 @@ review (own budget, below), or a context past 256K. On a hit it has posted `**Ha
 5. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
 Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
-`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`, `ESCALATE_RECURRENCE_WINDOW`); run-log counts decide if they move.
+`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`,
+`ESCALATE_RECURRENCE_WINDOW`, `ESCALATE_ROUND_BACKSTOP` (default 20; a safety net that should never
+trigger)); run-log counts decide if they move.
 
 ---
 
@@ -562,7 +568,7 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (findings remained at `--max-cycles`) runs `follow-up.sh`; capped-merge dependents are re-blocked on its follow-up:
+A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on its follow-up:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>
