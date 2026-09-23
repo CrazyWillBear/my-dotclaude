@@ -285,7 +285,7 @@ assert_contains "its own second round with findings does escalate" "$OUT" \
 rm -f "$RUNDIR/handoff.json"
 
 echo "test: finding entries in the ledger are not rounds (#110)"
-MIXED='1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tt\ta:1\n2 0 high, 1 medium, 0 low\nfinding\t2\tmedium\tt\ta:1\n'
+MIXED='1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tt\ta:1\n2 0 high, 1 medium, 0 low\nfinding\t2\tmedium\tt\tb:1\n'
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf "$MIXED" >"$RUNDIR/rounds"
 printf '{"attempt": 0, "mark": 0, "rounds_mark": 0}\n' >"$RUNDIR/handoff.json"
@@ -311,6 +311,63 @@ mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note
 printf '1 0 high, 0 medium, 0 low\n2 0 high, 1 medium, 0 low\n3 0 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base
 assert_empty "the NEWEST round decides, not the worst — a clean round 3 after a bad round 2" "$OUT"
+
+echo "test: recurrence — the same high/medium area in consecutive rounds asks for a design decision (#116)"
+RECUR='1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tjudge\tsrc/a.py:10\n2 0 high, 1 medium, 0 low\nfinding\t2\tmedium\tjudge again\tsrc/a.py:42\n3 0 high, 1 medium, 0 low\nfinding\t3\tmedium\tstill\tsrc/a.py:7\n'
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "exit 0" "$RC" "0"
+assert_equals "rounds 2 and 3 share src/a.py: the signal names the path, not the line" "$OUT" "recurrence: src/a.py"
+assert_equals "no handoff is posted — this is not an escalation" "$(posted)" "no"
+if [ -e "$RUNDIR/handoff.json" ]; then no "recurrence wrote handoff.json"; else ok "recurrence writes no handoff mark"; fi
+assert_equals "the fire is recorded per attempt and area" "$(cat "$RUNDIR/recurrence")" "$(printf '0\tsrc/a.py')"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the second wake falls through to review-cap: once per area per attempt" "$OUT" "review-cap: review 3 (3rd this attempt)"
+rm -f "$RUNDIR/recurrence"
+ESCALATE_RECURRENCE_WINDOW=3 run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the window is configurable: 3 rounds of src/a.py fires at 3" "$OUT" "recurrence: src/a.py"
+unset ESCALATE_RECURRENCE_WINDOW   # `run` is a shell function — same note as ESCALATE_CONSULT_CAP
+# rounds 1 and 3 only: NOT consecutive → review-cap, not recurrence
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tx\tsrc/a.py:1\n2 0 high, 1 medium, 0 low\nfinding\t2\tmedium\ty\tsrc/b.py:1\n3 0 high, 1 medium, 0 low\nfinding\t3\tmedium\tz\tsrc/a.py:9\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_not_contains "a gap round breaks the run" "$OUT" "recurrence"
+assert_contains "and review-cap still fires" "$OUT" "review-cap"
+# a recurring LOW is not a signal: lows are listed, not fixed, so they recur by design
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 0 medium, 1 low\nfinding\t1\tlow\tnit\tsrc/a.py:1\n2 0 high, 0 medium, 1 low\nfinding\t2\tlow\tnit\tsrc/a.py:1\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "two rounds of the same low fire nothing" "$OUT"
+# no path: the title is the area
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tRetry re-submits a charge\t\n2 1 high, 0 medium, 0 low\nfinding\t2\thigh\tretry re-submits a charge\t\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "with no path the title is the area, case-folded" "$OUT" "recurrence: retry re-submits a charge"
+# scoped to THIS attempt: rounds behind rounds_mark are not in the window
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
+printf '{"attempt": 0, "mark": 3, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
+run r1 12 standard "$REPO" --base base --attempt 1
+assert_empty "a respawn's first round has nothing to recur against" "$OUT"
+rm -f "$RUNDIR/handoff.json"
+# at the consult cap, recurrence yields to review-cap — a decide is a consult
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
+STUB_GH_COMMENTS='{"comments":[{"body":"**Consult 1**"},{"body":"**Consult 2**"}]}' run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "two consults already: review-cap, not a third decide" "$OUT" "review-cap"
+# --dry-run fires but records nothing
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0 --dry-run
+assert_contains "dry run reports" "$OUT" "recurrence: src/a.py"
+if [ -e "$RUNDIR/recurrence" ]; then no "dry run wrote recurrence"; else ok "dry run wrote no recurrence marker"; fi
+# the claude-backed exemption holds: no ledger of its own, never evaluated
+mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
+printf "$RECUR" >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 2
+assert_empty "a claude-backed attempt is exempt — the ledger is the codex wrapper's" "$OUT"
+assert_contains "and says why" "$ERR" "never escalated"
 
 echo "test: occupancy — read from the rollout's LAST per-request usage, not the turn total"
 mkrun "" ""
@@ -418,7 +475,7 @@ mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}
 run r1 12 standard "$REPO" --base base --dry-run
 assert_contains "reason printed" "$OUT" "failed"
 assert_equals "nothing posted" "$(posted)" "no"
-for f in handoff-comment.md handoff.json escalate-stderr.log; do
+for f in handoff-comment.md handoff.json escalate-stderr.log recurrence; do
     if [ -e "$RUNDIR/$f" ]; then no "dry run wrote $f"; else ok "dry run did not write $f"; fi
 done
 
