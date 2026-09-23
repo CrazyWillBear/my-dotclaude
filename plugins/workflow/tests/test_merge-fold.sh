@@ -20,6 +20,7 @@
 #   * an already-merged branch counts as merged (no-op, not an error)
 #   * the base branch is left checked out and the merges are real commits
 #   * unknown branch -> reported, does not abort the rest of the fold
+#   * --preview <upstream-ref> — clean / conflict <paths> against the upstream, working tree untouched
 #   * base-only launch check succeeds; usage errors exit non-zero
 #
 # Run: bash plugins/workflow/tests/test_merge-fold.sh   (non-zero if any fail)
@@ -197,11 +198,44 @@ assert_equals "one no-upstream line" "$(printf '%s\n' "$out" | grep -c '^upstrea
 assert_contains "no-upstream fold reports success" "$out" "summary merged=2 conflicted=0"
 
 # ---------------------------------------------------------------------------
+echo "test: --preview reports a conflict without changing the working tree"
+init_repo
+add_origin 0
+(cd "$WORK/other" && git pull -q)
+printf 'a\nb\nUPSTREAM\n' >"$WORK/other/f.txt"
+git -C "$WORK/other" add -A; git -C "$WORK/other" commit -qm upstream
+git -C "$WORK/other" push -q origin base
+printf 'a\nb\nLOCAL\n' >"$R/f.txt"
+g add -A; g commit -qm local
+head_before=$(g rev-parse HEAD)
+out=$(run_fold --preview origin/base); rc=$?
+assert_equals "conflict preview exits 0" "$rc" "0"
+assert_contains "conflict preview names f.txt" "$out" "conflict f.txt"
+assert_equals "conflict preview leaves the index clean" "$(g status --porcelain)" ""
+assert_equals "conflict preview leaves HEAD unchanged" "$(g rev-parse HEAD)" "$head_before"
+assert_equals "conflict preview leaves the local file untouched" "$(sed -n 3p "$R/f.txt")" "LOCAL"
+assert_not_contains "conflict preview has no summary" "$out" "summary"
+
+# ---------------------------------------------------------------------------
+echo "test: --preview reports exactly clean and leaves upstream files out of the working tree"
+init_repo
+add_origin 1
+branch t1 one.txt ONE
+g merge -q --no-ff --no-edit t1
+out=$(run_fold --preview origin/base); rc=$?
+assert_equals "clean preview exits 0" "$rc" "0"
+assert_equals "clean preview prints exactly clean" "$out" "clean"
+assert_equals "clean preview leaves the index clean" "$(g status --porcelain)" ""
+if [ ! -e "$R/up1.txt" ]; then ok "clean preview leaves upstream files out of the working tree"; else no "clean preview leaves upstream files out of the working tree"; fi
+
+# ---------------------------------------------------------------------------
 echo "test: usage errors exit non-zero"
 init_repo
 if (cd "$R" && bash "$FOLD" >/dev/null 2>&1); then no "no args should exit non-zero"; else ok "no args exits non-zero"; fi
 if (cd "$R" && bash "$FOLD" base >/dev/null 2>&1); then ok "base only runs the check and exits 0"; else no "base only runs the check and exits 0"; fi
 if (cd "$R" && bash "$FOLD" --allow-behind >/dev/null 2>&1); then no "allow-behind without a base exits non-zero"; else ok "allow-behind without a base exits non-zero"; fi
+if (cd "$R" && bash "$FOLD" --preview >/dev/null 2>&1); then no "preview without a ref exits non-zero"; else ok "preview without a ref exits non-zero"; fi
+if (cd "$R" && bash "$FOLD" --preview no-such/ref >/dev/null 2>&1); then no "preview with an unknown ref exits non-zero"; else ok "preview with an unknown ref exits non-zero"; fi
 if (cd "$WORK" && bash "$FOLD" base t1 >/dev/null 2>&1); then no "outside a repo should exit non-zero"; else ok "outside a repo exits non-zero"; fi
 
 # ---------------------------------------------------------------------------
