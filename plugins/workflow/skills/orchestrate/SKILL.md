@@ -91,9 +91,7 @@ The ad-hoc lane is unaffected — subagents are not cross-session.
 
 # Step 0 — dispatch
 
-**Route by SHAPE, not size.** A one-line typo fix and a 300-line refactor are the same shape if
-they are one unit of work with you sitting there; a 3-issue graph and a 30-issue PRD are the same
-shape as each other, and a different one.
+**Route by SHAPE, not size.** A one-line typo and a 300-line refactor are one unit with you present; a 3-issue graph and a 30-issue PRD are both graph work.
 
 | what you said | lane |
 |---|---|
@@ -101,7 +99,7 @@ shape as each other, and a different one.
 | an **issue graph** or a **PRD** (`--prd`, `--issues`, or "run the ready issues") | **session lane** — one `claude --bg` session per issue |
 | **ambiguous** — the goal, the place, or "done" is missing | **discuss. Build nothing.** |
 
-**"Explicit instruction"** means you can answer all three from the message alone:
+**"Explicit instruction"** means the message alone answers all three:
 
 - **What** — the change, concretely.
 - **Where** — the file, the module, the issue.
@@ -110,15 +108,13 @@ shape as each other, and a different one.
 *"Fix the null check in `parser.py` — it crashes on an empty header row"* passes all three.
 *"That null check is sketchy"* fails **what** and **done**: it names a place and a feeling.
 
-Any one missing → **discuss**. Not "make a reasonable assumption and start" — the ambiguous lane
-exists because building the wrong thing well is the expensive outcome.
+Any one missing → **discuss**. Don't assume: ambiguity risks building the wrong thing well.
 
-**Announce the lane in one line and proceed. Do not ask.** An explicit instruction must never wait
-on a confirmation you already gave; the announcement *is* the veto window:
+**Announce the lane, run id, and resolver source in one line; do not ask.** Put `source=user|shipped|fallback` from resolver stdout in that line—the announcement is the veto window:
 
-> Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`. Starting.
+> Ad-hoc lane: implementer → my-review → merge, on `issue-parser-null`, source=shipped. Starting.
 
-> Session lane: 6 slices of PRD #41, 5 in flight, run `orchestrate-20260906-141500`. Starting.
+> Session lane: 6 slices of PRD #41, 5 in flight, source=shipped, run `orchestrate-20260906-141500`. Starting.
 
 ---
 
@@ -219,14 +215,9 @@ An **empty allowlist** stops the run. An empty scope is never a reason to widen 
 Read each scoped issue's labels; take its tier from `tier:trivial` / `tier:standard` /
 `tier:complex`.
 
-- **Missing → backfill.** Run `/classify-task <N> --no-confirm` (Explore-grounded), then persist
-  it: `gh label create tier:<t> --description "complexity tier: <t>" 2>/dev/null || true` and
-  `gh issue edit <N> --add-label tier:<t>`. The next run reads the label.
-- **Auto-accept.** **Never prompt** to confirm or override a tier. Report the backfills in the
-  launch line; that is the whole interaction.
-- **Conflicting labels** → the **highest tier wins** (complex > standard > trivial), and warn.
-  Under-tiering routes real work to a model too cheap for it; the chain then escalates it anyway,
-  at the cost of a wasted attempt.
+- **Missing → backfill.** Run `/classify-task <N> --no-confirm` (Explore-grounded), then persist with `gh label create tier:<t> --description "complexity tier: <t>" 2>/dev/null || true` and `gh issue edit <N> --add-label tier:<t>`; the next run reads the label.
+- **Auto-accept.** **Never prompt** to confirm or override a tier. Report backfills in the launch line; also copy the resolver's `source=user|shipped|fallback` row from stdout there.
+- **Conflicting labels** → the **highest tier wins** (complex > standard > trivial); warn because under-tiering wastes an attempt on a model too cheap for the work.
 
 ## Step 3 — the graph, fetched once
 

@@ -108,6 +108,9 @@ assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*
 
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
+assert_contains "resolver source labels are documented" "$BODY" "source=user|shipped|fallback"
+assert_matches "the launch line reports the selected source" "$BODY" "launch line.{0,100}source=|source=.{0,100}launch line"
+assert_matches "the source is copied from resolver stdout" "$BODY" "resolver.{0,50}stdout|stdout.{0,50}resolver"
 
 # ---------------------------------------------------------------------------
 echo "test: workers — every tier spawns through spawn.sh; trivial starts on codex, never a subagent"
