@@ -103,7 +103,6 @@ else
 fi
 
 echo "test: a subagent runs the chain's TOP cell — the Agent tool takes no codex model (review fix 2)"
-assert_matches "trivial's subagent is spawned at the top cell" "$BODY" "trivial [$][(][(]chain-1"
 assert_matches "never the frontmatter default" "$BODY" "never the frontmatter default"
 assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*implementer_chain-1"
 
@@ -111,8 +110,10 @@ echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
 
 # ---------------------------------------------------------------------------
-echo "test: workers — sessions for standard/complex, subagent for trivial"
-assert_matches "trivial gets a subagent" "$BODY" "trivial.*subagent"
+echo "test: workers — every tier spawns through spawn.sh; trivial starts on codex, never a subagent"
+assert_matches "every tier spawns at attempt 0" "$BODY" "Spawn.*every tier"
+assert_matches "trivial starts on codex" "$BODY" "trivial.*codex"
+assert_not_matches "trivial is no longer a subagent" "$BODY" "trivial.*orchestrator-spawned.*subagent"
 assert_matches "session startup cost justifies the split" "$BODY" "40k"
 assert_matches "one session per issue, never reused" "$BODY" "[Nn]ever a reused per-slot session|One session per issue"
 assert_contains "session name carries the run" "$BODY" "orch-<runid>-issue-<N>"
@@ -177,7 +178,7 @@ assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
-assert_contains "the chain is named" "$BODY" "luna → terra → opus"
+assert_contains "the chain is named" "$BODY" "6-luna → 6-sol → opus"
 assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
 assert_matches "run on every wake" "$BODY" "On every wake"
 assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"

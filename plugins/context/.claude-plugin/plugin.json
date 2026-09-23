@@ -1,6 +1,6 @@
 {
   "name": "context",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Context-window management: the four hooks (watchdog, resume, save-handoff, suggest-docs) that drive deliberate, early /clear and /handoff as a session's window fills, plus /handoff and /handoff-plan themselves. Calls into nothing else, so every other plugin can depend on it.",
   "author": {
     "name": "William Chastain",

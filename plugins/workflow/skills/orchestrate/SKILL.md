@@ -127,13 +127,14 @@ on a confirmation you already gave; the announcement *is* the veto window:
 One unit of work, you are present, nothing to schedule. This is what `/pipeline` used to be.
 
 **Claude-only — check the backend before you trust the roster.** Steps 3-5 spawn through the
-`Agent` tool, which accepts only claude model names, so a `gpt-5.6-*` model from
+`Agent` tool, which accepts only claude model names, so a `gpt-*` model from
 `resolve-tier.sh` fails here. The **shipped** `model-tiers.json` is `backend: codex` in some
-cells (the trivial and standard implementer chains start on luna — PRD #104), and a user table
+cells (the trivial and standard implementer chains start on 6-luna — PRD #104), and a user table
 at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
 look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
 **top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
-(opus medium in the shipped table); a codex reviewer cell becomes `opus`. The plan comment
+(opus medium in the shipped table), never the frontmatter default; a codex reviewer cell
+becomes `opus`. The plan comment
 and the escalation script are session-lane only.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
@@ -162,9 +163,9 @@ reporting back over `SendMessage`.
 
 **Why sessions and not subagents:** a session can be attached to, killed and respawned; it can
 spawn its own subagents (a subagent cannot); and it carries a real context window sized for a whole
-issue. **A session costs ≈40k tokens to start**, which only pays for long parallel work — so
-`tier:trivial` issues get an orchestrator-spawned **subagent** instead, and only `standard` and
-`complex` get a session.
+issue. **A claude session costs ≈40k tokens to start**; a `codex exec` worker does not, so
+`tier:trivial` starts on codex (6-luna) like `standard`, and a claude session is paid for only
+when a chain escalates to its top cell or the tier is `complex`.
 
 **One session per issue. Never a reused per-slot session.** A reused slot carries the previous
 issue's context into the next build — which is precisely the poisoning the fresh-context reviewer
@@ -309,10 +310,8 @@ model can, and historically did, hallucinate.
    It posts the `**Plan**` comment and prints one line. **Run it with a 10-minute Bash timeout**
    (an opus pass outlasts the default). A non-zero exit is a failed plan: do not spawn a worker
    onto an issue with no plan — report it and skip the issue.
-4. **Spawn** — `tier:trivial` → an orchestrator-spawned `workflow:implementer` **subagent**
-   at the chain's **top cell** (`resolve-tier.sh trivial $((chain-1))` — always claude, since
-   the `Agent` tool takes no codex model; never the frontmatter default);
-   `standard`/`complex` → a **session**, at **attempt 0** of the tier's implementer chain:
+4. **Spawn** — every tier, `trivial` included, through `spawn.sh` at **attempt 0** of the
+   tier's implementer chain (trivial and standard start on codex; trivial carries no plan):
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
@@ -520,7 +519,7 @@ is blocked while #14 is three commits past it.
 # Escalation by script
 
 **A script decides a worker is out of its depth — never the worker, never you.** Each tier's
-implementer cell is an ordered **chain** (luna → terra → opus for trivial/standard; opus alone
+implementer cell is an ordered **chain** (6-luna → 6-sol → opus for trivial/standard; opus alone
 for complex); `spawn.sh --attempt <A>` selects the position:
 
 ```bash

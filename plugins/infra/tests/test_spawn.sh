@@ -52,7 +52,7 @@ err() { cat "$WORK/err"; }
 # pin one instead of riding whatever the shipped table happens to say this week. The
 # claude-path assertions below run against CFG_CLAUDE; the codex section further down
 # swaps in CFG_CODEX, which is what proves a codex-routed tier reaches the codex path.
-# One test deliberately uses the REAL shipped table — to pin the luna → terra → opus chain.
+# One test deliberately uses the REAL shipped table — to pin the 6-luna → 6-sol → opus chain.
 CFG_CLAUDE="$WORK/cfg-claude"
 mkdir -p "$CFG_CLAUDE"
 cat >"$CFG_CLAUDE/model-tiers.json" <<'JSON'
@@ -845,22 +845,22 @@ stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 [ -z "$stale_pid" ] || kill -- -"$stale_pid" 2>/dev/null || true
 
 # The SHIPPED roster (PRD #104, 2026-09-22, superseding the 2026-09-17 claude-only decision):
-# trivial and standard implement on codex — luna, then terra, then opus — behind an opus
+# trivial and standard implement on codex — 6-luna, then 6-sol, then opus — behind an opus
 # plan; complex stays on opus. A user without the codex CLI writes a claude-only table at
 # ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json; the FALLBACK roster is claude-only for
 # the same reason, so a broken table never depends on codex.
 #
 # CLAUDE_CONFIG_DIR is pinned at an empty dir so this reads the shipped table, not the
 # developer's own.
-echo "test: the SHIPPED roster — luna heads the trivial and standard chains, opus builds complex"
+echo "test: the SHIPPED roster — 6-luna heads the trivial and standard chains, opus builds complex"
 for t in trivial standard; do
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
     assert_arg "shipped $t attempt 0 spawns codex" "$out" "exec"
-    assert_arg "shipped $t attempt 0 is luna" "$out" "gpt-5.6-luna"
+    assert_arg "shipped $t attempt 0 is 6-luna" "$out" "gpt-6-luna"
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
-    assert_arg "shipped $t attempt 1 is terra" "$out" "gpt-5.6-terra"
+    assert_arg "shipped $t attempt 1 is 6-sol" "$out" "gpt-6-sol"
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 2 2>/dev/null)
     assert_arg "shipped $t attempt 2 tops out on claude" "$out" "--bg"
