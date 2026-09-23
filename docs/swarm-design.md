@@ -86,7 +86,7 @@ gains a backend column:
 
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium (the session lane's trivial subagent runs the top cell; the codex cells are reached only through `spawn.sh`) | claude opus low |
+| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
 | standard | claude opus medium | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium | claude opus high |
 | complex | claude fable medium | claude opus medium | claude opus high |
 
@@ -94,6 +94,8 @@ gains a backend column:
 — both cheaper, so the chain stays cheapest-first; standard's reviewer goes medium → high (a
 small cost for a large benchmark gain). `opus` is an alias, so every opus cell is Opus 5.5.
 Fable stays the complex planner until #106 measures it against opus/high as a planner.
+Trivial now spawns through `spawn.sh` on codex instead of as an opus subagent: 6-luna fits
+that size of issue, and a `codex exec` worker pays no claude-session startup cost.
 
 **Decided 2026-09-22 (PRD #104), superseding 2026-09-17's claude-only shipped table:** the roster
 spends the expensive model on one bounded planning pass and the cheap model on the build loop.

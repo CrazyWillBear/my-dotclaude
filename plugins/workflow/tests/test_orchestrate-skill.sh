@@ -103,7 +103,6 @@ else
 fi
 
 echo "test: a subagent runs the chain's TOP cell — the Agent tool takes no codex model (review fix 2)"
-assert_matches "trivial's subagent is spawned at the top cell" "$BODY" "trivial [$][(][(]chain-1"
 assert_matches "never the frontmatter default" "$BODY" "never the frontmatter default"
 assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*implementer_chain-1"
 
@@ -111,8 +110,10 @@ echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
 
 # ---------------------------------------------------------------------------
-echo "test: workers — sessions for standard/complex, subagent for trivial"
-assert_matches "trivial gets a subagent" "$BODY" "trivial.*subagent"
+echo "test: workers — every tier spawns through spawn.sh; trivial starts on codex, never a subagent"
+assert_matches "every tier spawns at attempt 0" "$BODY" "Spawn.*every tier"
+assert_matches "trivial starts on codex" "$BODY" "trivial.*codex"
+assert_not_matches "trivial is no longer a subagent" "$BODY" "trivial.*orchestrator-spawned.*subagent"
 assert_matches "session startup cost justifies the split" "$BODY" "40k"
 assert_matches "one session per issue, never reused" "$BODY" "[Nn]ever a reused per-slot session|One session per issue"
 assert_contains "session name carries the run" "$BODY" "orch-<runid>-issue-<N>"
