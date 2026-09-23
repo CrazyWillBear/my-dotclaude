@@ -260,7 +260,8 @@ if [ "$CODE" -eq 0 ] \
             # report the merge queue acts on can never disagree.
             PRIOR=()
             [ -z "$SCOPED" ] || PRIOR=(--prior "$RUNDIR")
-            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" "${PRIOR[@]}" \
+            # Empty arrays expand as unbound under set -u on macOS bash 3.2.
+            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" ${PRIOR[@]+"${PRIOR[@]}"} \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
                 # The run-dir ledger escalate.sh counts rounds from: round lines start

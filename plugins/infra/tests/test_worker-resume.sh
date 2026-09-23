@@ -320,6 +320,8 @@ STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":""
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
+assert_not_contains "a full resumed review can pass an empty prior list on bash 3.2" \
+    "$ERR" "unbound variable"
 assert_contains "a reviewer really ran — claude -p (#104)" "$(cat "$WORK/review-argv" 2>/dev/null)" "personal-tools:my-review"
 assert_equals "the prompt reached claude as ONE argument (review round 2)" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 # A SHA, not the branch name it was given: a name could be moved by the worker.
