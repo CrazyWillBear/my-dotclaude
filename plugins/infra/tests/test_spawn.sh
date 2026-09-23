@@ -490,7 +490,12 @@ echo "test: a failed schema write leaves no run dir behind either"
 # way a read-only mount does, and does it for root too.
 rm -rf "$CODEX_ROOT/schemafail"
 mkdir -p "$CODEX_ROOT/schemafail/r9/issue-12/status-schema.json"
-CODEX_RUN_ROOT="$CODEX_ROOT/schemafail" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+# The stub codex has to be on PATH like every other REAL (non-dry) codex spawn in this
+# file: spawn.sh refuses a codex tier outright when the CLI is absent, and that refusal
+# comes BEFORE the schema write this case is about. Without the stub the assertion below
+# passes or fails on whether the developer happens to have codex installed — green on a
+# machine that does, red in CI, which is exactly how it was caught.
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/schemafail" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
 rc=$?
 assert_equals "an unwritable schema exits non-zero" "$rc" "1"
