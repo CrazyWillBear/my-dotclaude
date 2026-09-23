@@ -379,6 +379,7 @@ cat >"$CODEX_BIN/claude" <<'STUB'
 printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
 pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+[ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
 # The `reviewing` marker must exist WHILE the review runs (escalate.sh reads it to hold the
 # stall signal off); the run dir is the clone's parent.
 [ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
@@ -644,12 +645,15 @@ rm -rf -- "$(dirname "$claude_settings")"
 
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    STUB_ENV_OUT="$WORK/env-codex" bash "$SPAWN" r9 12 standard "$REPO" base \
+    STUB_ENV_OUT="$WORK/env-codex" STUB_HOST_ENV_OUT="$WORK/host-env-codex" \
+    bash "$SPAWN" r9 12 standard "$REPO" base \
     --orchestrator orch-main --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
     >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_equals "Codex worker receives a value containing '=' intact" \
     "$(cat "$WORK/env-codex" 2>/dev/null)" "postgres://x?sslmode=require|bar"
+assert_equals "host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-codex" 2>/dev/null)" '|'
 leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
 assert_empty "Codex run dir never contains the env value" "$leak"
 
@@ -693,7 +697,7 @@ assert_equals "bare --env exits 1" "$rc" "1"
 
 echo "test: shared --env validation rejects host-steering and infra-owned names"
 for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
-    RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
+    GIT_TEMPLATE_DIR RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
     CODEX_RUN_ROOT CODEX_HOME HOME GH_CONFIG_DIR; do
     bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
     rc=$?

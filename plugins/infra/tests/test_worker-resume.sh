@@ -39,6 +39,7 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
 if [ "${1:-}" = -p ]; then
+    [ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
     pwd >"${STUB_REVIEW_CWD:-/dev/null}"
@@ -230,10 +231,13 @@ assert_equals "launched FROM the worktree, since resume has no -C" \
 echo "test: --env reaches a real resumed worker without entering run files"
 mkrun 90 '{"issue":90,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
 STUB_ENV_OUT="$WORK/env-resume" \
+    STUB_HOST_ENV_OUT="$WORK/host-env-resume" \
     STUB_REPORT='{"issue":90,"status":"built","round":0,"head":"abc","review":"","note":""}' \
     run r1 90 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --env FOO=bar
 assert_equals "resumed worker receives both --env values" \
     "$(cat "$WORK/env-resume" 2>/dev/null)" "postgres://x|bar"
+assert_equals "resume host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-resume" 2>/dev/null)" '|'
 leak=$(grep -rF 'postgres://x' "$CODEX_ROOT/r1/issue-90" 2>/dev/null || true)
 assert_empty "resume run dir never contains the env value" "$leak"
 

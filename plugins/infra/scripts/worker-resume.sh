@@ -221,8 +221,10 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/re
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
-[ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
-( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
+(
+    [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
+    cd "$WORKTREE" && "${CMD[@]}"
+) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
 # Anything the worker just resumed may have left at review-checkout/review-scratch is gone
 # BEFORE the clone below trusts either path (#99) — same placement and reasoning as

@@ -638,16 +638,26 @@ SCHEMA
 # cannot tell that a different process wrote it. A failed POST is recorded but does not
 # fail the run: the counts still reached worker-report.sh, and a lost comment costs the
 # fix round its detail, not its correctness.
-[ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
+# Only names cross argv into the wrapper; the values travel in its environment.
+# Remove them there as soon as Codex exits, before any host-side git, gh or reviewer.
+ENV_NAMES=()
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done
+    export "${ENVS[@]}"
+fi
 set -m
 bash -c '
     rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; counter=$6; shift 6
+    env_names=()
+    while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
+    shift
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     review=("$@")
     "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     rc=$?
+    for name in "${env_names[@]}"; do unset "$name"; done
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
     # could reach, and a planted verdict must never outlive the worker that planted it. The
@@ -719,9 +729,12 @@ bash -c '
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
-    "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    "${ENV_NAMES[@]}" --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
+if [ "${#ENV_NAMES[@]}" -gt 0 ]; then
+    for _name in "${ENV_NAMES[@]}"; do unset "$_name"; done
+fi
 printf '%s\n' "$!" >"$RUNDIR/pid"
 printf '%s\n' "$RUNDIR"
 exit 0
