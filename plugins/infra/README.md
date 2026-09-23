@@ -43,6 +43,8 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 `--env` pairs are checked by `env-pairs.sh` before launch; shell controls, Git routing/config
 and infra-owned names are reserved for both spawn and resume. Claude workers receive values in
 per-session settings because `claude --bg` does not reliably inherit arbitrary launcher exports.
+The private settings file remains readable after dispatch because the background session reads
+it again on later requests; remove it after stopping the session.
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 

@@ -764,8 +764,9 @@ fi
 if [ "${#ENVS[@]}" -gt 0 ]; then
     # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
     # export can instead contaminate a daemon that it starts. Put this worker's values in
-    # per-session settings, which Claude carries with the dispatch. The file is private,
-    # outside the run dir, and removed as soon as --bg has accepted the session.
+    # per-session settings, which Claude carries with the dispatch. The file is private
+    # and outside the run dir. It must remain for the session's lifetime: --bg returns
+    # before the session has finished reading it, and later requests read it again.
     _env_umask="$(umask)"
     umask 077
     CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.XXXXXX")" \
@@ -777,10 +778,11 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
         || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
     umask "$_env_umask"
 
-    trap 'rm -rf -- "$CLAUDE_SETTINGS_DIR"' EXIT
     CLAUDE_CMD=("${CMD[0]}" --settings "$CLAUDE_SETTINGS_FILE" "${CMD[@]:1}")
     "${CLAUDE_CMD[@]}" </dev/null
     _claude_rc=$?
+    # A failed dispatch did not create a session, so its settings are no longer needed.
+    [ "$_claude_rc" -eq 0 ] || rm -rf -- "$CLAUDE_SETTINGS_DIR"
     exit "$_claude_rc"
 fi
 exec "${CMD[@]}" </dev/null
