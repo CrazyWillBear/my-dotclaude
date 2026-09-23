@@ -35,8 +35,8 @@
 #                  (`<round> <H> high, <M> medium, <L> low`), NEVER from the thread: a
 #                  worker can post a comment headed `**Review round 99** — 0 high…` and
 #                  cannot touch the run dir. Rounds are counted inside the attempt (the
-#                  ledger position recorded at the last handoff), not off the run-wide
-#                  round number, which a respawn inherits: every position gets two.
+#                  ledger position recorded at the last handoff), not off the review number,
+#                  which runs 1..N across the whole run: every position gets two.
 #
 # THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
 # deviation would otherwise fire on every wake forever and walk the whole chain in three
@@ -188,6 +188,9 @@ def comment_time(c):
     except ValueError:
         return 0.0
 
+def ordinal(k):
+    return "%d%s" % (k, "th" if 10 <= k % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(k % 10, "th"))
+
 def read(name):
     try:
         with open(os.path.join(rundir, name), encoding="utf-8", errors="replace") as fh:
@@ -275,7 +278,7 @@ if reason is None:
     if len(rounds) >= 2:
         n, h, med = rounds[-1]          # the NEWEST, not the highest number
         if h > 0 or med > 0:
-            reason = ("review-cap", "review round %d (this attempt's %d) still has %d high, %d medium" % (n, len(rounds), h, med))
+            reason = ("review-cap", "review %d (%s this attempt) still has %d high, %d medium" % (n, ordinal(len(rounds)), h, med))
 
 # --- the rollout: live context occupancy ------------------------------------------------
 # The marker holds the stall signal off only for as long as a review may reasonably run:
