@@ -140,7 +140,8 @@ assert_not_contains "nothing leaked through" "$argv" "LEAKED"
 echo "test: the command carries the run-prefixed name and the tier's roster"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
 assert_arg "background" "$out" "--bg"
-assert_arg "run-prefixed session name" "$out" "orch-20260906-101500-issue-12"
+assert_arg "run-prefixed session name includes the initial attempt" "$out" "orch-20260906-101500-issue-12-a0"
+assert_contains "spawn prints the full session name" "$(err)" "session name: orch-20260906-101500-issue-12-a0"
 assert_arg "standard tier -> sonnet implementer" "$out" "sonnet"
 out_c=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
 assert_arg "complex tier -> opus implementer" "$out_c" "opus"
@@ -233,6 +234,7 @@ assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
 assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
 out_a1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 1)
 assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
+assert_arg "attempt 1 is part of the session name" "$out_a1" "orch-r1-issue-12-a1"
 assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
 assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
 assert_contains "and to continue from the last commit" "$out_a1" "last commit"
@@ -248,9 +250,12 @@ assert_equals "a non-numeric attempt exits 1" "$?" "1"
 RESOLVE_TIER_ROOT="$CFG_CLAUDE"
 out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
 assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
+assert_arg "a fix session name includes attempt and round" "$out_f1" "orch-r1-issue-12-a1-r2"
+assert_contains "spawn prints that full fix session name" "$(err)" "session name: orch-r1-issue-12-a1-r2"
 
 echo "test: --role fix is a fresh session working from the review comment"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
+assert_arg "the default attempt is included in a fix session name" "$out" "orch-20260906-101500-issue-12-a0-r2"
 assert_contains "says which round" "$out" "FIX ROUND 2"
 assert_contains "did not write this code" "$out" "You did not write this code"
 assert_contains "reads the review comment" "$out" "Review round"
@@ -601,9 +606,11 @@ PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_COD
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
 # the spawn returns immediately; the worker runs in the background
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-for f in events.jsonl last-message.txt pid exit status-schema.json; do
+for f in events.jsonl last-message.txt pid exit status-schema.json session-name; do
     if [ -f "$RUNDIR/$f" ]; then ok "wrote $f"; else no "missing $RUNDIR/$f"; fi
 done
+assert_equals "records the full name used for a codex attempt" \
+    "$(cat "$RUNDIR/session-name" 2>/dev/null)" "orch-r9-issue-12-a0"
 assert_equals "exit 0 recorded" "$(cat "$RUNDIR/exit" 2>/dev/null)" "0"
 assert_contains "the events file holds what codex streamed" "$(cat "$RUNDIR/events.jsonl")" "workspace-write"
 assert_contains "codex wrote its final message" "$(cat "$RUNDIR/last-message.txt")" '"status":"built"'
