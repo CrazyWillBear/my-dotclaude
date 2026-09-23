@@ -269,7 +269,7 @@ assert_contains "end-merge preview falls back to the local target" "$BODY" 'prev
 assert_contains "no-upstream preview tells the user it uses the local branch" "$BODY" 'When no upstream is configured for "$target", preview the local "$target" branch and say so in the offer.'
 assert_not_contains "end-merge preview does not assume origin" "$BODY" 'merge-fold.sh" --preview origin/<target>'
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
-assert_matches "a capped merge holds its dependents" "$BODY" "capped.*holds its dependents|holds its dependents"
+assert_matches "a capped merge files a follow-up" "$BODY" "capped.*follow-up.sh"
 assert_contains "capped-merge dependents are an orchestrator hold" "$BODY" "capped-merge dependents"
 
 echo "test: context discipline"

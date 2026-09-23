@@ -28,7 +28,8 @@ plugins/workflow/
 │   └── planner.md                    # opus, high effort — the plan contract; in the session lane consult.sh runs it on the planner cell and posts **Plan** to the issue
 ├── scripts/
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated
+│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated · follow-up
+│   ├── follow-up.sh                  # a capped merge's open findings → one scheduled follow-up that re-blocks its dependents
 │   ├── merge-fold.sh                 # deterministic model-free merge fold; refuses when the base is behind its upstream
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues

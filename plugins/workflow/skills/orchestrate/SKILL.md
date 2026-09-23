@@ -207,9 +207,8 @@ So the run **never queries for work**. Resolve an **explicit issue allowlist** f
 
 **The allowlist is frozen at launch** and never re-queried. That freeze does two jobs:
 
-- **Nothing the run files can be built by the run.** A `review-fix` follow-up filed mid-run is not
-  in the allowlist, so a cap-remainder cannot be immediately rebuilt — silently bypassing the cap
-  that parked it.
+- **Nothing the run files can be built by the run** — save ONE exception: `follow-up.sh`'s follow-up
+  enters the frozen graph as a scoped node and is built through `ready.sh` like any other issue.
 - It bounds the blast radius to the work you named.
 
 An **empty allowlist** stops the run. An empty scope is never a reason to widen the query.
@@ -278,7 +277,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/ready.sh" "$GRAPH" \
      --merged <each merged issue> --held <each user or run-log-held issue> --in-flight <each in flight>
 ```
 
-`--held` includes the user's explicit holds and every issue in `run-log.sh state`'s `held=` field, including capped-merge dependents. Pass those issue numbers on every readiness check. It is never "waiting on a blocker": ready.sh works that out from the graph itself.
+`--held` includes the user's explicit holds and every issue in `run-log.sh state`'s `held=` field. Pass those issue numbers on every readiness check. It is never "waiting on a blocker": ready.sh works that out from the graph itself.
 
 - **numbers on stdout** → admissible, ascending. Admit the lowest-numbered ones until `--max` slots
   are full.
@@ -578,14 +577,13 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (findings remained at `--max-cycles`) **holds its dependents** for the
-rest of the run — they would be building on known debt:
+A merge that lands **capped** (findings remained at `--max-cycles`) runs `follow-up.sh`; capped-merge dependents are re-blocked on its follow-up:
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" held '{"n":15,"why":"blocker #12 merged capped"}'
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH"
 ```
 
-Pass that dependent in `--held` on every later Step-5 readiness check; capped-merge dependents are run-log-held issues.
+It files ONE `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a `follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed.
 
 ---
 
@@ -617,7 +615,8 @@ with real tests:
 | `ready.sh` | readiness + the empty-set classification |
 | `session-status.sh` | worker state, and `--self` |
 | `spawn.sh` | the session command and the worker prompt contract |
-| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated |
+| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up |
+| `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents |
 | `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold, the launch check, and the end-merge preview |
 | `scope-graph.sh` | the one graph fetch |
