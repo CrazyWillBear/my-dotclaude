@@ -136,6 +136,22 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "escalate line carries the question" "$OUT" \
     "issue 44 escalate is the retry budget per-request or per-session?"
 
+echo "test: a missing infrastructure report is a terminal result"
+mkrun r1 46 "$(dead)" 0 \
+  '{"issue":46,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}'
+run r1 46 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_equals "blocked line carries the infrastructure need" "$OUT" \
+    "issue 46 blocked infra: postgres"
+
+echo "test: blocked without the infra contract is refused"
+mkrun r1 47 "$(dead)" 0 \
+  '{"issue":47,"status":"blocked","round":0,"head":"","review":"","note":"postgres"}'
+run r1 47 --interval 1 --timeout 20
+assert_equals "exit 1" "$RC" "1"
+assert_empty "malformed blocked reports print nothing" "$OUT"
+assert_contains "says the infra prefix is required" "$ERR" "blocked without an 'infra:' note"
+
 echo "test: a multi-line note is flattened — the lane parses ONE line"
 mkrun r1 45 "$(dead)" 0 \
   '{"issue":45,"status":"failed","round":0,"head":"","review":"","note":"first line\nsecond line\n\nthird"}'
