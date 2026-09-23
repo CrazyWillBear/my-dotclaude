@@ -316,14 +316,13 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
-   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the
-   thread or the ledger; every later spawn passes the same `--attempt` unless
-   [escalation](#escalation-by-script) moved it.
-   **Know the id, not just the name.** `claude stop` and `claude attach` take an **id**
-   (`Usage: claude stop <id>`) and reject a session name outright — the name addresses
-   `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing*
-   the id rather than a bare id, so don't parse spawn's output: read it from
-   **`session-status.sh <runid>`, column 2**, when you need it.
+   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
+   **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values:
+   ```bash
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> --env DATABASE_URL=postgres://...
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
+   ```
+   **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
 5. **Subscribe** — immediately after the spawn, `SendMessage` to `orch-<runid>-issue-<N>` with
    `notify_when_idle: true` and **no message**. See [Liveness](#liveness).
 

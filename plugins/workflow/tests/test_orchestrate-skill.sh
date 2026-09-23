@@ -176,6 +176,13 @@ assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reas
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 
+echo "test: a provisioned infra resource is passed only to the replacement worker"
+assert_contains "the blocked infra report is named" "$BODY" "blocked infra:"
+assert_contains "the replacement spawn carries --env" "$BODY" "--env DATABASE_URL=postgres://..."
+assert_contains "the resume accepts the same env flag" "$BODY" '`worker-resume.sh` takes the same flag'
+assert_contains "the run log records the env name only" "$BODY" '"env":["DATABASE_URL"]'
+assert_matches "the log rule says names, never the values" "$BODY" "names, never the values"
+
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
 assert_contains "the chain is named" "$BODY" "6-luna → 6-sol → opus"

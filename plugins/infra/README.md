@@ -11,6 +11,7 @@ plugins/infra/
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
 │   ├── spawn.sh                 # start (or print) a worker (one issue, at a chain --attempt) or a peer (one role): `claude --bg`, or `codex exec` when the cell says codex
+│   ├── env-pairs.sh             # shared NAME=VALUE validation for spawn and resume
 │   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
 │   ├── resolve-tier.sh          # resolve a tier + attempt → its {model, effort, backend} roster and chain length (awk, no jq; claude-only fallback)
@@ -32,7 +33,7 @@ reinvention this kit replaces.
 
 ```bash
 # worker: tier-routed model, fenced to its worktree, started from it
-bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix]
+bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix] [--env NAME=VALUE]...
 
 # peer: named by its role, carrying the charter and its brief
 bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
@@ -163,6 +164,7 @@ bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktr
      --answer "the retry budget is per-request"        # or --answer-file FILE
      # --round N    numbers the review comment this posts (default 1)
      # --attempt N  the chain position the worker was spawned at, so -m is the same model
+     # --env NAME=VALUE  repeatable; re-exported on resume (values never logged)
 ```
 
 **Two kinds of escalation (#104).** A note beginning `deviation:` is a false plan assumption:
