@@ -254,7 +254,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" scope '{"issues"
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref HEAD)"
 ```
 
-With only the base, the fold folds nothing: it fetches the base's upstream and compares. Put the result in the launch line (`upstream none`, up to date, or `behind <base> <n> <upstream>`). Exit **2** = the base is behind: stop before snapshotting and tell the user to pull, or to rerun with `--allow-behind`, which passes the flag through here. When `--allow-behind` is provided, include it before the base in this check and in the later fold command.
+With only the base, the fold folds nothing: it fetches the base's upstream and compares. Put the result in the launch line (`upstream none`, up to date, or `behind <base> <n> <upstream>`). Exit **2** = the base is behind: stop before snapshotting and tell the user to pull, or to rerun with `--allow-behind`, which passes the flag through this check. After this launch gate, every in-run fold uses `--allow-behind`: upstream movement during the run must not stall automatic merges.
 
 The run uses **one** worktree, so merges touch its linked checkout and leave the **primary checkout untouched**. Canonicalize with `realpath` first — git may print a relative `.git`. In the primary checkout (`git rev-parse --git-dir` and `--git-common-dir` resolve to the **same** path), record `base=$(git rev-parse HEAD)`, then run **`EnterWorktree(name: "orchestrate-<runid>")`**. Verify `worktree.baseRef` is `head` (installed here) and branches from `HEAD`: built-in `fresh` uses `origin/<default>` and **silently drops local commits**. If `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"`; the worktree is brand-new. If already in a linked worktree (the paths differ), skip; this *is* it.
 
@@ -543,7 +543,7 @@ Nothing is resumed across a model change. Thresholds are env-configurable (`ESCA
 ## Fold first, remainder second
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" "$baseBranch" issue-12 issue-13 issue-14
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --allow-behind "$baseBranch" issue-12 issue-13 issue-14
 ```
 
 `merge-fold.sh` lands every conflict-free branch with **plain git**, in order, testing each with

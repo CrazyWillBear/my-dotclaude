@@ -242,6 +242,7 @@ assert_matches "resolution must be reported back" "$BODY" "MUST report the resol
 # ---------------------------------------------------------------------------
 echo "test: merge"
 assert_contains "fold first" "$BODY" "merge-fold.sh"
+assert_contains "in-run fold allows upstream drift after the launch check" "$BODY" 'merge-fold.sh" --allow-behind "$baseBranch"'
 assert_matches "a fold, not a filter" "$BODY" "fold, not a filter"
 assert_matches "only the remainder reaches the merger" "$BODY" "conflicted remainder"
 assert_matches "merger is never tier-routed" "$BODY" "never tier-routed"
