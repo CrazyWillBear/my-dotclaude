@@ -8,26 +8,41 @@ set -uo pipefail
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 
-# --codex-policy NAME=VALUE... — print the codex `-c` values (one per line) that let a
-# provisioned KEY/SECRET/TOKEN name through Codex's default shell-environment filter
-# WITHOUT opening that filter for the rest of the inherited host environment: the
-# defaults are switched off, and every other inherited name they matched is re-excluded
-# by name. Prints nothing when no provisioned name needs it. Names only, never values.
+# --codex-policy DIR NAME=VALUE... — print the codex `-c` values (one per line) that let
+# a provisioned KEY/SECRET/TOKEN name through Codex's default shell-environment filter
+# WITHOUT opening that filter for the rest of the host environment: the defaults are
+# switched off, and every other name they matched is re-excluded by name — inherited
+# names (awk's ENVIRON also lists names that are not identifiers, which compgen -e skips)
+# and names Codex loads itself from $CODEX_HOME/.env. `-c ...exclude` REPLACES any
+# exclude list in the user's or DIR's project Codex config, so that case is refused
+# instead. Prints nothing when no provisioned name needs it. Names only, never values.
 secretish() { case "$1" in *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*) return 0 ;; esac; return 1; }
 if [ "${1:-}" = --codex-policy ]; then
-    shift
+    dir="${2:-}"; shift 2
     provisioned=" "; need=
     for pair in "$@"; do
         provisioned+="${pair%%=*} "
         secretish "${pair%%=*}" && need=1
     done
     [ -n "$need" ] || exit 0
+    codex_home="${CODEX_HOME:-${HOME:-/nonexistent}/.codex}"
+    # ponytail: any `exclude =` line counts, in any table — over-refuses rather than parse TOML.
+    for cfg in "$codex_home/config.toml" /etc/codex/config.toml "$dir/.codex/config.toml"; do
+        [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])exclude[[:space:]]*=' "$cfg" \
+            && die "$cfg sets shell_environment_policy.exclude, which a KEY/SECRET/TOKEN --env name would replace; rename the variable or drop that setting"
+    done
     excl=
     while IFS= read -r name; do
         secretish "$name" || continue
         case "$provisioned" in *" $name "*) continue ;; esac
+        case "$name" in *[[:cntrl:]]*) die "an inherited KEY/SECRET/TOKEN name contains a control character" ;; esac
+        name="${name//\\/\\\\}"; name="${name//\"/\\\"}"
+        case ",$excl," in *",\"$name\","*) continue ;; esac
         excl+="${excl:+,}\"$name\""
-    done < <(compgen -e)
+    done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
+             [ -f "$codex_home/.env" ] && sed -nE \
+                 's/^[[:space:]]*(export[[:space:]]+)?([^#=[:space:]]+)[[:space:]]*=.*/\2/p' \
+                 "$codex_home/.env")
     printf '%s\n' 'shell_environment_policy.ignore_default_excludes=true'
     [ -z "$excl" ] || printf 'shell_environment_policy.exclude=[%s]\n' "$excl"
     exit 0

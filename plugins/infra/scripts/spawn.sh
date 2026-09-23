@@ -495,8 +495,8 @@ CMD=(codex exec
 # worker's shell commands. Override that name filter when one of those names was
 # explicitly provisioned; keep the values in the process environment, not argv.
 if [ "${#ENVS[@]}" -gt 0 ]; then
-    while IFS= read -r _c; do CMD+=(-c "$_c"); done \
-        < <(bash "$INFRA/env-pairs.sh" --codex-policy "${ENVS[@]}")
+    _policy="$(bash "$INFRA/env-pairs.sh" --codex-policy "$WORKTREE" "${ENVS[@]}")" || exit 1
+    while IFS= read -r _c; do [ -z "$_c" ] || CMD+=(-c "$_c"); done <<<"$_policy"
 fi
 CMD+=(--json
      -o "$RUNDIR/last-message.txt"

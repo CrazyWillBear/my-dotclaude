@@ -685,6 +685,30 @@ assert_contains "Codex still filters inherited host secret names" "$excl" '"HOST
 assert_not_contains "Codex does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
 assert_not_contains "Codex config argv never prints the KEY value" "$out" 'private-canary'
 assert_not_contains "Codex config argv never prints a host secret value" "$out" 'host-canary'
+# Names compgen -e cannot list (not valid identifiers) and names Codex itself loads from
+# $CODEX_HOME/.env must be re-excluded too, or they pass the opened filter.
+mkdir -p "$HOME/.codex"
+printf 'export DOTENV_API_TOKEN=dotenv-canary\n# COMMENTED_TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(env 'npm_config_//reg/:_authToken=npm-canary' CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary \
+    --dry-run --orchestrator orch-main 2>"$WORK/err")
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes a non-identifier host secret name" "$excl" '"npm_config_//reg/:_authToken"'
+assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$excl" '"DOTENV_API_TOKEN"'
+assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOKEN'
+assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
+rm -f "$HOME/.codex/.env"
+# `-c shell_environment_policy.exclude` REPLACES the user's own list, so a user who set one
+# is refused rather than silently un-hidden.
+printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "user Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the user's exclude setting" "$(err)" "shell_environment_policy.exclude"
+assert_not_contains "refusal never prints the value" "$(err)" "private-canary"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "user Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$HOME/.codex/config.toml"
 
 echo "test: invalid --env values are rejected before a worker starts"
 STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
