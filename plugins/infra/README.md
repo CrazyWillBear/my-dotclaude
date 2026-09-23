@@ -168,7 +168,6 @@ and exits, and the answer is delivered by resuming that thread — which `worker
 bash ~/.claude/kit/infra/scripts/worker-resume.sh <runid> <issue> <tier> <worktree> \
      --base <base-branch> \
      --answer "the retry budget is per-request"        # or --answer-file FILE
-     # --round N    numbers the review comment this posts (default 1)
      # --attempt N  the chain position the worker was spawned at, so -m is the same model
      # --env NAME=VALUE  repeatable; re-exported on resume (values never logged)
 ```

@@ -168,7 +168,8 @@ assert_matches "told apart by the note's first word, not by reading" "$BODY" "fi
 assert_contains "the consult role" "$BODY" "consult.sh consult"
 assert_contains "consult.sh carries the attempt too (review round 11: it resolves the implementer's backend from resolve-tier.sh, not a codex run dir)" "$BODY" 'consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>'
 assert_contains "and it is logged" "$BODY" "consulted '{\"n\":<N>}'"
-assert_contains "the resume carries the attempt and the round" "$BODY" '--base "$BASE" --attempt <A> --round <K> --answer'
+assert_contains "the resume carries the attempt" "$BODY" '--base "$BASE" --attempt <A> --answer'
+assert_not_contains "consult resume does not pass a review round" "$BODY" '--attempt <A> --round <K> --answer'
 assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
@@ -189,7 +190,7 @@ assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
 assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \
     'spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> --env DATABASE_URL=postgres://...'
 assert_contains "consult-answer resumes re-pass the provisioned env" "$BODY" \
-    '--round <K> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." --env DATABASE_URL=postgres://...'
+    '--attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." --env DATABASE_URL=postgres://...'
 assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
     '--answer "..." --attempt <A> --env DATABASE_URL=postgres://...'
 
