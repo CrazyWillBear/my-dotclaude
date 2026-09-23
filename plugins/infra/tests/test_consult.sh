@@ -255,6 +255,12 @@ printf '{"attempt": 5, "mark": 6}\n' >"$RD/handoff.json"
 CODEX_RUN_ROOT="$WORK/codexruns" STUB_GH_COMMENTS="$OWN_THREE" run consult r1 12 standard "$WT" --attempt 1
 unset CODEX_RUN_ROOT
 assert_equals "a mark for another attempt is ignored (plan-floored: 4 consults, refused)" "$RC" "1"
+echo "test: a quota skip (attempt 0 -> 2) still floors at attempt 0's handoff mark"
+reset; mkdir -p "$RD"
+printf '{"attempt": 0, "mark": 6}\n' >"$RD/handoff.json"
+CODEX_RUN_ROOT="$WORK/codexruns" STUB_GH_COMMENTS="$INHERITED" run consult r1 12 standard "$WT" --attempt 2
+unset CODEX_RUN_ROOT
+assert_equals "attempt 2's FIRST consult is not refused for attempt 0's two" "$RC" "0"
 rm -rf "$WORK/codexruns"
 
 echo "test: with NO run dir (complex tier's claude-only chain) the floor is the **Plan**"

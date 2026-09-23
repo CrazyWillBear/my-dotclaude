@@ -181,7 +181,7 @@ bash "$RUNLOG" replay r2 >/dev/null 2>&1; assert_equals "no run-log record" "$?"
 # ---------------------------------------------------------------------------
 echo "test: no ledger — the last review comment on the thread is the source"
 reset; rm -rf "$CODEX_RUN_ROOT/r3"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- [P1] old — x:1"},{"body":"**Plan**\n\nx"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low\n\n- [P2] leaks handle — src/d.py:7"}]}'
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"},{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- [P1] old — x:1"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low\n\n- [P2] leaks handle — src/d.py:7"}]}'
 run r3 84 complex "$G" --attempt 1
 assert_equals "exits 0" "$RC" "0"
 BODY="$(cat "$WORK/body" 2>/dev/null)"
@@ -216,6 +216,21 @@ BODY="$(cat "$WORK/body" 2>/dev/null)"
 assert_contains "the claude round" "$BODY" "- [medium] claude found this. — src/h.py:2"
 assert_contains "the codex ledger's open set, marked to verify" "$BODY" "- [high] silent drop of rows — src/a.py:10 (round 2"
 assert_equals "the pre-mark codex comment is not read twice" "$(grep -c 'silent drop' "$WORK/body")" "1"
+
+echo "test: a quota skip (attempt 0 -> 2) still floors at attempt 0's handoff mark"
+reset; ledger r3k; printf '{"attempt": 0, "mark": 1}' >"$CODEX_RUN_ROOT/r3k/issue-84/handoff.json"
+mkdir -p "$WORK/tiers3"; python3 -c 'import json,sys; t=json.load(open(sys.argv[1])); i=t["complex"]["implementer"]; t["complex"]["implementer"]=[i[0],i[0],i[1]]; json.dump(t,open(sys.argv[2],"w"))' "$RESOLVE_TIER_ROOT/model-tiers.json" "$WORK/tiers3/model-tiers.json"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 2** — 1 high, 1 medium, 1 low\n\n- [P1] silent drop of rows — src/a.py:10\n- [P2] unchecked return — src/b.py:4\n- [P3] nit — src/c.py:1"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
+RESOLVE_TIER_ROOT="$WORK/tiers3" run r3k 84 complex "$G" --attempt 2
+assert_equals "exits 0" "$RC" "0"
+assert_equals "the pre-mark codex comment is not filed twice" "$(grep -c 'silent drop' "$WORK/body" 2>/dev/null)" "1"
+
+echo "test: with no run dir the floor is the newest **Plan** — a previous run's rounds are not read"
+reset; rm -rf "$CODEX_RUN_ROOT/r3l"
+export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/old.py:1` — last run."},{"body":"**Plan**\n\nx"},{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\nSomething is wrong."}]}'
+run r3l 84 standard "$G"
+assert_equals "this run's count-without-list is refused" "$RC" "1"
+assert_contains "says lists none" "$ERR" "lists none"
 
 echo "test: a claude comment that mentions [Pn] in prose is still read as a claude comment"
 reset; rm -rf "$CODEX_RUN_ROOT/r3i"

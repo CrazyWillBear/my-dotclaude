@@ -19,7 +19,7 @@
 #   codex   the run-dir ledger ($CODEX_RUN_ROOT/<runid>/issue-<N>/rounds, #110) only: its last
 #           round's finding lines — a scoped codex re-review restates every finding still open.
 #   claude  the thread's `**Review round N**` comments posted in THIS attempt (past the run
-#           dir's handoff.json mark, consult.sh's rule), every round's findings with earlier
+#           dir's handoff.json mark, else the newest **Plan** — consult.sh's floor), every round's findings with earlier
 #           rounds marked to verify, since a claude fix round reviews only its delta; plus,
 #           after an escalation, the ledger's last round as the codex attempts' open set.
 #           A comment with `- **high** \`path\` — text` lines is read here; one without them
@@ -94,15 +94,17 @@ claude)
         FOLLOWUP_RUNDIR="$RUNDIR" FOLLOWUP_ATTEMPT="$ATTEMPT" python3 <<"PY2"
 import json, os, re, subprocess, sys, tempfile
 comments = json.load(open(os.environ["FOLLOWUP_COMMENTS"])).get("comments") or []
-# THIS attempt's comments only: past the mark the handoff that ended the previous attempt
-# recorded (consult.sh's rule); no mark for it → the whole thread
-mark = 0
+# THIS attempt's comments only, consult.sh's floor: past the mark the last handoff recorded
+# when it ended an earlier attempt; else past the newest **Plan** (this run's start)
+mark = None
 try:
     m = json.load(open(os.path.join(os.environ["FOLLOWUP_RUNDIR"], "handoff.json")))
-    if int(m.get("attempt", -1)) == int(os.environ["FOLLOWUP_ATTEMPT"]) - 1:
+    if 0 <= int(m.get("attempt", -1)) < int(os.environ["FOLLOWUP_ATTEMPT"]):
         mark = max(0, min(len(comments), int(m.get("mark", 0))))
 except (OSError, ValueError, TypeError):
     pass
+if mark is None:
+    mark = max([i for i, c in enumerate(comments) if (c.get("body") or "").lstrip().startswith("**Plan**")] or [0])
 rows, last = [], ""
 for c in comments[mark:]:
     body = c.get("body") or ""

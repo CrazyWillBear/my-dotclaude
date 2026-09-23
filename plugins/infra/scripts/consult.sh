@@ -154,14 +154,14 @@ comments = [str(c.get("body") or "") for c in (doc.get("comments") or [])]
 is_consult = lambda c: re.match(r"\*\*Consult \d+\*\*", c.lstrip()) is not None
 total = sum(1 for c in comments if is_consult(c))
 
-# The floor: the mark the LAST handoff recorded, when it is the one that ended the attempt
-# before this one. Anything else (no file, unreadable, a mark for another attempt) falls
-# through to the plan heading, which is the exact answer on a one-attempt chain.
+# The floor: the mark the LAST handoff recorded, when it ended an EARLIER attempt (a quota
+# skip jumps 0 -> 2, so not only ATTEMPT-1). Anything else (no file, unreadable, a mark for a
+# later attempt) falls through to the plan heading, the exact answer on a one-attempt chain.
 floor = None
 try:
     with open(os.path.join(os.environ["CONSULT_RUNDIR"], "handoff.json")) as fh:
         m = json.load(fh)
-    if int(m.get("attempt", -1)) == int(os.environ["CONSULT_ATTEMPT"]) - 1:
+    if 0 <= int(m.get("attempt", -1)) < int(os.environ["CONSULT_ATTEMPT"]):
         floor = max(0, min(len(comments), int(m.get("mark", 0))))
 except (OSError, ValueError, TypeError, KeyError):
     floor = None
