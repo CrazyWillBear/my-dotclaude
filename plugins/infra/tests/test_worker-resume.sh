@@ -359,8 +359,9 @@ assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
-assert_equals "the last ledger line records round 4's verdict" \
-    "$(tail -1 "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
+assert_equals "round 4's line is followed by its three finding entries" \
+    "$(sed -n '/^4 /,$p' "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" \
+    "$(printf '4 2 high, 0 medium, 1 low\nfinding\t4\thigh\ta finding\tsrc/f:1\nfinding\t4\thigh\tanother\tsrc/g:2\nfinding\t4\tlow\ta nit\tsrc/h:3')"
 
 run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
 assert_equals "resume refuses the removed --round flag" "$RC" "1"

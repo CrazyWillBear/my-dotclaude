@@ -34,9 +34,10 @@
 #   review-cap     a SECOND review round within this attempt still has high or medium
 #                  findings — the fix session is spawned at the next chain position.
 #                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append
-#                  (`<round> <H> high, <M> medium, <L> low`), NEVER from the thread: a
-#                  worker can post a comment headed `**Review round 99** — 0 high…` and
-#                  cannot touch the run dir. Rounds are counted inside the attempt (the
+#                  (round lines `<round> <H> high, <M> medium, <L> low`; the
+#                  `finding<TAB>…` entries beside them — #110 — are not rounds), NEVER
+#                  from the thread: a worker can post a comment headed
+#                  `**Review round 99** — 0 high…` and cannot touch the run dir. Rounds are counted inside the attempt (the
 #                  ledger position recorded at the last handoff), not off the review number,
 #                  which runs 1..N across the whole run: every position gets two.
 #
@@ -275,7 +276,7 @@ if marked_attempt is None:
                 mark = i
                 break
 this_attempt = comments[mark:]
-ledger = [l for l in (read("rounds") or "").splitlines() if l.strip()]
+ledger = [l for l in (read("rounds") or "").splitlines() if re.match(r"\d", l)]
 if reason is None:
     # FIRST line only (consult.sh writes it there): a **Deviation** quoting an earlier
     # "**Consult 2** said..." at a line start would otherwise count as a consult and

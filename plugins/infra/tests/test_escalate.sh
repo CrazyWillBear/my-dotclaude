@@ -275,6 +275,22 @@ run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "its own second round with findings does escalate" "$OUT" \
     "review 4 (2nd this attempt)"
 rm -f "$RUNDIR/handoff.json"
+
+echo "test: finding entries in the ledger are not rounds (#110)"
+MIXED='1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tt\ta:1\n2 0 high, 1 medium, 0 low\nfinding\t2\tmedium\tt\ta:1\n'
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf "$MIXED" >"$RUNDIR/rounds"
+printf '{"attempt": 0, "mark": 0, "rounds_mark": 0}\n' >"$RUNDIR/handoff.json"
+run r1 12 standard "$REPO" --base base --dry-run
+assert_contains "two round lines are review 2, not review 4" "$OUT" \
+    "review 2 (2nd this attempt) still has 0 high, 1 medium"
+mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
+printf "$MIXED" >"$RUNDIR/rounds"
+rm -f "$RUNDIR/handoff.json"
+run r1 12 standard "$REPO" --base base
+assert_contains "the handoff marks the ledger by round lines only" \
+    "$(cat "$RUNDIR/handoff.json" 2>/dev/null)" '"rounds_mark": 2'
+rm -f "$RUNDIR/handoff.json"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n2 0 high, 0 medium, 3 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base
