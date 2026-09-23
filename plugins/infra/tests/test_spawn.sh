@@ -667,8 +667,9 @@ COMMENT="$(cat "$RUNDIR/review-comment.md" 2>/dev/null)"
 # The heading is counted by review-counts.sh — the SAME script worker-report.sh reads the
 # verdict with, so the issue thread and the merge queue cannot disagree about the findings.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 1 medium, 0 low"
-assert_equals "and the run-dir rounds ledger escalate.sh reads carries the same verdict" \
-    "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 2 high, 1 medium, 0 low"
+assert_equals "and the run-dir ledger holds the round line plus one entry per finding" \
+    "$(cat "$RUNDIR/rounds" 2>/dev/null)" \
+    "$(printf '1 2 high, 1 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\nfinding\t1\tmedium\tthree\tc:3')"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
 
 echo "test: four reviews across two attempts are numbered 1..4 from the ledger"
@@ -726,7 +727,9 @@ run_numbered_review 3 "$CFG_CODEX_CHAIN" \
 run_numbered_review 4 "$CFG_CODEX_CHAIN" \
     r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
 assert_equals "four reviews append ledger numbers 1..4" \
-    "$(cut -d' ' -f1 "$RUNDIR/rounds" | tr '\n' ',')" "1,2,3,4,"
+    "$(grep '^[0-9]' "$RUNDIR/rounds" | cut -d' ' -f1 | tr '\n' ',')" "1,2,3,4,"
+assert_equals "each review's finding is filed under its own round" \
+    "$(grep -c '^finding' "$RUNDIR/rounds")" "4"
 for review_number in 1 2 3 4; do
     assert_contains "saved comment $review_number is numbered from the ledger" \
         "$(cat "$WORK/review-comment-$review_number.md" 2>/dev/null)" \

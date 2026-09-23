@@ -685,9 +685,13 @@ bash -c '
                 if [ -n "$counts" ]; then
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
                     # which the worker cannot write; the thread copy is for humans and
-                    # the fix round, and a worker can forge a comment there.
-                    round=$(( $(cat "$rundir/rounds" 2>/dev/null | grep -c .) + 1 ))
+                    # the fix round, and a worker can forge a comment there. A round is a
+                    # line starting with a digit; the finding<TAB>… entries beside it are
+                    # emitted by review-counts.sh, the only parser of the review (#110).
+                    round=$(( $(cat "$rundir/rounds" 2>/dev/null | grep -c "^[0-9]") + 1 ))
                     printf "%s %s\n" "$round" "$counts" >>"$rundir/rounds"
+                    bash "$counter" "$rundir/review.txt" --findings "$round" \
+                        >>"$rundir/rounds" 2>>"$rundir/review-stderr.log"
                     { printf "**Review round %s** — %s\n\n" "$round" "$counts"
                       cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
                     (cd "$worktree" && gh issue comment "$issue" \
