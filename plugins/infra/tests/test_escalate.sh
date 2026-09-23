@@ -138,6 +138,14 @@ STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\n1. x"},{"body":"**Review rou
     run r1 12 standard "$REPO" --base base
 assert_empty "a first clean review is not a signal" "$OUT"
 
+echo "test: blocked infrastructure is never an escalation, even at the review cap"
+mkrun '{"issue":12,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}' 0
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "exit 0" "$RC" "0"
+assert_empty "blocked has no escalation signal" "$OUT"
+assert_equals "blocked posts no handoff" "$(posted)" "no"
+
 echo "test: failed — the worker's own report"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"done-check red: 3 tests"}' 0
 run r1 12 standard "$REPO" --base base --attempt 0
