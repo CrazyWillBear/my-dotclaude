@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>`, spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
-argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--prd N] [--issues N,N,...] [--skip-unknown]"
+argument-hint: "[--max N=5] [--max-cycles K=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
 ---
@@ -16,8 +16,7 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
 
 **It absorbs `/pipeline`.** There is one front door. Two front doors to the same room rot apart.
 
-`$ARGUMENTS` = `[--max N] [--max-cycles K] [--merge-split-at K] [--prd N] [--issues N,N,...]
-[--skip-unknown]`
+`$ARGUMENTS` = `[--max N] [--max-cycles K] [--merge-split-at K] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]`
 
 - **`--max N`** — **concurrent issues in flight** (default **5**), not a batch size. A slot frees
   when its issue merges, and the freed slot takes the next ready issue.
@@ -25,6 +24,7 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
   the cap counts **re-reviews**.
 - **`--merge-split-at K`** — the conflicted remainder above which the merge is split (default
   **5**). See [Merge](#merge).
+- **`--allow-behind`** — proceed even when the base is behind its upstream; passed through to `merge-fold.sh`.
 - **`--prd N`** / **`--issues N,N,...`** — the scope. See [The allowlist](#the-allowlist).
 - **`--skip-unknown`** — downgrade the unfetchable-issue error to a logged skip. Off by default,
   because failing loud on a partial scope is right.
@@ -248,34 +248,28 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" scope '{"issues"
 
 ## Step 4 — the orchestration worktree
 
-The whole run executes in **one** worktree, so the merge writes to a linked worktree and the
-**primary checkout is never touched**. Canonicalize with `realpath` first — git may print a
-relative `.git`. **In the primary checkout** (`git rev-parse --git-dir` and `--git-common-dir`
-resolve to the **same** path) → record `base=$(git rev-parse HEAD)`, then
-**`EnterWorktree(name: "orchestrate-<runid>")`**, and verify: `worktree.baseRef` `head` (which
-this kit installs) branches from `HEAD`, but the built-in `fresh` = `origin/<default>` **silently
-drops local commits**, so if `git rev-parse HEAD` ≠ `$base`, `git reset --hard "$base"` (the
-worktree is brand-new). **Already in a linked worktree** (the two differ) → skip; this *is* it.
+**First, the launch fetch check** — before anything is snapshotted:
 
-**Then exclude the per-issue worktrees**, which nest at `<baseRepo>/.worktrees/<runid>/issue-<N>`
-inside this tree and would show as untracked during the merge — in the repo's **local** exclude,
-never a tracked `.gitignore`, idempotently:
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref HEAD)"
+```
+
+With only the base, the fold folds nothing: it fetches the base's upstream and compares. Put the result in the launch line (`upstream none`, up to date, or `behind <base> <n> <upstream>`). Exit **2** = the base is behind: stop before snapshotting and tell the user to pull, or to rerun with `--allow-behind`, which passes the flag through this check. After this launch gate, every in-run fold uses `--allow-behind`: upstream movement during the run must not stall automatic merges.
+
+The run uses **one** worktree, so merges touch its linked checkout and leave the **primary checkout untouched**. Canonicalize with `realpath` first — git may print a relative `.git`. In the primary checkout (`git rev-parse --git-dir` and `--git-common-dir` resolve to the **same** path), record `base=$(git rev-parse HEAD)`, then run **`EnterWorktree(name: "orchestrate-<runid>")`**. Verify `worktree.baseRef` is `head` (installed here) and branches from `HEAD`: built-in `fresh` uses `origin/<default>` and **silently drops local commits**. If `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"`; the worktree is brand-new. If already in a linked worktree (the paths differ), skip; this *is* it.
+
+**Then exclude the per-issue worktrees** nested at `<baseRepo>/.worktrees/<runid>/issue-<N>`; they would show as untracked during the merge. Add `.worktrees/` idempotently to the repo's **local** exclude, never the tracked `.gitignore`:
 
 ```bash
 excl="$(git rev-parse --git-common-dir)/info/exclude"
 grep -qxF '.worktrees/' "$excl" 2>/dev/null || printf '.worktrees/\n' >> "$excl"
 ```
 
-Say so in the final report: it is a persistent mutation of the user's real repo that outlives the
-run. **Then resolve the run's own address, once**, and pass it to every spawn —
-`ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"` — because the name is this
-session's model-generated display title, and a rename mid-run would leave already-spawned workers
-addressing a name that no longer exists (`claude -n orch-<runid>` makes it stable).
+Say in the final report that this persistent mutation of the user's real repo outlives the run. **Resolve the run's own address once** and pass it to every spawn: `ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"`. A rename mid-run of the model-generated display title would leave existing workers with an invalid address; `claude -n orch-<runid>` makes it stable.
 
 ## Step 5 — the admission loop
 
-This is the whole scheduler. It is a loop **you** run, on the main thread, and it is deliberately
-boring: every decision in it is either a script's output or a message that arrived.
+This is the whole scheduler. It is a loop **you** run on the main thread, deliberately boring: every decision is a script's output or an arrived message.
 
 **Each pass:**
 
@@ -549,7 +543,7 @@ Nothing is resumed across a model change. Thresholds are env-configurable (`ESCA
 ## Fold first, remainder second
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" "$baseBranch" issue-12 issue-13 issue-14
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --allow-behind "$baseBranch" issue-12 issue-13 issue-14
 ```
 
 `merge-fold.sh` lands every conflict-free branch with **plain git**, in order, testing each with

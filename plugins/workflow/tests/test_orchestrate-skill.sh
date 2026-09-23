@@ -242,6 +242,7 @@ assert_matches "resolution must be reported back" "$BODY" "MUST report the resol
 # ---------------------------------------------------------------------------
 echo "test: merge"
 assert_contains "fold first" "$BODY" "merge-fold.sh"
+assert_contains "in-run fold allows upstream drift after the launch check" "$BODY" 'merge-fold.sh" --allow-behind "$baseBranch"'
 assert_matches "a fold, not a filter" "$BODY" "fold, not a filter"
 assert_matches "only the remainder reaches the merger" "$BODY" "conflicted remainder"
 assert_matches "merger is never tier-routed" "$BODY" "never tier-routed"
@@ -283,6 +284,11 @@ assert_contains "ExitWorktree(keep)" "$BODY" "ExitWorktree(keep)"
 assert_matches "verifies the base after entering (worktree.baseRef)" "$BODY" "worktree.baseRef"
 assert_contains "excludes .worktrees/ locally" "$BODY" "info/exclude"
 assert_matches "and says so in the report" "$BODY" "outlives the run|persistent mutation"
+check_ln=$(grep -nF 'scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref HEAD)"' "$SKILL_FILE" | head -1 | cut -d: -f1)
+base_ln=$(grep -nF 'base=$(git rev-parse HEAD)' "$SKILL_FILE" | head -1 | cut -d: -f1)
+if [ -n "$check_ln" ] && [ -n "$base_ln" ] && [ "$check_ln" -lt "$base_ln" ]; then ok "launch fetch check runs before the base snapshot"; else no "launch fetch check runs before the base snapshot"; fi
+assert_contains "the override flag is documented" "$BODY" "--allow-behind"
+assert_matches "the check result goes in the launch line" "$BODY" "behind.*launch line|launch line.*behind"
 
 # ---------------------------------------------------------------------------
 echo "test: the irreversible gh writes stay on the main thread (#77)"
