@@ -118,6 +118,7 @@ anything else, and the wrapper posts the `**Review round N**` comment exactly as
 and `review-counts.sh --findings N` turns the same items into the ledger's per-finding entries.
 Its rubric marks silent data loss, corruption, and denial-of-service that stalls or exhausts
 a shared worker as P1 regardless of apparent size.
+Fix rounds (`--role fix`, including a resumed fix worker) run `review-cmd.sh --scoped`; the reviewer restates the previous round's findings as `[fixed]` or `[Pn]` against `<reviewed-head>..HEAD` and adds anything the fix broke, while `[fixed]` items become `fixed` ledger entries and never count.
 Reviews never run on fable and never on a codex model.
 
 `session-status.sh <runid>` reports those alongside the claude sessions, in the same

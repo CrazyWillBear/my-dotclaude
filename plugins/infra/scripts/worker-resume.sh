@@ -199,8 +199,10 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
 # README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
+# The role comes from the file spawn.sh wrote.
+SCOPED=""; [ "$(head -1 "$RUNDIR/role" 2>/dev/null)" = fix ] && SCOPED="$RUNDIR"
 while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
-    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE" ${SCOPED:+--scoped "$SCOPED"})
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # review.txt goes too, and for the sharpest version of the same reason: it is the only
@@ -271,7 +273,10 @@ if [ "$CODE" -eq 0 ] \
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
             # report the merge queue acts on can never disagree.
-            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
+            PRIOR=()
+            [ -z "$SCOPED" ] || PRIOR=(--prior "$RUNDIR")
+            # Empty arrays expand as unbound under set -u on macOS bash 3.2.
+            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" ${PRIOR[@]+"${PRIOR[@]}"} \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
                 # The run-dir ledger escalate.sh counts rounds from: round lines start
@@ -280,6 +285,8 @@ if [ "$CODE" -eq 0 ] \
                 printf '%s %s\n' "$ROUND" "$COUNTS" >>"$RUNDIR/rounds"
                 bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" --findings "$ROUND" \
                     >>"$RUNDIR/rounds" 2>>"$RUNDIR/review-stderr.log"
+                git -C "$RUNDIR/review-checkout" rev-parse HEAD \
+                    >"$RUNDIR/reviewed-head" 2>>"$RUNDIR/review-stderr.log"
                 { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
                   cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"
                 ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
@@ -288,6 +295,7 @@ if [ "$CODE" -eq 0 ] \
                     || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
             else
                 printf 'REVIEW_UNREADABLE\n' >>"$RUNDIR/review-stderr.log"
+                rm -f "$RUNDIR/review.txt"
             fi
         else
             printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"

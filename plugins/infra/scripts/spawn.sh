@@ -543,8 +543,10 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
 # README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
+# A fix round is a scoped re-review (#115); the build review is always full.
+SCOPED=""; [ "$ROLE" = fix ] && SCOPED="$RUNDIR"
 while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
-    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE" ${SCOPED:+--scoped "$SCOPED"})
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review
@@ -588,6 +590,8 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # with the previous round's reason.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
+# worker-resume.sh reads this because it has no --role flag.
+printf '%s\n' "$ROLE" >"$RUNDIR/role"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -717,7 +721,11 @@ bash -c '
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
                 # the report the merge queue acts on can never disagree.
-                counts="$(bash "$counter" "$rundir/review.txt" 2>>"$rundir/review-stderr.log")"
+                prior=()
+                [ "$(head -1 "$rundir/role" 2>/dev/null)" = fix ] \
+                    && prior=(--prior "$rundir")
+                counts="$(bash "$counter" "$rundir/review.txt" "${prior[@]}" \
+                    2>>"$rundir/review-stderr.log")"
                 if [ -n "$counts" ]; then
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
                     # which the worker cannot write; the thread copy is for humans and
@@ -728,6 +736,9 @@ bash -c '
                     printf "%s %s\n" "$round" "$counts" >>"$rundir/rounds"
                     bash "$counter" "$rundir/review.txt" --findings "$round" \
                         >>"$rundir/rounds" 2>>"$rundir/review-stderr.log"
+                    # The next fix round range starts at this commit.
+                    git -C "$rundir/review-checkout" rev-parse HEAD \
+                        >"$rundir/reviewed-head" 2>>"$rundir/review-stderr.log"
                     { printf "**Review round %s** — %s\n\n" "$round" "$counts"
                       cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
                     (cd "$worktree" && gh issue comment "$issue" \
@@ -736,6 +747,7 @@ bash -c '
                         || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
                 else
                     printf "REVIEW_UNREADABLE\n" >>"$rundir/review-stderr.log"
+                    rm -f "$rundir/review.txt"
                 fi
             else
                 printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"

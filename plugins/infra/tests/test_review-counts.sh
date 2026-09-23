@@ -116,6 +116,73 @@ printf '* [P1] a finding — a.py:1\n' >"$WORK/star.txt"
 run "$WORK/star.txt"
 assert_equals "counted" "$OUT" "1 high, 0 medium, 0 low"
 
+echo "test: [fixed] items are ledger entries but never counted"
+printf '%s\n' \
+    '- [fixed] one — a:1' \
+    '- [fixed] two — b:2' \
+    '- [P2] three — c:3' \
+    '- [P1] four — d:4' >"$WORK/fixed-mixed.txt"
+run "$WORK/fixed-mixed.txt"
+assert_equals "fixed items are excluded from counts" "$RC" "0"
+assert_equals "only open findings are counted" "$OUT" "1 high, 1 medium, 0 low"
+run "$WORK/fixed-mixed.txt" --findings 2
+assert_equals "fixed items retain ledger identity without counting" "$OUT" \
+    "$(printf 'finding\t2\tfixed\tone\ta:1\nfinding\t2\tfixed\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\nfinding\t2\thigh\tfour\td:4')"
+
+echo "test: an all-fixed re-review is a clean count, not drift"
+printf '%s\n' '- [fixed] one — a:1' >"$WORK/fixed-only.txt"
+run "$WORK/fixed-only.txt"
+assert_equals "all-fixed review exits 0" "$RC" "0"
+assert_equals "all-fixed review counts zero" "$OUT" "0 high, 0 medium, 0 low"
+run "$WORK/fixed-only.txt" --findings 3
+assert_equals "all-fixed ledger entry preserves the original identity" "$OUT" \
+    "$(printf 'finding\t3\tfixed\tone\ta:1')"
+
+echo "test: [fixed] items do not hide malformed numbered findings"
+cat >"$WORK/fixed-with-drift.txt" <<'EOF'
+- [fixed] resolved finding — a:1
+1. [P1] malformed new finding — b:2
+EOF
+run "$WORK/fixed-with-drift.txt"
+assert_equals "mixed valid and malformed output is refused" "$RC" "1"
+assert_equals "nothing is counted from drifted output" "$OUT" ""
+assert_contains "explains the format drift" "$ERR" "drifted"
+
+echo "test: a scoped review must restate every open finding from the last round"
+PRIOR="$WORK/prior"
+mkdir -p "$PRIOR"
+printf '%s\n' fedcba9876543210fedcba9876543210fedcba98 >"$PRIOR/reviewed-head"
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\told\told.py:1\n2 2 high, 1 medium, 0 low\nfinding\t2\tfixed\told\told.py:1\nfinding\t2\thigh\tone\ta:1\nfinding\t2\thigh\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\n' >"$PRIOR/rounds"
+printf '%s\n' '- [fixed] one — a:1' '- [P2] three — c:3' '- [P1] new — d:4' >"$WORK/omitted.txt"
+run "$WORK/omitted.txt" --prior "$PRIOR"
+assert_equals "omitted prior finding is refused" "$RC" "1"
+assert_equals "omission produces no counts" "$OUT" ""
+assert_contains "omission names the missing identity" "$ERR" "two — b:2"
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:9' '- [P2] three — c:3' >"$WORK/mislabelled.txt"
+run "$WORK/mislabelled.txt" --prior "$PRIOR"
+assert_equals "changed path cannot stand in for a prior finding" "$RC" "1"
+assert_equals "changed path produces no counts" "$OUT" ""
+printf '%s\n' 'No findings.' >"$WORK/false-clean.txt"
+run "$WORK/false-clean.txt" --prior "$PRIOR"
+assert_equals "clean literal cannot omit prior findings" "$RC" "1"
+assert_equals "clean literal produces no counts" "$OUT" ""
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:2' '- [P2] three — c:3' '- [P1] new — d:4' >"$WORK/restated.txt"
+run "$WORK/restated.txt" --prior "$PRIOR"
+assert_equals "all identities restated succeeds" "$RC" "0"
+assert_equals "new findings still count" "$OUT" "1 high, 1 medium, 0 low"
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:2' '- [fixed] three — c:3' >"$WORK/all-restated.txt"
+run "$WORK/all-restated.txt" --prior "$PRIOR"
+assert_equals "all fixed and all restated succeeds" "$RC" "0"
+assert_equals "all fixed counts zero" "$OUT" "0 high, 0 medium, 0 low"
+printf '%s\n' '- [fixed] one — a:1' '- [P1] two — b:2' '  still open: the guard was added to one caller only' '- [P2] three — c:3' '  still open: untouched' >"$WORK/open-reasons.txt"
+run "$WORK/open-reasons.txt" --prior "$PRIOR"
+assert_equals "still-open items with reason lines are restated" "$RC" "0"
+assert_equals "still-open items count at their severity" "$OUT" "1 high, 1 medium, 0 low"
+rm "$PRIOR/reviewed-head"
+run "$WORK/false-clean.txt" --prior "$PRIOR"
+assert_equals "missing head preserves full-review fallback" "$RC" "0"
+assert_equals "full-review fallback counts clean" "$OUT" "0 high, 0 medium, 0 low"
+
 # ---------------------------------------------------------------------------
 # THE REFUSALS. Each one must print NOTHING on stdout: the callers read any output as a
 # verdict, and a verdict is what decides whether unreviewed code reaches the merge queue.

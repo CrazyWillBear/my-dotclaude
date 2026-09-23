@@ -370,6 +370,8 @@ STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":""
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
+assert_not_contains "a full resumed review can pass an empty prior list on bash 3.2" \
+    "$ERR" "unbound variable"
 assert_contains "a reviewer really ran — claude -p (#104)" "$(cat "$WORK/review-argv" 2>/dev/null)" "personal-tools:my-review"
 assert_equals "the prompt reached claude as ONE argument (review round 2)" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 # A SHA, not the branch name it was given: a name could be moved by the worker.
@@ -385,6 +387,12 @@ assert_not_contains "never the implementer's" \
 # a disposable clone instead — with TMPDIR pointed at the one scratch root the sandbox
 # actually granted.
 RUNDIR86="$CODEX_ROOT/r1/issue-86"
+assert_equals "the reviewed head is recorded" "$(cat "$RUNDIR86/reviewed-head" 2>/dev/null)" \
+    "$(git -C "$REPO" rev-parse HEAD)"
+if [ -e "$RUNDIR86/role" ]; then no "this resume unexpectedly had a role file"
+else ok "this resume has no role file"; fi
+assert_not_contains "a resume with no role file gets a full review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
 assert_equals "the reviewing marker existed while the review ran" "$(cat "$WORK/review-marker" 2>/dev/null)" "yes"
 assert_equals "the review ran in the disposable checkout" \
     "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR86/review-checkout"
@@ -416,6 +424,41 @@ assert_equals "round 4's line is followed by its three finding entries" \
 run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
 assert_equals "resume refuses the removed --round flag" "$RC" "1"
 assert_contains "and reports an unknown flag" "$ERR" "unknown flag"
+
+echo "test: a resumed FIX worker gets a scoped re-review"
+mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+RUNDIR87="$CODEX_ROOT/r1/issue-87"
+printf 'fix\n' >"$RUNDIR87/role"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR87/reviewed-head"
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\n' >"$RUNDIR87/rounds"
+STUB_REPORT='{"issue":87,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1' \
+    run r1 87 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0" "$RC" "0"
+assert_contains "a resumed fix uses the scoped prompt" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
+assert_contains "the previous finding reaches the resumed fix review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "- high: one — a:1"
+assert_equals "round 2 records the fixed finding without counting it" \
+    "$(sed -n '/^2 /,$p' "$RUNDIR87/rounds" 2>/dev/null)" \
+    "$(printf '2 0 high, 0 medium, 0 low\nfinding\t2\tfixed\tone\ta:1')"
+rm -rf "$RUNDIR87"
+
+echo "test: a resumed FIX review that drops a prior finding is refused"
+mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+RUNDIR88="$CODEX_ROOT/r1/issue-88"
+printf 'fix\n' >"$RUNDIR88/role"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR88/reviewed-head"
+printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\n' >"$RUNDIR88/rounds"
+STUB_REPORT='{"issue":88,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1' \
+    run r1 88 standard "$REPO" --answer "x" --base base
+assert_equals "omitted finding adds no ledger round" "$(cat "$RUNDIR88/rounds")" \
+    "$(printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2')"
+if [ -e "$RUNDIR88/review.txt" ]; then no "incomplete resumed review remained readable"
+else ok "incomplete resumed review was removed"; fi
+assert_contains "resume records the refusal" "$(cat "$RUNDIR88/review-stderr.log" 2>/dev/null)" "REVIEW_UNREADABLE"
+rm -rf "$RUNDIR88"
 
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
 # THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER

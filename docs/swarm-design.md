@@ -346,6 +346,7 @@ one-shot, so it maps onto `codex exec`:
   the launcher; the my-review agent's frontmatter pins its own) that spawns
   `personal-tools:my-review` on the commit range, in the disposable clone, and emits
   `- [Pn] title — path:line` items or the literal `No findings.` for `review-counts.sh`.
+  In scoped fix reviews (#115), `review-counts.sh` refuses the verdict unless every open finding in the last ledger round reappears with the same title and path, either `[fixed]` or `[Pn]`.
   `codex exec review` was a working reviewer, but it could not be pointed at a claude model, so
   the roster's "reviewer: opus" was silently false for every codex worker, and (below) nothing
   could shape what it said about how it verified. The paragraphs below record what was learned
