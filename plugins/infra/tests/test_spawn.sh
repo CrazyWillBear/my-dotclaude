@@ -642,6 +642,10 @@ assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claud
 assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
 assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
 claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
+case "$(basename "$(dirname "$claude_settings")")" in
+    claude-env.r1.issue-12.*) ok "settings dir is named for its run and issue, so the run end can sweep it" ;;
+    *) no "settings dir is not named claude-env.r1.issue-12.* (got '$claude_settings')" ;;
+esac
 assert_contains "successful dispatch prints the private settings path for cleanup" \
     "$argv" "Claude settings file: $claude_settings"
 if [ -n "$claude_settings" ] && [ -f "$claude_settings" ] \

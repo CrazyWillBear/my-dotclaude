@@ -465,10 +465,9 @@ posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's 
 
 # Liveness
 
-Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and
-the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
-For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id.
-After verifying its stop, remove its settings file and private directory per infra's README, before respawn or escalation.
+Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
+For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session
+ends (respawn, escalation, superseded by a fix-round session, or its issue merged), verify the stop, then remove its settings file and private directory per infra's README.
 
 ---
 
@@ -652,8 +651,9 @@ instead of buried under a success table:
 4. **Comment each conflict-stop onto its issue** — additive, never a close or an edit:
    > `/orchestrate` could not merge this: `<reason>`. The branch and its worktree are left intact at
    > `<path>` — resolve and re-run.
-5. **`ExitWorktree(keep)`** — the orchestration branch and worktree stay intact.
-6. **Report.** One row per scoped issue:
+5. **Sweep leftover plaintext env settings:** `rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*`.
+6. **`ExitWorktree(keep)`** — the orchestration branch and worktree stay intact.
+7. **Report.** One row per scoped issue:
 
    | column | source |
    |---|---|

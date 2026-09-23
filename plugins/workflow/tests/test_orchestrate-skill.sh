@@ -193,6 +193,10 @@ assert_contains "Claude settings paths are retained for cleanup" "$BODY" \
     "save the Claude settings file path"
 assert_contains "stopped Claude sessions have their private settings removed" "$BODY" \
     "remove its settings file and private directory"
+assert_contains "a superseded or merged Claude worker has its settings removed too" "$BODY" \
+    "superseded by a fix-round session, or its issue merged"
+assert_contains "the run end sweeps every leftover settings dir for the run" "$BODY" \
+    'rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*'
 assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
     "--role fix --round <K> --attempt <A> $resource_suffix"
 assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \

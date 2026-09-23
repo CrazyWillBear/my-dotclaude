@@ -789,7 +789,7 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
     # before the session has finished reading it, and later requests read it again.
     _env_umask="$(umask)"
     umask 077
-    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.XXXXXX")" \
+    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.$RUNID.issue-$ISSUE.XXXXXX")" \
         || die "could not create private Claude session settings"
     CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
     jq -n --args '{"env": reduce $ARGS.positional[] as $pair ({};

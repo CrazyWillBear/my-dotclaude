@@ -47,7 +47,9 @@ The private settings file remains readable after dispatch because the background
 it again on later requests. `spawn.sh` prints `Claude settings file: <path>` after a successful
 dispatch. Save that path with the session id. Once `claude stop <id>` has been verified, remove
 the file and its private directory with `rm -f -- "$settings_file"` then
-`rmdir -- "$(dirname "$settings_file")"`. A failed dispatch removes its file immediately.
+`rmdir -- "$(dirname "$settings_file")"`. A failed dispatch removes its file immediately. The
+directory is named `claude-env.<runid>.issue-<N>.*` under `$TMPDIR`, so a run's end sweeps any
+leftovers with `rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*`.
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
