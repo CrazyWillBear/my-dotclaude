@@ -611,7 +611,7 @@ with real tests:
 | `spawn.sh` | the session command and the worker prompt contract |
 | `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated |
 | `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
-| `merge-fold.sh` | the deterministic fold |
+| `merge-fold.sh` | the deterministic fold, the launch check, and the end-merge preview |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
 | `resolve-tier.sh` | tier + attempt → {model, effort, backend}, and the chain length |
@@ -629,8 +629,15 @@ The run ends when `ready.sh` reports a **designed empty** with nothing in flight
 finishes. Then, on the main thread and in this order — **close first**, so a failed close is loud
 instead of buried under a success table:
 
-1. **Merge and PR — offered, not taken.** Offer the end merge of `orchestrate-<runid>` into
-   `dev`/`main`, and offer **one** PR. Offer deleting the merged `issue-<N>` branches.
+1. **Merge and PR — offered, not taken.**
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --preview origin/<target>
+   ```
+   `<target>` is the branch the end merge goes into (`dev`/`main`); the preview fetches it and prints `clean` or `conflict <paths>` without touching the working tree.
+   The preview result is shown in the end-merge offer before asking, so the user approves with the
+   conflicts in view.
+   Offer the end merge of `orchestrate-<runid>` into `dev`/`main`, and offer **one** PR. Offer deleting
+   the merged `issue-<N>` branches.
 2. **Close the merged issues (#77 fix 1).** This is the **only** place the run closes an issue:
    ```bash
    gh issue close <N> --comment "Merged in <sha> by /orchestrate."

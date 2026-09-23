@@ -250,6 +250,11 @@ assert_contains "the split threshold" "$BODY" "--merge-split-at"
 assert_matches "two-at-a-time is not built yet" "$BODY" "not built"
 assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|are .?.?automatic"
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
+assert_contains "end merge is previewed against the upstream" "$BODY" 'merge-fold.sh" --preview'
+prev_ln=$(grep -nF 'merge-fold.sh" --preview' "$SKILL_FILE" | head -1 | cut -d: -f1)
+offer_ln=$(grep -nF 'Offer the end merge' "$SKILL_FILE" | head -1 | cut -d: -f1)
+if [ -n "$prev_ln" ] && [ -n "$offer_ln" ] && [ "$prev_ln" -lt "$offer_ln" ]; then ok "preview runs before the end-merge offer"; else no "preview runs before the end-merge offer"; fi
+assert_matches "the preview result is shown in the offer" "$BODY" "preview.*(offer|before asking)|offer.*preview"
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
 assert_matches "a capped merge holds its dependents" "$BODY" "capped.*holds its dependents|holds its dependents"
 
