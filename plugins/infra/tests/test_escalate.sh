@@ -157,6 +157,31 @@ mkrun "" 3
 run r1 12 standard "$REPO" --base base
 assert_contains "exit code is the reason" "$OUT" "failed: the worker exited 3"
 
+echo "test: a usage-limit crash is quota and the handoff names quota"
+mkrun "" 1
+cat >>"$RUNDIR/events.jsonl" <<'JSON'
+{"type":"error","message":"You've hit your usage limit. Try again at 3:05 PM."}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. Try again at 3:05 PM."}}
+JSON
+printf 'Reading additional input from stdin...\n' >"$RUNDIR/stderr.log"
+run r1 12 standard "$REPO" --base base --attempt 0
+case "$OUT" in "quota: "*) ok "starts with quota" ;; *) no "does not start with quota ('$OUT')" ;; esac
+assert_contains "quotes the usage-limit message" "$OUT" "usage limit"
+assert_not_contains "does not report a failed reason" "$OUT" "failed:"
+assert_equals "the handoff was posted" "$(posted)" "yes"
+BODY="$(cat "$WORK/body")"
+assert_contains "the handoff says quota was replaced" "$BODY" "replaced: quota:"
+
+echo "test: a non-quota crash adds the event-log message to the failed exit"
+mkrun "" 1
+printf '%s\n' \
+    '{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}' \
+    >>"$RUNDIR/events.jsonl"
+printf 'Reading additional input from stdin...\n' >"$RUNDIR/stderr.log"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "keeps the failed exit reason and event message" "$OUT" \
+    "failed: the worker exited 1: stream disconnected before completion"
+
 echo "test: failed — a dead pid with no exit file (killed)"
 mkrun "" "" 4194304   # a pid that cannot be alive (past pid_max on stock Linux)
 run r1 12 standard "$REPO" --base base

@@ -422,7 +422,9 @@ worktree. Nothing is resumed across a model change. At the top of the chain `spa
 and the run drains as `failed` does. Thresholds: `ESCALATE_STALL_MINUTES=20`,
 `ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_REVIEW_MINUTES=45` (the
 post-build review's own, longer budget — an event log untouched for the STALL window is not a
-stall while the sibling reviewer is running and younger than this). The counts come from the run log:
+stall while the sibling reviewer is running and younger than this). A `quota` reason (a usage-limit
+error in the event log) skips the remaining codex positions and goes to the claude cell or drains.
+The counts come from the run log:
 
 ```bash
 # run-log.sh is the orchestrator's own script (plugins/workflow/scripts/), not infra's.
