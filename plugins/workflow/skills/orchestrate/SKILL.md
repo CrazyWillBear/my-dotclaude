@@ -317,9 +317,9 @@ model can, and historically did, hallucinate.
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
    **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
-   **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values. Keep the exact env pairs per issue in the orchestrator's live context and re-append the full set to every later worker launch or resume because the run log stores names only:
+   **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values. Keep the exact env pairs per issue in the orchestrator's live context and re-append the full set to every later worker launch or resume because the run log stores names only. Before each call, rebuild `resource_args=()` for that issue, then append `resource_args+=(--env "$pair")` for each actual pair; leave it empty if none. A real pair has the shape `--env DATABASE_URL=<actual-value>`:
    ```bash
-   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> --env DATABASE_URL=postgres://...
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> ${resource_args[@]+"${resource_args[@]}"}
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
@@ -366,7 +366,7 @@ is how you confirm which round just landed):
 
 - **`H > 0` or `M > 0`, and rounds remain** → run [`escalate.sh`](#escalation-by-script) first
   (a second round with findings moves the attempt up), then spawn a **fix round**:
-  `spawn.sh ... --role fix --round <K> --attempt <A> --env DATABASE_URL=postgres://...` (repeat
+  `spawn.sh ... --role fix --round <K> --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat
   every provisioned pair). A **fresh** session every round: nothing compounds, and the fixer is
   not defending its own code.
 - **clean, or the cap is spent** → the issue joins the **merge queue**.
@@ -484,7 +484,7 @@ deviation is an escalation, not a consult); if it prints nothing:
 ```bash
 bash ~/.claude/kit/infra/scripts/consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" consulted '{"n":<N>}'
-bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." --env DATABASE_URL=postgres://...
+bash ~/.claude/kit/infra/scripts/worker-resume.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A> --answer "Consult posted: read the newest **Consult** comment on #<N> and follow its decision." ${resource_args[@]+"${resource_args[@]}"}
 ```
 
 **If `consult.sh` refuses instead** ("past the cap", only for a claude-backed worker — it
@@ -501,7 +501,7 @@ resume`**: the sandbox does not carry over and there is no `-C`, so a hand-writt
 offline and fails its own `gh` protocol silently ([infra's
 README](../../../infra/README.md#escalation-on-a-codex-worker)). For a claude session, **offer
 both routes. Recommend one.** When resuming after a human answer, pass the same per-issue pairs:
-`worker-resume.sh ... --answer "..." --attempt <A> --env DATABASE_URL=postgres://...` (repeat
+`worker-resume.sh ... --answer "..." --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat
 every provisioned pair).
 
 > #14's session is asking whether the retry budget is per-request or per-session. I can relay the
@@ -536,7 +536,7 @@ review (own budget, below), or a context past 256K. On a hit it has posted `**Ha
    for a codex row; verify nothing is still busy.
 2. `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"<reason>","attempt":<A>}'`.
 3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`), re-passing
-   every provisioned pair: `spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> --env DATABASE_URL=postgres://...`.
+   every provisioned pair: `spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> ${resource_args[@]+"${resource_args[@]}"}`.
    The worktree carries every commit; the thread carries the plan, consults, deviations and the handoff — nothing is relayed.
 4. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
