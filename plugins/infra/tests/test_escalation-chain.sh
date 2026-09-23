@@ -204,5 +204,19 @@ assert_equals "the reviewer got its prompt as one argument" "$(cat "$WORK/review
 escalate --attempt 0
 assert_empty "no signal" "$OUT"
 
+echo "BLOCKED: an infra gap is its own report, never a failure or a deviation"
+rm -rf "$CODEX_ROOT"
+STUB_REPORT='{"issue":12,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}' \
+    spawn --attempt 0 >/dev/null
+wait_exit
+assert_equals "worker-report surfaces it as its own line" \
+    "$(bash "$INFRA/worker-report.sh" r1 12 --interval 1 --timeout 20 2>/dev/null)" "issue 12 blocked infra: postgres"
+escalate --attempt 0
+assert_equals "escalate.sh exit 0" "$RC" "0"
+assert_empty "escalate.sh prints no signal" "$OUT"
+assert_equals "and posts no handoff" "$(posted)" "no"
+assert_contains "session-status shows it blocked, not failed" \
+    "$(bash "$INFRA/session-status.sh" r1 12 2>/dev/null)" "codex blocked"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
