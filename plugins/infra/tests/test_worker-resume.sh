@@ -363,7 +363,7 @@ assert_equals "the last ledger line records round 4's verdict" \
     "$(tail -1 "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
 
 run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
-assert_equals "--round is no longer accepted by worker-resume.sh" "$RC" "1"
+assert_equals "resume refuses the removed --round flag" "$RC" "1"
 assert_contains "and reports an unknown flag" "$ERR" "unknown flag"
 
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
