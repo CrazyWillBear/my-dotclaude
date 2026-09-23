@@ -308,6 +308,8 @@ assert_matches "two-at-a-time is not built yet" "$BODY" "not built"
 assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|are .?.?automatic"
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
 assert_contains "end-of-run integration review calls follow-up.sh" "$BODY" 'follow-up.sh" --integration "$RUNID" "$base"'
+assert_contains "integration review has a 10-minute Bash timeout" "$BODY" 'Run it with a 10-minute Bash timeout (`timeout: 600000`)'
+assert_contains "integration review waits when Bash backgrounds the call" "$BODY" "if Bash backgrounds it, wait for it."
 END_RUN="$(sed -n '/^# End of run$/,$p' "$SKILL_FILE")"
 integration_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- '--integration' | head -1 | cut -d: -f1)
 preview_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- 'merge-fold.sh" --preview' | head -1 | cut -d: -f1)

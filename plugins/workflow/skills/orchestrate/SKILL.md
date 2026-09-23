@@ -619,6 +619,7 @@ instead of buried under a success table:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" --integration "$RUNID" "$base" "$(git rev-parse HEAD)" "$GRAPH"
    ```
+   Run it with a 10-minute Bash timeout (`timeout: 600000`); if Bash backgrounds it, wait for it.
    After the fold, review `$base..HEAD` for cross-issue problems only on the highest tier's reviewer
    cell. File high/medium findings as one follow-up with no dependents.
    Log `integration-review`; put its result in the end-merge offer beside the preview. Report any
