@@ -265,7 +265,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/ready.sh" "$GRAPH" \
      --merged <each merged issue> --held <each user or run-log-held issue> --in-flight <each in flight>
 ```
 
-`--held` includes the user's explicit holds and every issue in `run-log.sh state`'s `held=` field. Pass those issue numbers on every readiness check. It is never "waiting on a blocker": ready.sh works that out from the graph itself.
+`--held` means **a dependent the user chose to hold** (their explicit holds), plus any issue in `run-log.sh state`'s `held=` field (only a failed `follow-up.sh` writes one, for the user to decide). Pass those issue numbers on every readiness check. It is never "waiting on a blocker" and never a capped merge's dependent: ready.sh works out blockers, including a follow-up, from the graph itself.
 
 - **numbers on stdout** → admissible, ascending. Admit the lowest-numbered ones until `--max` slots
   are full.
