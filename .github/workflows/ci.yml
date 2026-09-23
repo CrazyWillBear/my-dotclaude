@@ -76,5 +76,8 @@ jobs:
 
           exit "$status"
 
+      - name: Check every plugins/*/ dir is listed in the marketplace manifest
+        run: bash scripts/check-marketplace-plugins.sh
+
       - name: Check version consistency
         run: bash scripts/check-version-consistency.sh

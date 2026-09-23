@@ -11,18 +11,14 @@
 REPO="CrazyWillBear/my-dotclaude"
 RAW_BASE="https://raw.githubusercontent.com/${REPO}/main"
 OUR_MARKETPLACE="my-dotclaude"
-PERSONAL_PLUGIN="personal-tools@${OUR_MARKETPLACE}"
-WORKFLOW_PLUGIN="workflow@${OUR_MARKETPLACE}"
-CAVEMAN_REPO="JuliusBrussee/caveman"
-CAVEMAN_PLUGIN="caveman@caveman"
+PONYTAIL_REPO="DietrichGebert/ponytail"
+PONYTAIL_PLUGIN="ponytail@ponytail"
 # Anthropic's official marketplace ships with Claude Code (usually already registered);
 # agent-sdk-dev scaffolds new Claude Agent SDK apps.
 OFFICIAL_MARKETPLACE_REPO="anthropics/claude-plugins-official"
 AGENT_SDK_PLUGIN="agent-sdk-dev@claude-plugins-official"
-# Composio marketplace (third-party): perf (perf-investigation workflow) +
-# security-guidance (advisory PreToolUse hook).
+# Composio marketplace (third-party): security-guidance (advisory PreToolUse hook).
 COMPOSIO_MARKETPLACE_REPO="ComposioHQ/awesome-claude-plugins"
-PERF_PLUGIN="perf@awesome-claude-plugins"
 SECURITY_GUIDANCE_PLUGIN="security-guidance@awesome-claude-plugins"
 # security-sweep (third-party, read-only scan skill): its repo is its own marketplace.
 SECURITY_SWEEP_REPO="Onome-AJ/security-sweep-plugin"
@@ -57,6 +53,7 @@ tcr_require() {
 tcr_check_deps() {
   tcr_require git "Install git, then re-run."
   tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+  tcr_require python3 "Install python3, then re-run."
   # curl is only needed for the remote-template path.
   if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
     tcr_require curl "Install curl, or run this script from a local checkout of the repo."
@@ -94,15 +91,53 @@ tcr_install_plugin() {
   fi
 }
 
-# Installs the workflow plugin (the autonomous dev loop + context watchdog).
-# Assumes our marketplace is already added (call tcr_add_our_marketplace first).
-tcr_install_workflow() {
-  tcr_install_plugin "$WORKFLOW_PLUGIN"
+# Prints, one per line, every plugin name listed in our marketplace manifest
+# (.claude-plugin/marketplace.json — from TCR_LOCAL_ROOT when set, else fetched
+# from GitHub). Shared by tcr_install_our_plugins and update-kit.sh, so both
+# derive the plugin list instead of hardcoding plugin names.
+tcr_our_plugin_names() {
+  local mp tmp=""
+  if [ -n "${TCR_LOCAL_ROOT:-}" ] && [ -f "$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json" ]; then
+    mp="$TCR_LOCAL_ROOT/.claude-plugin/marketplace.json"
+  else
+    tmp="$(mktemp)"
+    curl -fsSL "$RAW_BASE/.claude-plugin/marketplace.json" -o "$tmp" \
+      || tcr_die "Could not fetch marketplace manifest from $RAW_BASE."
+    mp="$tmp"
+  fi
+  python3 -c '
+import json, sys
+with open(sys.argv[1]) as fh:
+    data = json.load(fh)
+for p in data["plugins"]:
+    print(p["name"])
+' "$mp"
+  local rc=$?
+  [ -n "$tmp" ] && rm -f "$tmp"
+  [ "$rc" -eq 0 ] || tcr_die "Could not parse marketplace manifest $mp."
 }
 
-tcr_install_caveman() {
-  tcr_add_marketplace "$CAVEMAN_REPO"
-  tcr_install_plugin "$CAVEMAN_PLUGIN"
+# Installs every plugin listed in our marketplace manifest — personal-tools,
+# workflow, and any plugin added there later — instead of one hand-written
+# function per plugin name. Assumes our marketplace is already added (call
+# tcr_add_our_marketplace first).
+# NOTE: this is the ONLY install helper that returns non-zero — every sibling soft-fails via
+# TCR_INSTALL_FAILED and returns 0. The setup scripts run under `set -euo pipefail`, so CALL
+# SITES MUST GUARD IT (`|| TCR_INSTALL_FAILED=1`). Unguarded, a transient curl failure during
+# `curl | bash` aborted the whole installer and silently skipped every later step, none of
+# which need the manifest. Verified 2026-09-17; pinned by test_plugin_wiring.sh.
+tcr_install_our_plugins() {
+  local names
+  names="$(tcr_our_plugin_names)" || return 1
+  local name
+  while IFS= read -r name; do
+    [ -n "$name" ] && tcr_install_plugin "${name}@${OUR_MARKETPLACE}"
+  done <<< "$names"
+}
+
+tcr_install_ponytail() {
+  tcr_add_marketplace "$PONYTAIL_REPO"
+  tcr_install_plugin "$PONYTAIL_PLUGIN"
 }
 
 # Installs agent-sdk-dev from Anthropic's official marketplace (Claude Agent SDK scaffolder).
@@ -111,11 +146,9 @@ tcr_install_agent_sdk_dev() {
   tcr_install_plugin "$AGENT_SDK_PLUGIN"
 }
 
-# Installs the Composio marketplace plugins: perf (perf-investigation workflow) and
-# security-guidance (advisory PreToolUse hook). Both live in one marketplace.
+# Installs the Composio marketplace plugin: security-guidance (advisory PreToolUse hook).
 tcr_install_composio_plugins() {
   tcr_add_marketplace "$COMPOSIO_MARKETPLACE_REPO"
-  tcr_install_plugin "$PERF_PLUGIN"
   tcr_install_plugin "$SECURITY_GUIDANCE_PLUGIN"
 }
 
@@ -172,12 +205,6 @@ tcr_setup_gh() {
   else
     tcr_warn "gh (GitHub CLI) not found — install it from https://cli.github.com and run 'gh auth login'. Claude uses gh for GitHub (there is no GitHub MCP)."
   fi
-}
-
-# Installs personal-tools. Assumes our marketplace is already added (call
-# tcr_add_our_marketplace before this).
-tcr_install_personal_tools() {
-  tcr_install_plugin "$PERSONAL_PLUGIN"
 }
 
 # --- system tools ------------------------------------------------------------
@@ -249,20 +276,20 @@ tcr_install_ctags() {
   fi
 }
 
-# --- caveman level -----------------------------------------------------------
+# --- ponytail level ----------------------------------------------------------
 
-tcr_caveman_config_path() {
+tcr_ponytail_config_path() {
   if [ -n "${XDG_CONFIG_HOME:-}" ]; then
-    printf '%s/caveman/config.json' "$XDG_CONFIG_HOME"
+    printf '%s/ponytail/config.json' "$XDG_CONFIG_HOME"
   else
-    printf '%s/.config/caveman/config.json' "$HOME"
+    printf '%s/.config/ponytail/config.json' "$HOME"
   fi
 }
 
-# tcr_set_caveman_level <lite|full|ultra|...>
-# Sets caveman's machine-wide default mode by merging into its config.json.
-tcr_set_caveman_level() {
-  tcr_merge_json_string "$(tcr_caveman_config_path)" defaultMode "$1"
+# tcr_set_ponytail_level <lite|full|ultra|...>
+# Sets ponytail's machine-wide default mode by merging into its config.json.
+tcr_set_ponytail_level() {
+  tcr_merge_json_string "$(tcr_ponytail_config_path)" defaultMode "$1"
 }
 
 # --- global (~/.claude) install ----------------------------------------------
@@ -319,7 +346,7 @@ tcr_install_global_claudemd() {
 # Merge one string key into a JSON object file, preserving every other key.
 # Creates the file when absent. Never overwrites a non-empty file it cannot
 # parse — it warns and leaves that file untouched, so it can't silently eat an
-# existing config (settings.json hooks/permissions, caveman settings, …). Backs
+# existing config (settings.json hooks/permissions, ponytail settings, …). Backs
 # up before a successful overwrite.
 tcr_merge_json_string() {
   local cfg="$1" key="$2" value="$3"
@@ -519,7 +546,7 @@ PY
 # tcr_install_statusline — install the default statusline renderer to
 # ~/.claude/statusline.py and point settings.json's statusLine at it. Always
 # overwrites any existing statusLine (a timestamped settings.json backup is
-# kept); the renderer folds the caveman mode badge in, so nothing is lost.
+# kept); the renderer folds the ponytail mode badge in, so nothing is lost.
 # Dev install only — setup-simple.sh leaves the status line plain.
 tcr_install_statusline() {
   local src="global/statusline.py"

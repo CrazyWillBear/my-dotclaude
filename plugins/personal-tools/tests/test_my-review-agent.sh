@@ -3,18 +3,18 @@
 # Tests for agents/my-review.md — the my-review agent prose.
 #
 # The agent is prose — not executable code — so we validate its frontmatter and
-# the content obligations the /pipeline severity-routing contract depends on:
+# the content obligations the severity-routing contract depends on:
 #
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter pins model: opus and effort: xhigh. The Agent tool has no
 #      effort parameter, so this pin GOVERNS every Agent-tool spawn — including
-#      /pipeline's tier-routed one, which overrides model per call but cannot
+#      a caller's tier-routed one, which overrides model per call but cannot
 #      touch effort. (Workflow agent() does take opts.effort, so /orchestrate
 #      routes it per call.)
 #   3. The 4-tier severity taxonomy (critical/high/medium/low) is present and
 #      the old blocker/warning/nit vocabulary is gone.
 #   4. The verdict line re-anchors APPROVE WITH NITS to only-low findings.
-#   5. The machine-readable ```findings block spec is present (the pipeline
+#   5. The machine-readable ```findings block spec is present (the caller
 #      routes off this block), including the replan flag and empty-when-clean.
 #   6. The ❓ unverified tag survives the migration.
 #   7. (issue #66) my-review now folds in the central-mechanism / mock-drift
@@ -78,6 +78,35 @@ assert_contains "low tier present" "$content" "**low**"
 # ---------------------------------------------------------------------------
 echo "test: old blocker/warning/nit vocabulary is gone"
 assert_not_contains "blocker severity absent" "$content" "blocker"
+
+# ---------------------------------------------------------------------------
+# Measured from real sessions: buggy-code was the single largest friction, and the
+# shape was always the same — a plausible API that doesn't exist, a version-only
+# feature that breaks CI, a test that passes with the impl stubbed, a README
+# snippet that fails if you run it. A flat checklist misses all four because each
+# one LOOKS correct on the page. These assertions pin the "verify, don't recall"
+# obligation so it can't quietly rot back out.
+echo "test: the reviewer verifies against what is installed rather than from memory"
+assert_contains "checks APIs against the installed package" "$content" "installed"
+assert_contains "names the from-memory failure explicitly" "$content" "never from memory"
+assert_contains "checks version/runtime compatibility" "$content" "Version-compat"
+assert_contains "checks for tests that assert nothing" "$content" "deleted or stubbed"
+assert_contains "checks doc snippets actually run" "$content" "ran it verbatim"
+
+# ---------------------------------------------------------------------------
+echo "test: review attention is weighted by blast radius, not spread flat"
+assert_contains "weighting section present" "$content" "Weight by blast radius"
+assert_contains "names auth as high-blast-radius" "$content" "auth and session handling"
+assert_contains "names money paths" "$content" "anything that"
+assert_contains "names destructive/irreversible areas" "$content" "data deletion"
+
+# ---------------------------------------------------------------------------
+# Lows are fixed in-run now, never parked on a backlog. That makes every reported
+# nit cost a real fix round, which is the only thing that keeps nit volume sane.
+echo "test: lows are fixed in-run, and the reviewer is told its nits cost a round"
+assert_contains "lows are not backlogged" "$content" "not** parked on a backlog"
+assert_contains "every finding gets fixed before landing" "$content" "gets fixed"
+assert_contains "states the bar for reporting" "$content" "would not spend a round on it"
 
 # ---------------------------------------------------------------------------
 echo "test: verdict line re-anchors WITH NITS to only-low findings"

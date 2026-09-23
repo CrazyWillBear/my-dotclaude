@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Tests for agents/implementer.md — the shared /orchestrate + /pipeline implementer.
+# Tests for agents/implementer.md — /orchestrate's implementer, both lanes.
 #
 # The agent is prose — not executable code — so we validate the two input shapes
-# and, above all, that generalizing it for /pipeline did NOT drop any of the
-# obligations /orchestrate depends on (this test is the structural regression
-# lock for the issue contract):
+# and, above all, that the obligations the run depends on are all still stated
+# (this test is the structural regression lock for the issue contract):
 #
-#   1. File exists at the expected discovery path; model pins to sonnet and
-#      effort stays xhigh.
+#   1. File exists at the expected discovery path; model pins to opus (the
+#      fallback for a spawn that omits an override — sonnet left the roster in
+#      #104) and effort stays max.
 #   2. Both input shapes are described: issue (number + body + worktree +
 #      issue-<N> branch) and work order (plan text + worktree + branch +
 #      commit-scope hint).
@@ -47,10 +47,11 @@ if [ -f "$AGENT_FILE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-echo "test: frontmatter — name, model: sonnet pin, and xhigh effort survive"
+echo "test: frontmatter — name, model: opus pin, and max effort survive"
 assert_contains "name field present" "$content" "name: implementer"
-assert_contains "model pinned to sonnet" "$content" "model: sonnet"
-assert_contains "effort stays xhigh" "$content" "effort: xhigh"
+assert_contains "model pinned to opus (sonnet is out of the roster, #104)" "$content" "model: opus"
+assert_not_contains "no sonnet fallback" "$content" "model: sonnet"
+assert_contains "effort stays max" "$content" "effort: max"
 
 # ---------------------------------------------------------------------------
 echo "test: issue input shape present (orchestrate contract)"
@@ -60,7 +61,7 @@ assert_contains "issue branch naming" "$content" "issue-<N>"
 assert_contains "absolute worktree path input" "$content" "absolute worktree path"
 
 # ---------------------------------------------------------------------------
-echo "test: work order input shape present (pipeline contract)"
+echo "test: work order input shape present"
 assert_contains "work order shape named" "$content" "Work order"
 assert_contains "plan text input" "$content" "plan text"
 assert_contains "commit-scope hint input" "$content" "commit-scope hint"
@@ -97,8 +98,53 @@ assert_contains "heredoc commit" "$content" 'commit -F -'
 # ---------------------------------------------------------------------------
 echo "test: orchestrate obligations intact — worktree boundaries"
 assert_contains "never create worktrees" "$content" "Never run \`git worktree add\`"
-assert_contains "no push/merge/rebase" "$content" "not** push, merge, rebase"
+assert_contains "no merge/rebase/branch switching" "$content" "not** merge, rebase"
+assert_contains "never merge, PR, close or edit" "$content" "Never merge, never open a PR, never close or edit"
+# push is DELIBERATELY allowed now — the worker pushes its own branch. Only the
+# irreversible, outward-facing writes are the main thread's.
+assert_not_contains "push is not forbidden" "$content" "Do **not** push"
 assert_contains "stop and report on blockers" "$content" "stop and report"
+
+echo "test: the issue thread is read BEFORE anything is planned"
+assert_contains "reads the comments first" "$content" "gh issue view <N> --comments"
+assert_contains "says why: rulings live in comments" "$content" "not** in the body"
+assert_contains "posts the tackled line" "$content" "Tackled #<N> on branch issue-<N>"
+assert_contains "brevity framed as correctness" "$content" "correctness property"
+
+echo "test: follow the Plan; stop on deviation, never improvise (#104)"
+assert_contains "the Plan comment is followed" "$content" "**Plan**"
+assert_contains "follows it step by step" "$content" "Follow it
+step by step"
+assert_contains "a false assumption is a stop" "$content" "do not improvise"
+assert_contains "the Deviation comment" "$content" "**Deviation**"
+assert_contains "names which step" "$content" "which step"
+assert_contains "what was found" "$content" "what you found"
+assert_contains "what was tried" "$content" "what you tried"
+assert_contains "a session pauses by escalating WITH the deviation: prefix" "$content" "issue <N> escalate deviation: <the same"
+assert_contains "a codex worker pauses with the escalate status" "$content" '"status": "escalate"'
+assert_contains "and the same prefix in note" "$content" '"note": "deviation: <the same three lines>"'
+assert_contains "the prefix is named as the dispatch key" "$content" "prefix is load-bearing"
+assert_contains "the Consult answers it" "$content" "**Consult N**"
+assert_contains "and the decision is followed" "$content" "Follow it.**"
+assert_contains "the consult cap is stated" "$content" "capped"
+
+echo "test: the context map is a hint the implementer may ignore"
+assert_contains "reads CONTEXT-MAP.md if present" "$content" "CONTEXT-MAP.md"
+assert_contains "hint, not a contract" "$content" "hint, not a contract"
+assert_contains "does not maintain it" "$content" "Do not try to repair or update it"
+
+echo "test: commit-per-green-sub-step is framed as RECOVERY, not hygiene"
+assert_contains "commits after every green sub-step" "$content" "Commit after every green sub-step"
+assert_contains "names it the recovery mechanism" "$content" "recovery mechanism"
+assert_contains "explains the resume-from-last-commit property" "$content" "resumes from your **last commit**"
+
+echo "test: a session implementer is told its plain output is invisible"
+assert_contains "says output is invisible" "$content" "invisible to the orchestrator"
+assert_contains "reports with SendMessage" "$content" "SendMessage"
+assert_contains "fixed-shape built line" "$content" "issue <N> built head="
+assert_contains "fixed-shape failure line" "$content" "issue <N> failed"
+assert_contains "escalation line" "$content" "issue <N> escalate"
+assert_contains "and a subagent reports in its final text instead" "$content" "running as a subagent"
 
 # ---------------------------------------------------------------------------
 echo "test: done-check obligation intact"

@@ -3,16 +3,17 @@
 # Tests for skills/my-review/SKILL.md — the /my-review slash-command prose.
 #
 # The skill is prose — not executable code. It became a main-thread launcher:
-# it asks whether to run on opus or fable, then spawns the my-review agent on
-# that model. We validate:
+# it decides opus vs fable itself — never asking — then spawns the my-review
+# agent on that model. We validate:
 #
 #   1. File exists at the expected discovery path.
 #   2. Frontmatter names the skill and drops the `agent:` executor (it now
 #      spawns the agent explicitly via the Agent tool instead of running inside
-#      it), declaring Agent + AskUserQuestion + git/gh Bash in allowed-tools.
+#      it), declaring Agent + git/gh Bash in allowed-tools — and NOT
+#      AskUserQuestion, because the model pick is never asked.
 #   3. The reviewer model is picked forward-or-judge: --complexity wins, else a
-#      tier judged from a cheap diff peek; complex asks opus vs fable,
-#      not-complex picks opus with no prompt (no blind ask). It stays
+#      tier judged from a cheap diff peek; complex picks opus or fable
+#      itself, not-complex picks opus, and neither prompts. It stays
 #      dependency-free of the workflow plugin (no classify-task / resolve-tier.sh).
 #   4. The spawn uses subagent_type: personal-tools:my-review with a model
 #      override.
@@ -53,10 +54,9 @@ assert_contains "name field present" "$content" "name: my-review"
 assert_not_contains "agent: executor dropped" "$content" "agent: my-review"
 
 # ---------------------------------------------------------------------------
-echo "test: allowed-tools declares Agent + AskUserQuestion + git/gh Bash"
+echo "test: allowed-tools declares Agent + git/gh Bash, and never AskUserQuestion"
 assert_contains "allowed-tools present" "$content" "allowed-tools:"
 assert_contains "Agent tool allowed" "$content" "Agent"
-assert_contains "AskUserQuestion tool allowed" "$content" "AskUserQuestion"
 assert_contains "git Bash allowed for the diff peek" "$content" "Bash(git:*)"
 assert_contains "gh Bash allowed for the PR diff peek" "$content" "Bash(gh:*)"
 
@@ -65,9 +65,13 @@ echo "test: forward-or-judge tier selection (--complexity wins, else a diff peek
 assert_contains "--complexity flag honored" "$content" "--complexity"
 assert_contains "forward-or-judge described" "$content" "forward-or-judge"
 assert_contains "cheap diff peek to judge the tier" "$content" "diff peek"
-assert_contains "complex offers opus" "$content" "opus"
-assert_contains "complex offers fable" "$content" "fable"
-assert_contains "not complex → no prompt" "$content" "no prompt"
+assert_contains "opus is the default pick" "$content" "opus"
+assert_contains "fable stays reachable for the deepest complex diff" "$content" "fable"
+assert_contains "no prompt at the model step" "$content" "no prompt"
+# Red in both directions: the whole point is that this step never asks. If
+# AskUserQuestion comes back anywhere in the skill — allowed-tools or prose —
+# the model pick is a question again and this must fail.
+assert_not_contains "the model pick never asks" "$content" "AskUserQuestion"
 
 # ---------------------------------------------------------------------------
 echo "test: spawn literals — subagent_type + model override"

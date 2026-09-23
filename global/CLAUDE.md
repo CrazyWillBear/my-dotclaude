@@ -81,6 +81,6 @@ stack another worktree on top inside an orchestrate run or any workflow subagent
 
 ## Communication
 
-Be concise. Lead with the answer, skip the preamble, and don't pad. (caveman handles
-tone when it's installed; this holds regardless.)
+Be concise. Lead with the answer, skip the preamble, and don't pad. (ponytail handles
+code minimalism when it's installed; this holds regardless.)
 

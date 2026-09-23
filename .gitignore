@@ -16,3 +16,4 @@ Thumbs.db
 
 # Per-issue worktrees created by /orchestrate (workflow plugin)
 .worktrees/
+CONTEXT-MAP.md

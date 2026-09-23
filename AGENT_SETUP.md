@@ -5,11 +5,11 @@ from the **my-dotclaude** repo. Both paths install the same full kit **user-wide
 `~/.claude`, not a project folder); they differ only in audience. Keep the user informed
 in plain language as you go:
 
-- **Developer setup** — global technical `CLAUDE.md`, the personal-tools + workflow +
-  caveman + agent-sdk-dev plugins, the Playwright MCP, a `gh` allowlist (read-only reads +
-  issue-write), and `model=opus`.
+- **Developer setup** — global technical `CLAUDE.md`, the context + personal-tools + infra +
+  workflow + swarm plugins plus ponytail, agent-sdk-dev, security-guidance and security-sweep,
+  the Playwright MCP, a `gh` allowlist (read-only reads + issue-write), and `model=opus`.
 - **Non-developer setup** — the same kit, but with a plain-English global `CLAUDE.md`,
-  caveman set to `lite`, and the model left at Claude Code's default.
+  ponytail set to `lite`, and the model left at Claude Code's default.
 
 ### Pick the path — ask first
 
@@ -70,14 +70,16 @@ macOS / Linux / WSL only (on Windows, run under WSL).
 3. Install the plugins (prefer the `claude` CLI):
    ```bash
    claude plugin marketplace add CrazyWillBear/my-dotclaude
+   claude plugin install context@my-dotclaude
    claude plugin install personal-tools@my-dotclaude
+   claude plugin install infra@my-dotclaude
    claude plugin install workflow@my-dotclaude
-   claude plugin marketplace add JuliusBrussee/caveman
-   claude plugin install caveman@caveman
+   claude plugin install swarm@my-dotclaude
+   claude plugin marketplace add DietrichGebert/ponytail
+   claude plugin install ponytail@ponytail
    claude plugin marketplace add anthropics/claude-plugins-official
    claude plugin install agent-sdk-dev@claude-plugins-official
    claude plugin marketplace add ComposioHQ/awesome-claude-plugins
-   claude plugin install perf@awesome-claude-plugins
    claude plugin install security-guidance@awesome-claude-plugins
    claude plugin marketplace add Onome-AJ/security-sweep-plugin
    claude plugin install security-sweep@security-sweep-marketplace
@@ -124,10 +126,10 @@ macOS / Linux / WSL only (on Windows, run under WSL).
    at Claude Code's default (don't set `model=opus`).
 2. Install the same plugins and the Playwright MCP as the developer fallback above (steps
    3–4), and set up the `gh` allowlist (step 5).
-3. Make caveman a little less terse: set its default level to `lite` by writing
+3. Make ponytail a little gentler: set its default level to `lite` by writing
    `{"defaultMode":"lite"}` (merging if the file exists) into
-   `~/.config/caveman/config.json` (on Windows: `%APPDATA%\caveman\config.json`; if
-   `$XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/caveman/config.json`).
+   `~/.config/ponytail/config.json` (on Windows: `%APPDATA%\ponytail\config.json`; if
+   `$XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/ponytail/config.json`).
 
 Finish by telling the user, in plain words, that everything is ready: they should close
 and reopen Claude Code, then just describe what they want to build — you'll handle the
@@ -147,8 +149,8 @@ Releases and reach the machine like this:
 - **`/check-updates`** asks on demand, printing `kit is up to date (vX.Y.Z)` or
   `vX.Y.Z available — run /update-kit to upgrade`.
 - **`/update-kit`** applies the latest release: it updates the `my-dotclaude` marketplace
-  entry and both the `personal-tools` and `workflow` plugins, then reminds the user to
-  **restart Claude Code** so the new versions load.
+  entry and every plugin listed in its manifest, refreshes the status line, then reminds the
+  user to **restart Claude Code** so the new versions load.
 
 When you finish a setup, mention these to the user in plain language so they know how
 they'll get updates.

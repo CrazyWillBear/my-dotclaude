@@ -2,8 +2,9 @@
 #
 # Developer setup — installs the full user-wide Claude Code kit into ~/.claude:
 # the global CLAUDE.md (technical), model=opus, a default context status line,
-# the personal-tools + workflow + caveman + agent-sdk-dev + perf +
-# security-guidance + security-sweep plugins, the Playwright MCP server, and a
+# every plugin our marketplace lists (context, personal-tools, infra, workflow,
+# swarm) plus ponytail, agent-sdk-dev, security-guidance and
+# security-sweep, the Playwright MCP server, and a
 # gh (GitHub CLI) allowlist (read-only reads + issue-write for the dev loop).
 # User scope — not tied to any one project.
 #
@@ -58,8 +59,10 @@ for arg in "$@"; do
 done
 export TCR_FORCE TCR_LOCAL_ROOT
 
-# This path is user-scope (~/.claude), so it only needs claude (and curl when remote).
+# This path is user-scope (~/.claude), so it only needs claude, python3 (used to
+# read/merge JSON below), and curl when remote.
 tcr_require claude "Install Claude Code (the 'claude' CLI), then re-run."
+tcr_require python3 "Install python3, then re-run."
 if [ -z "${TCR_LOCAL_ROOT:-}" ]; then
   tcr_require curl "Install curl, or run this script from a local checkout of the repo."
 fi
@@ -68,14 +71,13 @@ tcr_step "Developer setup into: $HOME/.claude"
 tcr_install_global_claudemd
 tcr_set_setting model opus
 tcr_set_nested_setting worktree.baseRef head   # per-session worktrees branch off current HEAD
-tcr_install_statusline         # default context status line (folds in caveman badge)
+tcr_install_statusline         # default context status line (folds in ponytail badge)
 tcr_install_ctags
 tcr_add_our_marketplace         # register our marketplace (local checkout or repo)
-tcr_install_personal_tools      # from our marketplace
-tcr_install_workflow            # from our marketplace
-tcr_install_caveman
+tcr_install_our_plugins || TCR_INSTALL_FAILED=1   # every plugin our marketplace lists; soft-fail like every sibling (see common.sh)
+tcr_install_ponytail
 tcr_install_agent_sdk_dev
-tcr_install_composio_plugins    # third-party: perf + security-guidance
+tcr_install_composio_plugins    # third-party: security-guidance
 tcr_install_security_sweep      # third-party: read-only security-scan skill
 tcr_install_playwright_mcp
 tcr_setup_gh
@@ -86,5 +88,5 @@ fi
 
 printf '\n%sDone.%s Next:\n' "${_C_BOLD:-}" "${_C_OFF:-}"
 printf '  1. Restart Claude Code so it loads the global CLAUDE.md and plugins.\n'
-printf '  2. Run /plugin to confirm personal-tools, workflow, caveman, agent-sdk-dev, perf, security-guidance, and security-sweep are enabled.\n'
+printf '  2. Run /plugin to confirm context, personal-tools, infra, workflow, swarm, ponytail, agent-sdk-dev, security-guidance, and security-sweep are enabled.\n'
 printf '  3. Run /mcp to confirm the Playwright server, and install gh (https://cli.github.com) + run gh auth login for GitHub.\n'

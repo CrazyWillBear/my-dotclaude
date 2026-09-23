@@ -14,12 +14,13 @@ contradictions and omissions. Read-only — nothing is edited.
 
 Run this in a Bash block. The key is sha1 of the canonical `--git-common-dir` — identical
 from the primary checkout and every linked worktree, so the stash survives EnterWorktree
-(the hook keys the same way):
+(the hook keys the same way, via python hashlib — not `sha1sum`, which isn't on macOS by
+default):
 
 ```bash
 gcd="$(git rev-parse --git-common-dir 2>/dev/null)"
 if [ -n "$gcd" ]; then root="$(cd "$gcd" && pwd -P)"; else root="$(pwd)"; fi
-key="$(printf %s "$root" | sha1sum | cut -c1-16)"
+key="$(python3 -c 'import hashlib,sys; print(hashlib.sha1(sys.argv[1].encode()).hexdigest()[:16])' "$root")"
 stash="${TMPDIR:-/tmp}/verify-plan-session-$key.path"
 log="$([ -s "$stash" ] && cat "$stash" | tr -d '\n')"
 # Stale-path fallback: entering a worktree moves the transcript to another
@@ -38,14 +39,33 @@ stop. Tell the user:
 
 Do nothing else until the user addresses this.
 
-## Step 2 — Oversize guard
+## Step 2 — Distil, then measure the distilled file
 
-Using the `$log` path resolved in Step 1, measure its size:
+**Never measure the raw transcript.** It is mostly not conversation: on a real design
+session, 1.71 MB of JSONL held ~336 KB of thinking, ~265 KB of tool results, ~137 KB of
+tool-call parameters and ~190 KB of harness bookkeeping around just ~138 KB of dialogue.
+Guarding on the raw size trips the cap on exactly the long, reversal-heavy sessions where
+this check is most worth running — and it makes the subagent read 12x the tokens it needs.
+
+So distil first, and use the distilled file everywhere below (including as the log path
+handed to the subagent in Step 4):
 
 ```bash
+out="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/distill-transcript.sh" "$log" \
+        | sed -n 's/.* out=//p')"
+[ -s "$out" ] || { echo "distil failed"; exit 1; }
+log="$out"
 bytes="$(wc -c < "$log")"
 marker="${TMPDIR:-/tmp}/verify-plan-oversize-$key"
 ```
+
+The distiller keeps **every** non-blank user/assistant text block, in order, labelled by
+role, and drops everything else. `thinking` is dropped deliberately even though it is the
+largest single category — it is reasoning the user never saw, containing positions worked
+through and discarded before speaking, so feeding it to a decisions-verifier invites
+mismatches against things that were never decided.
+
+The size guard still applies, on the distilled size:
 
 - `bytes` ≤ **600000** (≈ 150k tokens): remove any stale marker (`rm -f "$marker"`),
   proceed to Step 3.
@@ -86,6 +106,8 @@ structured prompt makes the subagent read the log in tiny chunks and crawl — ~
 > earlier ones. Report any contradictions or omissions, read-only. Lead with
 > `VERDICT: ALIGNED` or `VERDICT: MISMATCHES (n)`.
 
-## Step 5 — Relay the report
+## Step 5 — Report the verdict
 
-Relay the subagent's output verbatim to the user. Do not summarize, filter, or editorialize.
+Lead with the subagent's verdict line. Then give the mismatches, if any, one bullet each
+(what the target says, what the session decided). Drop the confirmations of what matched
+unless the user asks. Do not soften or reinterpret a mismatch.

@@ -4,10 +4,10 @@
 #
 # Black-box: pipe a sample Claude Code stdin JSON into the script with a
 # controlled HOME / CLAUDE_CONFIG_DIR / XDG_CACHE_HOME (so the real machine's
-# caveman flag and update cache never leak in) and assert on the printed line.
+# ponytail flag and update cache never leak in) and assert on the printed line.
 #
 # Covers: dir (~-relative), git branch (+ non-repo omits it), model, effort
-# level (+ absent-hides), token formatting + 0k fallback, cost, caveman fold
+# level (+ absent-hides), token formatting + 0k fallback, cost, ponytail fold
 # (+ symlink refusal), and the update flag.
 #
 # Run: bash setup/tests/test_statusline.sh  (non-zero if any fail)
@@ -21,7 +21,7 @@ SL="$ROOT/global/statusline.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-# Empty scratch config/cache so caveman + update segments stay off by default.
+# Empty scratch config/cache so ponytail + update segments stay off by default.
 EMPTY_CFG="$WORK/empty-cfg"; mkdir -p "$EMPTY_CFG"
 EMPTY_CACHE="$WORK/empty-cache"; mkdir -p "$EMPTY_CACHE"
 
@@ -93,20 +93,20 @@ out=$(run_sl "$json")
 has_not "no branch glyph" "$out" "⎇"
 has "still shows dir" "$out" "~/plain"
 
-# ---- test: caveman fold -----------------------------------------------------
-echo "test: caveman fold"
-CFG="$WORK/cfg-cave"; mkdir -p "$CFG"
-printf 'lite\n' > "$CFG/.caveman-active"
+# ---- test: ponytail fold ----------------------------------------------------
+echo "test: ponytail fold"
+CFG="$WORK/cfg-pony"; mkdir -p "$CFG"
+printf 'lite\n' > "$CFG/.ponytail-active"
 json='{"model":{"display_name":"Opus 4.8"},"workspace":{"current_dir":"'"$PLAIN"'"}}'
 out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$CFG" XDG_CACHE_HOME="$EMPTY_CACHE" python3 "$SL")
-has "caveman:lite shown" "$out" "caveman:lite"
+has "ponytail:lite shown" "$out" "ponytail:lite"
 
-echo "test: caveman flag via symlink -> ignored"
+echo "test: ponytail flag via symlink -> ignored"
 CFG2="$WORK/cfg-link"; mkdir -p "$CFG2"
 printf 'lite\n' > "$WORK/secret-mode"
-ln -s "$WORK/secret-mode" "$CFG2/.caveman-active"
+ln -s "$WORK/secret-mode" "$CFG2/.ponytail-active"
 out=$(printf '%s' "$json" | HOME="$HOME_DIR" CLAUDE_CONFIG_DIR="$CFG2" XDG_CACHE_HOME="$EMPTY_CACHE" python3 "$SL")
-has_not "symlinked flag ignored" "$out" "caveman"
+has_not "symlinked flag ignored" "$out" "ponytail"
 
 # ---- test: cost resets on /clear (session_id change) -----------------------
 # cost.total_cost_usd is process-scoped and survives /clear; the renderer

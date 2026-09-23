@@ -9,7 +9,8 @@
 #   2. Frontmatter pins name: merger, model: opus, and effort: xhigh.
 #      orchestrate's merger spawn passes no explicit model or effort, so this
 #      pin governs outright. The merger is never tier-routed: it is the single
-#      serial worker draining orchestrate's merge queue, and a bad conflict
+#      serial resolver of the fold's conflicted REMAINDER (not the whole queue —
+#      merge-fold.sh lands the conflict-free branches with no model), and a bad conflict
 #      resolution corrupts the base branch for every issue in the run — so it
 #      never gets a cheap model.
 #   3. The per-issue output line carries the MERGE COMMIT SHA. MERGE_SCHEMA
@@ -58,6 +59,18 @@ assert_contains "effort pinned to xhigh" "$content" "effort: xhigh"
 echo "test: the output contract asks for the merge commit sha (MERGE_SCHEMA needs it)"
 assert_contains "merge commit sha requested per issue" "$content" "merge commit sha"
 assert_contains "the sha is read off the base branch" "$content" "rev-parse HEAD"
+
+# ---------------------------------------------------------------------------
+# The fold is what keeps the opus merger OFF the clean path: merge-fold.sh lands
+# every conflict-free branch with plain git, and the agent only resolves the
+# remainder. If this wiring rots, the expensive model silently goes back to doing
+# merges that never needed it — and nothing else would catch that.
+echo "test: the merger runs merge-fold.sh first and only resolves the remainder"
+assert_contains "invokes the fold helper" "$content" "scripts/merge-fold.sh"
+assert_contains "the fold runs before any hand merge" "$content" "run the fold first"
+assert_contains "merged lines are not re-merged" "$content" "Do not re-merge it"
+assert_contains "the agent's job is the remainder" "$content" "resolve the remainder"
+assert_contains "explains the fold is order-dependent by design" "$content" "order-dependent by design"
 
 # ---------------------------------------------------------------------------
 # The merger continues through the batch after a stop ("After all merges" runs
