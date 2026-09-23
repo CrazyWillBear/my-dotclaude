@@ -149,8 +149,19 @@ CMD=(codex exec resume "$THREAD"
      -c "approval_policy=never"
      -c "sandbox_mode=workspace-write"
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Resume does not inherit the spawn's shell environment policy. Re-pass the
+# name-filter override when an explicitly provisioned value needs it.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    for _pair in "${ENVS[@]}"; do
+        case "${_pair%%=*}" in
+            *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*)
+                CMD+=(-c 'shell_environment_policy.ignore_default_excludes=true')
+                break ;;
+        esac
+    done
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$PROMPT")

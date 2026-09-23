@@ -490,8 +490,20 @@ CMD=(codex exec
      -c "approval_policy=never"
      -s workspace-write
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Some Codex configurations drop names containing KEY, SECRET or TOKEN from the
+# worker's shell commands. Override that name filter when one of those names was
+# explicitly provisioned; keep the values in the process environment, not argv.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    for _pair in "${ENVS[@]}"; do
+        case "${_pair%%=*}" in
+            *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*)
+                CMD+=(-c 'shell_environment_policy.ignore_default_excludes=true')
+                break ;;
+        esac
+    done
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$TASK")
