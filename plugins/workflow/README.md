@@ -122,8 +122,10 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
    comment. Nothing compounds, and the fixer is not defending its own code. The per-attempt
    `review-cap` moves a second review with open high/medium findings up the model chain. A recurring
    finding triggers `recurrence:` → `consult.sh decide` before the next fix round; if that round does
-   not reduce high + medium, `no-progress:` ends the loop. `ESCALATE_ROUND_BACKSTOP=20` is the
-   issue-wide safety net across attempts. Review counts come from the authoritative source per
+   not reduce high + medium, `no-progress:` ends the loop. Claude-backed attempts retain the five fix-round review cap
+   (initial build review free), counted across attempts from thread comments; after a `Decision`, they also stop as
+   `no-progress` if high + medium does not fall. `ESCALATE_ROUND_BACKSTOP=20` is the Codex script's issue-wide
+   safety net. Review counts come from the authoritative source per
    backend — the thread's review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a
    codex-backed one (its worker can post that comment too) — never a field kept separately.
 6. **Merge is a fold first.** `merge-fold.sh` lands every conflict-free branch with plain git, testing

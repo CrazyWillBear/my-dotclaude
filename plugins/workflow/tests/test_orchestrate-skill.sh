@@ -207,6 +207,14 @@ assert_contains "the backstop signal is named" "$BODY" "backstop: "
 assert_contains "the round backstop threshold is listed" "$BODY" "ESCALATE_ROUND_BACKSTOP"
 assert_matches "no-progress ends the loop, no respawn" "$BODY" "no-progress.{0,300}(no respawn|loop ends|ends the loop)"
 assert_matches "review-cap is per attempt" "$BODY" "review-cap.{0,200}attempt"
+assert_contains "Claude no-progress uses review comments" "$BODY" 'read the two newest `**Review round**` comments on the thread'
+assert_contains "Claude no-progress follows a Decision" "$BODY" 'after a `**Decision**` consult'
+assert_contains "Claude no-progress compares high + medium" "$BODY" 'if high + medium does not fall, end as `no-progress`'
+assert_contains "Claude keeps the five fix-review cap" "$BODY" 'stop after five fix-round reviews total'
+assert_contains "the initial build review remains free" "$BODY" '(the initial build review is free)'
+
+README_BODY="$(cat "$PLUGIN_ROOT/README.md")"
+assert_contains "workflow README preserves the Claude five-review cap" "$README_BODY" 'Claude-backed attempts retain the five fix-round review cap'
 
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"

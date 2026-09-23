@@ -348,7 +348,7 @@ is how you confirm which round just landed):
 - **`H > 0` or `M > 0`, and `escalate.sh` printed no stop** → run [`escalate.sh`](#escalation-by-script) first
   (a second round with findings moves the attempt up). **If it prints `recurrence: <area>`** the same finding keeps coming back: not an escalation — no handoff, same attempt — run the decide before the fix round, `bash ~/.claude/kit/infra/scripts/consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>` then `run-log.sh append "$RUNID" consulted '{"n":<N>}'`; the fixer reads the newest **Consult**. If it refuses (past the cap, no **Decision**), spawn the fix round anyway — the per-attempt `review-cap` is the model escalation on the next round.
   - **If it prints `no-progress: …` or `backstop: …`**, the loop for this issue ends: no handoff, no respawn, no further fix round. Run `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"no-progress","attempt":<A>}'` (or `"backstop"`); the issue joins the merge queue capped.
-  - `escalate.sh` exempts claude-backed attempts, so stop at `ESCALATE_ROUND_BACKSTOP` counted from the thread's `**Review round**` comments.
+  - **Claude-backed attempts:** `escalate.sh` skips them. For each report, read the two newest `**Review round**` comments on the thread; after a `**Decision**` consult in this attempt, if high + medium does not fall, end as `no-progress` and log reason `no-progress`. With findings still open, stop after five fix-round reviews total (the initial build review is free), counted across attempts; log reason `backstop`.
   If the loop continues, spawn a **fix round**: `spawn.sh ... --role fix --round <K> --attempt <A> ${resource_args[@]+"${resource_args[@]}"}` (repeat every provisioned pair). A **fresh** session every round: nothing compounds, and the fixer is not defending its own code.
 - **clean, or `no-progress:` / `backstop:` ended the loop** → the issue joins the **merge queue**.
 - **`issue <N> failed <why>`** → run [`escalate.sh`](#escalation-by-script). Below the top it
@@ -513,7 +513,8 @@ It prints **one line** — `<reason>: <detail>` — or nothing, from artifacts t
 when the second review in this attempt still has high or medium findings; the same high/medium area
 in the newest 2 review rounds (`recurrence: <area>` — a decide, not a handoff; see the report
 handling); `no-progress` after a planner decision when a later round does not reduce high + medium,
-or `backstop` at `ESCALATE_ROUND_BACKSTOP` rounds for the issue. It also catches an event log
+or `backstop` at `ESCALATE_ROUND_BACKSTOP` rounds for a Codex-backed issue. Claude-backed
+attempts use the thread-based stop rules in the report handling above. It also catches an event log
 untouched for 20 minutes while alive and not in its post-build review (own budget, below), or a
 context past 256K. `no-progress:` and `backstop:` end the loop with no handoff or respawn. On other
 signals it has posted `**Handoff**`. Then:
@@ -529,8 +530,8 @@ signals it has posted `**Handoff**`. Then:
 
 Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
 `ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`,
-`ESCALATE_RECURRENCE_WINDOW`, `ESCALATE_ROUND_BACKSTOP` (default 20; a safety net that should never
-trigger)); run-log counts decide if they move.
+`ESCALATE_RECURRENCE_WINDOW`, `ESCALATE_ROUND_BACKSTOP` (default 20; the Codex safety net, which
+should never trigger)); Claude-backed attempts retain the five fix-round review cap. Run-log counts decide if they move.
 
 ---
 

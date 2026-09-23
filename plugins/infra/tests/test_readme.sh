@@ -46,6 +46,8 @@ assert_contains "escalation respawn keeps role and round" "$BODY" 'spawn.sh --at
 assert_contains "the recurrence window is documented" "$BODY" "ESCALATE_RECURRENCE_WINDOW=2"
 assert_contains "no-progress is documented" "$BODY" "no-progress:"
 assert_contains "the round backstop default is documented" "$BODY" "ESCALATE_ROUND_BACKSTOP=20"
+assert_contains "the Claude-backed fix-review cap is documented" "$BODY" "five fix-round review cap"
+assert_contains "the 20-round backstop is limited to the Codex script path" "$BODY" "Codex safety net"
 assert_matches "occupancy is read from the rollout, not the turn total" "$BODY" "rollout.*joined by the thread id"
 assert_matches "the top of the chain drains" "$BODY" "drains as .?failed.? does"
 assert_matches "the reviewer is claude on the reviewer cell" "$BODY" "It is the claude reviewer"

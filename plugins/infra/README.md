@@ -451,10 +451,12 @@ and the run drains as `failed` does. The same high/medium area in the newest
 orchestrator runs `consult.sh decide` and then the next fix round at the same attempt. The fire
 uses up its round: later wakes stay quiet (no review-cap, no second decide) until that fix round's
 review lands a new one. After the decide, `no-progress:` ends the issue loop when a later review
-does not reduce high + medium findings. `backstop:` ends it at `ESCALATE_ROUND_BACKSTOP=20` review
-rounds across attempts; both signals post no handoff and cause no respawn, and the orchestrator
-logs the reason before the issue joins the merge queue capped. Claude-backed attempts are exempt
-from the script, so count their thread's `**Review round**` comments toward the same safety net.
+does not reduce high + medium findings. For the Codex script path, `backstop:` ends it at
+`ESCALATE_ROUND_BACKSTOP=20` review rounds across attempts; both signals post no handoff and cause
+no respawn, and the orchestrator logs the reason before the issue joins the merge queue capped.
+Claude-backed attempts skip the script: `/orchestrate` applies the five fix-round review cap
+(initial build review free) and the Decision-based no-progress rule from their thread comments.
+The 20-round setting is the Codex safety net.
 Thresholds: `ESCALATE_STALL_MINUTES=20`,
 `ESCALATE_OCCUPANCY_TOKENS=256000`, `ESCALATE_CONSULT_CAP=2`, `ESCALATE_RECURRENCE_WINDOW=2`,
 `ESCALATE_ROUND_BACKSTOP=20`, `ESCALATE_REVIEW_MINUTES=45` (the
