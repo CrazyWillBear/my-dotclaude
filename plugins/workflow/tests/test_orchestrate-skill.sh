@@ -325,6 +325,14 @@ assert_contains "the split threshold" "$BODY" "--merge-split-at"
 assert_matches "two-at-a-time is not built yet" "$BODY" "not built"
 assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|are .?.?automatic"
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
+assert_contains "end-of-run integration review calls follow-up.sh" "$BODY" 'follow-up.sh" --integration "$RUNID" "$base"'
+assert_contains "integration review has a 10-minute Bash timeout" "$BODY" 'Run it with a 10-minute Bash timeout (`timeout: 600000`)'
+assert_contains "integration review waits when Bash backgrounds the call" "$BODY" "if Bash backgrounds it, wait for it."
+END_RUN="$(sed -n '/^# End of run$/,$p' "$SKILL_FILE")"
+integration_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- '--integration' | head -1 | cut -d: -f1)
+preview_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- 'merge-fold.sh" --preview' | head -1 | cut -d: -f1)
+if [ -n "$integration_offset" ] && [ -n "$preview_offset" ] && [ "$integration_offset" -lt "$preview_offset" ]; then ok "integration review runs before the end-merge preview"; else no "integration review runs before the end-merge preview"; fi
+assert_matches "integration result belongs in the end-merge offer" "$BODY" "integration.{0,80}end-merge offer|end-merge offer.{0,80}integration"
 assert_contains "end merge is previewed against the upstream" "$BODY" 'merge-fold.sh" --preview'
 prev_ln=$(grep -nF 'merge-fold.sh" --preview' "$SKILL_FILE" | head -1 | cut -d: -f1)
 offer_ln=$(grep -nF 'Offer the end merge' "$SKILL_FILE" | head -1 | cut -d: -f1)
@@ -341,6 +349,8 @@ assert_contains "the capped follow-up receives the attempt" "$BODY" 'follow-up.s
 assert_contains "the follow-up re-blocks dependents" "$BODY" "re-blocked"
 assert_contains "the follow-up enters the frozen graph" "$BODY" "enters the frozen graph"
 assert_matches "a failed follow-up holds dependents" "$BODY" "follow-up.sh.*non-zero.*held"
+assert_matches "follow-up.sh gets the issue's attempt" "$BODY" "follow-up.sh.*--attempt <A>"
+assert_contains "run-log table includes integration-review" "$BODY" '| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |'
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"
@@ -378,6 +388,7 @@ assert_matches "and says so in the report" "$BODY" "outlives the run|persistent 
 check_ln=$(grep -nF 'scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref HEAD)"' "$SKILL_FILE" | head -1 | cut -d: -f1)
 base_ln=$(grep -nF 'base=$(git rev-parse HEAD)' "$SKILL_FILE" | head -1 | cut -d: -f1)
 if [ -n "$check_ln" ] && [ -n "$base_ln" ] && [ "$check_ln" -lt "$base_ln" ]; then ok "launch fetch check runs before the base snapshot"; else no "launch fetch check runs before the base snapshot"; fi
+assert_contains "base is recorded in a linked worktree too" "$BODY" 'In either case, first record `base=$(git rev-parse HEAD)`'
 assert_contains "the override flag is documented" "$BODY" "--allow-behind"
 assert_matches "the check result goes in the launch line" "$BODY" "behind.*launch line|launch line.*behind"
 

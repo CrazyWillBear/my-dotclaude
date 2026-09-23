@@ -243,7 +243,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref
 
 With only the base, the fold folds nothing: it fetches the base's upstream and compares. Put the result in the launch line (`upstream none`, up to date, or `behind <base> <n> <upstream>`). Exit **2** = the base is behind: stop before snapshotting and tell the user to pull, or to rerun with `--allow-behind`, which passes the flag through this check. After this launch gate, every in-run fold uses `--allow-behind`: upstream movement during the run must not stall automatic merges.
 
-The run uses **one** worktree, so merges touch its linked checkout and leave the **primary checkout untouched**. Canonicalize with `realpath` first — git may print a relative `.git`. In the primary checkout (`git rev-parse --git-dir` and `--git-common-dir` resolve to the **same** path), record `base=$(git rev-parse HEAD)`, then run **`EnterWorktree(name: "orchestrate-<runid>")`**. Verify `worktree.baseRef` is `head` (installed here) and branches from `HEAD`: built-in `fresh` uses `origin/<default>` and **silently drops local commits**. If `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"`; the worktree is brand-new. If already in a linked worktree (the paths differ), skip; this *is* it.
+The run uses **one** worktree, so merges touch its linked checkout and leave the **primary checkout untouched**. Canonicalize with `realpath` first — git may print a relative `.git`. In either case, first record `base=$(git rev-parse HEAD)` — End of run reviews `$base..HEAD`. In the primary checkout (`git rev-parse --git-dir` and `--git-common-dir` resolve to the **same** path), then run **`EnterWorktree(name: "orchestrate-<runid>")`**. Verify `worktree.baseRef` is `head` (installed here) and branches from `HEAD`: built-in `fresh` uses `origin/<default>` and **silently drops local commits**. If `git rev-parse HEAD` ≠ `$base`, run `git reset --hard "$base"`; the worktree is brand-new. If already in a linked worktree (the paths differ), skip; this *is* it.
 
 **Then exclude the per-issue worktrees** nested at `<baseRepo>/.worktrees/<runid>/issue-<N>`; they would show as untracked during the merge. Add `.worktrees/` idempotently to the repo's **local** exclude, never the tracked `.gitignore`:
 
@@ -528,10 +528,8 @@ signals it has posted `**Handoff**`. Then:
 4. **On a `quota:` reason, skip the remaining codex positions.** The next codex model shares the quota; respawn at the first `A' > A` where `resolve-tier.sh <tier> <A'>` prints `implementer_backend=claude` (the claude cell), or **drain** if there is none.
 5. **If `spawn.sh` refuses** (`past the top of ... chain`): **drain** as `failed` does — stop, report.
 
-Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`,
-`ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`,
-`ESCALATE_RECURRENCE_WINDOW`, `ESCALATE_ROUND_BACKSTOP` (default 20; the Codex safety net, which
-should never trigger)); Claude-backed attempts retain the five fix-round review cap. Run-log counts decide if they move.
+Nothing is resumed across a model change. Thresholds are env-configurable (`ESCALATE_STALL_MINUTES`, `ESCALATE_REVIEW_MINUTES`, `ESCALATE_OCCUPANCY_TOKENS`, `ESCALATE_CONSULT_CAP`,
+`ESCALATE_RECURRENCE_WINDOW`, `ESCALATE_ROUND_BACKSTOP` (default 20; the Codex safety net, which should never trigger)); Claude-backed attempts retain the five fix-round review cap. Run-log counts decide if they move.
 
 ---
 
@@ -569,17 +567,14 @@ with `S ≈ 40k`, `C ≈ 5k`, ≈5.7). Until then, one merger.
   classifier inside the linearization point, which is the measured friction this design exists to
   remove.
 
-A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium
-findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on that follow-up:
+A merge that lands **capped** (its loop ended on `no-progress` or `backstop` with high/medium findings open) runs `follow-up.sh`; capped-merge dependents are re-blocked on that follow-up:
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>
 ```
 
-It files one `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH`
-as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a
-`follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed.
-If `follow-up.sh` exits non-zero, log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
+It files one `ready-for-agent` issue with the open high/medium findings, adds it to `$GRAPH` as a blocker of every scoped dependent (held by `ready.sh` until it is `--merged`), and logs a
+`follow-up` event. It refuses a parent outside the frozen scope; only lows open → nothing filed. If `follow-up.sh` exits non-zero, log each dependent `held` (`run-log.sh append "$RUNID" held '{"n":<dep>,"why":"follow-up failed"}'`) and tell the user.
 
 ---
 
@@ -609,8 +604,8 @@ with real tests:
 | `ready.sh` | readiness + the empty-set classification |
 | `session-status.sh` | worker state, and `--self` |
 | `spawn.sh` | the session command and the worker prompt contract |
-| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up |
-| `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents |
+| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |
+| `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents, and the end-of-run integration review |
 | `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold, the launch check, and the end-merge preview |
 | `scope-graph.sh` | the one graph fetch |
@@ -628,6 +623,12 @@ finishes. Then, on the main thread and in this order — **close first**, so a f
 instead of buried under a success table:
 
 1. **Merge and PR — offered, not taken.**
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" --integration "$RUNID" "$base" "$(git rev-parse HEAD)" "$GRAPH"
+   ```
+   Run it with a 10-minute Bash timeout (`timeout: 600000`); if Bash backgrounds it, wait for it.
+   After the fold, review `$base..HEAD` for cross-issue problems only on the highest tier's reviewer cell. File high/medium findings as one follow-up with no dependents.
+   Log `integration-review`; put its result in the end-merge offer beside the preview. Report any non-zero exit in the offer; never skip it silently.
    ```bash
    target=dev # or main
    target_upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "$target@{upstream}" 2>/dev/null || true)"; preview_ref="${target_upstream:-$target}"

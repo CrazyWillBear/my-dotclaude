@@ -56,7 +56,7 @@ cat >"$RESOLVE_TIER_ROOT/model-tiers.json" <<'JSON'
   "complex":  { "planner": {"backend":"claude","model":"opus","effort":"medium"},
                 "implementer": [ {"backend":"codex","model":"gpt-6-luna","effort":"xhigh"},
                                  {"backend":"claude","model":"opus","effort":"medium"} ],
-                "reviewer": {"backend":"claude","model":"opus","effort":"high"} }
+                "reviewer": {"backend":"claude","model":"opus","effort":"xhigh"} }
 }
 JSON
 
@@ -111,6 +111,7 @@ ledger() {
 
 reset() { rm -f "$WORK/gh-argv" "$WORK/body"; unset STUB_GH_COMMENTS; mkgraph; }
 run() { OUT="$(bash "$FOLLOWUP" "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
+run_from() { local repo="$1"; shift; OUT="$(cd "$repo" && bash "$FOLLOWUP" "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
 creates() { cat "$WORK/gh-argv" 2>/dev/null | grep -c '^create$'; }
 jq_() { python3 -c "import json,sys; g=json.load(open(sys.argv[1])); print($1)" "$G"; }
 
@@ -270,6 +271,96 @@ assert_contains "names the gap" "$ERR" "no ledger"
 reset; rm -rf "$CODEX_RUN_ROOT/r3g"; run r3g 84 complex "$G"
 assert_equals "codex attempt, no ledger: exits 1" "$RC" "1"
 assert_contains "codex attempt, no ledger: names the gap" "$ERR" "no ledger"
+
+# ---------------------------------------------------------------------------
+echo "test: end-of-run integration review runs on the detached merged head"
+INTEGRATION_REPO="$WORK/integration-repo"
+mkdir -p "$INTEGRATION_REPO"
+git -C "$INTEGRATION_REPO" init -q
+git -C "$INTEGRATION_REPO" config user.email t@t.com
+git -C "$INTEGRATION_REPO" config user.name t
+printf 'base\n' >"$INTEGRATION_REPO/base.txt"
+git -C "$INTEGRATION_REPO" add base.txt
+git -C "$INTEGRATION_REPO" commit -qm base
+INTEGRATION_BASE="$(git -C "$INTEGRATION_REPO" rev-parse HEAD)"
+git -C "$INTEGRATION_REPO" checkout -qb issue-1
+printf 'slice one\n' >"$INTEGRATION_REPO/one.txt"
+git -C "$INTEGRATION_REPO" add one.txt
+git -C "$INTEGRATION_REPO" commit -qm 'issue 1'
+git -C "$INTEGRATION_REPO" checkout -qb issue-2 "$INTEGRATION_BASE"
+printf 'slice two\n' >"$INTEGRATION_REPO/two.txt"
+git -C "$INTEGRATION_REPO" add two.txt
+git -C "$INTEGRATION_REPO" commit -qm 'issue 2'
+git -C "$INTEGRATION_REPO" checkout -qb run "$INTEGRATION_BASE"
+git -C "$INTEGRATION_REPO" merge -q --no-ff issue-1 -m 'merge issue 1'
+git -C "$INTEGRATION_REPO" merge -q --no-ff issue-2 -m 'merge issue 2'
+INTEGRATION_HEAD="$(git -C "$INTEGRATION_REPO" rev-parse HEAD)"
+INTEGRATION_GRAPH="$WORK/integration-graph.json"
+cat >"$INTEGRATION_GRAPH" <<'JSON'
+{"issues":[{"n":1,"tier":"standard"},{"n":2,"tier":"complex"}]}
+JSON
+export CLAUDE_LOG="$WORK/claude.log"
+cat >"$BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\nPWD=%s\nHEAD=%s\n' "$*" "$PWD" "$(git rev-parse HEAD)" >>"$CLAUDE_LOG"
+printf '%s' "${CLAUDE_REVIEW_OUT:-}"
+STUB
+chmod +x "$BIN/claude"
+
+echo "test: P1 and P3 findings file one highest-tier follow-up and log counts"
+reset
+export STUB_GH_NEW=900 CLAUDE_REVIEW_OUT=$'- [P1] shared contract broke — one.txt:1\n- [P3] wording nit — two.txt:1'
+cp "$INTEGRATION_GRAPH" "$WORK/integration-before.json"
+run_from "$INTEGRATION_REPO" --integration int_findings "$INTEGRATION_BASE" "$INTEGRATION_HEAD" "$INTEGRATION_GRAPH"
+assert_equals "exits 0" "$RC" "0"
+assert_equals "exactly one gh issue create" "$(creates)" "1"
+ARGV="$(cat "$WORK/gh-argv")"
+BODY="$(cat "$WORK/body")"
+assert_contains "body has the P1 verbatim" "$BODY" "- [P1] shared contract broke — one.txt:1"
+assert_not_contains "body omits the P3" "$BODY" "wording nit"
+assert_contains "labels highest tier complex" "$ARGV" "tier:complex"
+assert_contains "labels ready-for-agent" "$ARGV" "ready-for-agent"
+assert_contains "review uses xhigh reviewer effort" "$(cat "$WORK/claude.log")" "--effort xhigh"
+assert_not_contains "review cwd is outside the source repo" "$(cat "$WORK/claude.log")" "PWD=$INTEGRATION_REPO"
+assert_contains "review checkout is at the frozen head" "$(cat "$WORK/claude.log")" "HEAD=$INTEGRATION_HEAD"
+REPLAY="$(cd "$INTEGRATION_REPO" && HOME="$HOME" bash "$RUNLOG" replay int_findings)"
+assert_contains "logs high count" "$REPLAY" '"high": 1'
+assert_contains "logs medium count" "$REPLAY" '"medium": 0'
+assert_contains "logs low count" "$REPLAY" '"low": 1'
+assert_contains "logs the filed child" "$REPLAY" '"child": 900'
+assert_contains "prints the integration counts" "$OUT" "integration-review: 1 high, 0 medium, 1 low"
+cmp -s "$INTEGRATION_GRAPH" "$WORK/integration-before.json" && ok "graph byte-identical" || no "graph byte-identical"
+
+echo "test: a clean integration review files nothing and logs null child"
+reset
+export CLAUDE_REVIEW_OUT='No findings.'
+run_from "$INTEGRATION_REPO" --integration int_clean "$INTEGRATION_BASE" "$INTEGRATION_HEAD" "$INTEGRATION_GRAPH"
+assert_equals "clean review exits 0" "$RC" "0"
+assert_equals "clean review creates nothing" "$(creates)" "0"
+assert_contains "clean review logs zero counts" "$(cd "$INTEGRATION_REPO" && bash "$RUNLOG" replay int_clean)" '"high": 0, "low": 0, "medium": 0'
+assert_contains "clean review logs null child" "$(cd "$INTEGRATION_REPO" && bash "$RUNLOG" replay int_clean)" '"child": null'
+assert_contains "clean review says nothing filed" "$OUT" "nothing filed"
+
+echo "test: an unparseable integration review fails without a child or event"
+reset
+export CLAUDE_REVIEW_OUT='Looks fine to me.'
+run_from "$INTEGRATION_REPO" --integration int_bad "$INTEGRATION_BASE" "$INTEGRATION_HEAD" "$INTEGRATION_GRAPH"
+assert_equals "unparseable review exits non-zero" "$RC" "1"
+assert_equals "unparseable review creates nothing" "$(creates)" "0"
+(cd "$INTEGRATION_REPO" && bash "$RUNLOG" replay int_bad >/dev/null 2>&1); replay_rc=$?
+assert_equals "unparseable review logs no event" "$replay_rc" "1"
+assert_equals "unparseable review output is kept in the run dir" \
+    "$(cat "$CODEX_RUN_ROOT/int_bad/integration-review.txt" 2>/dev/null)" "Looks fine to me."
+assert_contains "the failure names the kept review" "$ERR" "$CODEX_RUN_ROOT/int_bad/integration-review.txt"
+
+echo "test: integration mode refuses a graph without tiered issues and bad arg counts"
+NO_TIER_GRAPH="$WORK/no-tier.json"
+printf '{"issues":[{"n":1,"tier":null}]}' >"$NO_TIER_GRAPH"
+run_from "$INTEGRATION_REPO" --integration int_no_tier "$INTEGRATION_BASE" "$INTEGRATION_HEAD" "$NO_TIER_GRAPH"
+assert_equals "no tier exits non-zero" "$RC" "1"
+run_from "$INTEGRATION_REPO" --integration int_bad_args "$INTEGRATION_BASE" "$INTEGRATION_HEAD"
+assert_equals "bad arg count exits non-zero" "$RC" "1"
+unset STUB_GH_NEW CLAUDE_REVIEW_OUT
 
 # ---------------------------------------------------------------------------
 echo "test: refuses anything outside the frozen scope"

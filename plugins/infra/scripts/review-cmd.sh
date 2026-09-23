@@ -24,6 +24,7 @@
 #
 # Usage:
 #   bash review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>]
+#   bash review-cmd.sh integration <base-sha> <head-sha> <tier>
 #
 #     <base-sha>  what the review diffs against. A SHA, NOT a branch name — see below.
 #     <issue>     the issue number, for my-review's central-mechanism audit.
@@ -32,6 +33,8 @@
 # round's non-fixed ledger entries, and the fix range is <reviewed-head>..HEAD. The output
 # adds [fixed] for findings the fix resolved. Any unusable input falls back to a full
 # review with a WARN. The first review of a branch is always full.
+# Integration review (#121) covers the folded run range as a single unit and asks only
+# about cross-issue problems; it does not name an issue or run the central-mock audit.
 #
 # Output: the argv, NUL-DELIMITED (`printf '%s\0'`), on stdout; nothing on stdout on
 # failure. Exit 0 = a command was printed. Exit 1 = it could not be built, loud on stderr.
@@ -73,26 +76,40 @@ set -uo pipefail
 INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 die() { echo "error: $*" >&2; exit 1; }
 
-TIER="${1:-}"
-BASE_SHA="${2:-}"
-ISSUE="${3:-}"; ISSUE="${ISSUE#\#}"
-[ -n "$TIER" ] && [ -n "$BASE_SHA" ] && [ -n "$ISSUE" ] \
-    || die "usage: review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>]"
-SCOPED_DIR=""
-if [ "${4:-}" = --scoped ]; then
-    [ -n "${5:-}" ] || die "usage: review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>]"
-    SCOPED_DIR="$5"
-elif [ -n "${4:-}" ]; then
-    die "usage: review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>]"
-fi
-case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
+USAGE="usage: review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>] | integration <base-sha> <head-sha> <tier>"
+need_sha() {
+    local label="$1" value="$2"
+    case "$value" in
+        *[!0-9a-f]*|"") die "$label must be a resolved SHA, not a ref: '$value'" ;;
+    esac
+    [ "${#value}" -ge 7 ] || die "$label sha is too short to be unambiguous: '$value'"
+}
 
-# A branch name here would silently reintroduce the movable-base hole above, and the
-# callers resolve it themselves, so anything that is not a hex object name is a caller bug.
-case "$BASE_SHA" in
-    *[!0-9a-f]*|"") die "base must be a resolved SHA, not a ref: '$BASE_SHA'" ;;
-esac
-[ "${#BASE_SHA}" -ge 7 ] || die "base sha is too short to be unambiguous: '$BASE_SHA'"
+MODE=full
+SCOPED_DIR=""
+HEAD_SHA=""
+if [ "${1:-}" = integration ]; then
+    MODE=integration
+    [ "$#" -eq 4 ] || die "$USAGE"
+    BASE_SHA="$2"; HEAD_SHA="$3"; TIER="$4"
+    need_sha base "$BASE_SHA"
+    need_sha head "$HEAD_SHA"
+else
+    TIER="${1:-}"
+    BASE_SHA="${2:-}"
+    ISSUE="${3:-}"; ISSUE="${ISSUE#\#}"
+    [ -n "$TIER" ] && [ -n "$BASE_SHA" ] && [ -n "$ISSUE" ] \
+        || die "$USAGE"
+    if [ "${4:-}" = --scoped ]; then
+        [ -n "${5:-}" ] || die "$USAGE"
+        SCOPED_DIR="$5"
+    elif [ -n "${4:-}" ]; then
+        die "$USAGE"
+    fi
+    case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
+    # The callers resolve the base before starting the worker; a movable ref is a caller bug.
+    need_sha base "$BASE_SHA"
+fi
 
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
 ROSTER="$(bash "$INFRA/resolve-tier.sh" "$TIER" 2>/dev/null)"
@@ -128,7 +145,10 @@ high downstream):
 
 Silent data loss, data corruption, and any denial-of-service (an input that stalls or exhausts a shared worker) are ALWAYS high (P1), whatever their apparent size."
 
-FULL_INTRO="You are the INDEPENDENT REVIEWER for issue #$ISSUE. This checkout is a disposable clone
+if [ "$MODE" = integration ]; then
+    FULL_INTRO="You are the INTEGRATION REVIEWER for an /orchestrate run. Per-issue reviews already happened on every slice; do NOT re-review single-issue problems. Spawn personal-tools:my-review (model $MODEL) on the commit range $BASE_SHA..$HEAD_SHA as ONE unit, and report ONLY cross-issue problems: one slice breaking another's assumption, two slices changing the same contract, seams between issues no single review saw. Nothing on GitHub."
+else
+    FULL_INTRO="You are the INDEPENDENT REVIEWER for issue #$ISSUE. This checkout is a disposable clone
 of the worker's branch; you did not write this code and you change nothing here.
 
 Spawn the personal-tools:my-review agent (Agent tool, subagent_type personal-tools:my-review,
@@ -136,6 +156,7 @@ model $MODEL) with this target: the commit range $BASE_SHA..HEAD, reviewed as ON
 issue #$ISSUE — so it also runs the central-mechanism / mock-drift audit against the
 issue's \`## Central mechanism\` line (\`gh issue view $ISSUE\`). It may file a mock-debt
 follow-up; nothing else on GitHub."
+fi
 
 FULL_CLOSE="- [P1] <one-line title> — <path>:<line>
   <one line: what is wrong and why it matters>
