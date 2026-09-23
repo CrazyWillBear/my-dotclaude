@@ -270,6 +270,7 @@ assert_contains "no-upstream preview tells the user it uses the local branch" "$
 assert_not_contains "end-merge preview does not assume origin" "$BODY" 'merge-fold.sh" --preview origin/<target>'
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
 assert_matches "a capped merge holds its dependents" "$BODY" "capped.*holds its dependents|holds its dependents"
+assert_contains "capped-merge dependents are an orchestrator hold" "$BODY" "capped-merge dependents"
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"
@@ -290,6 +291,8 @@ assert_matches "an empty allowlist stops the run" "$BODY" "empty allowlist stops
 
 echo "test: readiness is a script, not the model's arithmetic"
 assert_contains "ready.sh is called with the graph" "$BODY" "ready.sh"
+assert_matches "--held is defined beside its usage as the user's explicit hold" "$BODY" "--held.*explicit hold"
+assert_matches "--held is never 'waiting on a blocker'" "$BODY" "never .?waiting on a blocker"
 assert_matches "never compute readiness yourself" "$BODY" "Never compute readiness yourself"
 assert_matches "the three ready.sh outcomes are all handled" "$BODY" "nothing-to-do"
 assert_matches "an unexplained empty stops the run" "$BODY" "[Nn]ever treat it as .?finished"
