@@ -102,6 +102,8 @@ echo "test: the prompt pins the shape review-counts.sh parses"
 assert_contains "the finding item shape" "$OUT" "- [P1] <one-line title> — <path>:<line>"
 assert_contains "the clean literal" "$OUT" "No findings."
 assert_contains "and says it is parsed" "$OUT" "parsed"
+assert_contains "data loss, corruption, and denial-of-service are always P1" "$OUT" \
+    "Silent data loss, data corruption, and any denial-of-service (an input that stalls or exhausts a shared worker) are ALWAYS high (P1), whatever their apparent size."
 
 echo "test: read-only by denylist — no edits, no git writes, no GitHub writes but mock-debt"
 for t in Edit Write NotebookEdit "Bash(git commit:*)" "Bash(git push:*)" "Bash(git merge:*)" \
