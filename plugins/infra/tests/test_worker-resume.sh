@@ -245,10 +245,14 @@ mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note"
 run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run
 assert_equals "resume dry run exits 0" "$RC" "0"
 assert_not_contains "resume dry run never prints the env value" "$OUT" "postgres://x"
-run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+HOST_SECRET_CANARY=host-canary run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
 assert_arg "resume keeps explicitly provisioned KEY names in shell commands" "$OUT" \
     'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$OUT" | grep '^shell_environment_policy.exclude=')
+assert_contains "resume still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "resume does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
 assert_not_contains "resume config argv never prints the KEY value" "$OUT" 'private-canary'
+assert_not_contains "resume config argv never prints a host secret value" "$OUT" 'host-canary'
 
 echo "test: a resume that crashes is reported as failed, not as the previous turn's success"
 mkrun 82 '{"issue":82,"status":"built","round":0,"head":"stale99","review":"0 high, 0 medium, 0 low","note":""}'

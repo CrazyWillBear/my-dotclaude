@@ -153,13 +153,8 @@ CMD=(codex exec resume "$THREAD"
 # Resume does not inherit the spawn's shell environment policy. Re-pass the
 # name-filter override when an explicitly provisioned value needs it.
 if [ "${#ENVS[@]}" -gt 0 ]; then
-    for _pair in "${ENVS[@]}"; do
-        case "${_pair%%=*}" in
-            *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*)
-                CMD+=(-c 'shell_environment_policy.ignore_default_excludes=true')
-                break ;;
-        esac
-    done
+    while IFS= read -r _c; do CMD+=(-c "$_c"); done \
+        < <(bash "$INFRA/env-pairs.sh" --codex-policy "${ENVS[@]}")
 fi
 CMD+=(--json
      -o "$RUNDIR/last-message.txt"

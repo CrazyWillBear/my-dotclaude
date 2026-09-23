@@ -495,13 +495,8 @@ CMD=(codex exec
 # worker's shell commands. Override that name filter when one of those names was
 # explicitly provisioned; keep the values in the process environment, not argv.
 if [ "${#ENVS[@]}" -gt 0 ]; then
-    for _pair in "${ENVS[@]}"; do
-        case "${_pair%%=*}" in
-            *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*)
-                CMD+=(-c 'shell_environment_policy.ignore_default_excludes=true')
-                break ;;
-        esac
-    done
+    while IFS= read -r _c; do CMD+=(-c "$_c"); done \
+        < <(bash "$INFRA/env-pairs.sh" --codex-policy "${ENVS[@]}")
 fi
 CMD+=(--json
      -o "$RUNDIR/last-message.txt"

@@ -673,10 +673,14 @@ assert_not_contains "Claude dry run never prints the env value" "$out" "postgres
 out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "Codex dry run exits 0" "$?" "0"
 assert_not_contains "Codex dry run never prints the env value" "$out" "postgres://x"
-out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+out=$(HOST_SECRET_CANARY=host-canary codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 assert_arg "Codex keeps explicitly provisioned KEY names in shell commands" "$out" \
     'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "Codex does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
 assert_not_contains "Codex config argv never prints the KEY value" "$out" 'private-canary'
+assert_not_contains "Codex config argv never prints a host secret value" "$out" 'host-canary'
 
 echo "test: invalid --env values are rejected before a worker starts"
 STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
