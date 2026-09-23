@@ -185,6 +185,10 @@ assert_contains "the run log records the env name only" "$BODY" '"env":["DATABAS
 assert_matches "the log rule says names, never the values" "$BODY" "names, never the values"
 assert_contains "provisioned pairs stay in per-issue orchestrator state" "$BODY" \
     "Keep the exact env pairs per issue in the orchestrator's live context"
+assert_contains "Claude settings paths are retained for cleanup" "$BODY" \
+    "save the Claude settings file path"
+assert_contains "stopped Claude sessions have their private settings removed" "$BODY" \
+    "remove its settings file and private directory"
 assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
     '--role fix --round <K> --attempt <A> --env DATABASE_URL=postgres://...'
 assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \

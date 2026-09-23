@@ -807,7 +807,11 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
     "${CLAUDE_CMD[@]}" </dev/null
     _claude_rc=$?
     # A failed dispatch did not create a session, so its settings are no longer needed.
-    [ "$_claude_rc" -eq 0 ] || rm -rf -- "$CLAUDE_SETTINGS_DIR"
+    if [ "$_claude_rc" -eq 0 ]; then
+        printf 'Claude settings file: %s\n' "$CLAUDE_SETTINGS_FILE"
+    else
+        rm -rf -- "$CLAUDE_SETTINGS_DIR"
+    fi
     exit "$_claude_rc"
 fi
 exec "${CMD[@]}" </dev/null

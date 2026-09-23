@@ -642,13 +642,16 @@ assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claud
 assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
 assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
 claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
+assert_contains "successful dispatch prints the private settings path for cleanup" \
+    "$argv" "Claude settings file: $claude_settings"
 if [ -n "$claude_settings" ] && [ -f "$claude_settings" ] \
    && [ "$(jq -r '.env.DATABASE_URL' "$claude_settings")" = 'postgres://x' ]; then
     ok "private Claude settings remain readable after dispatch for later session requests"
 else
     no "private Claude settings disappeared or lost the value after dispatch"
 fi
-rm -rf -- "$(dirname "$claude_settings")"
+rm -f -- "$claude_settings"
+rmdir -- "$(dirname "$claude_settings")"
 
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \

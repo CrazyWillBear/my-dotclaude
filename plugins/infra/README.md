@@ -44,7 +44,10 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 and infra-owned names are reserved for both spawn and resume. Claude workers receive values in
 per-session settings because `claude --bg` does not reliably inherit arbitrary launcher exports.
 The private settings file remains readable after dispatch because the background session reads
-it again on later requests; remove it after stopping the session.
+it again on later requests. `spawn.sh` prints `Claude settings file: <path>` after a successful
+dispatch. Save that path with the session id. Once `claude stop <id>` has been verified, remove
+the file and its private directory with `rm -f -- "$settings_file"` then
+`rmdir -- "$(dirname "$settings_file")"`. A failed dispatch removes its file immediately.
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 

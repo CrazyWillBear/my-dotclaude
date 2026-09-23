@@ -465,10 +465,10 @@ posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's 
 
 # Liveness
 
-Subscribe at spawn (`notify_when_idle: true`, no message) and never poll; session states
-(`busy`/`idle`/`blocked`/`done`/`stopped`/`failed`/`gone`), the codex backend's PID-based control,
-and the full `stop` → verify → respawn recovery procedure are documented in
-[infra's README](../../../infra/README.md#liveness-and-recovery).
+Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and
+the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
+For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id.
+After verifying its stop, remove its settings file and private directory per infra's README, before respawn or escalation.
 
 ---
 
