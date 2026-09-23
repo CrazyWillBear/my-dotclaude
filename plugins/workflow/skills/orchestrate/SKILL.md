@@ -597,8 +597,8 @@ with real tests:
 | `ready.sh` | readiness + the empty-set classification |
 | `session-status.sh` | worker state, and `--self` |
 | `spawn.sh` | the session command and the worker prompt contract |
-| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up |
-| `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents |
+| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |
+| `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents, and the end-of-run integration review |
 | `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold, the launch check, and the end-merge preview |
 | `scope-graph.sh` | the one graph fetch |
@@ -616,6 +616,13 @@ finishes. Then, on the main thread and in this order — **close first**, so a f
 instead of buried under a success table:
 
 1. **Merge and PR — offered, not taken.**
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" --integration "$RUNID" "$base" "$(git rev-parse HEAD)" "$GRAPH"
+   ```
+   After the fold, review `$base..HEAD` for cross-issue problems only on the highest tier's reviewer
+   cell. File high/medium findings as one follow-up with no dependents.
+   Log `integration-review`; put its result in the end-merge offer beside the preview. Report any
+   non-zero exit in the offer; never skip it silently.
    ```bash
    target=dev # or main
    target_upstream="$(git rev-parse --abbrev-ref --symbolic-full-name "$target@{upstream}" 2>/dev/null || true)"; preview_ref="${target_upstream:-$target}"

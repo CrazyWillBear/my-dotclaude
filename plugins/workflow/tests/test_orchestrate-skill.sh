@@ -307,6 +307,12 @@ assert_contains "the split threshold" "$BODY" "--merge-split-at"
 assert_matches "two-at-a-time is not built yet" "$BODY" "not built"
 assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|are .?.?automatic"
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
+assert_contains "end-of-run integration review calls follow-up.sh" "$BODY" 'follow-up.sh" --integration "$RUNID" "$base"'
+END_RUN="$(sed -n '/^# End of run$/,$p' "$SKILL_FILE")"
+integration_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- '--integration' | head -1 | cut -d: -f1)
+preview_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- 'merge-fold.sh" --preview' | head -1 | cut -d: -f1)
+if [ -n "$integration_offset" ] && [ -n "$preview_offset" ] && [ "$integration_offset" -lt "$preview_offset" ]; then ok "integration review runs before the end-merge preview"; else no "integration review runs before the end-merge preview"; fi
+assert_matches "integration result belongs in the end-merge offer" "$BODY" "integration.{0,80}end-merge offer|end-merge offer.{0,80}integration"
 assert_contains "end merge is previewed against the upstream" "$BODY" 'merge-fold.sh" --preview'
 prev_ln=$(grep -nF 'merge-fold.sh" --preview' "$SKILL_FILE" | head -1 | cut -d: -f1)
 offer_ln=$(grep -nF 'Offer the end merge' "$SKILL_FILE" | head -1 | cut -d: -f1)
@@ -321,6 +327,7 @@ assert_matches "a capped merge files a follow-up" "$BODY" "capped.*follow-up.sh"
 assert_contains "capped-merge dependents are an orchestrator hold" "$BODY" "capped-merge dependents"
 assert_matches "a failed follow-up.sh holds the dependents" "$BODY" "follow-up.sh.*non-zero.*held"
 assert_matches "follow-up.sh gets the issue's attempt" "$BODY" "follow-up.sh.*--attempt <A>"
+assert_contains "run-log table includes integration-review" "$BODY" '| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |'
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"
