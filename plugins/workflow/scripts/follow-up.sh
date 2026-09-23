@@ -5,7 +5,7 @@
 # Usage:
 #   bash follow-up.sh <runid> <issue> <tier> <graph.json> [--attempt N]
 #
-# A merge that lands capped (findings remained at --max-cycles) leaves work behind.
+# A merge that lands capped (no-progress or the round backstop left findings open) leaves work behind.
 # Instead of holding its dependents by hand, this files one `ready-for-agent` issue
 # carrying the still-open high/medium findings verbatim, adds it to the FROZEN graph
 # as a scoped node, and adds it as a blocker of every scoped issue whose `blockedBy`

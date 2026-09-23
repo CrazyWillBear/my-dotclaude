@@ -36,6 +36,9 @@ assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in: $2)" ;; esac; }
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3' in: $2)" ;; *) ok "$1" ;; esac; }
 
+OLD_CYCLE_FLAG='--max'"-cycles"
+assert_not_contains "the removed cycle flag is absent from the follow-up contract" "$(cat "$FOLLOWUP")" "$OLD_CYCLE_FLAG"
+
 export HOME="$WORK/home"; mkdir -p "$HOME"
 git init -q "$WORK/repo" && cd "$WORK/repo" || exit 1
 export CODEX_RUN_ROOT="$WORK/runs"

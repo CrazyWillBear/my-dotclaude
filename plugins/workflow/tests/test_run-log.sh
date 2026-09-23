@@ -119,11 +119,13 @@ r append run5 consulted '{"n":12}'
 r append run5 escalated '{"n":12,"reason":"failed","attempt":0}'
 r append run5 escalated '{"n":13,"reason":"stall","attempt":1}'
 r append run5 escalated '{"n":13,"reason":"deviation-cap","attempt":0}'
+r append run5 escalated '{"n":14,"reason":"no-progress","attempt":0}'
 out=$(r state run5)
 assert_contains "planned is a deduped set" "$out" "planned=12,13"
 assert_contains "consult counts per issue" "$out" "consulted=12:2"
-assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2"
+assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2,14:1"
 assert_contains "the escalation reasons survive replay for the pilot's numbers" "$(r replay run5)" '"reason": "deviation-cap"'
+assert_contains "terminal reasons survive replay" "$(r replay run5)" '"reason": "no-progress"'
 
 echo "test: follow-up folds parent:child (#117)"
 r append run6 follow-up '{"n":84,"child":131,"reblocked":[85,95]}'

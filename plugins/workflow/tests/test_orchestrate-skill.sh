@@ -200,6 +200,22 @@ assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$R
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
 
+echo "test: no-progress replaces --max""-cycles (#118)"
+assert_not_contains "--max""-cycles is gone" "$BODY" "--max""-cycles"
+assert_contains "the no-progress signal is named" "$BODY" "no-progress: "
+assert_contains "the backstop signal is named" "$BODY" "backstop: "
+assert_contains "the round backstop threshold is listed" "$BODY" "ESCALATE_ROUND_BACKSTOP"
+assert_matches "no-progress ends the loop, no respawn" "$BODY" "no-progress.{0,300}(no respawn|loop ends|ends the loop)"
+assert_matches "review-cap is per attempt" "$BODY" "review-cap.{0,200}attempt"
+assert_contains "Claude no-progress uses review comments" "$BODY" 'read the two newest `**Review round**` comments on the thread'
+assert_contains "Claude no-progress follows a Decision" "$BODY" 'after a `**Decision**` consult'
+assert_contains "Claude no-progress compares high + medium" "$BODY" 'if high + medium does not fall, end as `no-progress`'
+assert_contains "Claude keeps the five fix-review cap" "$BODY" 'stop after five fix-round reviews total'
+assert_contains "the initial build review remains free" "$BODY" '(the initial build review is free)'
+
+README_BODY="$(cat "$PLUGIN_ROOT/README.md")"
+assert_contains "workflow README preserves the Claude five-review cap" "$README_BODY" 'Claude-backed attempts retain the five fix-round review cap'
+
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 
@@ -321,8 +337,10 @@ assert_not_contains "end-merge preview does not assume origin" "$BODY" 'merge-fo
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
 assert_matches "a capped merge files a follow-up" "$BODY" "capped.*follow-up.sh"
 assert_contains "capped-merge dependents are an orchestrator hold" "$BODY" "capped-merge dependents"
-assert_matches "a failed follow-up.sh holds the dependents" "$BODY" "follow-up.sh.*non-zero.*held"
-assert_matches "follow-up.sh gets the issue's attempt" "$BODY" "follow-up.sh.*--attempt <A>"
+assert_contains "the capped follow-up receives the attempt" "$BODY" 'follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>'
+assert_contains "the follow-up re-blocks dependents" "$BODY" "re-blocked"
+assert_contains "the follow-up enters the frozen graph" "$BODY" "enters the frozen graph"
+assert_matches "a failed follow-up holds dependents" "$BODY" "follow-up.sh.*non-zero.*held"
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"
