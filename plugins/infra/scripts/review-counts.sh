@@ -68,7 +68,7 @@ ROUND = os.environ.get("LEDGER_ROUND", "")
 def sev(p):
     return "high" if p in ("0", "1") else "medium" if p == "2" else "low"
 
-items = re.findall(r"(?m)^\s*[-*]\s*\[P([0-9])\]\s*(.*)$", text)
+items = re.findall(r"(?m)^[ \t]*[-*][ \t]*\[P([0-9])\][ \t]*(.*)$", text)
 marks = [p for p, _ in items]
 if not marks:
     if re.search(r"\[P[0-9]\]", text):

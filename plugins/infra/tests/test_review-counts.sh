@@ -180,6 +180,14 @@ printf -- '- [P1] just a title\n' >"$WORK/noloc.txt"
 run "$WORK/noloc.txt" --findings 1
 assert_equals "trailing empty field" "$OUT" "$(printf 'finding\t1\thigh\tjust a title\t')"
 
+echo "test: an empty-title item does not swallow the next line's finding"
+printf -- '- [P2]\n- [P1] next — n.py:1\n' >"$WORK/emptytitle.txt"
+run "$WORK/emptytitle.txt"
+assert_equals "both items counted" "$OUT" "1 high, 1 medium, 0 low"
+run "$WORK/emptytitle.txt" --findings 1
+assert_equals "two entries, the empty one stays empty" "$OUT" \
+    "$(printf 'finding\t1\tmedium\t\t\nfinding\t1\thigh\tnext\tn.py:1')"
+
 echo "test: --findings on the clean literal prints nothing and exits 0"
 run "$WORK/clean.txt" --findings 2
 assert_equals "exit 0" "$RC" "0"
