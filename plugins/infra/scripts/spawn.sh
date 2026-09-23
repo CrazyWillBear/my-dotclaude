@@ -741,7 +741,7 @@ bash -c '
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
-    "${ENV_NAMES[@]}" --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
 if [ "${#ENV_NAMES[@]}" -gt 0 ]; then

@@ -610,6 +610,13 @@ assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
 assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
+# Bash 3.2 treats an empty array expansion as unbound under `set -u`. The no-env
+# launch above this check must keep the wrapper argument list guarded as well.
+if grep -Fq "\${ENV_NAMES[@]+\"\${ENV_NAMES[@]}\"} --WORKER--" "$SPAWN"; then
+    ok "Codex wrapper handles an empty env-name array on Bash 3.2"
+else
+    no "Codex wrapper expands an empty env-name array under set -u"
+fi
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
