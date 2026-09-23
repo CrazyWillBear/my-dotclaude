@@ -2,9 +2,14 @@
 #
 # review-counts.sh — read one independent-reviewer output file and print its finding counts.
 #
-# Usage:  bash review-counts.sh <review-file>
+# Usage:  bash review-counts.sh <review-file> [--findings <round>]
 # Output: exactly `<H> high, <M> medium, <L> low` on stdout.
 # Exit 0 = a verdict was read. Exit 1 = it could not be, NOTHING on stdout.
+#
+# `--findings N` prints, instead of the counts, one line per finding in the run-dir
+# ledger-entry shape `finding<TAB><round><TAB><severity><TAB><title><TAB><path:line>`
+# (path empty when the item has none), nothing for a clean review, and the identical
+# refusals. It is the ONLY producer of ledger finding lines (#110).
 #
 # WHY THIS IS ITS OWN SCRIPT. Three callers need the same counts — worker-report.sh (the
 # verdict the orchestrator acts on), and spawn.sh's wrapper and worker-resume.sh (the
@@ -31,11 +36,19 @@
 
 set -uo pipefail
 
+USAGE="usage: review-counts.sh <review-file> [--findings <round>]"
 FILE="${1:-}"
-[ -n "$FILE" ] || { echo "usage: review-counts.sh <review-file>" >&2; exit 1; }
+[ -n "$FILE" ] || { echo "$USAGE" >&2; exit 1; }
+ROUND=""
+if [ "${2:-}" = "--findings" ]; then
+    ROUND="${3:-}"
+    case "$ROUND" in ''|*[!0-9]*) echo "$USAGE" >&2; exit 1 ;; esac
+elif [ -n "${2:-}" ]; then
+    echo "$USAGE" >&2; exit 1
+fi
 [ -f "$FILE" ] || { echo "error: no review file at $FILE" >&2; exit 1; }
 
-REVIEW_FILE="$FILE" python3 <<'PY'
+REVIEW_FILE="$FILE" LEDGER_ROUND="$ROUND" python3 <<'PY'
 import os, re, sys
 
 try:
@@ -50,7 +63,13 @@ if not text.strip():
           file=sys.stderr)
     sys.exit(1)
 
-marks = re.findall(r"(?m)^\s*[-*]\s*\[P([0-9])\]", text)
+ROUND = os.environ.get("LEDGER_ROUND", "")
+
+def sev(p):
+    return "high" if p in ("0", "1") else "medium" if p == "2" else "low"
+
+items = re.findall(r"(?m)^\s*[-*]\s*\[P([0-9])\]\s*(.*)$", text)
+marks = [p for p, _ in items]
 if not marks:
     if re.search(r"\[P[0-9]\]", text):
         print("error: the review mentions a [Pn] severity but not as a finding list item — "
@@ -60,14 +79,25 @@ if not marks:
     if text.strip() == "No findings.":
         # A genuinely clean review: the ENTIRE output is the one literal it was given.
         # Anything around it is a reviewer that ignored its format, and that is refused.
-        print("0 high, 0 medium, 0 low")
+        if not ROUND:
+            print("0 high, 0 medium, 0 low")
         sys.exit(0)
     print("error: the review has no finding list items and no 'No findings.' line — "
           "its format has drifted and an unreadable review is not a clean one",
           file=sys.stderr)
     sys.exit(1)
 
-high = sum(1 for m in marks if m in ("0", "1"))
-med = sum(1 for m in marks if m == "2")
+if ROUND:
+    for p, rest in items:
+        # The location is whatever follows the LAST spaced em dash; a title may hold one.
+        title, sep, loc = rest.rpartition(" — ")
+        if not sep:
+            title, loc = rest, ""
+        print("finding\t%s\t%s\t%s\t%s"
+              % (ROUND, sev(p), " ".join(title.split()), " ".join(loc.split())))
+    sys.exit(0)
+
+high = sum(1 for m in marks if sev(m) == "high")
+med = sum(1 for m in marks if sev(m) == "medium")
 print("%d high, %d medium, %d low" % (high, med, len(marks) - high - med))
 PY

@@ -33,9 +33,9 @@ no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 assert_equals()   { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '$2')" ;; esac; }
 
-run() {   # run <file> -> OUT/ERR/RC
-    local errf="$WORK/err"
-    OUT="$(bash "$SCRIPT" "$1" 2>"$errf")"
+run() {   # run <file> [args...] -> OUT/ERR/RC
+    local errf="$WORK/err" f="$1"; shift
+    OUT="$(bash "$SCRIPT" "$f" "$@" 2>"$errf")"
     RC=$?
     ERR="$(cat "$errf")"
 }
@@ -158,6 +158,48 @@ OUT="$(bash "$SCRIPT" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"
 assert_equals "exit 1" "$RC" "1"
 assert_equals "NOTHING on stdout" "$OUT" ""
 assert_contains "usage" "$ERR" "usage"
+
+# ---------------------------------------------------------------------------
+# --findings N: the same parse, emitted as the run-dir ledger's per-finding entries (#110).
+echo "test: --findings N emits one tab-separated ledger entry per finding"
+run "$WORK/mix.txt" --findings 3
+assert_equals "exit 0" "$RC" "0"
+assert_equals "one entry per finding, severity mapped" "$OUT" \
+    "$(printf 'finding\t3\thigh\ta critical one\ta.py:1\nfinding\t3\thigh\tanother high\tb.py:2\nfinding\t3\tmedium\ta medium\tc.py:3\nfinding\t3\tlow\ta low\td.py:4\nfinding\t3\tlow\talso a low\te.py:5')"
+
+echo "test: --findings splits title from path on the LAST em dash"
+run "$WORK/p1.txt" --findings 1
+assert_equals "real codex item" "$OUT" \
+    "$(printf 'finding\t1\thigh\tAvoid executing caller input through a shell\t/tmp/x/m.py:13-13')"
+printf -- '- [P2] a — b — c.py:9\n' >"$WORK/dash.txt"
+run "$WORK/dash.txt" --findings 1
+assert_equals "earlier dashes stay in the title" "$OUT" "$(printf 'finding\t1\tmedium\ta — b\tc.py:9')"
+
+echo "test: --findings on an item with no location leaves the path empty"
+printf -- '- [P1] just a title\n' >"$WORK/noloc.txt"
+run "$WORK/noloc.txt" --findings 1
+assert_equals "trailing empty field" "$OUT" "$(printf 'finding\t1\thigh\tjust a title\t')"
+
+echo "test: --findings on the clean literal prints nothing and exits 0"
+run "$WORK/clean.txt" --findings 2
+assert_equals "exit 0" "$RC" "0"
+assert_equals "nothing on stdout" "$OUT" ""
+
+echo "test: --findings refuses drift the same way — nothing on stdout"
+run "$WORK/drift.txt" --findings 2
+assert_equals "exit 1" "$RC" "1"
+assert_equals "NOTHING on stdout" "$OUT" ""
+assert_contains "says the format drifted" "$ERR" "drifted"
+
+echo "test: --findings needs an integer round"
+run "$WORK/mix.txt" --findings
+assert_equals "missing round: exit 1" "$RC" "1"
+assert_equals "missing round: NOTHING on stdout" "$OUT" ""
+assert_contains "missing round: usage" "$ERR" "usage"
+run "$WORK/mix.txt" --findings x
+assert_equals "non-integer round: exit 1" "$RC" "1"
+assert_equals "non-integer round: NOTHING on stdout" "$OUT" ""
+assert_contains "non-integer round: usage" "$ERR" "usage"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
