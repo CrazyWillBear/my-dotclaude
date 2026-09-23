@@ -330,13 +330,17 @@ if reason is None and window > 0 and consults < cap and not spent:
     newest = attempt_rounds[-window:]
     if len(newest) == window:
         fired = {f[2] for f in fires}
-        for area in areas.get(newest[-1], []):
-            if area not in fired and all(area in areas.get(r, []) for r in newest[:-1]):
-                if not dry:
-                    with open(os.path.join(rundir, "recurrence"), "a", encoding="utf-8") as fh:
+        recurring = [a for a in dict.fromkeys(areas.get(newest[-1], []))
+                     if a not in fired and all(a in areas.get(r, []) for r in newest[:-1])]
+        if recurring:
+            # ONE decide covers the round, so EVERY recurring area is recorded as fired:
+            # a second area left unrecorded would fire its own decide next round.
+            if not dry:
+                with open(os.path.join(rundir, "recurrence"), "a", encoding="utf-8") as fh:
+                    for area in recurring:
                         fh.write("%d\t%d\t%s\n" % (attempt, newest[-1], area))
-                print("recurrence: %s" % area)
-                sys.exit(0)
+            print("recurrence: %s" % recurring[0])
+            sys.exit(0)
 if reason is None and not spent:
     rounds = []
     for l in ledger[rounds_mark:]:
