@@ -774,7 +774,7 @@ echo "test: shared --env validation rejects host-steering and infra-owned names"
 for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
     GIT_TEMPLATE_DIR LD_AUDIT LD_DEBUG DYLD_FALLBACK_LIBRARY_PATH \
     RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
-    CODEX_RUN_ROOT CODEX_HOME HOME GH_CONFIG_DIR; do
+    CODEX_RUN_ROOT CODEX_HOME CODEX_ETC_ROOT HOME GH_CONFIG_DIR; do
     bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
     rc=$?
     assert_equals "$name is rejected" "$rc" "1"

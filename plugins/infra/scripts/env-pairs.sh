@@ -26,8 +26,9 @@ if [ "${1:-}" = --codex-policy ]; then
     done
     [ -n "$need" ] || exit 0
     codex_home="${CODEX_HOME:-${HOME:-/nonexistent}/.codex}"
+    etc_dir="${CODEX_ETC_ROOT:-/etc/codex}"
     # ponytail: any `exclude =` line counts, in any table — over-refuses rather than parse TOML.
-    for cfg in "$codex_home/config.toml" /etc/codex/config.toml "$dir/.codex/config.toml"; do
+    for cfg in "$codex_home/config.toml" "$etc_dir/config.toml" "$dir/.codex/config.toml"; do
         [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])exclude[[:space:]]*=' "$cfg" \
             && die "$cfg sets shell_environment_policy.exclude, which a KEY/SECRET/TOKEN --env name would replace; rename the variable or drop that setting"
     done
@@ -64,7 +65,7 @@ for pair in "$@"; do
         LD_*|DYLD_*| \
         NODE_OPTIONS|PYTHONHOME|PYTHONPATH|PERL5OPT|RUBYOPT| \
         GIT_*| \
-        GH_CONFIG_DIR|XDG_CONFIG_HOME|CODEX_HOME|CODEX_RUN_ROOT|CLAUDE_CONFIG_DIR| \
+        GH_CONFIG_DIR|XDG_CONFIG_HOME|CODEX_HOME|CODEX_RUN_ROOT|CODEX_ETC_ROOT|CLAUDE_CONFIG_DIR| \
         INFRA|RUNID|ISSUE|TIER|WORKTREE|BASE|ROUND|ATTEMPT|ROLE|NAME|MODEL|EFFORT| \
         ORCH|BACKEND|CHAIN|BRANCH|TASK|ROSTER|WRITABLE_ROOTS|RUNDIR|THREAD|CMD| \
         REVIEW_CMD|ENVS|EXTRA|ANSWER|ANSWER_SET|DRY|BASE_SHA|CODE|PROMPT|HANDOFF| \
