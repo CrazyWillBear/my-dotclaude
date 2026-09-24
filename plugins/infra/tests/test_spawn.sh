@@ -749,6 +749,16 @@ out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "managed Codex exclude list is fine when no filter override is needed" "$?" "0"
 rm -f "$CODEX_ETC_ROOT/managed_config.toml"
 
+printf '[shell_environment_policy]\nfilters = [{ exclude = "X_*" }]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "Codex filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy]\nfilters = ["X_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "bare Codex filters setting + secret-named --env refuses" "$?" "1"
+assert_contains "bare filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+rm -f "$HOME/.codex/config.toml"
+
 echo "test: invalid --env values are rejected before a worker starts"
 STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
     bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main --env NOEQUALS \

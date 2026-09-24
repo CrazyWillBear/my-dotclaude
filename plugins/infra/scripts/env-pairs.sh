@@ -13,8 +13,8 @@ die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 # WITHOUT opening that filter for the rest of the host environment: the defaults are
 # switched off, and every other name they matched is re-excluded by name — inherited
 # names (awk's ENVIRON also lists names that are not identifiers, which compgen -e skips)
-# and names Codex loads itself from $CODEX_HOME/.env. `-c ...exclude` may outrank the
-# exclude list in user, system, managed or project Codex config, so that case is refused
+# and names Codex loads itself from $CODEX_HOME/.env. `-c ...exclude` may outrank an
+# exclude list or `filters` setting in user, system, managed or project Codex config, so that case is refused
 # instead. Prints nothing when no provisioned name needs it. Names only, never values.
 secretish() { case "$1" in *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*) return 0 ;; esac; return 1; }
 if [ "${1:-}" = --codex-policy ]; then
@@ -27,11 +27,11 @@ if [ "${1:-}" = --codex-policy ]; then
     [ -n "$need" ] || exit 0
     codex_home="${CODEX_HOME:-${HOME:-/nonexistent}/.codex}"
     etc_dir="${CODEX_ETC_ROOT:-/etc/codex}"
-    # ponytail: any `exclude =` line counts, in any table — over-refuses rather than parse TOML.
+    # ponytail: any `exclude =` or `filters =` line counts, in any table — over-refuses rather than parse TOML.
     for cfg in "$codex_home/config.toml" "$etc_dir/config.toml" \
         "$etc_dir/managed_config.toml" "$dir/.codex/config.toml"; do
-        [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])exclude[[:space:]]*=' "$cfg" \
-            && die "$cfg sets shell_environment_policy.exclude, which a KEY/SECRET/TOKEN --env name would replace; rename the variable or drop that setting"
+        [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])(exclude|filters)[[:space:]]*=' "$cfg" \
+            && die "$cfg sets shell_environment_policy.exclude or .filters, which a KEY/SECRET/TOKEN --env name would override; rename the variable or drop that setting"
     done
     excl=
     while IFS= read -r name; do

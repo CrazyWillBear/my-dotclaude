@@ -44,7 +44,7 @@ bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
 and infra-owned names are reserved for both spawn and resume. On Codex, a KEY/SECRET/TOKEN
 name turns off the default secret filter and re-excludes every other such host name; that
 override replaces a user, project, system or managed (`/etc/codex/managed_config.toml`)
-`shell_environment_policy.exclude`, so it is refused then. Claude workers receive values in
+`shell_environment_policy.exclude` or `filters` setting, so it is refused then. Claude workers receive values in
 per-session settings because `claude --bg` does not reliably inherit arbitrary launcher exports.
 The private settings file remains readable after dispatch because the background session reads
 it again on later requests. `spawn.sh` prints `Claude settings file: <path>` after a successful
