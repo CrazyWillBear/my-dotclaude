@@ -747,6 +747,15 @@ assert_contains "a name after a mid-value quote is never skipped" "$excl" '"AFTE
 assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
 assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
 rm -f "$HOME/.codex/.env"
+
+# dotenvy accepts Unicode whitespace and more than spaces/tabs around names.
+printf '\vVERTICAL_TOKEN=v\n\fFORM_SECRET=f\n\rRETURN_KEY=r\n\u00a0NBSP_TOKEN=n\n\u3000IDEOGRAPHIC_SECRET=i\nexport\vEXPORTED_TOKEN=x\nPADDED_KEY\f=y\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+for name in VERTICAL_TOKEN FORM_SECRET RETURN_KEY NBSP_TOKEN IDEOGRAPHIC_SECRET EXPORTED_TOKEN PADDED_KEY; do
+    assert_contains "Codex re-excludes dotenv name with extended whitespace: $name" "$excl" "\"$name\""
+done
+rm -f "$HOME/.codex/.env"
 # A configured policy may conflict with or outrank the `-c` override, so it is refused.
 printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)

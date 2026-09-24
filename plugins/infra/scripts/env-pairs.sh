@@ -43,19 +43,21 @@ if [ "${1:-}" = --codex-policy ]; then
         case ",$excl," in *",\"$name\","*) continue ;; esac
         excl+="${excl:+,}\"$name\""
     done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
-             [ -f "$codex_home/.env" ] && awk '
-                 # ponytail: every NAME= line start counts, even inside a quoted value — over-excludes rather than mirror dotenvys quoting.
-                 {
-                     if (!match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=/)) next
-                     line = substr($0, RSTART, RLENGTH)
-                     sub(/^[ \t]*/, "", line)
-                     sub(/^export[ \t]+/, "", line)
-                     eq = index(line, "=")
-                     name = substr(line, 1, eq - 1)
-                     sub(/[ \t]*$/, "", name)
-                     print name
-                 }
-             ' "$codex_home/.env")
+             if [ -f "$codex_home/.env" ]; then
+                 python3 - "$codex_home/.env" <<'PY'
+import re
+import sys
+
+# ponytail: every NAME= line start counts, even inside a quoted value — over-excludes
+# rather than mirror dotenvy's quoting. Unicode whitespace matches dotenvy's trim.
+name_line = re.compile(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*=')
+with open(sys.argv[1], encoding='utf-8', errors='replace', newline='') as env_file:
+    for line in env_file:
+        match = name_line.match(line)
+        if match:
+            print(match.group(1))
+PY
+             fi)
     printf '%s\n' 'shell_environment_policy.ignore_default_excludes=true'
     [ -z "$excl" ] || printf 'shell_environment_policy.exclude=[%s]\n' "$excl"
     exit 0
