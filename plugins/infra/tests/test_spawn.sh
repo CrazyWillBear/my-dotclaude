@@ -18,7 +18,7 @@
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
-unset DATABASE_URL FOO
+unset DATABASE_URL FOO CODEX_HOME
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
@@ -31,6 +31,8 @@ trap 'rm -rf "$WORK"' EXIT
 # and finds resolve-tier.sh / session-status.sh beside itself, so no link is needed.
 export HOME="$WORK/home"
 mkdir -p "$HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 pass=0
 fail=0

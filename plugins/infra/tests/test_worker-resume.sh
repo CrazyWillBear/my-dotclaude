@@ -28,6 +28,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 CODEX_ROOT="$WORK/codexruns"
 export CODEX_RUN_ROOT="$CODEX_ROOT"
+unset CODEX_HOME
+export CODEX_HOME="$WORK/codex-home"
+mkdir -p "$CODEX_HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 BIN="$WORK/bin"
 mkdir -p "$BIN"
