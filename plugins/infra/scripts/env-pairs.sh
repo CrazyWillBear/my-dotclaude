@@ -42,9 +42,37 @@ if [ "${1:-}" = --codex-policy ]; then
         case ",$excl," in *",\"$name\","*) continue ;; esac
         excl+="${excl:+,}\"$name\""
     done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
-             [ -f "$codex_home/.env" ] && sed -nE \
-                 's/^[[:space:]]*(export[[:space:]]+)?([^#=[:space:]]+)[[:space:]]*=.*/\2/p' \
-                 "$codex_home/.env")
+             [ -f "$codex_home/.env" ] && awk '
+                 function closes(line, quote,    i, c, escaped) {
+                     if (quote == sprintf("%c", 39)) return index(line, quote) > 0
+                     escaped = 0
+                     for (i = 1; i <= length(line); i++) {
+                         c = substr(line, i, 1)
+                         if (c == "\"" && !escaped) return 1
+                         if (c == "\\" && !escaped) escaped = 1
+                         else escaped = 0
+                     }
+                     return 0
+                 }
+                 {
+                     if (q != "") {
+                         if (closes($0, q)) q = ""
+                         next
+                     }
+                     if (!match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=/)) next
+                     line = substr($0, RSTART, RLENGTH)
+                     sub(/^[ \t]*/, "", line)
+                     sub(/^export[ \t]+/, "", line)
+                     eq = index(line, "=")
+                     name = substr(line, 1, eq - 1)
+                     sub(/[ \t]*$/, "", name)
+                     print name
+                     value = substr($0, index($0, "=") + 1)
+                     sub(/^[ \t]*/, "", value)
+                     quote = substr(value, 1, 1)
+                     if ((quote == "\"" || quote == sprintf("%c", 39)) && !closes(substr(value, 2), quote)) q = quote
+                 }
+             ' "$codex_home/.env")
     printf '%s\n' 'shell_environment_policy.ignore_default_excludes=true'
     [ -z "$excl" ] || printf 'shell_environment_policy.exclude=[%s]\n' "$excl"
     exit 0

@@ -727,6 +727,18 @@ assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$
 assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOKEN'
 assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
 rm -f "$HOME/.codex/.env"
+
+printf 'export DOTENV_API_TOKEN=dotenv-canary\nMULTI_TOKEN="first\nFRAG_TOKEN=frag-canary\nclosing"\nSQ_KEY=\047a\nSQFRAG_KEY=b\047\n"weird/TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes exported dotenv names" "$excl" '"DOTENV_API_TOKEN"'
+assert_contains "Codex re-excludes a multi-line double-quoted dotenv name" "$excl" '"MULTI_TOKEN"'
+assert_contains "Codex re-excludes a multi-line single-quoted dotenv name" "$excl" '"SQ_KEY"'
+assert_not_contains "a multi-line double-quoted continuation is not parsed as a name" "$excl" 'FRAG_TOKEN'
+assert_not_contains "a multi-line single-quoted continuation is not parsed as a name" "$excl" 'SQFRAG_KEY'
+assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
+assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
+rm -f "$HOME/.codex/.env"
 # `-c shell_environment_policy.exclude` REPLACES the user's own list, so a user who set one
 # is refused rather than silently un-hidden.
 printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
