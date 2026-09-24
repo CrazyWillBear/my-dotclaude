@@ -28,6 +28,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 CODEX_ROOT="$WORK/codexruns"
 export CODEX_RUN_ROOT="$CODEX_ROOT"
+unset CODEX_HOME
+export CODEX_HOME="$WORK/codex-home"
+mkdir -p "$CODEX_HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 BIN="$WORK/bin"
 mkdir -p "$BIN"
@@ -212,6 +217,8 @@ chmod +x "$BIN/codex"
 # gh is STUBBED, not permitted to be real: the reviewer's findings are posted to the issue
 # as the "Review round" comment, and a test that reached the real gh would comment on
 # whatever repo the suite happens to run in. It records the call so the post is assertable.
+# The generated stub uses these expansions when it runs, not while being written.
+# shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"${STUB_GH_ARGV:-/dev/null}"\nexit 0\n' \
     >"$BIN/gh"
 chmod +x "$BIN/gh"
@@ -254,6 +261,22 @@ assert_contains "resume still filters inherited host secret names" "$excl" '"HOS
 assert_not_contains "resume does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
 assert_not_contains "resume config argv never prints the KEY value" "$OUT" 'private-canary'
 assert_not_contains "resume config argv never prints a host secret value" "$OUT" 'host-canary'
+
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$CODEX_HOME/config.toml"
+run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_equals "resume user Codex exclude + secret-named --env refuses" "$RC" "1"
+assert_contains "resume refusal names the user Codex policy setting" "$ERR" "shell_environment_policy.exclude"
+assert_not_contains "resume user-config refusal never prints the value" "$ERR" "private-canary"
+rm -f "$CODEX_HOME/config.toml"
+
+mkdir -p "$REPO/.codex"
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$REPO/.codex/config.toml"
+run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_equals "resume project Codex exclude + secret-named --env refuses" "$RC" "1"
+assert_contains "resume refusal names the project Codex config file" "$ERR" ".codex/config.toml"
+assert_not_contains "resume project-config refusal never prints the value" "$ERR" "private-canary"
+rm -f "$REPO/.codex/config.toml"
+rmdir "$REPO/.codex"
 
 echo "test: a resume that crashes is reported as failed, not as the previous turn's success"
 mkrun 82 '{"issue":82,"status":"built","round":0,"head":"stale99","review":"0 high, 0 medium, 0 low","note":""}'
@@ -378,7 +401,7 @@ assert_equals "the prompt reached claude as ONE argument (review round 2)" "$(ca
 assert_not_contains "the base is NOT passed as a branch name" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "base..HEAD"
 assert_contains "but as a resolved sha" "$(cat "$WORK/review-argv" 2>/dev/null)" \
-    "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+    "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_contains "at the tier's REVIEWER model, not the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "opus"
 assert_not_contains "never the implementer's" \

@@ -18,7 +18,7 @@
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
-unset DATABASE_URL FOO
+unset DATABASE_URL FOO CODEX_HOME
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
@@ -31,6 +31,8 @@ trap 'rm -rf "$WORK"' EXIT
 # and finds resolve-tier.sh / session-status.sh beside itself, so no link is needed.
 export HOME="$WORK/home"
 mkdir -p "$HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 pass=0
 fail=0
@@ -298,6 +300,8 @@ mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL sp
     if [ "$2" = - ]; then
         printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
     else
+        # The generated stub uses these expansions when it runs, not while being written.
+        # shellcheck disable=SC2016
         printf '#!/usr/bin/env bash\n[ "${1:-}" = --self ] || exit 1\nprintf "%%s\\n" "%s"\n' \
             "$2" >"$1/session-status.sh"
     fi
@@ -599,7 +603,7 @@ rm -rf "$CODEX_ROOT"
 echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
 assert_contains "the finding shape" "$rv" "- [P1]"
 assert_contains "the clean literal" "$rv" "No findings."
-assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_arg "no edits" "$rv" "Edit"
 assert_arg "no pushes" "$rv" "Bash(git push:*)"
 assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
@@ -725,8 +729,50 @@ assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$
 assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOKEN'
 assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
 rm -f "$HOME/.codex/.env"
-# `-c shell_environment_policy.exclude` REPLACES the user's own list, so a user who set one
-# is refused rather than silently un-hidden.
+
+printf 'export DOTENV_API_TOKEN=dotenv-canary\nMULTI_TOKEN="first\nFRAG_TOKEN=frag-canary\nclosing"\nSQ_KEY=\047a\nSQFRAG_KEY=frag-canary\nclosing\nESCAPED_SINGLE_KEY=\047a\\\047\nESCAPED_FOLLOW_TOKEN=follow-canary\nPEM_PRIVATE_KEY="-----BEGIN\nKEY MATERIAL\n# it\047s a comment\nCOMMENT_TOKEN=x\nMID_TOKEN=ab"c\nAFTER_MID_TOKEN=y\n"weird/TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes exported dotenv names" "$excl" '"DOTENV_API_TOKEN"'
+assert_contains "multi-line double-quoted dotenv names are over-excluded" "$excl" '"MULTI_TOKEN"'
+assert_contains "multi-line single-quoted dotenv names are over-excluded" "$excl" '"SQ_KEY"'
+assert_contains "names after an unterminated double quote are never skipped" "$excl" '"FRAG_TOKEN"'
+assert_contains "names after an unterminated single quote are never skipped" "$excl" '"SQFRAG_KEY"'
+assert_contains "escaped-single-quote dotenv names are over-excluded" "$excl" '"ESCAPED_SINGLE_KEY"'
+assert_contains "names after an escaped single quote are never skipped" "$excl" '"ESCAPED_FOLLOW_TOKEN"'
+assert_contains "PEM names inside apparent quoted values are over-excluded" "$excl" '"PEM_PRIVATE_KEY"'
+assert_contains "an apostrophe in a comment cannot hide the next name" "$excl" '"COMMENT_TOKEN"'
+assert_contains "a name with a mid-value quote is over-excluded" "$excl" '"MID_TOKEN"'
+assert_contains "a name after a mid-value quote is never skipped" "$excl" '"AFTER_MID_TOKEN"'
+assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
+assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
+rm -f "$HOME/.codex/.env"
+
+# dotenvy accepts Unicode whitespace and more than spaces/tabs around names.
+printf '\vVERTICAL_TOKEN=v\n\fFORM_SECRET=f\n\rRETURN_KEY=r\n\u00a0NBSP_TOKEN=n\n\u3000IDEOGRAPHIC_SECRET=i\nexport\vEXPORTED_TOKEN=x\nPADDED_KEY\f=y\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+for name in VERTICAL_TOKEN FORM_SECRET RETURN_KEY NBSP_TOKEN IDEOGRAPHIC_SECRET EXPORTED_TOKEN PADDED_KEY; do
+    assert_contains "Codex re-excludes dotenv name with extended whitespace: $name" "$excl" "\"$name\""
+done
+rm -f "$HOME/.codex/.env"
+# The .env scan must fail closed: a broken python3, or a re.py in the cwd shadowing the
+# real module, may not silently drop the .env names while the defaults are still opened.
+printf 'SHADOW_TOKEN=s\n' >"$HOME/.codex/.env"
+mkdir -p "$WORK/badpy" "$WORK/shadow"
+printf '#!/bin/sh\nexit 7\n' >"$WORK/badpy/python3"; chmod +x "$WORK/badpy/python3"
+out=$(PATH="$WORK/badpy:$PATH" codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "a failing .env scan refuses the Codex spawn" "$rc" "1"
+assert_not_contains "a failing .env scan never opens the default filter" "$out" 'ignore_default_excludes'
+assert_contains "a failing .env scan is reported" "$(err)" '.env'
+printf 'open(%s, "w").close()\nraise SystemExit(3)\n' "'$WORK/shadowed'" >"$WORK/shadow/re.py"
+out=$(cd "$WORK/shadow" && codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "a cwd re.py cannot shadow the .env scan" "$excl" '"SHADOW_TOKEN"'
+if [ -e "$WORK/shadowed" ]; then no "a cwd re.py never runs"; else ok "a cwd re.py never runs"; fi
+rm -rf "$HOME/.codex/.env" "$WORK/badpy" "$WORK/shadow"
+# A configured policy may conflict with or outrank the `-c` override, so it is refused.
 printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 rc=$?
@@ -735,6 +781,44 @@ assert_contains "refusal names the user's exclude setting" "$(err)" "shell_envir
 assert_not_contains "refusal never prints the value" "$(err)" "private-canary"
 out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "user Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$HOME/.codex/config.toml"
+
+mkdir -p "$REPO/.codex"
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$REPO/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "project Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the project Codex config file" "$(err)" ".codex/config.toml"
+assert_not_contains "project-config refusal never prints the value" "$(err)" "private-canary"
+rm -f "$REPO/.codex/config.toml"
+rmdir "$REPO/.codex"
+
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$CODEX_ETC_ROOT/managed_config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "managed Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the managed config file" "$(err)" "managed_config.toml"
+assert_not_contains "managed-config refusal never prints the value" "$(err)" "private-canary"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "managed Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$CODEX_ETC_ROOT/managed_config.toml"
+
+printf '[shell_environment_policy]\nfilters = [{ exclude = "X_*" }]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "Codex filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy]\nfilters = ["X_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "bare Codex filters setting + secret-named --env refuses" "$?" "1"
+assert_contains "bare filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[[shell_environment_policy.filters]]\ninclude = "PATH"\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "array-of-tables filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "array-of-tables refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy.filters]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "filters table policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters table refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
 rm -f "$HOME/.codex/config.toml"
 
 echo "test: invalid --env values are rejected before a worker starts"
@@ -772,7 +856,7 @@ echo "test: shared --env validation rejects host-steering and infra-owned names"
 for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
     GIT_TEMPLATE_DIR LD_AUDIT LD_DEBUG DYLD_FALLBACK_LIBRARY_PATH \
     RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
-    CODEX_RUN_ROOT CODEX_HOME HOME GH_CONFIG_DIR; do
+    CODEX_RUN_ROOT CODEX_HOME CODEX_ETC_ROOT HOME GH_CONFIG_DIR; do
     bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
     rc=$?
     assert_equals "$name is rejected" "$rc" "1"
@@ -840,7 +924,7 @@ assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
 assert_equals "the multi-line prompt reached claude as ONE argument" \
     "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 assert_contains "against a base SHA, not the branch name it was passed" \
-    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')"
 assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
