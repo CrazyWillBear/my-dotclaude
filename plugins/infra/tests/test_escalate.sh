@@ -258,7 +258,25 @@ run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
 mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
 
-echo "test: review-cap — a second round with high or medium findings, from the RUN-DIR ledger"
+echo "test: review-cap — the FIRST round with high or medium findings, from the RUN-DIR ledger"
+# The shipped chain is luna → opus: luna builds, and any review with findings hands the fix
+# rounds to opus (PRD #70: luna's own fix rounds ran 5–6 deep without converging).
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the build review with a medium escalates" "$OUT" \
+    "review-cap: review 1 (1st this attempt) still has 0 high, 1 medium"
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 0 medium, 3 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "lows alone never escalate" "$OUT"
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
+ESCALATE_REVIEW_CAP=2 run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "ESCALATE_REVIEW_CAP=2 gives the codex cell one fix round first" "$OUT"
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+ESCALATE_REVIEW_CAP=0 run r1 12 standard "$REPO" --base base --attempt 0
+assert_equals "ESCALATE_REVIEW_CAP=0 is refused" "$RC" "1"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n2 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 0
@@ -276,10 +294,10 @@ assert_empty "and two forged rounds with findings burn nothing — the ledger is
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
 printf '{"attempt": 0, "mark": 3, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
-run r1 12 standard "$REPO" --base base --attempt 1
+ESCALATE_REVIEW_CAP=2 run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a respawn's FIRST round (headed round 3) is not its second — no escalation" "$OUT"
 printf '4 0 high, 1 medium, 0 low\n' >>"$RUNDIR/rounds"
-run r1 12 standard "$REPO" --base base --attempt 1
+ESCALATE_REVIEW_CAP=2 run r1 12 standard "$REPO" --base base --attempt 1
 assert_contains "its own second round with findings does escalate" "$OUT" \
     "review 4 (2nd this attempt)"
 rm -f "$RUNDIR/handoff.json"
@@ -306,7 +324,11 @@ assert_empty "lows alone never escalate" "$OUT"
 mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
 printf '1 2 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base
-assert_empty "a first round with findings is a fix round, not an escalation" "$OUT"
+assert_contains "a first round with findings escalates: opus fixes from round 1" "$OUT" "review-cap: review 1 (1st this attempt)"
+mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+ESCALATE_REVIEW_CAP=2 run r1 12 standard "$REPO" --base base
+assert_empty "at ESCALATE_REVIEW_CAP=2 a first round with findings is a fix round, not an escalation" "$OUT"
 mkrun '{"issue":12,"status":"fixed","round":2,"head":"abc1234","review":"","note":""}' 0
 printf '1 0 high, 0 medium, 0 low\n2 0 high, 1 medium, 0 low\n3 0 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base
@@ -369,7 +391,7 @@ assert_equals "with no path the title is the area, case-folded" "$OUT" "recurren
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf "$RECUR" >"$RUNDIR/rounds"
 printf '{"attempt": 0, "mark": 3, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
-run r1 12 standard "$REPO" --base base --attempt 1
+ESCALATE_REVIEW_CAP=2 run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a respawn's first round has nothing to recur against" "$OUT"
 rm -f "$RUNDIR/handoff.json"
 # at the consult cap, recurrence yields to review-cap — a decide is a consult

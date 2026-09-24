@@ -163,8 +163,8 @@ the loss from a kill at one sub-step, which is what makes killing on **suspicion
 resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
 respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
 onto a worktree whose previous session is still alive. A **codex** worker is replaced along its
-tier's implementer chain (6-luna → 6-sol → opus) by `escalate.sh`, from countable evidence — a
-`failed` report, a third deviation, a second review round with findings, a stall, a full context
+tier's implementer chain (6-luna → opus) by `escalate.sh`, from countable evidence — a
+`failed` report, a third deviation, a review round with high or medium findings, a stall, a full context
 — never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
 because nothing in git or GitHub records that a session was killed or a model changed.
 

@@ -65,8 +65,8 @@ session.
 
 | tier | planner | implementer (chain, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (cell kept valid) | 6-luna xhigh → 6-sol xhigh → opus medium (no plan; starts on codex like standard) | opus low |
-| standard | opus medium | 6-luna xhigh → 6-sol xhigh → opus medium | opus medium |
+| trivial | none run (cell kept valid) | 6-luna xhigh → opus medium (no plan; starts on codex like standard) | opus low |
+| standard | opus medium | 6-luna xhigh → opus medium | opus medium |
 | complex | fable medium | opus medium | opus high |
 
 The expensive model spends one bounded pass planning (`consult.sh plan`, posted to the issue as
@@ -441,8 +441,9 @@ bash ~/.claude/kit/infra/scripts/escalate.sh <runid> <N> <tier> <worktree> --bas
 ```
 
 which prints `<reason>: <detail>` or nothing, from artifacts that already exist — a `failed`
-report or crash, a third `**Deviation**` comment (consults are capped at two), a second
-`**Review round**` still carrying high or medium findings, a context at or past 256K (read from
+report or crash, a third `**Deviation**` comment (consults are capped at two), the
+`ESCALATE_REVIEW_CAP`-th `**Review round**` of the attempt (default 1: the first) still carrying
+high or medium findings — so with the shipped chain luna builds and opus fixes — a context at or past 256K (read from
 the worker's own rollout under `~/.codex/sessions`, joined by the thread id in `events.jsonl`;
 the event log's `turn.completed` usage is the turn's cumulative total, not the context size),
 or an event log untouched for 20 minutes while the pid lives. On a hit it posts the mechanical

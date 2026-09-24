@@ -209,6 +209,11 @@ assert_contains "the backstop signal is named" "$BODY" "backstop: "
 assert_contains "the round backstop threshold is listed" "$BODY" "ESCALATE_ROUND_BACKSTOP"
 assert_matches "no-progress ends the loop, no respawn" "$BODY" "no-progress.{0,300}(no respawn|loop ends|ends the loop)"
 assert_matches "review-cap is per attempt" "$BODY" "review-cap.{0,200}attempt"
+assert_contains "the review-cap threshold is listed" "$BODY" "ESCALATE_REVIEW_CAP"
+assert_contains "clean is 0 high and 0 medium" "$BODY" '`H = 0` and `M = 0` (clean'
+assert_contains "lows never block the merge queue" "$BODY" "lows never block"
+assert_contains "no fix round for lows alone" "$BODY" "Never spawn a fix round for lows alone"
+assert_not_contains "6-sol is out of the chain" "$BODY" "6-sol"
 assert_contains "Claude no-progress uses review comments" "$BODY" 'read the two newest `**Review round**` comments on the thread'
 assert_contains "Claude no-progress follows a Decision" "$BODY" 'after a `**Decision**` consult'
 assert_contains "Claude no-progress compares high + medium" "$BODY" 'if high + medium does not fall, end as `no-progress`'
@@ -252,7 +257,7 @@ assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
-assert_contains "the chain is named" "$BODY" "6-luna → 6-sol → opus"
+assert_contains "the chain is named" "$BODY" "6-luna → opus"
 assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
 assert_matches "run on every wake" "$BODY" "On every wake"
 assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"

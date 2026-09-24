@@ -132,7 +132,7 @@ assert_equals "trivial: implementer_model 6-luna (chain head)" "$(val "$OUT" imp
 assert_equals "trivial: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 assert_equals "trivial: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
 assert_equals "trivial: implementer_attempt 0" "$(val "$OUT" implementer_attempt)" "0"
-assert_equals "trivial: implementer_chain 3" "$(val "$OUT" implementer_chain)" "3"
+assert_equals "trivial: implementer_chain 2" "$(val "$OUT" implementer_chain)" "2"
 assert_equals "trivial: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "trivial: reviewer_effort low" "$(val "$OUT" reviewer_effort)" "low"
 assert_equals "trivial: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
@@ -147,7 +147,7 @@ assert_equals "standard: planner_backend claude" "$(val "$OUT" planner_backend)"
 assert_equals "standard: implementer_model 6-luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-6-luna"
 assert_equals "standard: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 assert_equals "standard: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
-assert_equals "standard: implementer_chain 3" "$(val "$OUT" implementer_chain)" "3"
+assert_equals "standard: implementer_chain 2" "$(val "$OUT" implementer_chain)" "2"
 assert_equals "standard: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
 assert_equals "standard: reviewer_effort medium" "$(val "$OUT" reviewer_effort)" "medium"
 assert_equals "standard: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
@@ -178,25 +178,26 @@ done
 run_tier standard __REAL__ 1
 assert_equals "standard attempt 1: exit 0" "$RC" "0"
 assert_equals "standard attempt 1: stderr empty" "$ERR" ""
-assert_equals "standard attempt 1: 6-sol" "$(val "$OUT" implementer_model)" "gpt-6-sol"
-assert_equals "standard attempt 1: still codex" "$(val "$OUT" implementer_backend)" "codex"
+assert_equals "standard attempt 1: opus tops the chain (no 6-sol hop)" "$(val "$OUT" implementer_model)" "opus"
+assert_equals "standard attempt 1: at medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "standard attempt 1: claude backend" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "standard attempt 1: attempt echoed" "$(val "$OUT" implementer_attempt)" "1"
-run_tier standard __REAL__ 2
-assert_equals "standard attempt 2: opus tops the chain" "$(val "$OUT" implementer_model)" "opus"
-assert_equals "standard attempt 2: at medium" "$(val "$OUT" implementer_effort)" "medium"
-assert_equals "standard attempt 2: claude backend" "$(val "$OUT" implementer_backend)" "claude"
-assert_equals "standard attempt 2: chain still 3" "$(val "$OUT" implementer_chain)" "3"
+assert_equals "standard attempt 1: chain still 2" "$(val "$OUT" implementer_chain)" "2"
 # The planner and reviewer cells do not move with the attempt.
-assert_equals "standard attempt 2: planner unchanged" "$(val "$OUT" planner_model)" "opus"
-assert_equals "standard attempt 2: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
+assert_equals "standard attempt 1: planner unchanged" "$(val "$OUT" planner_model)" "opus"
+assert_equals "standard attempt 1: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
 run_tier trivial __REAL__ 1
-assert_equals "trivial shares the standard chain: attempt 1 is 6-sol" "$(val "$OUT" implementer_model)" "gpt-6-sol"
+assert_equals "trivial shares the standard chain: attempt 1 is opus" "$(val "$OUT" implementer_model)" "opus"
+for t in trivial standard; do
+    run_tier "$t"
+    assert_not_contains "$t: 6-sol is out of the shipped chain" "$OUT" "gpt-6-sol"
+done
 
 echo "test: an attempt past the top of the chain is a loud fallback, never a silent wrap"
-run_tier standard __REAL__ 3
+run_tier standard __REAL__ 2
 assert_equals "past the top: exit 0 (the contract holds)" "$RC" "0"
-assert_contains "past the top: WARN names the attempt" "$ERR" "attempt 3"
-assert_contains "past the top: WARN names the chain length" "$ERR" "3"
+assert_contains "past the top: WARN names the attempt" "$ERR" "attempt 2"
+assert_contains "past the top: WARN names the chain length" "$ERR" "length 2"
 assert_equals "past the top: falls back to the claude-only roster" "$(val "$OUT" implementer_model)" "opus"
 assert_equals "past the top: fallback chain length is 1" "$(val "$OUT" implementer_chain)" "1"
 run_tier standard __REAL__ -1

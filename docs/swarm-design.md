@@ -86,9 +86,17 @@ gains a backend column:
 
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
-| standard | claude opus medium | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium | claude opus medium |
+| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
+| standard | claude opus medium | codex 6-luna xhigh → claude opus medium | claude opus medium |
 | complex | claude fable medium | claude opus medium | claude opus high |
+
+**Updated 2026-09-23 (6-sol dropped, opus fixes from round 1):** PRD #70's run showed luna
+builds fine but its fix rounds do not converge (5–6 review rounds per issue, fix rounds adding
+new highs), and every issue paid two codex hops before reaching opus. The chain is now
+6-luna → opus, and `escalate.sh`'s review-cap fires on the attempt's FIRST review with high or
+medium findings (`ESCALATE_REVIEW_CAP=1`), so a codex build with findings is fixed by opus
+from fix round 1. A consequence: the recurrence decide (#116) needs two rounds in one codex
+attempt, so with the shipped defaults it can no longer fire for a codex attempt.
 
 **Updated 2026-09-22 (GPT-6, Opus 5.5):** 6-luna and 6-sol replace 5.6-luna and 5.6-terra
 — both cheaper, so the chain stays cheapest-first; standard's reviewer goes medium → high (a

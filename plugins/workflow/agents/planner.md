@@ -20,7 +20,7 @@ by path (a marketplace install caches each plugin separately; docs/swarm-design.
 split), so the two are kept in step by hand and both grep tests pin the same section names —
 on the tier's **planner cell** (opus medium for standard, fable medium for complex) **before the
 build worker is spawned**, and posts the output as the `**Plan**` comment. The implementer —
-a cheaper model (6-luna, then 6-sol, then opus as the chain escalates) — reads the thread before
+a cheaper model (6-luna, then opus as the chain escalates) — reads the thread before
 doing anything, so it receives the plan the way it receives everything else. That is the
 whole design: a smart one-pass plan in front of a cheap build loop. Trivial issues self-plan.
 

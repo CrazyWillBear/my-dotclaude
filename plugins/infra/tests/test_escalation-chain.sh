@@ -111,12 +111,11 @@ escalate() { rm -f "$WORK/gh-argv" "$WORK/body"; OUT="$(bash "$INFRA/escalate.sh
 posted() { grep -qx comment "$WORK/gh-argv" 2>/dev/null && echo yes || echo no; }
 
 # ---------------------------------------------------------------------------
-echo "test: the shipped chain resolves 6-luna → 6-sol → opus for a standard issue"
-R0="$(bash "$INFRA/resolve-tier.sh" standard 0)"; R1="$(bash "$INFRA/resolve-tier.sh" standard 1)"; R2="$(bash "$INFRA/resolve-tier.sh" standard 2)"
+echo "test: the shipped chain resolves 6-luna → opus for a standard issue"
+R0="$(bash "$INFRA/resolve-tier.sh" standard 0)"; R1="$(bash "$INFRA/resolve-tier.sh" standard 1)"
 assert_contains "attempt 0 6-luna" "$R0" "implementer_model=gpt-6-luna"
-assert_contains "attempt 1 6-sol" "$R1" "implementer_model=gpt-6-sol"
-assert_contains "attempt 2 opus" "$R2" "implementer_model=opus"
-assert_contains "chain length 3" "$R0" "implementer_chain=3"
+assert_contains "attempt 1 opus" "$R1" "implementer_model=opus"
+assert_contains "chain length 2" "$R0" "implementer_chain=2"
 
 echo "test: attempt 0 spawns 6-luna for real, through codex, with the plan in its prompt"
 out="$(spawn --attempt 0 --dry-run)"
@@ -126,7 +125,7 @@ assert_contains "the worker is told to follow the Plan comment" "$out" "**Plan**
 assert_contains "and to stop on a deviation" "$out" "**Deviation**"
 
 # ---------------------------------------------------------------------------
-echo "SIGNAL 1: a failed report → escalate → respawn names 6-sol → handoff posted"
+echo "SIGNAL 1: a failed report → escalate → respawn tops out on opus → handoff posted"
 rm -rf "$CODEX_ROOT"
 STUB_REPORT='{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"done-check red"}' \
     spawn --attempt 0 >/dev/null
@@ -141,8 +140,8 @@ assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "**Handoff** —
 assert_contains "handoff lists the branch's commit" "$(cat "$WORK/body")" "step 1: add f"
 assert_contains "handoff carries the last event-log activity" "$(cat "$WORK/body")" "pytest -q"
 out="$(spawn --attempt 1 --dry-run)"
-assert_arg "the respawn argv names the NEXT chain model" "$out" "gpt-6-sol"
-assert_arg "still codex" "$out" "codex"
+assert_arg "the respawn argv names the NEXT chain model" "$out" "opus"
+assert_arg "which is the claude cell" "$out" "--bg"
 assert_contains "and the respawn is told it is one" "$out" "**Handoff**"
 assert_contains "onto the SAME worktree" "$out" "$WT"
 
@@ -150,7 +149,7 @@ assert_contains "onto the SAME worktree" "$out" "$WT"
 echo "SIGNAL 2: a stale event log with a live pid → stall → respawn"
 rm -rf "$CODEX_ROOT"
 STUB_SLEEP=60 STUB_REPORT='{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
-    spawn --attempt 1 >/dev/null
+    spawn --attempt 0 >/dev/null
 unset STUB_SLEEP   # `spawn` is a shell FUNCTION: on bash < 4.4 (macOS's 3.2) a var assigned
                    # in front of a function call can leak into the CURRENT shell instead of
                    # staying scoped to that call — every LATER spawn in this file would then
@@ -159,13 +158,13 @@ for _ in $(seq 1 25); do [ -s "$RUNDIR/pid" ] && [ -f "$RUNDIR/events.jsonl" ] &
 WPID="$(cat "$RUNDIR/pid")"
 sleep 0.5   # let the stub finish streaming before the mtime is aged
 assert_contains "session-status reads the live worker as busy" "$(bash "$INFRA/session-status.sh" r1 12 2>/dev/null)" "codex busy"
-escalate --attempt 1
+escalate --attempt 0
 assert_empty "a fresh event log: no signal" "$OUT"
 age_file "$RUNDIR/events.jsonl" 30
-escalate --attempt 1
+escalate --attempt 0
 assert_contains "aged log + live pid = stall" "$OUT" "stall: no event-log activity for 30 minutes"
-assert_contains "handoff names attempt 1" "$(cat "$WORK/body")" "attempt 1 replaced: stall"
-out="$(spawn --attempt 2 --dry-run)"
+assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "attempt 0 replaced: stall"
+out="$(spawn --attempt 1 --dry-run)"
 assert_arg "the respawn tops out on claude" "$out" "--bg"
 assert_arg "at opus" "$out" "opus"
 kill -- -"$WPID" 2>/dev/null; WPID=""
@@ -188,10 +187,10 @@ assert_contains "the handoff was posted for it" "$(cat "$WORK/body")" "replaced:
 kill -- -"$WPID" 2>/dev/null; WPID=""
 
 # ---------------------------------------------------------------------------
-echo "THE TOP OF THE CHAIN: spawn.sh refuses attempt 3, so the orchestrator drains"
-spawn --attempt 3 --dry-run >/dev/null
+echo "THE TOP OF THE CHAIN: spawn.sh refuses attempt 2, so the orchestrator drains"
+spawn --attempt 2 --dry-run >/dev/null
 assert_equals "exit 1" "$?" "1"
-assert_contains "names the chain" "$(cat "$WORK/err")" "past the top of tier 'standard' implementer chain (length 3)"
+assert_contains "names the chain" "$(cat "$WORK/err")" "past the top of tier 'standard' implementer chain (length 2)"
 
 echo "A CLEAN BUILD escalates nothing — the loop must not burn tiers for free"
 rm -rf "$CODEX_ROOT"

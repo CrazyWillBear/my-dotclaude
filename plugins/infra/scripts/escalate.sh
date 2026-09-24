@@ -54,15 +54,19 @@
 #                  a consult — so review-cap takes over. A claude-backed attempt stays exempt: the ledger is written
 #                  only by the codex review wrapper, so a claude attempt has no rounds of its
 #                  own, and any in the file belong to earlier codex attempts behind rounds_mark.
-#   review-cap     a SECOND review round within this attempt still has high or medium
-#                  findings — the fix session is spawned at the next chain position.
+#   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 1:
+#                  the very first) still has high or medium findings — the fix session is
+#                  spawned at the next chain position. With the shipped luna → opus chain
+#                  that means a codex build with findings is fixed by opus from fix round 1;
+#                  luna builds fine but its fix rounds did not converge (PRD #70 ran 5–6
+#                  rounds per issue). Set 2 to give the codex cell one fix round first.
 #                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append
 #                  (round lines `<round> <H> high, <M> medium, <L> low`; the
 #                  `finding<TAB>…` entries beside them — #110 — are not rounds), NEVER
 #                  from the thread: a worker can post a comment headed
 #                  `**Review round 99** — 0 high…` and cannot touch the run dir. Rounds are counted inside the attempt (the
 #                  ledger position recorded at the last handoff), not off the review number,
-#                  which runs 1..N across the whole run: every position gets two.
+#                  which runs 1..N across the whole run: every position gets its own count.
 #
 # THE THREAD SIGNALS ARE SCOPED TO THIS ATTEMPT. Issue comments are permanent, so a third
 # deviation would otherwise fire on every wake forever and walk the whole chain in three
@@ -98,6 +102,7 @@
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
 #   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=20 (safety net; should never trigger)
+#   ESCALATE_REVIEW_CAP=1 (which review of an attempt, still carrying high/medium, escalates)
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
@@ -141,6 +146,8 @@ case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 ESC_BACKSTOP="${ESCALATE_ROUND_BACKSTOP:-20}"
 case "$ESC_BACKSTOP" in ''|*[!0-9]*) die "ESCALATE_ROUND_BACKSTOP must be a number, got '$ESC_BACKSTOP'" ;; esac
+ESC_REVIEW_CAP="${ESCALATE_REVIEW_CAP:-1}"
+case "$ESC_REVIEW_CAP" in ''|0|*[!0-9]*) die "ESCALATE_REVIEW_CAP must be a number of 1 or more, got '$ESC_REVIEW_CAP'" ;; esac
 # An UNKNOWN tier must not reach resolve-tier.sh: it answers one with the claude-only
 # FALLBACK roster (exit 0, its WARN discarded below), which reads here as "claude-backed,
 # never escalated" — silently switching every signal off for that worker for the rest of
@@ -194,6 +201,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
        ESC_BACKSTOP="$ESC_BACKSTOP" \
+       ESC_REVIEW_CAP="$ESC_REVIEW_CAP" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
 # A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
@@ -210,6 +218,7 @@ occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
 window  = int(os.environ["ESC_WINDOW"])
 backstop = int(os.environ["ESC_BACKSTOP"])
+review_cap = int(os.environ["ESC_REVIEW_CAP"])
 dry     = bool(os.environ.get("ESC_DRY"))
 
 def comment_time(c):
@@ -365,7 +374,7 @@ if reason is None and not spent:
         m = re.match(r"(\d+) (\d+) high, (\d+) medium", l)
         if m:
             rounds.append(tuple(int(x) for x in m.groups()))
-    if len(rounds) >= 2:
+    if len(rounds) >= review_cap:
         n, h, med = rounds[-1]          # the NEWEST, not the highest number
         if h > 0 or med > 0:
             reason = ("review-cap", "review %d (%s this attempt) still has %d high, %d medium" % (n, ordinal(len(rounds)), h, med))

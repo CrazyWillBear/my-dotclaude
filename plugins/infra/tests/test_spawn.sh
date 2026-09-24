@@ -1260,11 +1260,9 @@ for t in trivial standard; do
     assert_arg "shipped $t attempt 0 is 6-luna" "$out" "gpt-6-luna"
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
-    assert_arg "shipped $t attempt 1 is 6-sol" "$out" "gpt-6-sol"
-    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
-          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 2 2>/dev/null)
-    assert_arg "shipped $t attempt 2 tops out on claude" "$out" "--bg"
+    assert_arg "shipped $t attempt 1 tops out on claude" "$out" "--bg"
     assert_arg "at opus" "$out" "opus"
+    assert_not_contains "no 6-sol hop" "$out" "gpt-6-sol"
 done
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
       bash "$SPAWN" r9 12 complex "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
