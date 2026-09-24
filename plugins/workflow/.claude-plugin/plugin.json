@@ -1,7 +1,7 @@
 {
   "name": "workflow",
-  "version": "1.0.2",
-  "description": "An autonomous dev loop. /orchestrate is a standing dispatcher: it routes by shape — one explicit unit of work runs as a subagent chain, an issue graph or PRD gets one real `claude --bg` session per issue (named orch-<runid>-issue-<N>, tier-routed model, its own git worktree, reporting over SendMessage), and anything ambiguous is discussed rather than built. Scope is always an explicit issue allowlist, readiness is computed by ready.sh over a launch-frozen graph rather than guessed by a model, the issue thread carries findings and decisions so they never pass through the orchestrator, merging is a deterministic fold with only the conflicted remainder reaching an agent, and the end merge, the single PR and every issue close stay on the main thread. The plugin also ships /classify-task and the manager's front half, /to-prd and /to-issues.",
+  "version": "1.1.0",
+  "description": "An autonomous dev loop. /orchestrate is a standing dispatcher: it routes by shape — one explicit unit of work runs as a subagent chain, an issue graph or PRD gets one real `claude --bg` session per issue (named orch-<runid>-issue-<N>-a<attempt>-r<round>, tier-routed model, its own git worktree, reporting over SendMessage), and anything ambiguous is discussed rather than built. Scope is always an explicit issue allowlist, readiness is computed by ready.sh over a launch-frozen graph rather than guessed by a model, the issue thread carries findings and decisions so they never pass through the orchestrator, merging is a deterministic fold with only the conflicted remainder reaching an agent, and the end merge, the single PR and every issue close stay on the main thread. The plugin also ships /classify-task and the manager's front half, /to-prd and /to-issues.",
   "author": {
     "name": "William Chastain",
     "url": "https://github.com/CrazyWillBear"
