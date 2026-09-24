@@ -34,17 +34,12 @@ if [ "${1:-}" = --codex-policy ]; then
         [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])(exclude|filters)[[:space:]]*=|^[[:space:]]*\[\[?[[:space:]]*shell_environment_policy\.(exclude|filters)' "$cfg" \
             && die "$cfg contains a shell_environment_policy.exclude or .filters setting that may conflict with or outrank the -c override needed for KEY/SECRET/TOKEN --env; rename the variable or drop that setting"
     done
-    excl=
-    while IFS= read -r name; do
-        secretish "$name" || continue
-        case "$provisioned" in *" $name "*) continue ;; esac
-        case "$name" in *[[:cntrl:]]*) die "an inherited KEY/SECRET/TOKEN name contains a control character" ;; esac
-        name="${name//\\/\\\\}"; name="${name//\"/\\\"}"
-        case ",$excl," in *",\"$name\","*) continue ;; esac
-        excl+="${excl:+,}\"$name\""
-    done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
-             if [ -f "$codex_home/.env" ]; then
-                 python3 - "$codex_home/.env" <<'PY'
+    # Both scans run to a variable first so a failure refuses instead of silently dropping
+    # names (`< <(...)` loses the exit status). `python3 -I` keeps a cwd re.py out of sys.path.
+    names="$(awk 'BEGIN { for (k in ENVIRON) print k }')" \
+        || die "could not list inherited environment names; refusing KEY/SECRET/TOKEN --env"
+    if [ -f "$codex_home/.env" ]; then
+        dotenv="$(python3 -I - "$codex_home/.env" <<'PY'
 import re
 import sys
 
@@ -57,7 +52,18 @@ with open(sys.argv[1], encoding='utf-8', errors='replace', newline='') as env_fi
         if match:
             print(match.group(1))
 PY
-             fi)
+)" || die "could not read names from $codex_home/.env; refusing KEY/SECRET/TOKEN --env"
+        names+=$'\n'"$dotenv"
+    fi
+    excl=
+    while IFS= read -r name; do
+        secretish "$name" || continue
+        case "$provisioned" in *" $name "*) continue ;; esac
+        case "$name" in *[[:cntrl:]]*) die "an inherited KEY/SECRET/TOKEN name contains a control character" ;; esac
+        name="${name//\\/\\\\}"; name="${name//\"/\\\"}"
+        case ",$excl," in *",\"$name\","*) continue ;; esac
+        excl+="${excl:+,}\"$name\""
+    done <<<"$names"
     printf '%s\n' 'shell_environment_policy.ignore_default_excludes=true'
     [ -z "$excl" ] || printf 'shell_environment_policy.exclude=[%s]\n' "$excl"
     exit 0

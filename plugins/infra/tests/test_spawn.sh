@@ -756,6 +756,22 @@ for name in VERTICAL_TOKEN FORM_SECRET RETURN_KEY NBSP_TOKEN IDEOGRAPHIC_SECRET 
     assert_contains "Codex re-excludes dotenv name with extended whitespace: $name" "$excl" "\"$name\""
 done
 rm -f "$HOME/.codex/.env"
+# The .env scan must fail closed: a broken python3, or a re.py in the cwd shadowing the
+# real module, may not silently drop the .env names while the defaults are still opened.
+printf 'SHADOW_TOKEN=s\n' >"$HOME/.codex/.env"
+mkdir -p "$WORK/badpy" "$WORK/shadow"
+printf '#!/bin/sh\nexit 7\n' >"$WORK/badpy/python3"; chmod +x "$WORK/badpy/python3"
+out=$(PATH="$WORK/badpy:$PATH" codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "a failing .env scan refuses the Codex spawn" "$rc" "1"
+assert_not_contains "a failing .env scan never opens the default filter" "$out" 'ignore_default_excludes'
+assert_contains "a failing .env scan is reported" "$(err)" '.env'
+printf 'open(%s, "w").close()\nraise SystemExit(3)\n' "'$WORK/shadowed'" >"$WORK/shadow/re.py"
+out=$(cd "$WORK/shadow" && codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "a cwd re.py cannot shadow the .env scan" "$excl" '"SHADOW_TOKEN"'
+if [ -e "$WORK/shadowed" ]; then no "a cwd re.py never runs"; else ok "a cwd re.py never runs"; fi
+rm -rf "$HOME/.codex/.env" "$WORK/badpy" "$WORK/shadow"
 # A configured policy may conflict with or outrank the `-c` override, so it is refused.
 printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
