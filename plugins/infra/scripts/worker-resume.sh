@@ -10,15 +10,14 @@
 #
 # Usage:
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
-#        [--round N] [--attempt N] [--dry-run]
+#        [--attempt N] [--env NAME=VALUE]... [--dry-run]
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer-file FILE \
-#        [--round N] [--attempt N] [--dry-run]
+#        [--attempt N] [--env NAME=VALUE]... [--dry-run]
 #
 #     --base BRANCH  REQUIRED. What the post-resume review diffs against. The resumed
 #                    worker does not review itself (§ the reviewer, below), so without
 #                    this there is nothing to review against and the run would be landed
 #                    unreviewed.
-#     --round N      the round number quoted in the review comment this posts (default 1)
 #     --attempt N    the chain position the worker was SPAWNED at (default 0), so the
 #                    re-passed `-m` is the same model — a resume on a different model is
 #                    a stranger on the thread (#104). The answer is normally a consult's
@@ -52,8 +51,8 @@ ANSWER=""
 ANSWER_SET=0
 DRY=""
 BASE=""
-ROUND=1
 ATTEMPT=0
+ENVS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -64,16 +63,16 @@ while [ $# -gt 0 ]; do
                        ANSWER="$(cat "$2")"; ANSWER_SET=1; shift 2 ;;
         --base)        [ $# -ge 2 ] || die "--base needs a value"
                        BASE="$2"; shift 2 ;;
-        --round)       [ $# -ge 2 ] || die "--round needs a value"
-                       ROUND="$2"; shift 2 ;;
         --attempt)     [ $# -ge 2 ] || die "--attempt needs a value"
                        ATTEMPT="$2"; shift 2 ;;
+        --env)         [ $# -ge 2 ] || die "--env needs NAME=VALUE"
+                       ENVS+=("$2"); shift 2 ;;
         --dry-run)     DRY=1; shift ;;
         *)             die "unknown flag $1" ;;
     esac
 done
 
-USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--round N] [--dry-run]"
+USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT [--attempt N] [--env NAME=VALUE]... [--dry-run]"
 [ -n "$RUNID" ] && [ -n "$ISSUE" ] && [ -n "$TIER" ] && [ -n "$WORKTREE" ] || die "$USAGE"
 # --base is REQUIRED, and deliberately has no default. The resumed turn ends with an
 # independent review (below) and the reviewer's commit range cannot be built without one —
@@ -82,13 +81,13 @@ USAGE="usage: worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH -
 # Guessing a base here (`main`, the current branch) would be the same silence with extra
 # steps: wrong on any repo whose default differs, and undetectable when it is.
 [ -n "$BASE" ] || die "--base BRANCH is required — the post-resume review cannot run without it"
-case "$ROUND" in ''|*[!0-9]*) die "--round must be a number, got '$ROUND'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "--attempt must be a number, got '$ATTEMPT'" ;; esac
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 # Same guard as spawn.sh, worker-report.sh and run-log.sh: it is joined into a path.
 case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9._-] and may not be . or .., got '$RUNID'" ;; esac
 [ "$ANSWER_SET" -eq 1 ] || die "an answer is required: --answer TEXT or --answer-file FILE"
 [ -n "${ANSWER//[[:space:]]/}" ] || die "the answer is empty — resuming with nothing to say wastes the thread"
+[ "${#ENVS[@]}" -eq 0 ] || bash "$INFRA/env-pairs.sh" "${ENVS[@]}" || exit 1
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
 
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
@@ -137,7 +136,9 @@ review:
    {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
 Use \"status\": \"failed\" with the reason in \"note\" if you could not finish. If you are
 STILL blocked on something only a human can answer, use \"status\": \"escalate\" again with
-the new question in \"note\" — do not guess."
+the new question in \"note\" — do not guess. Missing infrastructure you cannot create (a
+database, a service, a credential)? \"status\": \"blocked\" with \"note\" = \"infra: <what is missing>\"
+— never an escalate deviation."
 
 CMD=(codex exec resume "$THREAD"
      -m "$MODEL"
@@ -145,8 +146,14 @@ CMD=(codex exec resume "$THREAD"
      -c "approval_policy=never"
      -c "sandbox_mode=workspace-write"
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Resume does not inherit the spawn's shell environment policy. Re-pass the
+# name-filter override when an explicitly provisioned value needs it.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    _policy="$(bash "$INFRA/env-pairs.sh" --codex-policy "$WORKTREE" "${ENVS[@]}")" || exit 1
+    while IFS= read -r _c; do [ -z "$_c" ] || CMD+=(-c "$_c"); done <<<"$_policy"
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$PROMPT")
@@ -192,8 +199,10 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
 # README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
+# The role comes from the file spawn.sh wrote.
+SCOPED=""; [ "$(head -1 "$RUNDIR/role" 2>/dev/null)" = fix ] && SCOPED="$RUNDIR"
 while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
-    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE" ${SCOPED:+--scoped "$SCOPED"})
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # review.txt goes too, and for the sharpest version of the same reason: it is the only
@@ -217,7 +226,10 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/re
 # just went to a human and came back — so there is nothing to gain from backgrounding it,
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
-( cd "$WORKTREE" && "${CMD[@]}" ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
+(
+    [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
+    cd "$WORKTREE" && "${CMD[@]}"
+) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
 # Anything the worker just resumed may have left at review-checkout/review-scratch is gone
 # BEFORE the clone below trusts either path (#99) — same placement and reasoning as
@@ -261,11 +273,20 @@ if [ "$CODE" -eq 0 ] \
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
             # report the merge queue acts on can never disagree.
-            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" \
+            PRIOR=()
+            [ -z "$SCOPED" ] || PRIOR=(--prior "$RUNDIR")
+            # Empty arrays expand as unbound under set -u on macOS bash 3.2.
+            COUNTS="$(bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" ${PRIOR[@]+"${PRIOR[@]}"} \
                 2>>"$RUNDIR/review-stderr.log")"
             if [ -n "$COUNTS" ]; then
-                # The run-dir ledger escalate.sh counts rounds from (see spawn.sh's wrapper).
+                # The run-dir ledger escalate.sh counts rounds from: round lines start
+                # with a digit, finding entries do not (see spawn.sh's wrapper).
+                ROUND=$(( $(cat "$RUNDIR/rounds" 2>/dev/null | grep -c '^[0-9]') + 1 ))
                 printf '%s %s\n' "$ROUND" "$COUNTS" >>"$RUNDIR/rounds"
+                bash "$INFRA/review-counts.sh" "$RUNDIR/review.txt" --findings "$ROUND" \
+                    >>"$RUNDIR/rounds" 2>>"$RUNDIR/review-stderr.log"
+                git -C "$RUNDIR/review-checkout" rev-parse HEAD \
+                    >"$RUNDIR/reviewed-head" 2>>"$RUNDIR/review-stderr.log"
                 { printf '**Review round %s** — %s\n\n' "$ROUND" "$COUNTS"
                   cat "$RUNDIR/review.txt"; } >"$RUNDIR/review-comment.md"
                 ( cd "$WORKTREE" && gh issue comment "$ISSUE" \
@@ -274,6 +295,7 @@ if [ "$CODE" -eq 0 ] \
                     || printf 'REVIEW_COMMENT_POST_FAILED\n' >>"$RUNDIR/review-stderr.log"
             else
                 printf 'REVIEW_UNREADABLE\n' >>"$RUNDIR/review-stderr.log"
+                rm -f "$RUNDIR/review.txt"
             fi
         else
             printf 'REVIEW_FAILED\n' >>"$RUNDIR/review-stderr.log"

@@ -18,9 +18,11 @@
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
 set -u
+unset DATABASE_URL FOO CODEX_HOME
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPAWN="$(cd "$SCRIPT_DIR/.." && pwd)/scripts/spawn.sh"
+ENV_PAIRS="$(dirname "$SPAWN")/env-pairs.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -29,6 +31,8 @@ trap 'rm -rf "$WORK"' EXIT
 # and finds resolve-tier.sh / session-status.sh beside itself, so no link is needed.
 export HOME="$WORK/home"
 mkdir -p "$HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 pass=0
 fail=0
@@ -106,6 +110,21 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@"
 printf 'STDIN:['; cat; printf ']\n'
+settings=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --settings) settings="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+# A running --bg daemon does not inherit arbitrary variables from this launcher.
+unset DATABASE_URL FOO
+if [ -n "$settings" ]; then
+    DATABASE_URL="$(jq -r '.env.DATABASE_URL // ""' "$settings")"
+    FOO="$(jq -r '.env.FOO // ""' "$settings")"
+fi
+[ -n "${STUB_SETTINGS_OUT:-}" ] && printf '%s\n' "$settings" >"$STUB_SETTINGS_OUT"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 STUB
 chmod +x "$BIN/claude"
 
@@ -140,7 +159,8 @@ assert_not_contains "nothing leaked through" "$argv" "LEAKED"
 echo "test: the command carries the run-prefixed name and the tier's roster"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
 assert_arg "background" "$out" "--bg"
-assert_arg "run-prefixed session name" "$out" "orch-20260906-101500-issue-12"
+assert_arg "run-prefixed session name includes the initial attempt" "$out" "orch-20260906-101500-issue-12-a0"
+assert_contains "spawn prints the full session name" "$(err)" "session name: orch-20260906-101500-issue-12-a0"
 assert_arg "standard tier -> sonnet implementer" "$out" "sonnet"
 out_c=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
 assert_arg "complex tier -> opus implementer" "$out_c" "opus"
@@ -199,6 +219,8 @@ assert_contains "the deviation names step, finding and attempt" "$out_s" "which 
 # every backend the codex shape left a claude worker unable to emit its own pause mechanism.
 assert_contains "a CLAUDE worker's pause is SendMessage, with the deviation: prefix" "$out_s" \
     "issue 12 escalate deviation: <the same three lines>"
+assert_contains "a CLAUDE worker can report missing infrastructure as blocked" "$out_s" \
+    "issue 12 blocked infra: <what is missing>"
 assert_not_contains "never the codex-only status/note shape it cannot emit" "$out_s" '"note" = "deviation: "'
 assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
 
@@ -231,6 +253,7 @@ assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
 assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
 out_a1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 1)
 assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
+assert_arg "attempt 1 is part of the session name" "$out_a1" "orch-r1-issue-12-a1"
 assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
 assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
 assert_contains "and to continue from the last commit" "$out_a1" "last commit"
@@ -246,12 +269,16 @@ assert_equals "a non-numeric attempt exits 1" "$?" "1"
 RESOLVE_TIER_ROOT="$CFG_CLAUDE"
 out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
 assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
+assert_arg "a fix session name includes attempt and round" "$out_f1" "orch-r1-issue-12-a1-r2"
+assert_contains "spawn prints that full fix session name" "$(err)" "session name: orch-r1-issue-12-a1-r2"
 
 echo "test: --role fix is a fresh session working from the review comment"
 out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
+assert_arg "the default attempt is included in a fix session name" "$out" "orch-20260906-101500-issue-12-a0-r2"
 assert_contains "says which round" "$out" "FIX ROUND 2"
 assert_contains "did not write this code" "$out" "You did not write this code"
 assert_contains "reads the review comment" "$out" "Review round"
+assert_contains "a newer Consult decision replaces re-patching" "$out" "implement the decision"
 assert_contains "reports the round back" "$out" "round=2"
 assert_not_contains "does not re-post the tackled comment" "$out" "Tackled #12"
 
@@ -273,6 +300,8 @@ mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL sp
     if [ "$2" = - ]; then
         printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
     else
+        # The generated stub uses these expansions when it runs, not while being written.
+        # shellcheck disable=SC2016
         printf '#!/usr/bin/env bash\n[ "${1:-}" = --self ] || exit 1\nprintf "%%s\\n" "%s"\n' \
             "$2" >"$1/session-status.sh"
     fi
@@ -349,6 +378,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -n "${STUB_CODEX_SLEEP:-}" ] && sleep "$STUB_CODEX_SLEEP"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 exit "${STUB_CODEX_EXIT:-0}"
 STUB
 
@@ -361,6 +391,7 @@ cat >"$CODEX_BIN/claude" <<'STUB'
 printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
 pwd >"${STUB_REVIEW_CWD:-/dev/null}"
+[ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
 # The `reviewing` marker must exist WHILE the review runs (escalate.sh reads it to hold the
 # stall signal off); the run dir is the clone's parent.
 [ -e ../reviewing ] && printf 'yes\n' >"${STUB_REVIEW_MARKER:-/dev/null}"
@@ -521,6 +552,8 @@ assert_contains "a codex worker pauses on a deviation with the escalate status" 
 # --output-schema) that a claude worker does not (review round 9).
 assert_contains "a CODEX worker's pause DOES use the status/note shape" "$out_cx" \
     '"note" = "deviation: "'
+assert_contains "a CODEX worker can report missing infrastructure as blocked" "$out_cx" \
+    'infra: <what is missing>'
 
 echo "test: a SIBLING reviewer is spawned — CLAUDE, at the tier's REVIEWER cell (#104)"
 # THE FIX FOR WHAT #96's GATE CAUGHT, then #104's: the worker used to run `codex exec
@@ -554,10 +587,23 @@ assert_arg "the re-review names the reviewer model" \
     "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
     "opus"
 
+echo "test: only a FIX dry run is scoped, even when the run dir is seeded"
+mkdir -p "$RUNDIR"
+printf '1 2 high, 1 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\nfinding\t1\tmedium\tthree\tc:3\n' \
+    >"$RUNDIR/rounds"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR/reviewed-head"
+assert_contains "a FIX dry run gets the scoped prompt" \
+    "$(review_argv "$(codex_dry r9 12 standard "$REPO" base --role fix --round 2)")" \
+    "RE-REVIEW"
+assert_not_contains "a BUILD dry run remains full with the same seeded dir" \
+    "$(review_argv "$(codex_dry r9 12 standard "$REPO" base)")" \
+    "RE-REVIEW"
+rm -rf "$CODEX_ROOT"
+
 echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
 assert_contains "the finding shape" "$rv" "- [P1]"
 assert_contains "the clean literal" "$rv" "No findings."
-assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_arg "no edits" "$rv" "Edit"
 assert_arg "no pushes" "$rv" "Bash(git push:*)"
 assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
@@ -591,22 +637,252 @@ assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
 assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
+# Bash 3.2 treats an empty array expansion as unbound under `set -u`. The no-env
+# launch above this check must keep the wrapper argument list guarded as well.
+if grep -Fq "\${ENV_NAMES[@]+\"\${ENV_NAMES[@]}\"} --WORKER--" "$SPAWN"; then
+    ok "Codex wrapper handles an empty env-name array on Bash 3.2"
+else
+    no "Codex wrapper expands an empty env-name array under set -u"
+fi
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
 # the spawn returns immediately; the worker runs in the background
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-for f in events.jsonl last-message.txt pid exit status-schema.json; do
+for f in events.jsonl last-message.txt pid exit status-schema.json session-name; do
     if [ -f "$RUNDIR/$f" ]; then ok "wrote $f"; else no "missing $RUNDIR/$f"; fi
 done
+assert_equals "records the full name used for a codex attempt" \
+    "$(cat "$RUNDIR/session-name" 2>/dev/null)" "orch-r9-issue-12-a0"
 assert_equals "exit 0 recorded" "$(cat "$RUNDIR/exit" 2>/dev/null)" "0"
 assert_contains "the events file holds what codex streamed" "$(cat "$RUNDIR/events.jsonl")" "workspace-write"
 assert_contains "codex wrote its final message" "$(cat "$RUNDIR/last-message.txt")" '"status":"built"'
 assert_contains "the schema is real JSON naming the status field" \
     "$(cat "$RUNDIR/status-schema.json")" '"status"'
+assert_contains "the schema permits blocked infrastructure reports" \
+    "$(cat "$RUNDIR/status-schema.json")" '"blocked"'
 assert_contains "stdin is closed — codex blocks forever on an open one" \
     "$(cat "$RUNDIR/events.jsonl")" "STDIN:[]"
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
+
+echo "test: --env reaches real Claude and Codex workers without entering argv or run files"
+argv=$(STUB_ENV_OUT="$WORK/env-claude" STUB_SETTINGS_OUT="$WORK/settings-claude" \
+    PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
+    "$WORK/wt" base --orchestrator orch-main --env DATABASE_URL=postgres://x --env FOO=bar)
+assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
+assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
+assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
+claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
+case "$(basename "$(dirname "$claude_settings")")" in
+    claude-env.r1.issue-12.*) ok "settings dir is named for its run and issue, so the run end can sweep it" ;;
+    *) no "settings dir is not named claude-env.r1.issue-12.* (got '$claude_settings')" ;;
+esac
+assert_contains "successful dispatch prints the private settings path for cleanup" \
+    "$argv" "Claude settings file: $claude_settings"
+if [ -n "$claude_settings" ] && [ -f "$claude_settings" ] \
+   && [ "$(jq -r '.env.DATABASE_URL' "$claude_settings")" = 'postgres://x' ]; then
+    ok "private Claude settings remain readable after dispatch for later session requests"
+else
+    no "private Claude settings disappeared or lost the value after dispatch"
+fi
+rm -f -- "$claude_settings"
+rmdir -- "$(dirname "$claude_settings")"
+
+rm -rf "$CODEX_ROOT"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    STUB_ENV_OUT="$WORK/env-codex" STUB_HOST_ENV_OUT="$WORK/host-env-codex" \
+    bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "Codex worker receives a value containing '=' intact" \
+    "$(cat "$WORK/env-codex" 2>/dev/null)" "postgres://x?sslmode=require|bar"
+assert_equals "host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-codex" 2>/dev/null)" '|'
+leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
+assert_empty "Codex run dir never contains the env value" "$leak"
+
+out=$(dry r1 12 standard /w base --env DATABASE_URL=postgres://x)
+assert_equals "Claude dry run exits 0" "$?" "0"
+assert_not_contains "Claude dry run never prints the env value" "$out" "postgres://x"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "Codex dry run exits 0" "$?" "0"
+assert_not_contains "Codex dry run never prints the env value" "$out" "postgres://x"
+out=$(HOST_SECRET_CANARY=host-canary codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_arg "Codex keeps explicitly provisioned KEY names in shell commands" "$out" \
+    'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "Codex does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
+assert_not_contains "Codex config argv never prints the KEY value" "$out" 'private-canary'
+assert_not_contains "Codex config argv never prints a host secret value" "$out" 'host-canary'
+# Names compgen -e cannot list (not valid identifiers) and names Codex itself loads from
+# $CODEX_HOME/.env must be re-excluded too, or they pass the opened filter.
+mkdir -p "$HOME/.codex"
+printf 'export DOTENV_API_TOKEN=dotenv-canary\n# COMMENTED_TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(env 'npm_config_//reg/:_authToken=npm-canary' CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary \
+    --dry-run --orchestrator orch-main 2>"$WORK/err")
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes a non-identifier host secret name" "$excl" '"npm_config_//reg/:_authToken"'
+assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$excl" '"DOTENV_API_TOKEN"'
+assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOKEN'
+assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
+rm -f "$HOME/.codex/.env"
+
+printf 'export DOTENV_API_TOKEN=dotenv-canary\nMULTI_TOKEN="first\nFRAG_TOKEN=frag-canary\nclosing"\nSQ_KEY=\047a\nSQFRAG_KEY=frag-canary\nclosing\nESCAPED_SINGLE_KEY=\047a\\\047\nESCAPED_FOLLOW_TOKEN=follow-canary\nPEM_PRIVATE_KEY="-----BEGIN\nKEY MATERIAL\n# it\047s a comment\nCOMMENT_TOKEN=x\nMID_TOKEN=ab"c\nAFTER_MID_TOKEN=y\n"weird/TOKEN=x\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "Codex re-excludes exported dotenv names" "$excl" '"DOTENV_API_TOKEN"'
+assert_contains "multi-line double-quoted dotenv names are over-excluded" "$excl" '"MULTI_TOKEN"'
+assert_contains "multi-line single-quoted dotenv names are over-excluded" "$excl" '"SQ_KEY"'
+assert_contains "names after an unterminated double quote are never skipped" "$excl" '"FRAG_TOKEN"'
+assert_contains "names after an unterminated single quote are never skipped" "$excl" '"SQFRAG_KEY"'
+assert_contains "escaped-single-quote dotenv names are over-excluded" "$excl" '"ESCAPED_SINGLE_KEY"'
+assert_contains "names after an escaped single quote are never skipped" "$excl" '"ESCAPED_FOLLOW_TOKEN"'
+assert_contains "PEM names inside apparent quoted values are over-excluded" "$excl" '"PEM_PRIVATE_KEY"'
+assert_contains "an apostrophe in a comment cannot hide the next name" "$excl" '"COMMENT_TOKEN"'
+assert_contains "a name with a mid-value quote is over-excluded" "$excl" '"MID_TOKEN"'
+assert_contains "a name after a mid-value quote is never skipped" "$excl" '"AFTER_MID_TOKEN"'
+assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
+assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
+rm -f "$HOME/.codex/.env"
+
+# dotenvy accepts Unicode whitespace and more than spaces/tabs around names.
+printf '\vVERTICAL_TOKEN=v\n\fFORM_SECRET=f\n\rRETURN_KEY=r\n\u00a0NBSP_TOKEN=n\n\u3000IDEOGRAPHIC_SECRET=i\nexport\vEXPORTED_TOKEN=x\nPADDED_KEY\f=y\n' >"$HOME/.codex/.env"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+for name in VERTICAL_TOKEN FORM_SECRET RETURN_KEY NBSP_TOKEN IDEOGRAPHIC_SECRET EXPORTED_TOKEN PADDED_KEY; do
+    assert_contains "Codex re-excludes dotenv name with extended whitespace: $name" "$excl" "\"$name\""
+done
+rm -f "$HOME/.codex/.env"
+# The .env scan must fail closed: a broken python3, or a re.py in the cwd shadowing the
+# real module, may not silently drop the .env names while the defaults are still opened.
+printf 'SHADOW_TOKEN=s\n' >"$HOME/.codex/.env"
+mkdir -p "$WORK/badpy" "$WORK/shadow"
+printf '#!/bin/sh\nexit 7\n' >"$WORK/badpy/python3"; chmod +x "$WORK/badpy/python3"
+out=$(PATH="$WORK/badpy:$PATH" codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "a failing .env scan refuses the Codex spawn" "$rc" "1"
+assert_not_contains "a failing .env scan never opens the default filter" "$out" 'ignore_default_excludes'
+assert_contains "a failing .env scan is reported" "$(err)" '.env'
+printf 'open(%s, "w").close()\nraise SystemExit(3)\n' "'$WORK/shadowed'" >"$WORK/shadow/re.py"
+out=$(cd "$WORK/shadow" && codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
+assert_contains "a cwd re.py cannot shadow the .env scan" "$excl" '"SHADOW_TOKEN"'
+if [ -e "$WORK/shadowed" ]; then no "a cwd re.py never runs"; else ok "a cwd re.py never runs"; fi
+rm -rf "$HOME/.codex/.env" "$WORK/badpy" "$WORK/shadow"
+# A configured policy may conflict with or outrank the `-c` override, so it is refused.
+printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "user Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the user's exclude setting" "$(err)" "shell_environment_policy.exclude"
+assert_not_contains "refusal never prints the value" "$(err)" "private-canary"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "user Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$HOME/.codex/config.toml"
+
+mkdir -p "$REPO/.codex"
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$REPO/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "project Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the project Codex config file" "$(err)" ".codex/config.toml"
+assert_not_contains "project-config refusal never prints the value" "$(err)" "private-canary"
+rm -f "$REPO/.codex/config.toml"
+rmdir "$REPO/.codex"
+
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$CODEX_ETC_ROOT/managed_config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "managed Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the managed config file" "$(err)" "managed_config.toml"
+assert_not_contains "managed-config refusal never prints the value" "$(err)" "private-canary"
+out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
+assert_equals "managed Codex exclude list is fine when no filter override is needed" "$?" "0"
+rm -f "$CODEX_ETC_ROOT/managed_config.toml"
+
+printf '[shell_environment_policy]\nfilters = [{ exclude = "X_*" }]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "Codex filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy]\nfilters = ["X_*"]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "bare Codex filters setting + secret-named --env refuses" "$?" "1"
+assert_contains "bare filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[[shell_environment_policy.filters]]\ninclude = "PATH"\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "array-of-tables filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "array-of-tables refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy.filters]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "filters table policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters table refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+rm -f "$HOME/.codex/config.toml"
+
+echo "test: invalid --env values are rejected before a worker starts"
+STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Claude --env exits 1" "$rc" "1"
+assert_contains "malformed Claude --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Claude --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$WORK/env-bad" ]; then ok "malformed Claude --env spawns nothing"; else no "malformed Claude --env spawned the stub"; fi
+
+rm -rf "$CODEX_ROOT/badenv"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main --env NOEQUALS \
+    >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "malformed Codex --env exits 1" "$rc" "1"
+assert_contains "malformed Codex --env says NAME=VALUE" "$(err)" "NAME=VALUE"
+assert_not_contains "malformed Codex --env never echoes the argument" "$(err)" "NOEQUALS"
+if [ ! -e "$CODEX_ROOT/badenv" ]; then ok "malformed Codex --env creates no run dir"; else no "malformed Codex --env created a run dir"; fi
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env 1BAD=x >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "invalid env name exits 1" "$rc" "1"
+assert_contains "invalid env name is identified" "$(err)" "not a valid variable name"
+
+PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "bare --env exits 1" "$rc" "1"
+
+echo "test: shared --env validation rejects host-steering and infra-owned names"
+for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETERS GIT_DIR GIT_WORK_TREE \
+    GIT_TEMPLATE_DIR LD_AUDIT LD_DEBUG DYLD_FALLBACK_LIBRARY_PATH \
+    RUNDIR CMD WORKTREE RUNID ISSUE TIER BACKEND MODEL EFFORT TASK INFRA ENVS \
+    CODEX_RUN_ROOT CODEX_HOME CODEX_ETC_ROOT HOME GH_CONFIG_DIR; do
+    bash "$ENV_PAIRS" "$name=private-canary" >"$WORK/out" 2>"$WORK/err"
+    rc=$?
+    assert_equals "$name is rejected" "$rc" "1"
+    assert_contains "$name rejection says reserved" "$(err)" "reserved"
+    assert_not_contains "$name rejection never echoes its value" "$(err)" "private-canary"
+done
+
+STUB_ENV_OUT="$WORK/env-reserved" PATH="$BIN:$PATH" \
+    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+    --env BASH_ENV=private-canary >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Claude spawn rejects a reserved shell variable" "$rc" "1"
+assert_contains "Claude spawn explains the reserved name" "$(err)" "reserved"
+assert_not_contains "Claude spawn never echoes the value" "$(err)" "private-canary"
+if [ ! -e "$WORK/env-reserved" ]; then ok "Claude spawn starts nothing for a reserved name"
+else no "Claude spawn started with a reserved name"; fi
+
+rm -rf "$CODEX_ROOT/reserved-git"
+PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/reserved-git" \
+    RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" r9 12 standard "$REPO" base \
+    --orchestrator orch-main --env GIT_CONFIG_COUNT=1 >"$WORK/out" 2>"$WORK/err"
+rc=$?
+assert_equals "Codex spawn rejects a Git routing variable" "$rc" "1"
+assert_contains "Codex spawn explains the reserved name" "$(err)" "reserved"
+if [ ! -d "$CODEX_ROOT/reserved-git" ]; then ok "Codex spawn creates no run dir for a reserved name"
+else no "Codex spawn created a run dir for a reserved name"; fi
 
 # ---------------------------------------------------------------------------
 # THE WRAPPER'S REVIEW STAGE. This is the path EVERY codex build takes, and it had no
@@ -648,7 +924,7 @@ assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
 assert_equals "the multi-line prompt reached claude as ONE argument" \
     "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 assert_contains "against a base SHA, not the branch name it was passed" \
-    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')"
 assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
@@ -667,9 +943,133 @@ COMMENT="$(cat "$RUNDIR/review-comment.md" 2>/dev/null)"
 # The heading is counted by review-counts.sh — the SAME script worker-report.sh reads the
 # verdict with, so the issue thread and the merge queue cannot disagree about the findings.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 1 medium, 0 low"
-assert_equals "and the run-dir rounds ledger escalate.sh reads carries the same verdict" \
-    "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 2 high, 1 medium, 0 low"
+assert_equals "and the run-dir ledger holds the round line plus one entry per finding" \
+    "$(cat "$RUNDIR/rounds" 2>/dev/null)" \
+    "$(printf '1 2 high, 1 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\nfinding\t1\tmedium\tthree\tc:3')"
 assert_contains "and the reviewer's text" "$COMMENT" "a real finding"
+assert_equals "the reviewed head is recorded for the next round's fix range" \
+    "$(cat "$RUNDIR/reviewed-head" 2>/dev/null)" "$(git -C "$REPO" rev-parse HEAD)"
+assert_equals "the role is recorded" "$(cat "$RUNDIR/role" 2>/dev/null)" "build"
+assert_not_contains "a BUILD review is a full review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
+
+echo "test: a fix round is a SCOPED re-review, and its ledger round matches the last"
+rm -f "$WORK/review-argv" "$WORK/gh-argv"
+STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1
+- [fixed] two — b:2
+- [P2] three — c:3
+- [P1] four — d:4' \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+FIX_REVIEW_ARGV="$(cat "$WORK/review-argv" 2>/dev/null)"
+assert_contains "fix review is scoped" "$FIX_REVIEW_ARGV" "RE-REVIEW"
+assert_contains "first prior high finding reaches the re-review" "$FIX_REVIEW_ARGV" "- high: one — a:1"
+assert_contains "prior medium finding reaches the re-review" "$FIX_REVIEW_ARGV" "- medium: three — c:3"
+assert_contains "the fix range starts at the reviewed HEAD" "$FIX_REVIEW_ARGV" \
+    "$(git -C "$REPO" rev-parse HEAD)..HEAD"
+assert_equals "round 2 has the expected counts and all four ledger entries" \
+    "$(sed -n '/^2 /,$p' "$RUNDIR/rounds" 2>/dev/null)" \
+    "$(printf '2 1 high, 1 medium, 0 low\nfinding\t2\tfixed\tone\ta:1\nfinding\t2\tfixed\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\nfinding\t2\thigh\tfour\td:4')"
+ROUND_ONE_PAIRS="$(awk -F'\t' '$1=="finding"&&$2==1{print $4"\t"$5}' "$RUNDIR/rounds")"
+FIXED_PAIRS="$(awk -F'\t' '$1=="finding"&&$2==2&&$3=="fixed"{print $4"\t"$5}' "$RUNDIR/rounds")"
+FIXED_COUNT="$(awk -F'\t' '$1=="finding"&&$2==2&&$3=="fixed"{n++} END{print n+0}' "$RUNDIR/rounds")"
+assert_equals "both fixed findings retain their identities" "$FIXED_COUNT" "2"
+TAB="$(printf '\t')"
+while IFS="$TAB" read -r fixed_title fixed_path; do
+    [ -n "$fixed_title" ] || continue
+    pair="$(printf '%s\t%s' "$fixed_title" "$fixed_path")"
+    if printf '%s\n' "$ROUND_ONE_PAIRS" | grep -qxF -- "$pair"; then
+        ok "fixed finding '$fixed_title' keeps its prior title and path"
+    else
+        no "fixed finding '$fixed_title' lost its prior title or path"
+    fi
+done <<EOF
+$FIXED_PAIRS
+EOF
+assert_equals "the role is now fix" "$(cat "$RUNDIR/role" 2>/dev/null)" "fix"
+
+echo "test: an incomplete scoped review cannot become a clean merge-gate verdict"
+ROUND_TWO="$(cat "$RUNDIR/rounds")"
+rm -f "$WORK/gh-argv"
+STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_TEXT='- [fixed] three — c:3' \
+    PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 2 --orchestrator orch-main \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "an omitted prior finding adds no ledger round" "$(cat "$RUNDIR/rounds")" "$ROUND_TWO"
+if [ -e "$RUNDIR/review.txt" ]; then no "incomplete review remained readable by worker-report"
+else ok "incomplete review was removed before worker-report"; fi
+assert_contains "rejection is recorded" "$(cat "$RUNDIR/review-stderr.log" 2>/dev/null)" "REVIEW_UNREADABLE"
+if [ -e "$WORK/gh-argv" ]; then no "incomplete review was posted"
+else ok "incomplete review was not posted"; fi
+rm -rf "$CODEX_ROOT"
+
+echo "test: four reviews across two attempts are numbered 1..4 from the ledger"
+# CFG_CODEX is a single-position chain, so attempt 1 resolves to claude. Keep this central
+# mechanism test on the real codex wrapper by supplying a two-position codex chain for its
+# attempt-1 runs.
+CFG_CODEX_CHAIN="$WORK/cfg-codex-chain"
+mkdir -p "$CFG_CODEX_CHAIN"
+cat >"$CFG_CODEX_CHAIN/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "haiku",         "effort": "medium" },
+    "implementer": [ { "backend": "codex", "model": "gpt-5.6-luna",  "effort": "max" },
+                     { "backend": "codex", "model": "gpt-5.6-terra", "effort": "high" } ],
+    "reviewer":    { "backend": "claude", "model": "sonnet",        "effort": "low" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "sonnet",        "effort": "high" },
+    "implementer": [ { "backend": "codex", "model": "gpt-5.6-terra", "effort": "max" },
+                     { "backend": "codex", "model": "gpt-5.6-sol",   "effort": "high" } ],
+    "reviewer":    { "backend": "claude", "model": "opus",          "effort": "medium" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "xhigh" },
+    "implementer": { "backend": "codex",  "model": "gpt-5.6-sol", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "xhigh" }
+  }
+}
+JSON
+attempt1_roster=$(RESOLVE_TIER_ROOT="$CFG_CODEX_CHAIN" \
+    bash "$SCRIPT_DIR/../scripts/resolve-tier.sh" standard 1)
+assert_contains "the local attempt-1 roster stays codex-backed" "$attempt1_roster" \
+    "implementer_backend=codex"
+
+rm -rf "$CODEX_ROOT"
+run_numbered_review() {
+    local number="$1" tier_root="$2"
+    shift 2
+    STUB_REVIEW_TEXT='- [P1] x — a:1' \
+        PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$tier_root" \
+        bash "$SPAWN" "$@" >/dev/null 2>"$WORK/err"
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+    if [ -f "$RUNDIR/review-comment.md" ]; then
+        cp "$RUNDIR/review-comment.md" "$WORK/review-comment-$number.md"
+    else
+        no "review $number did not write its issue comment"
+    fi
+}
+run_numbered_review 1 "$CFG_CODEX" \
+    r9 12 standard "$REPO" base --orchestrator orch-main
+run_numbered_review 2 "$CFG_CODEX" \
+    r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main
+run_numbered_review 3 "$CFG_CODEX_CHAIN" \
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+run_numbered_review 4 "$CFG_CODEX_CHAIN" \
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+assert_equals "four reviews append ledger numbers 1..4" \
+    "$(grep '^[0-9]' "$RUNDIR/rounds" | cut -d' ' -f1 | tr '\n' ',')" "1,2,3,4,"
+assert_equals "each review's finding is filed under its own round" \
+    "$(grep -c '^finding' "$RUNDIR/rounds")" "4"
+for review_number in 1 2 3 4; do
+    assert_contains "saved comment $review_number is numbered from the ledger" \
+        "$(cat "$WORK/review-comment-$review_number.md" 2>/dev/null)" \
+        "**Review round $review_number**"
+done
 
 echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/gh-argv"
@@ -860,11 +1260,9 @@ for t in trivial standard; do
     assert_arg "shipped $t attempt 0 is 6-luna" "$out" "gpt-6-luna"
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
-    assert_arg "shipped $t attempt 1 is 6-sol" "$out" "gpt-6-sol"
-    out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
-          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 2 2>/dev/null)
-    assert_arg "shipped $t attempt 2 tops out on claude" "$out" "--bg"
+    assert_arg "shipped $t attempt 1 tops out on claude" "$out" "--bg"
     assert_arg "at opus" "$out" "opus"
+    assert_not_contains "no 6-sol hop" "$out" "gpt-6-sol"
 done
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
       bash "$SPAWN" r9 12 complex "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)

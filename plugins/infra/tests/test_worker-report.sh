@@ -108,6 +108,16 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "the exact report line" "$OUT" \
     "issue 41 built head=abc1234 review=1 high, 2 medium, 3 low"
 
+echo "test: worker-report resolves an attempt and fix-round suffix back to its issue"
+mkrun r1 48 "$(dead)" 0 \
+  '{"issue":48,"status":"fixed","round":3,"head":"feed123","review":"","note":""}'
+mkreview r1 48 0 0 0
+printf '%s\n' 'orch-r1-issue-48-a2-r3' >"$CODEX_ROOT/r1/issue-48/session-name"
+run r1 48 --interval 1 --timeout 3
+assert_equals "exit 0" "$RC" "0"
+assert_equals "suffix maps to the base issue report" "$OUT" \
+    "issue 48 fixed round=3 head=feed123 review=0 high, 0 medium, 0 low"
+
 
 echo "test: a fix round carries its round number, so the orchestrator knows which landed"
 mkrun r1 42 "$(dead)" 0 \
@@ -135,6 +145,22 @@ run r1 44 --interval 1 --timeout 20
 assert_equals "exit 0" "$RC" "0"
 assert_equals "escalate line carries the question" "$OUT" \
     "issue 44 escalate is the retry budget per-request or per-session?"
+
+echo "test: a missing infrastructure report is a terminal result"
+mkrun r1 46 "$(dead)" 0 \
+  '{"issue":46,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}'
+run r1 46 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_equals "blocked line carries the infrastructure need" "$OUT" \
+    "issue 46 blocked infra: postgres"
+
+echo "test: blocked without the infra contract is refused"
+mkrun r1 47 "$(dead)" 0 \
+  '{"issue":47,"status":"blocked","round":0,"head":"","review":"","note":"postgres"}'
+run r1 47 --interval 1 --timeout 20
+assert_equals "exit 1" "$RC" "1"
+assert_empty "malformed blocked reports print nothing" "$OUT"
+assert_contains "says the infra prefix is required" "$ERR" "blocked without an 'infra:' note"
 
 echo "test: a multi-line note is flattened — the lane parses ONE line"
 mkrun r1 45 "$(dead)" 0 \
@@ -260,6 +286,46 @@ run r3 60 --interval 1 --timeout 20
 assert_equals "exit 0 — a crash is still characterisable" "$RC" "0"
 assert_contains "failed line" "$OUT" "issue 60 failed"
 assert_contains "carries the stderr reason" "$OUT" "model refused the sandbox"
+
+echo "test: a usage-limit crash reports quota from events.jsonl, not the stderr banner"
+d="$CODEX_ROOT/r3/issue-67"
+mkrun r3 67 "$(dead)" 1
+cat >"$d/events.jsonl" <<'JSON'
+{"type":"thread.started"}
+{"type":"turn.started"}
+{"type":"error","message":"You've hit your usage limit. Try again at 3:05 PM."}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. Try again at 3:05 PM."}}
+JSON
+printf 'Reading additional input from stdin...\n' >"$d/stderr.log"
+run r3 67 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+case "$OUT" in "issue 67 failed quota: "*) ok "starts with the quota reason" ;; *) no "does not start with the quota reason ('$OUT')" ;; esac
+assert_contains "quotes the usage-limit event" "$OUT" "usage limit"
+assert_not_contains "does not quote the stdin banner" "$OUT" "Reading additional input"
+
+echo "test: a non-quota crash reports the last event-log error, not the stderr banner"
+d="$CODEX_ROOT/r3/issue-68"
+mkrun r3 68 "$(dead)" 1
+printf '%s\n' \
+    '{"type":"thread.started"}' \
+    '{"type":"turn.started"}' \
+    '{"type":"turn.failed","error":{"message":"stream disconnected before completion"}}' \
+    >"$d/events.jsonl"
+printf 'Reading additional input from stdin...\n' >"$d/stderr.log"
+run r3 68 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_contains "quotes the event-log reason" "$OUT" "issue 68 failed stream disconnected before completion"
+assert_not_contains "does not include quota" "$OUT" "quota:"
+assert_not_contains "does not quote the stdin banner" "$OUT" "Reading additional input"
+
+echo "test: a crash with no error event falls back to the stderr tail"
+d="$CODEX_ROOT/r3/issue-69"
+mkrun r3 69 "$(dead)" 1
+printf '%s\n' '{"type":"thread.started"}' '{"type":"turn.started"}' >"$d/events.jsonl"
+printf 'codex: fatal: boom\n' >"$d/stderr.log"
+run r3 69 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_contains "uses the stderr fallback" "$OUT" "issue 69 failed codex: fatal: boom"
 
 echo "test: a CLEAN exit with no report is loud and prints nothing — never a fake success"
 mkrun r3 61 "$(dead)" 0

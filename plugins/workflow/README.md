@@ -28,8 +28,9 @@ plugins/workflow/
 │   └── planner.md                    # opus, high effort — the plan contract; in the session lane consult.sh runs it on the planner cell and posts **Plan** to the issue
 ├── scripts/
 │   ├── ready.sh                      # which scoped issues are READY right now, + the empty-set classification
-│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated
-│   ├── merge-fold.sh                 # deterministic model-free merge fold; prints the conflicted remainder
+│   ├── run-log.sh                    # append-only run log: scope · held · respawned · decision · planned · consulted · escalated · follow-up
+│   ├── follow-up.sh                  # a capped merge's open findings → one scheduled follow-up that re-blocks its dependents
+│   ├── merge-fold.sh                 # deterministic model-free merge fold; refuses when the base is behind its upstream
 │   ├── prd-children.sh               # resolve a PRD's child slices (shared: orchestrate's scope + prd-reap)
 │   ├── prd-reap.sh                   # detect fully-closed PRDs from the run's closed slice issues
 │   └── scope-graph.sh                # fetch the whole issue graph at launch (bodies, comments, tiers, blockers, mock-debt)
@@ -76,7 +77,8 @@ the next build — the exact poisoning the fresh-context reviewer exists to prev
 **≈40k tokens** to start, which only pays for long parallel work, so `tier:trivial` issues get a
 subagent instead and only `standard` / `complex` get a session.
 
-Names carry the run: sessions are `orch-<runid>-issue-<N>`, worktrees `.worktrees/<runid>/issue-<N>`.
+Names carry the run and worker position: sessions are `orch-<runid>-issue-<N>-a<attempt>`
+(fix rounds append `-r<round>`), and worktrees are `.worktrees/<runid>/issue-<N>`.
 `claude agents --json` is **global** and concurrent orchestrator runs are the intended usage — without
 the prefix one run can see, wake and **stop** another run's workers.
 
@@ -84,8 +86,8 @@ the prefix one run can see, wake and **stop** another run's workers.
 walks PRD #N's child slices (`prd-children.sh`), and with neither flag the skill infers the open PRD
 (asking if there's more than one). The loop **never runs a repo-wide `ready-for-agent` query** — one
 that did swept an unrelated issue into a PRD's branch (#77). The allowlist is **frozen at launch**, so
-**nothing the run files can be built by the run**: a `review-fix` follow-up filed mid-run — including a
-cap-remainder — waits for a future run instead of bypassing the cap that parked it.
+**nothing the run files can be built by the run** except the capped merge's `follow-up.sh` issue:
+it enters the frozen graph and blocks the capped issue's dependents until it merges.
 
 **The tier is a label, not a guess.** `tier:trivial` / `tier:standard` / `tier:complex`, set by
 `/to-issues` at slice time, **read** at launch and **backfilled** when missing (real `classify-task`,
@@ -108,7 +110,7 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
 ### The loop
 
 1. **`ready.sh`** over the frozen graph, minus what merged, is held, or is in flight.
-2. **Admit** the lowest-numbered ready issues up to `--max N` (default 5). For each: write a
+2. **Admit** the lowest-numbered ready issues up to `--max N` (default 8). For each: write a
    `CONTEXT-MAP.md` into its worktree (one sonnet `Explore` at **admission**, so a dependent's map
    reflects its merged blockers), cut the worktree, and **`spawn.sh`** the session.
 3. **Subscribe, don't poll.** `SendMessage` with `notify_when_idle: true` and **no message** — a pure
@@ -117,10 +119,15 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
    **reports and exits**. A session's plain output is **invisible** to other agents, so every spawn
    prompt tells it to report with `SendMessage` — miss that line and the orchestrator waits forever.
 5. **Fix rounds are fresh sessions** (`--role fix`), told to work from the issue's latest review-round
-   comment. Nothing compounds, and the fixer is not defending its own code. Capped by `--max-cycles`
-   (default 5); **cycles are counted from the authoritative source per backend** — the thread's
-   review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a codex-backed one
-   (its worker can post that comment too) — never a field kept separately.
+   comment. Nothing compounds, and the fixer is not defending its own code. The per-attempt
+   `review-cap` moves a second review with open high/medium findings up the model chain. A recurring
+   finding triggers `recurrence:` → `consult.sh decide` before the next fix round; if that round does
+   not reduce high + medium, `no-progress:` ends the loop. Claude-backed attempts retain the five fix-round review cap
+   (initial build review free), counted across attempts from thread comments; after a `Decision`, they also stop as
+   `no-progress` if high + medium does not fall. `ESCALATE_ROUND_BACKSTOP=20` is the Codex script's issue-wide
+   safety net. Review counts come from the authoritative source per
+   backend — the thread's review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a
+   codex-backed one (its worker can post that comment too) — never a field kept separately.
 6. **Merge is a fold first.** `merge-fold.sh` lands every conflict-free branch with plain git, testing
    each with `git merge-tree --write-tree` before touching the working tree; only the **conflicted
    remainder** reaches the `merger` agent (**opus**, never tier-routed). It is a *fold*, not a filter:
@@ -156,8 +163,8 @@ the loss from a kill at one sub-step, which is what makes killing on **suspicion
 resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
 respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
 onto a worktree whose previous session is still alive. A **codex** worker is replaced along its
-tier's implementer chain (6-luna → 6-sol → opus) by `escalate.sh`, from countable evidence — a
-`failed` report, a third deviation, a second review round with findings, a stall, a full context
+tier's implementer chain (6-luna → opus) by `escalate.sh`, from countable evidence — a
+`failed` report, a third deviation, a review round with high or medium findings, a stall, a full context
 — never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
 because nothing in git or GitHub records that a session was killed or a model changed.
 

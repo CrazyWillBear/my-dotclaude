@@ -20,7 +20,7 @@
 #
 #   worker:
 #     --role build|fix      build (default) or a fix round on an existing branch
-#     --round N             fix-round number, quoted in the fix prompt (default 1)
+#     --round N             fix-round number, quoted in the fix prompt only (default 1)
 #     --attempt N           chain position (default 0). The tier's implementer cell is an
 #                           ORDERED CHAIN (resolve-tier.sh, #104); escalate.sh decides a
 #                           worker is out of its depth and the orchestrator respawns at
@@ -28,6 +28,7 @@
 #                           script refuses — the orchestrator drains there, it never wraps.
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
+#     --env NAME=VALUE      repeatable; passed to the worker launch, never logged
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -57,10 +58,11 @@
 #
 # Why each flag is here — these are the ways an unattended session dies quietly:
 #
-#   -n orch-<runid>-issue-<N>   worker only: the run prefix. `claude agents --json` is
-#                               global and concurrent runs are intended; without it one
-#                               run can stop another run's workers. A peer is named by
-#                               its role instead — see --name above.
+#   -n orch-<runid>-issue-<N>-a<attempt>[-r<round>]   worker only: the run prefix and
+#                               attempt/round. `claude agents --json` is global and
+#                               concurrent runs are intended; without the prefix one run
+#                               can stop another run's workers. A peer is named by its
+#                               role instead — see --name above.
 #   --permission-mode bypassPermissions
 #                               an unattended session in manual or acceptEdits mode
 #                               deadlocks on its FIRST prompt with nobody to answer.
@@ -118,6 +120,7 @@ need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 # (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
 NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
 EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
+ENVS=()    # validated worker environment pairs; exported only at a launch point
 
 if [ "${1:-}" = peer ]; then
 # ---------------------------------------------------------------------------
@@ -158,7 +161,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -173,14 +176,19 @@ while [ $# -gt 0 ]; do
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
         --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
+        --env)          need $# --env;          ENVS+=("$2"); shift 2 ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
     esac
 done
 
+# Validate before resolving a tier or building a run directory. Values are never printed
+# by the shared validator, even on malformed input.
+[ "${#ENVS[@]}" -eq 0 ] || bash "$INFRA/env-pairs.sh" "${ENVS[@]}" || exit 1
+
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ROLE" in build|fix) ;; *) die "role must be build or fix, got '$ROLE'" ;; esac
-# $ROUND lands in the "**Review round N**" heading and the rounds ledger escalate.sh parses.
+# $ROUND is quoted in the fix prompt only; the review number comes from the rounds ledger (line count + 1).
 case "$ROUND" in ''|*[!0-9]*) die "round must be a number, got '$ROUND'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 [ -n "$RUNID" ] || die "runid is required"
@@ -218,7 +226,8 @@ fi
 # not here. It used to be read here to interpolate `-m` into the worker's own review
 # step, and that step is gone (§ CODEX below): the worker no longer reviews anything.
 
-NAME="orch-$RUNID-issue-$ISSUE"
+NAME="orch-$RUNID-issue-$ISSUE-a$ATTEMPT"
+[ "$ROLE" = fix ] && NAME="$NAME-r$ROUND"
 BRANCH="issue-$ISSUE"
 fi
 
@@ -335,7 +344,9 @@ if [ "$BACKEND" = codex ]; then
    count you made up:
       {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
    or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
-   on something only a human can answer? \"status\": \"escalate\", question in \"note\"."
+   on something only a human can answer? \"status\": \"escalate\", question in \"note\". Missing
+   infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
+   with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
     FIX_REVIEW_STEP="4. Do NOT re-review the delta yourself. The independent reviewer runs again after
    you exit and posts the next round's comment"
     FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
@@ -343,7 +354,9 @@ if [ "$BACKEND" = codex ]; then
    required; send \"\" for any that does not apply, \"review\" included — the reviewer
    fills that in, not you:
       {\"issue\": $ISSUE, \"status\": \"fixed\", \"round\": $ROUND, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
-   or the same shape with \"status\": \"failed\" and the reason in \"note\"."
+   or the same shape with \"status\": \"failed\" and the reason in \"note\". Missing
+   infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
+   with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
 else
     REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
    my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
@@ -366,14 +379,18 @@ else
 
 Never merge, never open a PR, never close or edit the issue. If you are stuck on
 something only a human can answer, SendMessage \"$ORCH\" with \"issue $ISSUE escalate
-<question>\" and wait."
+<question>\" and wait. Or, if infrastructure you cannot create is missing (a database, a
+service, a credential), send: issue $ISSUE blocked infra: <what is missing> — never an
+escalate deviation."
     FIX_REVIEW_STEP="4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
    review, then POST its findings YOURSELF as the next \"**Review round**\" comment, in
    the same shape as the previous one, incrementing the round number. The reviewer
    POSTS NOTHING itself, and that comment is the run's cycle counter."
     FIX_REPORT_STEP="5. REPORT, THEN STOP — plain output is invisible. SendMessage to \"$ORCH\":
       issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
-   or \"issue $ISSUE failed <one short line why>\"."
+   or \"issue $ISSUE failed <one short line why>\". Or, if infrastructure you cannot create is
+   missing (a database, a service, a credential): issue $ISSUE blocked infra: <what is missing>
+   — never an escalate deviation."
 fi
 
 if [ "$ROLE" = build ]; then
@@ -414,7 +431,10 @@ ${HANDOFF_STEP}Worktree: $WORKTREE — branch $BRANCH. Work ONLY here.
 
 1. \`gh issue view $ISSUE --comments\` and read the LATEST "Review round" comment.
    Those findings are your work order; the review already names file and line. Fix the
-   highs and mediums; lows are listed, not fixed.
+   highs and mediums; lows are listed, not fixed. If a "Consult" comment NEWER than that
+   review carries a "Decision", the findings kept coming back and a design decision was
+   made for them: implement the decision (its Revised steps) instead of patching the same
+   findings again.
 2. Fix them, TDD-first, committing after every green sub-step. If a finding names a
    fact that's true anywhere else in the codebase too — not a mistake local to this
    line — grep the repo for other instances of the same pattern and fix those in the
@@ -483,8 +503,15 @@ CMD=(codex exec
      -c "approval_policy=never"
      -s workspace-write
      -c "sandbox_workspace_write.writable_roots=$WRITABLE_ROOTS"
-     -c "sandbox_workspace_write.network_access=true"
-     --json
+     -c "sandbox_workspace_write.network_access=true")
+# Some Codex configurations drop names containing KEY, SECRET or TOKEN from the
+# worker's shell commands. Override that name filter when one of those names was
+# explicitly provisioned; keep the values in the process environment, not argv.
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    _policy="$(bash "$INFRA/env-pairs.sh" --codex-policy "$WORKTREE" "${ENVS[@]}")" || exit 1
+    while IFS= read -r _c; do [ -z "$_c" ] || CMD+=(-c "$_c"); done <<<"$_policy"
+fi
+CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$TASK")
@@ -518,8 +545,10 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
 # README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
 REVIEW_CMD=()
+# A fix round is a scoped re-review (#115); the build review is always full.
+SCOPED=""; [ "$ROLE" = fix ] && SCOPED="$RUNDIR"
 while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
-    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE")
+    < <(bash "$INFRA/review-cmd.sh" "$TIER" "$BASE_SHA" "$ISSUE" ${SCOPED:+--scoped "$SCOPED"})
 [ "${#REVIEW_CMD[@]}" -gt 0 ] || die "could not build the reviewer command for tier '$TIER'"
 
 # One argument per line, and the reviewer's argv after a `--REVIEW--` marker: the review
@@ -529,6 +558,7 @@ if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
     printf '%s\n' --REVIEW--
     printf '%s\n' "${REVIEW_CMD[@]}"
+    printf 'session name: %s\n' "$NAME" >&2
     exit 0
 fi
 
@@ -563,6 +593,10 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # with the previous round's reason.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
+# worker-resume.sh reads this because it has no --role flag.
+printf '%s\n' "$ROLE" >"$RUNDIR/role"
+printf '%s\n' "$NAME" >"$RUNDIR/session-name" \
+    || die "cannot record worker session name in $RUNDIR/session-name"
 
 # The worker's fixed-shape status report. `--output-schema` is what turns the final
 # message from prose into something a caller can read without a model in the loop.
@@ -576,7 +610,7 @@ cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot 
   "type": "object",
   "properties": {
     "issue":  { "type": "integer" },
-    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate"] },
+    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate", "blocked"] },
     "round":  { "type": "integer" },
     "head":   { "type": "string" },
     "review": { "type": "string" },
@@ -631,15 +665,26 @@ SCHEMA
 # cannot tell that a different process wrote it. A failed POST is recorded but does not
 # fail the run: the counts still reached worker-report.sh, and a lost comment costs the
 # fix round its detail, not its correctness.
+# Only names cross argv into the wrapper; the values travel in its environment.
+# Remove them there as soon as Codex exits, before any host-side git, gh or reviewer.
+ENV_NAMES=()
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done
+    export "${ENVS[@]}"
+fi
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; round=$4; roots=$5; counter=$6; shift 6
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; shift 5
+    env_names=()
+    while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
+    shift
     worker=()
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     review=("$@")
     "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     rc=$?
+    for name in "${env_names[@]}"; do unset "$name"; done
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
     # could reach, and a planted verdict must never outlive the worker that planted it. The
@@ -681,12 +726,24 @@ bash -c '
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
                 # the report the merge queue acts on can never disagree.
-                counts="$(bash "$counter" "$rundir/review.txt" 2>>"$rundir/review-stderr.log")"
+                prior=()
+                [ "$(head -1 "$rundir/role" 2>/dev/null)" = fix ] \
+                    && prior=(--prior "$rundir")
+                counts="$(bash "$counter" "$rundir/review.txt" "${prior[@]}" \
+                    2>>"$rundir/review-stderr.log")"
                 if [ -n "$counts" ]; then
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
                     # which the worker cannot write; the thread copy is for humans and
-                    # the fix round, and a worker can forge a comment there.
+                    # the fix round, and a worker can forge a comment there. A round is a
+                    # line starting with a digit; the finding<TAB>… entries beside it are
+                    # emitted by review-counts.sh, the only parser of the review (#110).
+                    round=$(( $(cat "$rundir/rounds" 2>/dev/null | grep -c "^[0-9]") + 1 ))
                     printf "%s %s\n" "$round" "$counts" >>"$rundir/rounds"
+                    bash "$counter" "$rundir/review.txt" --findings "$round" \
+                        >>"$rundir/rounds" 2>>"$rundir/review-stderr.log"
+                    # The next fix round range starts at this commit.
+                    git -C "$rundir/review-checkout" rev-parse HEAD \
+                        >"$rundir/reviewed-head" 2>>"$rundir/review-stderr.log"
                     { printf "**Review round %s** — %s\n\n" "$round" "$counts"
                       cat "$rundir/review.txt"; } >"$rundir/review-comment.md"
                     (cd "$worktree" && gh issue comment "$issue" \
@@ -695,6 +752,7 @@ bash -c '
                         || printf "REVIEW_COMMENT_POST_FAILED\n" >>"$rundir/review-stderr.log"
                 else
                     printf "REVIEW_UNREADABLE\n" >>"$rundir/review-stderr.log"
+                    rm -f "$rundir/review.txt"
                 fi
             else
                 printf "REVIEW_FAILED rc=%s\n" "$?" >>"$rundir/review-stderr.log"
@@ -709,12 +767,16 @@ bash -c '
     fi
     rm -f "$rundir/reviewing"
     printf "%s\n" "$rc" >"$rundir/exit"' \
-    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$ROUND" "$INFRA/common-git-dir.sh" \
+    _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" \
-    "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
+    ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
+if [ "${#ENV_NAMES[@]}" -gt 0 ]; then
+    for _name in "${ENV_NAMES[@]}"; do unset "$_name"; done
+fi
 printf '%s\n' "$!" >"$RUNDIR/pid"
+printf 'session name: %s\n' "$NAME" >&2
 printf '%s\n' "$RUNDIR"
 exit 0
 fi
@@ -742,6 +804,7 @@ CMD=(claude --bg -n "$NAME"
 # prompt is the last argument, so its own newlines land after everything else.
 if [ -n "$DRY" ]; then
     printf '%s\n' "${CMD[@]}"
+    printf 'session name: %s\n' "$NAME" >&2
     exit 0
 fi
 
@@ -753,4 +816,33 @@ if [ -n "$WORKTREE" ]; then
 fi
 # </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
 # to answer a read, and a session blocked on one looks exactly like a session working.
+printf 'session name: %s\n' "$NAME" >&2
+if [ "${#ENVS[@]}" -gt 0 ]; then
+    # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
+    # export can instead contaminate a daemon that it starts. Put this worker's values in
+    # per-session settings, which Claude carries with the dispatch. The file is private
+    # and outside the run dir. It must remain for the session's lifetime: --bg returns
+    # before the session has finished reading it, and later requests read it again.
+    _env_umask="$(umask)"
+    umask 077
+    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.$RUNID.issue-$ISSUE.XXXXXX")" \
+        || die "could not create private Claude session settings"
+    CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
+    jq -n --args '{"env": reduce $ARGS.positional[] as $pair ({};
+        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])})}' \
+        -- "${ENVS[@]}" >"$CLAUDE_SETTINGS_FILE" 2>/dev/null \
+        || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
+    umask "$_env_umask"
+
+    CLAUDE_CMD=("${CMD[0]}" --settings "$CLAUDE_SETTINGS_FILE" "${CMD[@]:1}")
+    "${CLAUDE_CMD[@]}" </dev/null
+    _claude_rc=$?
+    # A failed dispatch did not create a session, so its settings are no longer needed.
+    if [ "$_claude_rc" -eq 0 ]; then
+        printf 'Claude settings file: %s\n' "$CLAUDE_SETTINGS_FILE"
+    else
+        rm -rf -- "$CLAUDE_SETTINGS_DIR"
+    fi
+    exit "$_claude_rc"
+fi
 exec "${CMD[@]}" </dev/null

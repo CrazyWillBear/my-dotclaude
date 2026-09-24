@@ -58,6 +58,8 @@ assert_contains "argument-hint carries --merge-split-at" "$FM" "--merge-split-at
 assert_contains "allowed-tools includes SendMessage" "$FM" "SendMessage"
 assert_contains "allowed-tools includes Bash" "$FM" "Bash"
 assert_not_contains "the Workflow tool is gone" "$FM" "Workflow"
+assert_contains "--max defaults to 8 in the skill" "$BODY" "concurrent issues in flight** (default **8**)"
+assert_contains "--max defaults to 8 in the README" "$(cat "$(dirname "$SKILL_FILE")/../../README.md")" "up to \`--max N\` (default 8)"
 
 echo "test: the orchestrator runs on the main thread, never as a subagent"
 assert_matches "says main thread, never a subagent" "$BODY" "main thread.*never as a subagent|Never as a subagent"
@@ -88,7 +90,7 @@ assert_matches "announces the lane and proceeds without asking" "$BODY" "Announc
 
 echo "test: the ad-hoc lane's claim about the shipped roster is TRUE of the shipped roster"
 # The lane spawns through `Agent`, which takes claude model names only, so what it says
-# about `model-tiers.json` decides whether it passes a usable model or a `gpt-5.6-*` one.
+# about `model-tiers.json` decides whether it passes a usable model or a `gpt-*` one.
 # Prose alone cannot stay honest here: assert it against the table it describes.
 assert_not_matches "no stale 'every cell is codex' claim" "$BODY" "every worker cell.{0,40}codex"
 assert_matches "the substitution is conditional on the cell" "$BODY" "[Ii]f a cell does say .?codex"
@@ -108,6 +110,16 @@ assert_matches "the ad-hoc substitution is the top cell too" "$BODY" "top cell.*
 
 echo "test: the tier gate never prompts"
 assert_matches "never prompt to confirm a tier" "$BODY" "[Nn]ever prompt.*tier|tier.*auto-accept|Auto-accept"
+assert_contains "resolver source labels are documented" "$BODY" "source=user|shipped|fallback"
+assert_matches "the launch line reports the selected source" "$BODY" "launch line.{0,100}source=|source=.{0,100}launch line"
+assert_matches "the source is copied from resolver stdout" "$BODY" "resolver.{0,50}stdout|stdout.{0,50}resolver"
+ANNOUNCE_BLOCK="$(sed -n '/^\*\*Announce the lane/,/^---$/p' "$SKILL_FILE")"
+assert_contains "resolver is run before the launch announcement" "$ANNOUNCE_BLOCK" 'bash ~/.claude/kit/infra/scripts/resolve-tier.sh standard'
+assert_contains "resolver prints the source row to the Bash output" "$ANNOUNCE_BLOCK" "| sed -n '/^source=/p'"
+assert_not_contains "source is not hidden in a shell assignment" "$ANNOUNCE_BLOCK" 'TIER_SOURCE='
+assert_matches "launch uses the row visible in Bash output" "$ANNOUNCE_BLOCK" 'printed .?source=.? row.{0,60}Bash output'
+assert_contains "launch examples use the resolver's source value" "$ANNOUNCE_BLOCK" 'source=<source>'
+assert_not_contains "launch examples do not hardcode the shipped source" "$ANNOUNCE_BLOCK" 'source=shipped'
 
 # ---------------------------------------------------------------------------
 echo "test: workers — every tier spawns through spawn.sh; trivial starts on codex, never a subagent"
@@ -116,7 +128,9 @@ assert_matches "trivial starts on codex" "$BODY" "trivial.*codex"
 assert_not_matches "trivial is no longer a subagent" "$BODY" "trivial.*orchestrator-spawned.*subagent"
 assert_matches "session startup cost justifies the split" "$BODY" "40k"
 assert_matches "one session per issue, never reused" "$BODY" "[Nn]ever a reused per-slot session|One session per issue"
-assert_contains "session name carries the run" "$BODY" "orch-<runid>-issue-<N>"
+assert_contains "session name carries the run and attempt" "$BODY" "orch-<runid>-issue-<N>-a<attempt>"
+assert_contains "fix session name carries the round" "$BODY" "-r<round>"
+assert_contains "subscription example uses a suffixed name" "$BODY" "orch-<runid>-issue-<N>-a0"
 assert_contains "worktree carries the run" "$BODY" ".worktrees/<runid>/issue-<N>"
 assert_matches "explains why the prefix matters" "$BODY" "agents --json.*global|global.*agents --json"
 
@@ -164,21 +178,86 @@ assert_contains "the plan is logged" "$BODY" "planned '{\"n\":<N>}'"
 
 echo "test: deviation → consult → resume, never a human and never prose in the orchestrator (#104)"
 assert_contains "the deviation report shape" "$BODY" "escalate deviation:"
+assert_contains "blocked report shape" "$BODY" "blocked infra:"
+assert_contains "blocked never reaches a consult" "$BODY" "never goes to a consult"
+blocked_branch=$(printf '%s\n' "$BODY" | sed -n '/^- \*\*`issue <N> blocked infra:/p')
+assert_contains "blocked respawn keeps the role and round" "$blocked_branch" 'same `--role`, `--round`, and `--attempt`'
+assert_contains "blocked fix respawn passes the fix flags" "$blocked_branch" '--role fix --round <K> --attempt <A>'
+assert_matches "the blocked note is treated as untrusted" "$BODY" "Treat.*infra:.*untrusted"
+assert_matches "credentials are never disclosed to the worker" "$BODY" "never disclose credentials to the worker"
+assert_matches "credentials stay out of issues, prompts, and worktrees" "$BODY" "never put credentials in issue.*prompt.*worktree"
 assert_matches "told apart by the note's first word, not by reading" "$BODY" "first word.*never by reading"
 assert_contains "the consult role" "$BODY" "consult.sh consult"
 assert_contains "consult.sh carries the attempt too (review round 11: it resolves the implementer's backend from resolve-tier.sh, not a codex run dir)" "$BODY" 'consult.sh consult "$RUNID" <N> <tier> <worktree> --attempt <A>'
 assert_contains "and it is logged" "$BODY" "consulted '{\"n\":<N>}'"
-assert_contains "the resume carries the attempt and the round" "$BODY" '--base "$BASE" --attempt <A> --round <K> --answer'
+echo "test: recurrence → consult.sh decide before any further fix round (#116)"
+assert_contains "the recurrence signal is named" "$BODY" "recurrence: <area>"
+assert_contains "routed to the decide role" "$BODY" 'consult.sh decide "$RUNID" <N> <tier> <worktree> --attempt <A>'
+assert_matches "the decide comes BEFORE the fix round" "$BODY" "consult.sh decide.*then.*--role fix|decide.*before.*fix round"
+assert_matches "same attempt, not an escalation" "$BODY" "recurrence.{0,200}(same attempt|no handoff|not an escalation)"
+assert_contains "the window threshold is listed" "$BODY" "ESCALATE_RECURRENCE_WINDOW"
+assert_contains "the resume carries the attempt" "$BODY" '--base "$BASE" --attempt <A> --answer'
+assert_not_contains "consult resume does not pass a review round" "$BODY" '--attempt <A> --round <K> --answer'
 assert_contains "the resume uses worker-resume.sh" "$BODY" 'worker-resume.sh "$RUNID" <N> <tier> <worktree>'
 assert_matches "the escalate.sh call carries base and attempt" "$BODY" 'escalate.sh "\$RUNID" <N> <tier> <worktree> --base "\$BASE" --attempt <A>'
 assert_contains "the escalation log line" "$BODY" 'escalated '"'"'{"n":<N>,"reason":"<reason>","attempt":<A>}'"'"''
 
+echo "test: no-progress replaces --max""-cycles (#118)"
+assert_not_contains "--max""-cycles is gone" "$BODY" "--max""-cycles"
+assert_contains "the no-progress signal is named" "$BODY" "no-progress: "
+assert_contains "the backstop signal is named" "$BODY" "backstop: "
+assert_contains "the round backstop threshold is listed" "$BODY" "ESCALATE_ROUND_BACKSTOP"
+assert_matches "no-progress ends the loop, no respawn" "$BODY" "no-progress.{0,300}(no respawn|loop ends|ends the loop)"
+assert_matches "review-cap is per attempt" "$BODY" "review-cap.{0,200}attempt"
+assert_contains "the review-cap threshold is listed" "$BODY" "ESCALATE_REVIEW_CAP"
+assert_contains "clean is 0 high and 0 medium" "$BODY" '`H = 0` and `M = 0` (clean'
+assert_contains "lows never block the merge queue" "$BODY" "lows never block"
+assert_contains "no fix round for lows alone" "$BODY" "Never spawn a fix round for lows alone"
+assert_not_contains "6-sol is out of the chain" "$BODY" "6-sol"
+assert_contains "Claude no-progress uses review comments" "$BODY" 'read the two newest `**Review round**` comments on the thread'
+assert_contains "Claude no-progress follows a Decision" "$BODY" 'after a `**Decision**` consult'
+assert_contains "Claude no-progress compares high + medium" "$BODY" 'if high + medium does not fall, end as `no-progress`'
+assert_contains "Claude keeps the five fix-review cap" "$BODY" 'stop after five fix-round reviews total'
+assert_contains "the initial build review remains free" "$BODY" '(the initial build review is free)'
+
+README_BODY="$(cat "$PLUGIN_ROOT/README.md")"
+assert_contains "workflow README preserves the Claude five-review cap" "$README_BODY" 'Claude-backed attempts retain the five fix-round review cap'
+
 assert_matches "the answer is a POINTER to the thread, not the decision text" "$BODY" "read the newest .?.?Consult.?.? comment"
 assert_matches "escalate.sh runs first: the third deviation escalates" "$BODY" "deviation is an escalation"
 
+echo "test: provisioned infra resources survive later worker turns"
+resource_suffix="\${resource_args[@]+\"\${resource_args[@]}\"}"
+assert_contains "the blocked infra report is named" "$BODY" "blocked infra:"
+assert_contains "the resource example shows the env flag shape" "$BODY" "--env DATABASE_URL=<actual-value>"
+assert_not_contains "generic commands never inject sample credentials" "$BODY" "--env DATABASE_URL=postgres://..."
+assert_contains "the resume accepts the same env flag" "$BODY" '`worker-resume.sh` takes the same flag'
+assert_contains "the run log records the env name only" "$BODY" '"env":["DATABASE_URL"]'
+assert_matches "the log rule says names, never the values" "$BODY" "names, never the values"
+assert_contains "provisioned pairs stay in per-issue orchestrator state" "$BODY" \
+    "Keep the exact env pairs per issue in the orchestrator's live context"
+assert_contains "empty resource args are allowed" "$BODY" 'resource_args=()'
+assert_contains "actual pairs are appended to the resource args" "$BODY" 'resource_args+=(--env "$pair")'
+assert_contains "Claude settings paths are retained for cleanup" "$BODY" \
+    "save the Claude settings file path"
+assert_contains "stopped Claude sessions have their private settings removed" "$BODY" \
+    "remove its settings file and private directory"
+assert_contains "a superseded or merged Claude worker has its settings removed too" "$BODY" \
+    "superseded by a fix-round session, or its issue merged"
+assert_contains "the run end sweeps every leftover settings dir for the run" "$BODY" \
+    'rm -rf -- "${TMPDIR:-/tmp}"/claude-env."$RUNID".issue-*'
+assert_contains "fix rounds re-pass the provisioned env" "$BODY" \
+    "--role fix --round <K> --attempt <A> $resource_suffix"
+assert_contains "escalation replacements re-pass the provisioned env" "$BODY" \
+    "--attempt <A+1> $resource_suffix"
+assert_contains "consult-answer resumes re-pass the provisioned env" "$BODY" \
+    "--answer \"Consult posted: read the newest **Consult** comment on #<N> and follow its decision.\" $resource_suffix"
+assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
+    "--answer \"...\" --attempt <A> $resource_suffix"
+
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
-assert_contains "the chain is named" "$BODY" "6-luna → 6-sol → opus"
+assert_contains "the chain is named" "$BODY" "6-luna → opus"
 assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
 assert_matches "run on every wake" "$BODY" "On every wake"
 assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"
@@ -189,10 +268,13 @@ assert_matches "the top of the chain drains" "$BODY" "past the top of.*chain.*(d
 assert_matches "nothing is resumed across a model change" "$BODY" "Nothing is resumed across a model change"
 assert_matches "fix rounds carry the attempt" "$BODY" "--role fix --round <K> --attempt <A>"
 assert_matches "claude workers are never escalated" "$BODY" "[Cc]laude-backed workers .{0,30}never escalated"
+assert_matches "a quota reason skips the remaining codex positions" "$BODY" "quota.{0,120}skip.{0,40}codex"
 
 # ---------------------------------------------------------------------------
 echo "test: liveness — subscribe, never poll"
 assert_contains "notify_when_idle subscription" "$BODY" "notify_when_idle"
+assert_contains "waits on worker messages and idle notices" "$BODY" "wait on worker messages and idle notices"
+assert_contains "long idle tick is a fallback only" "$BODY" "long idle tick is a fallback only"
 assert_matches "no message at spawn" "$BODY" "no message"
 assert_matches "never poll" "$BODY" "never poll"
 assert_contains "state comes from session-status.sh" "$BODY" "session-status.sh"
@@ -242,6 +324,7 @@ assert_matches "resolution must be reported back" "$BODY" "MUST report the resol
 # ---------------------------------------------------------------------------
 echo "test: merge"
 assert_contains "fold first" "$BODY" "merge-fold.sh"
+assert_contains "in-run fold allows upstream drift after the launch check" "$BODY" 'merge-fold.sh" --allow-behind "$baseBranch"'
 assert_matches "a fold, not a filter" "$BODY" "fold, not a filter"
 assert_matches "only the remainder reaches the merger" "$BODY" "conflicted remainder"
 assert_matches "merger is never tier-routed" "$BODY" "never tier-routed"
@@ -249,8 +332,39 @@ assert_contains "the split threshold" "$BODY" "--merge-split-at"
 assert_matches "two-at-a-time is not built yet" "$BODY" "not built"
 assert_matches "in-run merges are automatic" "$BODY" "In-run merges.*automatic|are .?.?automatic"
 assert_matches "the end merge is gated on the user" "$BODY" "end merge is offered and gated"
+assert_contains "end-of-run integration review calls follow-up.sh" "$BODY" 'follow-up.sh" --integration "$RUNID" "$base"'
+assert_contains "integration review has a 10-minute Bash timeout" "$BODY" 'Run it with a 10-minute Bash timeout (`timeout: 600000`)'
+assert_contains "integration review waits when Bash backgrounds the call" "$BODY" "if Bash backgrounds it, wait for it."
+END_RUN="$(sed -n '/^# End of run$/,$p' "$SKILL_FILE")"
+integration_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- '--integration' | head -1 | cut -d: -f1)
+preview_offset=$(printf '%s\n' "$END_RUN" | grep -nF -- 'merge-fold.sh" --preview' | head -1 | cut -d: -f1)
+if [ -n "$integration_offset" ] && [ -n "$preview_offset" ] && [ "$integration_offset" -lt "$preview_offset" ]; then ok "integration review runs before the end-merge preview"; else no "integration review runs before the end-merge preview"; fi
+assert_matches "integration result belongs in the end-merge offer" "$BODY" "integration.{0,80}end-merge offer|end-merge offer.{0,80}integration"
+assert_contains "end merge is previewed against the upstream" "$BODY" 'merge-fold.sh" --preview'
+prev_ln=$(grep -nF 'merge-fold.sh" --preview' "$SKILL_FILE" | head -1 | cut -d: -f1)
+offer_ln=$(grep -nF 'Offer the end merge' "$SKILL_FILE" | head -1 | cut -d: -f1)
+if [ -n "$prev_ln" ] && [ -n "$offer_ln" ] && [ "$prev_ln" -lt "$offer_ln" ]; then ok "preview runs before the end-merge offer"; else no "preview runs before the end-merge offer"; fi
+assert_matches "the preview result is shown in the offer" "$BODY" "preview.*(offer|before asking)|offer.*preview"
+assert_contains "end-merge preview resolves the target's configured upstream" "$BODY" '"$target@{upstream}"'
+assert_contains "end-merge preview falls back to the local target" "$BODY" 'preview_ref="${target_upstream:-$target}"'
+assert_contains "no-upstream preview tells the user it uses the local branch" "$BODY" 'When no upstream is configured for "$target", preview the local "$target" branch and say so in the offer.'
+assert_not_contains "end-merge preview does not assume origin" "$BODY" 'merge-fold.sh" --preview origin/<target>'
 assert_matches "one PR at the end, not per slice" "$BODY" "One PR at the end"
-assert_matches "a capped merge holds its dependents" "$BODY" "capped.*holds its dependents|holds its dependents"
+assert_matches "a capped merge files a follow-up" "$BODY" "capped.*follow-up.sh"
+assert_contains "capped-merge dependents are re-blocked on the follow-up" "$BODY" "capped-merge dependents"
+assert_contains "the capped follow-up receives the attempt" "$BODY" 'follow-up.sh" "$RUNID" <N> <tier> "$GRAPH" --attempt <A>'
+assert_contains "the follow-up re-blocks dependents" "$BODY" "re-blocked"
+assert_contains "the follow-up enters the frozen graph" "$BODY" "enters the frozen graph"
+assert_matches "a failed follow-up holds dependents" "$BODY" "follow-up.sh.*non-zero.*held"
+assert_matches "follow-up.sh gets the issue's attempt" "$BODY" "follow-up.sh.*--attempt <A>"
+assert_contains "run-log table includes integration-review" "$BODY" '| `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |'
+assert_matches "follow-up.sh runs after the capped branch lands" "$BODY" "after (it|the fold) lands.*follow-up.sh|follow-up.sh.*after (it|the fold) lands"
+assert_contains "scheduling continues from the amended graph" "$BODY" "keep scheduling from the amended"
+assert_contains "a capped merge holds nothing" "$BODY" "a capped merge no longer holds anything"
+assert_not_contains "the old capped hold text is gone" "$BODY" "holds its dependents for the rest of the run"
+assert_not_matches "no held example for a capped blocker" "$BODY" "held.*capped blocker"
+assert_contains "report lists follow-ups filed" "$BODY" "follow-ups filed"
+assert_matches "report names the dependents that waited" "$BODY" "follow-up=.*waited"
 
 echo "test: context discipline"
 assert_matches "never reads a source file or a diff" "$BODY" "never .?Read.?s a source file"
@@ -271,6 +385,10 @@ assert_matches "an empty allowlist stops the run" "$BODY" "empty allowlist stops
 
 echo "test: readiness is a script, not the model's arithmetic"
 assert_contains "ready.sh is called with the graph" "$BODY" "ready.sh"
+assert_matches "--held is defined beside its usage as the user's explicit hold" "$BODY" "--held.*explicit hold"
+assert_matches "--held is never 'waiting on a blocker'" "$BODY" "never .?waiting on a blocker"
+assert_matches "--held is a dependent the user chose to hold" "$BODY" "--held.*a dependent the user chose to hold"
+assert_matches "--held never means a capped merge" "$BODY" "never .?waiting on a blocker.*capped merge"
 assert_matches "never compute readiness yourself" "$BODY" "Never compute readiness yourself"
 assert_matches "the three ready.sh outcomes are all handled" "$BODY" "nothing-to-do"
 assert_matches "an unexplained empty stops the run" "$BODY" "[Nn]ever treat it as .?finished"
@@ -283,6 +401,12 @@ assert_contains "ExitWorktree(keep)" "$BODY" "ExitWorktree(keep)"
 assert_matches "verifies the base after entering (worktree.baseRef)" "$BODY" "worktree.baseRef"
 assert_contains "excludes .worktrees/ locally" "$BODY" "info/exclude"
 assert_matches "and says so in the report" "$BODY" "outlives the run|persistent mutation"
+check_ln=$(grep -nF 'scripts/merge-fold.sh" "$(git rev-parse --abbrev-ref HEAD)"' "$SKILL_FILE" | head -1 | cut -d: -f1)
+base_ln=$(grep -nF 'base=$(git rev-parse HEAD)' "$SKILL_FILE" | head -1 | cut -d: -f1)
+if [ -n "$check_ln" ] && [ -n "$base_ln" ] && [ "$check_ln" -lt "$base_ln" ]; then ok "launch fetch check runs before the base snapshot"; else no "launch fetch check runs before the base snapshot"; fi
+assert_contains "base is recorded in a linked worktree too" "$BODY" 'In either case, first record `base=$(git rev-parse HEAD)`'
+assert_contains "the override flag is documented" "$BODY" "--allow-behind"
+assert_matches "the check result goes in the launch line" "$BODY" "behind.*launch line|launch line.*behind"
 
 # ---------------------------------------------------------------------------
 echo "test: the irreversible gh writes stay on the main thread (#77)"
@@ -321,7 +445,8 @@ assert_matches "per-slice PRs" "$BODY" "[Pp]er-slice PRs"
 # ---------------------------------------------------------------------------
 echo "test: it stays smaller than the thing it replaced"
 lines=$(wc -l <"$SKILL_FILE")
-if [ "$lines" -lt 700 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
+# Keep one line of headroom for integration changes before the <700 merged-file gate.
+if [ "$lines" -lt 699 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
 for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do

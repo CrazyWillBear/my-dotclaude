@@ -2,20 +2,35 @@
 #
 # Deterministic merge fold — the model-free half of the merge stage.
 #
-#   merge-fold.sh <base-branch> <branch> [branch ...]
+#   merge-fold.sh [--allow-behind] <base-branch> [branch ...]
+#   merge-fold.sh --preview <upstream-ref>
 #
 # Run from inside the worktree that has <base-branch> checked out. Folds each
 # branch into the base IN THE GIVEN ORDER, testing every step with
 # `git merge-tree --write-tree` before touching the working tree, and sets aside
-# the ones that conflict. Prints one line per branch plus a summary:
+# the ones that conflict. Before folding, it fetches and checks the base's
+# upstream. Running with only the base is the launch fetch check. Prints the
+# upstream status, one line per branch, and a summary:
+#
+#   upstream none <base>               no upstream is configured or resolvable
+#   behind <base> <n> <upstream>       base is n commits behind its upstream
 #
 #   merged   <branch> <sha>            merged cleanly (or was already merged)
 #   conflict <branch> <path,path,...>  set aside — needs a merger agent
 #   unknown  <branch>                  no such local branch; skipped, fold continues
 #   summary  merged=<n> conflicted=<k>
 #
+# Preview output:
+#
+#   clean                               the end merge is conflict-free
+#   conflict <path,path,...>            the end merge conflicts at these paths
+#
+# Preview merges HEAD into the fetched upstream with merge-tree only, and exits
+# 0 whether the result is clean or conflicted.
+#
 # Exit 0 whenever the fold ran, conflicts included — a remainder is expected
-# output, not an error. Exit 1 only on a usage or repo error.
+# output, not an error. Exit 1 on a usage or repo error. Exit 2 when the base is
+# behind its upstream and --allow-behind was not given; nothing has been folded.
 #
 # WHY A FOLD AND NOT A FILTER. Conflict-freeness is relative to the ACCUMULATING
 # base, not to the original one: two branches can each merge cleanly into base and
@@ -38,14 +53,66 @@ set -u
 
 die() { printf 'merge-fold: %s\n' "$1" >&2; exit 1; }
 
-[ "$#" -ge 2 ] || die "usage: merge-fold.sh <base-branch> <branch> [branch ...]"
-
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+
+conflict_paths() {
+    local paths
+    paths="$(printf '%s\n' "$1" \
+        | sed -n 's/^[0-7]\{6\} [0-9a-f]\{7,\} [123]'"$(printf '\t')"'//p' \
+        | sort -u | paste -sd, -)"
+    [ -n "$paths" ] || paths="<paths-unavailable>"
+    printf '%s\n' "$paths"
+}
+
+if [ "${1-}" = "--preview" ]; then
+    [ "$#" -eq 2 ] || die "usage: merge-fold.sh --preview <upstream-ref>"
+    ref="$2"; remote="${ref%%/*}"
+    if git remote | grep -qxF "$remote"; then
+        git fetch --quiet "$remote" >/dev/null 2>&1 \
+          || printf 'merge-fold: fetch of %s failed; previewing against the last-fetched upstream\n' "$remote" >&2
+    fi
+    git rev-parse --verify --quiet "$ref^{commit}" >/dev/null || die "unknown ref '$ref'"
+    if out="$(git merge-tree --write-tree "$ref" HEAD 2>&1)"; then
+        echo clean
+    else
+        printf 'conflict %s\n' "$(conflict_paths "$out")"
+    fi
+    exit 0
+fi
+
+allow_behind=0
+if [ "${1-}" = "--allow-behind" ]; then
+    allow_behind=1
+    shift
+fi
+
+[ "$#" -ge 1 ] || die "usage: merge-fold.sh [--allow-behind] <base-branch> [branch ...]"
 
 base="$1"; shift
 
 current="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 [ "$current" = "$base" ] || die "base branch '$base' is not checked out here (on '$current') — run this in the worktree that holds it"
+
+remote="$(git config "branch.$base.remote" 2>/dev/null || true)"
+up=""
+if [ -n "$remote" ]; then
+    if [ "$remote" != "." ] && ! git fetch --quiet "$remote" >/dev/null 2>&1; then
+        printf 'merge-fold: fetch of %s failed; comparing against the last-fetched upstream\n' "$remote" >&2
+    fi
+    up="$(git rev-parse --abbrev-ref --symbolic-full-name "$base@{upstream}" 2>/dev/null || true)"
+fi
+if [ -z "$up" ]; then
+    printf 'upstream none %s\n' "$base"
+else
+    behind="$(git rev-list --count "HEAD..$up")"
+    if [ "$behind" -gt 0 ]; then
+        printf 'behind %s %d %s\n' "$base" "$behind" "$up"
+        if [ "$allow_behind" -ne 1 ]; then
+            printf 'merge-fold: %s is %d commit(s) behind %s — pull it, or pass --allow-behind to fold anyway\n' "$base" "$behind" "$up" >&2
+            exit 2
+        fi
+    fi
+fi
 
 merged=0
 conflicted=0
@@ -73,11 +140,7 @@ for b in "$@"; do
     else
         # Conflict. The `<mode> <oid> <stage>\t<path>` lines are git's stable
         # machine format; the prose "CONFLICT (...)" messages are not.
-        paths="$(printf '%s\n' "$out" \
-            | sed -n 's/^[0-7]\{6\} [0-9a-f]\{7,\} [123]'"$(printf '\t')"'//p' \
-            | sort -u | paste -sd, -)"
-        [ -n "$paths" ] || paths="<paths-unavailable>"
-        printf 'conflict %s %s\n' "$b" "$paths"
+        printf 'conflict %s %s\n' "$b" "$(conflict_paths "$out")"
         conflicted=$((conflicted + 1))
     fi
 done

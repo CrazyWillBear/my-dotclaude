@@ -86,9 +86,17 @@ gains a backend column:
 
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
-| standard | claude opus medium | codex 6-luna xhigh → codex 6-sol xhigh → claude opus medium | claude opus high |
+| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
+| standard | claude opus medium | codex 6-luna xhigh → claude opus medium | claude opus medium |
 | complex | claude fable medium | claude opus medium | claude opus high |
+
+**Updated 2026-09-23 (6-sol dropped, opus fixes from round 1):** PRD #70's run showed luna
+builds fine but its fix rounds do not converge (5–6 review rounds per issue, fix rounds adding
+new highs), and every issue paid two codex hops before reaching opus. The chain is now
+6-luna → opus, and `escalate.sh`'s review-cap fires on the attempt's FIRST review with high or
+medium findings (`ESCALATE_REVIEW_CAP=1`), so a codex build with findings is fixed by opus
+from fix round 1. A consequence: the recurrence decide (#116) needs two rounds in one codex
+attempt, so with the shipped defaults it can no longer fire for a codex attempt.
 
 **Updated 2026-09-22 (GPT-6, Opus 5.5):** 6-luna and 6-sol replace 5.6-luna and 5.6-terra
 — both cheaper, so the chain stays cheapest-first; standard's reviewer goes medium → high (a
@@ -96,6 +104,8 @@ small cost for a large benchmark gain). `opus` is an alias, so every opus cell i
 Fable stays the complex planner until #106 measures it against opus/high as a planner.
 Trivial now spawns through `spawn.sh` on codex instead of as an opus subagent: 6-luna fits
 that size of issue, and a `codex exec` worker pays no claude-session startup cost.
+As of 2026-09-23, the shipped standard reviewer effort is medium.
+At launch, the dispatcher prints the resolver's `source=` row on its main thread and copies it into the announcement; shell variables do not persist across Bash calls.
 
 **Decided 2026-09-22 (PRD #104), superseding 2026-09-17's claude-only shipped table:** the roster
 spends the expensive model on one bounded planning pass and the cheap model on the build loop.
@@ -273,6 +283,10 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
 
 Nothing rotates automatically. The context plugin's watchdog advises; the orchestrator asks.
 
+Claude background sessions do not reliably inherit arbitrary launcher variables; worker `--env`
+values travel in per-session settings to avoid daemon filtering or cross-session leakage.
+The shared validator reserves shell launch controls, Git routing/configuration names and infra-owned variables before export.
+
 ## Codex backend
 
 Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A worker is
@@ -340,6 +354,7 @@ one-shot, so it maps onto `codex exec`:
   the launcher; the my-review agent's frontmatter pins its own) that spawns
   `personal-tools:my-review` on the commit range, in the disposable clone, and emits
   `- [Pn] title — path:line` items or the literal `No findings.` for `review-counts.sh`.
+  In scoped fix reviews (#115), `review-counts.sh` refuses the verdict unless every open finding in the last ledger round reappears with the same title and path, either `[fixed]` or `[Pn]`.
   `codex exec review` was a working reviewer, but it could not be pointed at a claude model, so
   the roster's "reviewer: opus" was silently false for every codex worker, and (below) nothing
   could shape what it said about how it verified. The paragraphs below record what was learned

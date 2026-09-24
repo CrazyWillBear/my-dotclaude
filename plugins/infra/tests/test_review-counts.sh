@@ -33,9 +33,9 @@ no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 assert_equals()   { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '$2')" ;; esac; }
 
-run() {   # run <file> -> OUT/ERR/RC
-    local errf="$WORK/err"
-    OUT="$(bash "$SCRIPT" "$1" 2>"$errf")"
+run() {   # run <file> [args...] -> OUT/ERR/RC
+    local errf="$WORK/err" f="$1"; shift
+    OUT="$(bash "$SCRIPT" "$f" "$@" 2>"$errf")"
     RC=$?
     ERR="$(cat "$errf")"
 }
@@ -116,6 +116,73 @@ printf '* [P1] a finding — a.py:1\n' >"$WORK/star.txt"
 run "$WORK/star.txt"
 assert_equals "counted" "$OUT" "1 high, 0 medium, 0 low"
 
+echo "test: [fixed] items are ledger entries but never counted"
+printf '%s\n' \
+    '- [fixed] one — a:1' \
+    '- [fixed] two — b:2' \
+    '- [P2] three — c:3' \
+    '- [P1] four — d:4' >"$WORK/fixed-mixed.txt"
+run "$WORK/fixed-mixed.txt"
+assert_equals "fixed items are excluded from counts" "$RC" "0"
+assert_equals "only open findings are counted" "$OUT" "1 high, 1 medium, 0 low"
+run "$WORK/fixed-mixed.txt" --findings 2
+assert_equals "fixed items retain ledger identity without counting" "$OUT" \
+    "$(printf 'finding\t2\tfixed\tone\ta:1\nfinding\t2\tfixed\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\nfinding\t2\thigh\tfour\td:4')"
+
+echo "test: an all-fixed re-review is a clean count, not drift"
+printf '%s\n' '- [fixed] one — a:1' >"$WORK/fixed-only.txt"
+run "$WORK/fixed-only.txt"
+assert_equals "all-fixed review exits 0" "$RC" "0"
+assert_equals "all-fixed review counts zero" "$OUT" "0 high, 0 medium, 0 low"
+run "$WORK/fixed-only.txt" --findings 3
+assert_equals "all-fixed ledger entry preserves the original identity" "$OUT" \
+    "$(printf 'finding\t3\tfixed\tone\ta:1')"
+
+echo "test: [fixed] items do not hide malformed numbered findings"
+cat >"$WORK/fixed-with-drift.txt" <<'EOF'
+- [fixed] resolved finding — a:1
+1. [P1] malformed new finding — b:2
+EOF
+run "$WORK/fixed-with-drift.txt"
+assert_equals "mixed valid and malformed output is refused" "$RC" "1"
+assert_equals "nothing is counted from drifted output" "$OUT" ""
+assert_contains "explains the format drift" "$ERR" "drifted"
+
+echo "test: a scoped review must restate every open finding from the last round"
+PRIOR="$WORK/prior"
+mkdir -p "$PRIOR"
+printf '%s\n' fedcba9876543210fedcba9876543210fedcba98 >"$PRIOR/reviewed-head"
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\told\told.py:1\n2 2 high, 1 medium, 0 low\nfinding\t2\tfixed\told\told.py:1\nfinding\t2\thigh\tone\ta:1\nfinding\t2\thigh\ttwo\tb:2\nfinding\t2\tmedium\tthree\tc:3\n' >"$PRIOR/rounds"
+printf '%s\n' '- [fixed] one — a:1' '- [P2] three — c:3' '- [P1] new — d:4' >"$WORK/omitted.txt"
+run "$WORK/omitted.txt" --prior "$PRIOR"
+assert_equals "omitted prior finding is refused" "$RC" "1"
+assert_equals "omission produces no counts" "$OUT" ""
+assert_contains "omission names the missing identity" "$ERR" "two — b:2"
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:9' '- [P2] three — c:3' >"$WORK/mislabelled.txt"
+run "$WORK/mislabelled.txt" --prior "$PRIOR"
+assert_equals "changed path cannot stand in for a prior finding" "$RC" "1"
+assert_equals "changed path produces no counts" "$OUT" ""
+printf '%s\n' 'No findings.' >"$WORK/false-clean.txt"
+run "$WORK/false-clean.txt" --prior "$PRIOR"
+assert_equals "clean literal cannot omit prior findings" "$RC" "1"
+assert_equals "clean literal produces no counts" "$OUT" ""
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:2' '- [P2] three — c:3' '- [P1] new — d:4' >"$WORK/restated.txt"
+run "$WORK/restated.txt" --prior "$PRIOR"
+assert_equals "all identities restated succeeds" "$RC" "0"
+assert_equals "new findings still count" "$OUT" "1 high, 1 medium, 0 low"
+printf '%s\n' '- [fixed] one — a:1' '- [fixed] two — b:2' '- [fixed] three — c:3' >"$WORK/all-restated.txt"
+run "$WORK/all-restated.txt" --prior "$PRIOR"
+assert_equals "all fixed and all restated succeeds" "$RC" "0"
+assert_equals "all fixed counts zero" "$OUT" "0 high, 0 medium, 0 low"
+printf '%s\n' '- [fixed] one — a:1' '- [P1] two — b:2' '  still open: the guard was added to one caller only' '- [P2] three — c:3' '  still open: untouched' >"$WORK/open-reasons.txt"
+run "$WORK/open-reasons.txt" --prior "$PRIOR"
+assert_equals "still-open items with reason lines are restated" "$RC" "0"
+assert_equals "still-open items count at their severity" "$OUT" "1 high, 1 medium, 0 low"
+rm "$PRIOR/reviewed-head"
+run "$WORK/false-clean.txt" --prior "$PRIOR"
+assert_equals "missing head preserves full-review fallback" "$RC" "0"
+assert_equals "full-review fallback counts clean" "$OUT" "0 high, 0 medium, 0 low"
+
 # ---------------------------------------------------------------------------
 # THE REFUSALS. Each one must print NOTHING on stdout: the callers read any output as a
 # verdict, and a verdict is what decides whether unreviewed code reaches the merge queue.
@@ -158,6 +225,56 @@ OUT="$(bash "$SCRIPT" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"
 assert_equals "exit 1" "$RC" "1"
 assert_equals "NOTHING on stdout" "$OUT" ""
 assert_contains "usage" "$ERR" "usage"
+
+# ---------------------------------------------------------------------------
+# --findings N: the same parse, emitted as the run-dir ledger's per-finding entries (#110).
+echo "test: --findings N emits one tab-separated ledger entry per finding"
+run "$WORK/mix.txt" --findings 3
+assert_equals "exit 0" "$RC" "0"
+assert_equals "one entry per finding, severity mapped" "$OUT" \
+    "$(printf 'finding\t3\thigh\ta critical one\ta.py:1\nfinding\t3\thigh\tanother high\tb.py:2\nfinding\t3\tmedium\ta medium\tc.py:3\nfinding\t3\tlow\ta low\td.py:4\nfinding\t3\tlow\talso a low\te.py:5')"
+
+echo "test: --findings splits title from path on the LAST em dash"
+run "$WORK/p1.txt" --findings 1
+assert_equals "real codex item" "$OUT" \
+    "$(printf 'finding\t1\thigh\tAvoid executing caller input through a shell\t/tmp/x/m.py:13-13')"
+printf -- '- [P2] a — b — c.py:9\n' >"$WORK/dash.txt"
+run "$WORK/dash.txt" --findings 1
+assert_equals "earlier dashes stay in the title" "$OUT" "$(printf 'finding\t1\tmedium\ta — b\tc.py:9')"
+
+echo "test: --findings on an item with no location leaves the path empty"
+printf -- '- [P1] just a title\n' >"$WORK/noloc.txt"
+run "$WORK/noloc.txt" --findings 1
+assert_equals "trailing empty field" "$OUT" "$(printf 'finding\t1\thigh\tjust a title\t')"
+
+echo "test: an empty-title item does not swallow the next line's finding"
+printf -- '- [P2]\n- [P1] next — n.py:1\n' >"$WORK/emptytitle.txt"
+run "$WORK/emptytitle.txt"
+assert_equals "both items counted" "$OUT" "1 high, 1 medium, 0 low"
+run "$WORK/emptytitle.txt" --findings 1
+assert_equals "two entries, the empty one stays empty" "$OUT" \
+    "$(printf 'finding\t1\tmedium\t\t\nfinding\t1\thigh\tnext\tn.py:1')"
+
+echo "test: --findings on the clean literal prints nothing and exits 0"
+run "$WORK/clean.txt" --findings 2
+assert_equals "exit 0" "$RC" "0"
+assert_equals "nothing on stdout" "$OUT" ""
+
+echo "test: --findings refuses drift the same way — nothing on stdout"
+run "$WORK/drift.txt" --findings 2
+assert_equals "exit 1" "$RC" "1"
+assert_equals "NOTHING on stdout" "$OUT" ""
+assert_contains "says the format drifted" "$ERR" "drifted"
+
+echo "test: --findings needs an integer round"
+run "$WORK/mix.txt" --findings
+assert_equals "missing round: exit 1" "$RC" "1"
+assert_equals "missing round: NOTHING on stdout" "$OUT" ""
+assert_contains "missing round: usage" "$ERR" "usage"
+run "$WORK/mix.txt" --findings x
+assert_equals "non-integer round: exit 1" "$RC" "1"
+assert_equals "non-integer round: NOTHING on stdout" "$OUT" ""
+assert_contains "non-integer round: usage" "$ERR" "usage"
 
 # ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

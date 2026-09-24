@@ -17,6 +17,7 @@
 # Run: bash plugins/infra/tests/test_worker-resume.sh   (non-zero if any fail)
 
 set -u
+unset DATABASE_URL FOO
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -27,6 +28,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 CODEX_ROOT="$WORK/codexruns"
 export CODEX_RUN_ROOT="$CODEX_ROOT"
+unset CODEX_HOME
+export CODEX_HOME="$WORK/codex-home"
+mkdir -p "$CODEX_HOME"
+export CODEX_ETC_ROOT="$WORK/etc-codex"
+mkdir -p "$CODEX_ETC_ROOT"
 
 BIN="$WORK/bin"
 mkdir -p "$BIN"
@@ -38,6 +44,7 @@ cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
 if [ "${1:-}" = -p ]; then
+    [ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
 printf '%s\n' "$#" >"${STUB_REVIEW_ARGC:-/dev/null}"
     pwd >"${STUB_REVIEW_CWD:-/dev/null}"
@@ -175,6 +182,7 @@ run r1 80 standard "$REPO" --answer "the budget is per-request" --dry-run
 assert_contains "answer is in the prompt" "$OUT" "the budget is per-request"
 assert_contains "and it is told to continue, not restart" "$OUT" "do not start over"
 assert_contains "and how to report" "$OUT" "output schema"
+assert_contains "and how to report missing infrastructure" "$OUT" "infra: <what is missing>"
 
 echo "test: --answer-file is the same thing for a long answer"
 printf 'a long\nmulti-line answer\n' >"$WORK/ans.txt"
@@ -201,6 +209,7 @@ fi
 out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
@@ -208,6 +217,8 @@ chmod +x "$BIN/codex"
 # gh is STUBBED, not permitted to be real: the reviewer's findings are posted to the issue
 # as the "Review round" comment, and a test that reached the real gh would comment on
 # whatever repo the suite happens to run in. It records the call so the post is assertable.
+# The generated stub uses these expansions when it runs, not while being written.
+# shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"${STUB_GH_ARGV:-/dev/null}"\nexit 0\n' \
     >"$BIN/gh"
 chmod +x "$BIN/gh"
@@ -224,6 +235,48 @@ assert_not_contains "and not the stale escalation it replaced" "$OUT" "old quest
 assert_equals "the new exit code is recorded" "$(cat "$CODEX_ROOT/r1/issue-81/exit")" "0"
 assert_equals "launched FROM the worktree, since resume has no -C" \
     "$(cat "$WORK/cwd")" "$REPO"
+
+echo "test: --env reaches a real resumed worker without entering run files"
+mkrun 90 '{"issue":90,"status":"escalate","round":0,"head":"","review":"","note":"old question"}'
+STUB_ENV_OUT="$WORK/env-resume" \
+    STUB_HOST_ENV_OUT="$WORK/host-env-resume" \
+    STUB_REPORT='{"issue":90,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 90 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --env FOO=bar
+assert_equals "resumed worker receives both --env values" \
+    "$(cat "$WORK/env-resume" 2>/dev/null)" "postgres://x|bar"
+assert_equals "resume host reviewer receives neither worker value" \
+    "$(cat "$WORK/host-env-resume" 2>/dev/null)" '|'
+leak=$(grep -rF 'postgres://x' "$CODEX_ROOT/r1/issue-90" 2>/dev/null || true)
+assert_empty "resume run dir never contains the env value" "$leak"
+
+mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run
+assert_equals "resume dry run exits 0" "$RC" "0"
+assert_not_contains "resume dry run never prints the env value" "$OUT" "postgres://x"
+HOST_SECRET_CANARY=host-canary run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_arg "resume keeps explicitly provisioned KEY names in shell commands" "$OUT" \
+    'shell_environment_policy.ignore_default_excludes=true'
+excl=$(printf '%s\n' "$OUT" | grep '^shell_environment_policy.exclude=')
+assert_contains "resume still filters inherited host secret names" "$excl" '"HOST_SECRET_CANARY"'
+assert_not_contains "resume does not filter the provisioned name" "$excl" 'STRIPE_API_KEY'
+assert_not_contains "resume config argv never prints the KEY value" "$OUT" 'private-canary'
+assert_not_contains "resume config argv never prints a host secret value" "$OUT" 'host-canary'
+
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$CODEX_HOME/config.toml"
+run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_equals "resume user Codex exclude + secret-named --env refuses" "$RC" "1"
+assert_contains "resume refusal names the user Codex policy setting" "$ERR" "shell_environment_policy.exclude"
+assert_not_contains "resume user-config refusal never prints the value" "$ERR" "private-canary"
+rm -f "$CODEX_HOME/config.toml"
+
+mkdir -p "$REPO/.codex"
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$REPO/.codex/config.toml"
+run r1 91 standard "$REPO" --answer x --env STRIPE_API_KEY=private-canary --dry-run
+assert_equals "resume project Codex exclude + secret-named --env refuses" "$RC" "1"
+assert_contains "resume refusal names the project Codex config file" "$ERR" ".codex/config.toml"
+assert_not_contains "resume project-config refusal never prints the value" "$ERR" "private-canary"
+rm -f "$REPO/.codex/config.toml"
+rmdir "$REPO/.codex"
 
 echo "test: a resume that crashes is reported as failed, not as the previous turn's success"
 mkrun 82 '{"issue":82,"status":"built","round":0,"head":"stale99","review":"0 high, 0 medium, 0 low","note":""}'
@@ -300,6 +353,26 @@ run r1 80 standard "$REPO" --answer "x" --bogus
 assert_equals "unknown flag exits 1" "$RC" "1"
 assert_contains "names it" "$ERR" "unknown flag"
 
+run r1 80 standard "$REPO" --answer x --env NOEQUALS
+assert_equals "malformed --env exits 1" "$RC" "1"
+assert_contains "malformed --env says NAME=VALUE" "$ERR" "NAME=VALUE"
+assert_not_contains "malformed --env never echoes its argument" "$ERR" "NOEQUALS"
+assert_equals "malformed --env leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
+run r1 80 standard "$REPO" --answer x --env PATH=private-canary
+assert_equals "resume rejects a reserved command-path variable" "$RC" "1"
+assert_contains "resume explains the reserved name" "$ERR" "reserved"
+assert_not_contains "resume never echoes the value" "$ERR" "private-canary"
+assert_equals "reserved --env leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
+run r1 80 standard "$REPO" --answer x --env LD_AUDIT=private-canary
+assert_equals "resume rejects loader variables" "$RC" "1"
+assert_contains "loader rejection explains the reserved name" "$ERR" "reserved"
+assert_equals "loader rejection leaves the old exit file untouched" \
+    "$(cat "$CODEX_ROOT/r1/issue-80/exit")" "1"
+
 # ---------------------------------------------------------------------------
 # THE INDEPENDENT REVIEWER. A resumed worker's branch is as unreviewed as a freshly built
 # one, and this script used to end by asking the WORKER for a review count it produced by
@@ -308,22 +381,27 @@ assert_contains "names it" "$ERR" "unknown flag"
 echo "test: the resumed turn ends with a SIBLING reviewer, not the worker's own review"
 rm -f "$WORK/review-argv" "$WORK/gh-argv" "$WORK/review-cwd" "$WORK/review-tmpdir"
 mkrun 86 '{"issue":86,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+mkdir -p "$CODEX_ROOT/r1/issue-86"
+printf '1 0 high, 0 medium, 0 low\n2 0 high, 0 medium, 0 low\n3 0 high, 0 medium, 0 low\n' \
+    >"$CODEX_ROOT/r1/issue-86/rounds"
 STUB_REPORT='{"issue":86,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
     STUB_REVIEW_TEXT='- [P1] a finding — src/f:1
 - [P1] another — src/g:2
 - [P3] a nit — src/h:3' \
     STUB_REVIEW_CWD="$WORK/review-cwd" STUB_REVIEW_TMPDIR="$WORK/review-tmpdir" \
-    run r1 86 standard "$REPO" --answer "x" --base base --round 4
+    run r1 86 standard "$REPO" --answer "x" --base base
 assert_equals "exit 0" "$RC" "0"
 assert_contains "the REVIEWER's verdict reaches the report" "$OUT" \
     "issue 86 built head=abc1234 review=2 high, 0 medium, 1 low"
+assert_not_contains "a full resumed review can pass an empty prior list on bash 3.2" \
+    "$ERR" "unbound variable"
 assert_contains "a reviewer really ran — claude -p (#104)" "$(cat "$WORK/review-argv" 2>/dev/null)" "personal-tools:my-review"
 assert_equals "the prompt reached claude as ONE argument (review round 2)" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 # A SHA, not the branch name it was given: a name could be moved by the worker.
 assert_not_contains "the base is NOT passed as a branch name" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "base..HEAD"
 assert_contains "but as a resolved sha" "$(cat "$WORK/review-argv" 2>/dev/null)" \
-    "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+    "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_contains "at the tier's REVIEWER model, not the implementer's" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "opus"
 assert_not_contains "never the implementer's" \
@@ -332,6 +410,12 @@ assert_not_contains "never the implementer's" \
 # a disposable clone instead — with TMPDIR pointed at the one scratch root the sandbox
 # actually granted.
 RUNDIR86="$CODEX_ROOT/r1/issue-86"
+assert_equals "the reviewed head is recorded" "$(cat "$RUNDIR86/reviewed-head" 2>/dev/null)" \
+    "$(git -C "$REPO" rev-parse HEAD)"
+if [ -e "$RUNDIR86/role" ]; then no "this resume unexpectedly had a role file"
+else ok "this resume has no role file"; fi
+assert_not_contains "a resume with no role file gets a full review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
 assert_equals "the reviewing marker existed while the review ran" "$(cat "$WORK/review-marker" 2>/dev/null)" "yes"
 assert_equals "the review ran in the disposable checkout" \
     "$(cat "$WORK/review-cwd" 2>/dev/null)" "$RUNDIR86/review-checkout"
@@ -351,12 +435,53 @@ assert_contains "on the right issue" "$(cat "$WORK/gh-argv" 2>/dev/null)" "86"
 # and passing it as --body would put it at the mercy of shell quoting.
 assert_contains "as a --body-file" "$(cat "$WORK/gh-argv" 2>/dev/null)" "--body-file"
 COMMENT="$(cat "$CODEX_ROOT/r1/issue-86/review-comment.md" 2>/dev/null)"
-assert_contains "carrying the round number it was given" "$COMMENT" "**Review round 4**"
+assert_contains "numbered from the ledger" "$COMMENT" "**Review round 4**"
 assert_contains "and the reviewer's own findings text" "$COMMENT" "a finding"
 # The heading's counts come from review-counts.sh, the SAME script worker-report.sh reads
 # the verdict with — so the issue thread and the merge queue cannot disagree.
 assert_contains "with the counts in the heading" "$COMMENT" "2 high, 0 medium, 1 low"
-assert_equals "the rounds ledger records round 4's verdict" "$(cat "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" "4 2 high, 0 medium, 1 low"
+assert_equals "round 4's line is followed by its three finding entries" \
+    "$(sed -n '/^4 /,$p' "$CODEX_ROOT/r1/issue-86/rounds" 2>/dev/null)" \
+    "$(printf '4 2 high, 0 medium, 1 low\nfinding\t4\thigh\ta finding\tsrc/f:1\nfinding\t4\thigh\tanother\tsrc/g:2\nfinding\t4\tlow\ta nit\tsrc/h:3')"
+
+run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
+assert_equals "resume refuses the removed --round flag" "$RC" "1"
+assert_contains "and reports an unknown flag" "$ERR" "unknown flag"
+
+echo "test: a resumed FIX worker gets a scoped re-review"
+mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+RUNDIR87="$CODEX_ROOT/r1/issue-87"
+printf 'fix\n' >"$RUNDIR87/role"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR87/reviewed-head"
+printf '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\n' >"$RUNDIR87/rounds"
+STUB_REPORT='{"issue":87,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1' \
+    run r1 87 standard "$REPO" --answer "x" --base base
+assert_equals "exit 0" "$RC" "0"
+assert_contains "a resumed fix uses the scoped prompt" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "RE-REVIEW"
+assert_contains "the previous finding reaches the resumed fix review" \
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "- high: one — a:1"
+assert_equals "round 2 records the fixed finding without counting it" \
+    "$(sed -n '/^2 /,$p' "$RUNDIR87/rounds" 2>/dev/null)" \
+    "$(printf '2 0 high, 0 medium, 0 low\nfinding\t2\tfixed\tone\ta:1')"
+rm -rf "$RUNDIR87"
+
+echo "test: a resumed FIX review that drops a prior finding is refused"
+mkrun 88 '{"issue":88,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+RUNDIR88="$CODEX_ROOT/r1/issue-88"
+printf 'fix\n' >"$RUNDIR88/role"
+printf '%s\n' "$(git -C "$REPO" rev-parse HEAD)" >"$RUNDIR88/reviewed-head"
+printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2\n' >"$RUNDIR88/rounds"
+STUB_REPORT='{"issue":88,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='- [fixed] one — a:1' \
+    run r1 88 standard "$REPO" --answer "x" --base base
+assert_equals "omitted finding adds no ledger round" "$(cat "$RUNDIR88/rounds")" \
+    "$(printf '1 2 high, 0 medium, 0 low\nfinding\t1\thigh\tone\ta:1\nfinding\t1\thigh\ttwo\tb:2')"
+if [ -e "$RUNDIR88/review.txt" ]; then no "incomplete resumed review remained readable"
+else ok "incomplete resumed review was removed"; fi
+assert_contains "resume records the refusal" "$(cat "$RUNDIR88/review-stderr.log" 2>/dev/null)" "REVIEW_UNREADABLE"
+rm -rf "$RUNDIR88"
 
 echo "test: a review-checkout symlink planted during the worker's OWN turn is neutralised"
 # THE ORDERING BUG (#99 follow-up). review-checkout/review-scratch must be cleared AFTER
