@@ -32,7 +32,7 @@ if [ "${1:-}" = --codex-policy ]; then
     # ponytail: any `exclude =` or `filters =` line counts, in any table — over-refuses rather than parse TOML.
     for cfg in "$codex_home/config.toml" "$etc_dir/config.toml" \
         "$etc_dir/managed_config.toml" "$dir/.codex/config.toml"; do
-        [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])(exclude|filters)[[:space:]]*=' "$cfg" \
+        [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])(exclude|filters)[[:space:]]*=|^[[:space:]]*\[\[?[[:space:]]*shell_environment_policy\.(exclude|filters)' "$cfg" \
             && die "$cfg sets shell_environment_policy.exclude or .filters, which a KEY/SECRET/TOKEN --env name would override; rename the variable or drop that setting"
     done
     excl=

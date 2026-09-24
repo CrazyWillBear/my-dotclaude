@@ -787,6 +787,14 @@ printf '[shell_environment_policy]\nfilters = ["X_*"]\n' >"$HOME/.codex/config.t
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 assert_equals "bare Codex filters setting + secret-named --env refuses" "$?" "1"
 assert_contains "bare filters refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[[shell_environment_policy.filters]]\ninclude = "PATH"\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "array-of-tables filters policy + secret-named --env refuses" "$?" "1"
+assert_contains "array-of-tables refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
+printf '[shell_environment_policy.filters]\n' >"$HOME/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+assert_equals "filters table policy + secret-named --env refuses" "$?" "1"
+assert_contains "filters table refusal names shell_environment_policy" "$(err)" "shell_environment_policy"
 rm -f "$HOME/.codex/config.toml"
 
 echo "test: invalid --env values are rejected before a worker starts"
