@@ -13,11 +13,10 @@ die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 # WITHOUT opening that filter for the rest of the host environment: the defaults are
 # switched off, and every other name they matched is re-excluded by name — inherited
 # names (awk's ENVIRON also lists names that are not identifiers, which compgen -e skips)
-# and names Codex loads itself from $CODEX_HOME/.env. A `-c ...exclude` setting may
-# outrank a user or project policy, the system (/etc/codex/config.toml) policy, or the
-# managed (/etc/codex/managed_config.toml) policy's `exclude` list or `filters` setting.
-# Those configs are refused. Prints nothing when no provisioned name needs it. Names only,
-# never values.
+# and names Codex loads itself from $CODEX_HOME/.env. A user, project, system or managed
+# (`/etc/codex/managed_config.toml`) `shell_environment_policy.exclude` or `filters`
+# setting may conflict with or outrank the `-c` override, so the combination is refused.
+# Prints nothing when no provisioned name needs it. Names only, never values.
 secretish() { case "$1" in *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*) return 0 ;; esac; return 1; }
 if [ "${1:-}" = --codex-policy ]; then
     dir="${2:-}"; shift 2
@@ -29,11 +28,11 @@ if [ "${1:-}" = --codex-policy ]; then
     [ -n "$need" ] || exit 0
     codex_home="${CODEX_HOME:-${HOME:-/nonexistent}/.codex}"
     etc_dir="${CODEX_ETC_ROOT:-/etc/codex}"
-    # ponytail: any `exclude =` or `filters =` line counts, in any table — over-refuses rather than parse TOML.
+    # ponytail: any `exclude =` or `filters =` line or filters table header counts — over-refuses rather than parse TOML.
     for cfg in "$codex_home/config.toml" "$etc_dir/config.toml" \
         "$etc_dir/managed_config.toml" "$dir/.codex/config.toml"; do
         [ -f "$cfg" ] && grep -Eq '(^|[[:space:],{.])(exclude|filters)[[:space:]]*=|^[[:space:]]*\[\[?[[:space:]]*shell_environment_policy\.(exclude|filters)' "$cfg" \
-            && die "$cfg sets shell_environment_policy.exclude or .filters, which a KEY/SECRET/TOKEN --env name would override; rename the variable or drop that setting"
+            && die "$cfg contains a shell_environment_policy.exclude or .filters setting that may conflict with or outrank the -c override needed for KEY/SECRET/TOKEN --env; rename the variable or drop that setting"
     done
     excl=
     while IFS= read -r name; do

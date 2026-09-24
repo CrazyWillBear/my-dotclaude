@@ -747,8 +747,7 @@ assert_contains "a name after a mid-value quote is never skipped" "$excl" '"AFTE
 assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
 assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
 rm -f "$HOME/.codex/.env"
-# `-c shell_environment_policy.exclude` REPLACES the user's own list, so a user who set one
-# is refused rather than silently un-hidden.
+# A configured policy may conflict with or outrank the `-c` override, so it is refused.
 printf '[shell_environment_policy]\nexclude = ["MY_PRIVATE_*"]\n' >"$HOME/.codex/config.toml"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 rc=$?
