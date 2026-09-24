@@ -1,6 +1,6 @@
 {
   "name": "infra",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Scripts-only shared layer: background-session spawning, session state, inbound-message checks, and tier resolution. A SessionStart hook links ~/.claude/kit/infra to this plugin so other plugins call its scripts by one fixed path.",
   "author": {
     "name": "William Chastain",

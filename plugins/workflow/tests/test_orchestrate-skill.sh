@@ -58,6 +58,8 @@ assert_contains "argument-hint carries --merge-split-at" "$FM" "--merge-split-at
 assert_contains "allowed-tools includes SendMessage" "$FM" "SendMessage"
 assert_contains "allowed-tools includes Bash" "$FM" "Bash"
 assert_not_contains "the Workflow tool is gone" "$FM" "Workflow"
+assert_contains "--max defaults to 8 in the skill" "$BODY" "concurrent issues in flight** (default **8**)"
+assert_contains "--max defaults to 8 in the README" "$(cat "$(dirname "$SKILL_FILE")/../../README.md")" "up to \`--max N\` (default 8)"
 
 echo "test: the orchestrator runs on the main thread, never as a subagent"
 assert_matches "says main thread, never a subagent" "$BODY" "main thread.*never as a subagent|Never as a subagent"

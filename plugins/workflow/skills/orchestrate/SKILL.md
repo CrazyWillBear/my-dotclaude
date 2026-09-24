@@ -18,7 +18,7 @@ a subagent orchestrator would talk and never hear back. Every worker reply would
 
 `$ARGUMENTS` = `[--max N] [--merge-split-at K] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]`
 
-- **`--max N`** — **concurrent issues in flight** (default **5**), not a batch size. A slot frees
+- **`--max N`** — **concurrent issues in flight** (default **8**), not a batch size. A slot frees
   when its issue merges, and the freed slot takes the next ready issue.
 - **`--merge-split-at K`** — the conflicted remainder above which the merge is split (default
   **5**). See [Merge](#merge).

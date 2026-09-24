@@ -110,7 +110,7 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
 ### The loop
 
 1. **`ready.sh`** over the frozen graph, minus what merged, is held, or is in flight.
-2. **Admit** the lowest-numbered ready issues up to `--max N` (default 5). For each: write a
+2. **Admit** the lowest-numbered ready issues up to `--max N` (default 8). For each: write a
    `CONTEXT-MAP.md` into its worktree (one sonnet `Explore` at **admission**, so a dependent's map
    reflects its merged blockers), cut the worktree, and **`spawn.sh`** the session.
 3. **Subscribe, don't poll.** `SendMessage` with `notify_when_idle: true` and **no message** — a pure
