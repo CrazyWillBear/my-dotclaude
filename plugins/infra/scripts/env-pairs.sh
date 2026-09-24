@@ -13,9 +13,11 @@ die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 # WITHOUT opening that filter for the rest of the host environment: the defaults are
 # switched off, and every other name they matched is re-excluded by name — inherited
 # names (awk's ENVIRON also lists names that are not identifiers, which compgen -e skips)
-# and names Codex loads itself from $CODEX_HOME/.env. `-c ...exclude` may outrank an
-# exclude list or `filters` setting in user, system, managed or project Codex config, so that case is refused
-# instead. Prints nothing when no provisioned name needs it. Names only, never values.
+# and names Codex loads itself from $CODEX_HOME/.env. A `-c ...exclude` setting may
+# outrank a user or project policy, the system (/etc/codex/config.toml) policy, or the
+# managed (/etc/codex/managed_config.toml) policy's `exclude` list or `filters` setting.
+# Those configs are refused. Prints nothing when no provisioned name needs it. Names only,
+# never values.
 secretish() { case "$1" in *[Kk][Ee][Yy]*|*[Ss][Ee][Cc][Rr][Ee][Tt]*|*[Tt][Oo][Kk][Ee][Nn]*) return 0 ;; esac; return 1; }
 if [ "${1:-}" = --codex-policy ]; then
     dir="${2:-}"; shift 2

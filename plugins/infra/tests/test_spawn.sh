@@ -300,6 +300,8 @@ mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL sp
     if [ "$2" = - ]; then
         printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
     else
+        # The generated stub uses these expansions when it runs, not while being written.
+        # shellcheck disable=SC2016
         printf '#!/usr/bin/env bash\n[ "${1:-}" = --self ] || exit 1\nprintf "%%s\\n" "%s"\n' \
             "$2" >"$1/session-status.sh"
     fi
@@ -601,7 +603,7 @@ rm -rf "$CODEX_ROOT"
 echo "test: the reviewer is told the shape review-counts.sh parses, and is read-only"
 assert_contains "the finding shape" "$rv" "- [P1]"
 assert_contains "the clean literal" "$rv" "No findings."
-assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify base^{commit})..HEAD"
+assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_arg "no edits" "$rv" "Edit"
 assert_arg "no pushes" "$rv" "Bash(git push:*)"
 assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
@@ -751,6 +753,16 @@ out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "user Codex exclude list is fine when no filter override is needed" "$?" "0"
 rm -f "$HOME/.codex/config.toml"
 
+mkdir -p "$REPO/.codex"
+printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$REPO/.codex/config.toml"
+out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
+rc=$?
+assert_equals "project Codex exclude list + secret-named --env refuses" "$rc" "1"
+assert_contains "refusal names the project Codex config file" "$(err)" ".codex/config.toml"
+assert_not_contains "project-config refusal never prints the value" "$(err)" "private-canary"
+rm -f "$REPO/.codex/config.toml"
+rmdir "$REPO/.codex"
+
 printf '[shell_environment_policy]\nexclude = ["X_*"]\n' >"$CODEX_ETC_ROOT/managed_config.toml"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 rc=$?
@@ -874,7 +886,7 @@ assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
 assert_equals "the multi-line prompt reached claude as ONE argument" \
     "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
 assert_contains "against a base SHA, not the branch name it was passed" \
-    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify base^{commit})"
+    "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')"
 assert_not_contains "never the branch name" \
     "$(printf '%s\n' "$(cat "$WORK/review-argv" 2>/dev/null)" | grep -Fx -- 'base')" "base"
 # exit is the terminal signal: worker-report.sh reads the run the moment it appears, so a
