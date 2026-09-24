@@ -45,20 +45,7 @@ if [ "${1:-}" = --codex-policy ]; then
         excl+="${excl:+,}\"$name\""
     done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
              [ -f "$codex_home/.env" ] && awk '
-                 function balanced(value,    q, escaped, i, c, single) {
-                     single = sprintf("%c", 39)
-                     q = ""
-                     escaped = 0
-                     for (i = 1; i <= length(value); i++) {
-                         c = substr(value, i, 1)
-                         if (escaped) { escaped = 0; continue }
-                         if (c == "\\") { escaped = 1; continue }
-                         if (q == "") {
-                             if (c == "\"" || c == single) q = c
-                         } else if (c == q) q = ""
-                     }
-                     return q == ""
-                 }
+                 # ponytail: every NAME= line start counts, even inside a quoted value — over-excludes rather than mirror dotenvys quoting.
                  {
                      if (!match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=/)) next
                      line = substr($0, RSTART, RLENGTH)
@@ -67,9 +54,6 @@ if [ "${1:-}" = --codex-policy ]; then
                      eq = index(line, "=")
                      name = substr(line, 1, eq - 1)
                      sub(/[ \t]*$/, "", name)
-                     value = substr($0, index($0, "=") + 1)
-                     # dotenvy parses one line at a time; a bad quote cannot hide later names.
-                     if (!balanced(value)) next
                      print name
                  }
              ' "$codex_home/.env")

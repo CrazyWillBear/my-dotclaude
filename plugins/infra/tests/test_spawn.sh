@@ -730,16 +730,20 @@ assert_not_contains "a commented .env line is not a name" "$excl" 'COMMENTED_TOK
 assert_not_contains "Codex config argv never prints a .env value" "$out" 'dotenv-canary'
 rm -f "$HOME/.codex/.env"
 
-printf 'export DOTENV_API_TOKEN=dotenv-canary\nMULTI_TOKEN="first\nFRAG_TOKEN=frag-canary\nclosing"\nSQ_KEY=\047a\nSQFRAG_KEY=frag-canary\nclosing\nESCAPED_SINGLE_KEY=\047a\\\047\nESCAPED_FOLLOW_TOKEN=follow-canary\n"weird/TOKEN=x\n' >"$HOME/.codex/.env"
+printf 'export DOTENV_API_TOKEN=dotenv-canary\nMULTI_TOKEN="first\nFRAG_TOKEN=frag-canary\nclosing"\nSQ_KEY=\047a\nSQFRAG_KEY=frag-canary\nclosing\nESCAPED_SINGLE_KEY=\047a\\\047\nESCAPED_FOLLOW_TOKEN=follow-canary\nPEM_PRIVATE_KEY="-----BEGIN\nKEY MATERIAL\n# it\047s a comment\nCOMMENT_TOKEN=x\nMID_TOKEN=ab"c\nAFTER_MID_TOKEN=y\n"weird/TOKEN=x\n' >"$HOME/.codex/.env"
 out=$(codex_dry r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary)
 excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
 assert_contains "Codex re-excludes exported dotenv names" "$excl" '"DOTENV_API_TOKEN"'
-assert_not_contains "an unterminated double-quoted dotenv line is not loaded" "$excl" 'MULTI_TOKEN'
-assert_not_contains "an unterminated single-quoted dotenv line is not loaded" "$excl" 'SQ_KEY'
-assert_contains "a valid line after an unterminated double quote is still loaded" "$excl" '"FRAG_TOKEN"'
-assert_contains "a valid line after an unterminated single quote is still loaded" "$excl" '"SQFRAG_KEY"'
-assert_not_contains "an escaped single quote does not close an invalid dotenv line" "$excl" 'ESCAPED_SINGLE_KEY'
-assert_contains "an escaped single quote cannot hide the next dotenv name" "$excl" '"ESCAPED_FOLLOW_TOKEN"'
+assert_contains "multi-line double-quoted dotenv names are over-excluded" "$excl" '"MULTI_TOKEN"'
+assert_contains "multi-line single-quoted dotenv names are over-excluded" "$excl" '"SQ_KEY"'
+assert_contains "names after an unterminated double quote are never skipped" "$excl" '"FRAG_TOKEN"'
+assert_contains "names after an unterminated single quote are never skipped" "$excl" '"SQFRAG_KEY"'
+assert_contains "escaped-single-quote dotenv names are over-excluded" "$excl" '"ESCAPED_SINGLE_KEY"'
+assert_contains "names after an escaped single quote are never skipped" "$excl" '"ESCAPED_FOLLOW_TOKEN"'
+assert_contains "PEM names inside apparent quoted values are over-excluded" "$excl" '"PEM_PRIVATE_KEY"'
+assert_contains "an apostrophe in a comment cannot hide the next name" "$excl" '"COMMENT_TOKEN"'
+assert_contains "a name with a mid-value quote is over-excluded" "$excl" '"MID_TOKEN"'
+assert_contains "a name after a mid-value quote is never skipped" "$excl" '"AFTER_MID_TOKEN"'
 assert_not_contains "invalid dotenv names are not parsed" "$excl" 'weird/TOKEN'
 assert_not_contains "Codex config argv never prints a continuation value" "$out" 'frag-canary'
 rm -f "$HOME/.codex/.env"
