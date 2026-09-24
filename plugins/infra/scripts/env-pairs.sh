@@ -45,22 +45,21 @@ if [ "${1:-}" = --codex-policy ]; then
         excl+="${excl:+,}\"$name\""
     done < <(awk 'BEGIN { for (k in ENVIRON) print k }'
              [ -f "$codex_home/.env" ] && awk '
-                 function closes(line, quote,    i, c, escaped) {
-                     if (quote == sprintf("%c", 39)) return index(line, quote) > 0
+                 function balanced(value,    q, escaped, i, c, single) {
+                     single = sprintf("%c", 39)
+                     q = ""
                      escaped = 0
-                     for (i = 1; i <= length(line); i++) {
-                         c = substr(line, i, 1)
-                         if (c == "\"" && !escaped) return 1
-                         if (c == "\\" && !escaped) escaped = 1
-                         else escaped = 0
+                     for (i = 1; i <= length(value); i++) {
+                         c = substr(value, i, 1)
+                         if (escaped) { escaped = 0; continue }
+                         if (c == "\\") { escaped = 1; continue }
+                         if (q == "") {
+                             if (c == "\"" || c == single) q = c
+                         } else if (c == q) q = ""
                      }
-                     return 0
+                     return q == ""
                  }
                  {
-                     if (q != "") {
-                         if (closes($0, q)) q = ""
-                         next
-                     }
                      if (!match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_.]*[ \t]*=/)) next
                      line = substr($0, RSTART, RLENGTH)
                      sub(/^[ \t]*/, "", line)
@@ -68,11 +67,10 @@ if [ "${1:-}" = --codex-policy ]; then
                      eq = index(line, "=")
                      name = substr(line, 1, eq - 1)
                      sub(/[ \t]*$/, "", name)
-                     print name
                      value = substr($0, index($0, "=") + 1)
-                     sub(/^[ \t]*/, "", value)
-                     quote = substr(value, 1, 1)
-                     if ((quote == "\"" || quote == sprintf("%c", 39)) && !closes(substr(value, 2), quote)) q = quote
+                     # dotenvy parses one line at a time; a bad quote cannot hide later names.
+                     if (!balanced(value)) next
+                     print name
                  }
              ' "$codex_home/.env")
     printf '%s\n' 'shell_environment_policy.ignore_default_excludes=true'
