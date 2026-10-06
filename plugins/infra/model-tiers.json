@@ -1,9 +1,9 @@
 {
   "trivial": {
-    "planner":     { "backend": "claude", "model": "opus",  "effort": "medium" },
+    "planner":     { "backend": "claude", "model": "sonnet", "effort": "high" },
     "implementer": [
       { "backend": "codex",  "model": "gpt-6-luna",    "effort": "xhigh" },
-      { "backend": "claude", "model": "opus",          "effort": "medium" }
+      { "backend": "claude", "model": "sonnet",        "effort": "medium" }
     ],
     "reviewer":    { "backend": "claude", "model": "opus",  "effort": "low" }
   },
@@ -16,8 +16,8 @@
     "reviewer":    { "backend": "claude", "model": "opus",  "effort": "medium" }
   },
   "complex": {
-    "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },
-    "implementer": { "backend": "claude", "model": "opus",  "effort": "medium" },
-    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
+    "planner":     { "backend": "claude", "model": "opus",   "effort": "high" },
+    "implementer": { "backend": "claude", "model": "sonnet", "effort": "high" },
+    "reviewer":    { "backend": "claude", "model": "opus",   "effort": "high" }
   }
 }

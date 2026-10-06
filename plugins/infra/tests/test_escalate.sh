@@ -259,7 +259,7 @@ assert_empty "a review-cap already handed off does not re-fire on the next attem
 mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
 
 echo "test: review-cap — the FIRST round with high or medium findings, from the RUN-DIR ledger"
-# The shipped chain is luna → opus: luna builds, and any review with findings hands the fix
+# The shipped standard chain is luna → opus: luna builds, and any review with findings hands the fix
 # rounds to opus (PRD #70: luna's own fix rounds ran 5–6 deep without converging).
 mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
 printf '1 0 high, 1 medium, 3 low\n' >"$RUNDIR/rounds"

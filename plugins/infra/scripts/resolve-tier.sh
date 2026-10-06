@@ -35,8 +35,7 @@
 # backend claude takes a model in {haiku,sonnet,opus,fable}; backend codex takes a
 # model in {gpt-5.6-luna,gpt-5.6-terra,gpt-5.6-sol,gpt-6-luna,gpt-6-sol,gpt-6-astra}.
 # Either paired with the other's model — or any other backend value — is a miss like
-# any other bad cell. Sonnet is
-# gone from the shipped table but stays VALID so a user table can still name it.
+# any other bad cell.
 #
 # Fallback (single WARN to stderr, then the hardcoded claude-only roster to stdout,
 # exit 0) on ANY of: a missing/unreadable config; unparseable content (including

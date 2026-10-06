@@ -56,8 +56,8 @@
 #                  own, and any in the file belong to earlier codex attempts behind rounds_mark.
 #   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 1:
 #                  the very first) still has high or medium findings — the fix session is
-#                  spawned at the next chain position. With the shipped luna → opus chain
-#                  that means a codex build with findings is fixed by opus from fix round 1;
+#                  spawned at the next chain position. With the shipped luna → opus/sonnet
+#                  chains a codex build with findings is fixed on claude from fix round 1;
 #                  luna builds fine but its fix rounds did not converge (PRD #70 ran 5–6
 #                  rounds per issue). Set 2 to give the codex cell one fix round first.
 #                  Counted from `$RUNDIR/rounds`, the ledger the review wrappers append

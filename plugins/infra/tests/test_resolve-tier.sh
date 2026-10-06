@@ -125,8 +125,8 @@ assert_equals "trivial: stderr empty (no WARN)" "$ERR" ""
 assert_equals "trivial: exactly 13 key=value lines" "$(printf '%s\n' "$OUT" | grep -c '=')" "13"
 assert_equals "trivial: source names shipped table" "$(val "$OUT" source)" "shipped"
 assert_equals "trivial: tier echoed" "$(val "$OUT" tier)" "trivial"
-assert_equals "trivial: planner_model opus" "$(val "$OUT" planner_model)" "opus"
-assert_equals "trivial: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "trivial: planner_model sonnet" "$(val "$OUT" planner_model)" "sonnet"
+assert_equals "trivial: planner_effort high" "$(val "$OUT" planner_effort)" "high"
 assert_equals "trivial: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
 assert_equals "trivial: implementer_model 6-luna (chain head)" "$(val "$OUT" implementer_model)" "gpt-6-luna"
 assert_equals "trivial: implementer_effort xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
@@ -156,11 +156,11 @@ run_tier complex
 assert_equals "complex: exit 0" "$RC" "0"
 assert_equals "complex: stderr empty (no WARN)" "$ERR" ""
 assert_equals "complex: tier echoed" "$(val "$OUT" tier)" "complex"
-assert_equals "complex: planner_model fable" "$(val "$OUT" planner_model)" "fable"
-assert_equals "complex: planner_effort medium" "$(val "$OUT" planner_effort)" "medium"
+assert_equals "complex: planner_model opus" "$(val "$OUT" planner_model)" "opus"
+assert_equals "complex: planner_effort high" "$(val "$OUT" planner_effort)" "high"
 assert_equals "complex: planner_backend claude" "$(val "$OUT" planner_backend)" "claude"
-assert_equals "complex: implementer_model opus" "$(val "$OUT" implementer_model)" "opus"
-assert_equals "complex: implementer_effort medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "complex: implementer_model sonnet" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "complex: implementer_effort high" "$(val "$OUT" implementer_effort)" "high"
 assert_equals "complex: implementer_backend claude" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "complex: implementer_chain 1 (a single cell is a chain of one)" "$(val "$OUT" implementer_chain)" "1"
 assert_equals "complex: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
@@ -169,10 +169,9 @@ assert_equals "complex: reviewer_backend claude" "$(val "$OUT" reviewer_backend)
 
 # ---------------------------------------------------------------------------
 echo "test: the implementer CHAIN — an attempt index walks it, and the top is knowable (#104)"
-# Sonnet is out of the shipped roster; the reviewer is never fable (memory: reviews on opus).
+# The reviewer is never fable (memory: reviews on opus).
 for t in trivial standard complex; do
     run_tier "$t"
-    assert_not_contains "$t: no sonnet anywhere in the shipped roster" "$OUT" "sonnet"
     assert_not_contains "$t: the reviewer is never fable" "$(val "$OUT" reviewer_model)" "fable"
 done
 run_tier standard __REAL__ 1
@@ -187,7 +186,8 @@ assert_equals "standard attempt 1: chain still 2" "$(val "$OUT" implementer_chai
 assert_equals "standard attempt 1: planner unchanged" "$(val "$OUT" planner_model)" "opus"
 assert_equals "standard attempt 1: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
 run_tier trivial __REAL__ 1
-assert_equals "trivial shares the standard chain: attempt 1 is opus" "$(val "$OUT" implementer_model)" "opus"
+assert_equals "trivial attempt 1: sonnet tops the chain" "$(val "$OUT" implementer_model)" "sonnet"
+assert_equals "trivial attempt 1: at medium" "$(val "$OUT" implementer_effort)" "medium"
 for t in trivial standard; do
     run_tier "$t"
     assert_not_contains "$t: 6-sol is out of the shipped chain" "$OUT" "gpt-6-sol"

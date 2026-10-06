@@ -126,7 +126,7 @@ cells (the trivial and standard implementer chains start on 6-luna — PRD #104)
 at `${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json` may say anything. Resolve the roster and
 look. **If a cell does say `codex`, do not pass its model to `Agent`** — use the chain's
 **top cell** (`resolve-tier.sh <tier> $((implementer_chain-1))`), which is always claude
-(opus medium in the shipped table), never the frontmatter default; a codex reviewer cell becomes `opus`. The plan comment and the escalation script are session-lane only.
+(sonnet medium for trivial, opus medium for standard in the shipped table), never the frontmatter default; a codex reviewer cell becomes `opus`. The plan comment and the escalation script are session-lane only.
 
 1. **Classify** — run the `classify-task` skill (batch mode, `--no-confirm`) to get the tier, and
    resolve its roster with `bash ~/.claude/kit/infra/scripts/resolve-tier.sh <tier>`. **Never
@@ -491,8 +491,8 @@ is blocked while #14 is three commits past it.
 # Escalation by script
 
 **A script decides a worker is out of its depth — never the worker, never you.** Each tier's
-implementer cell is an ordered **chain** (6-luna → opus for trivial/standard; opus alone
-for complex); `spawn.sh --attempt <A>` selects the position:
+implementer cell is an ordered **chain** (6-luna → sonnet for trivial, 6-luna → opus for
+standard; sonnet alone for complex); `spawn.sh --attempt <A>` selects the position:
 
 ```bash
 bash ~/.claude/kit/infra/scripts/escalate.sh "$RUNID" <N> <tier> <worktree> --base "$BASE" --attempt <A>

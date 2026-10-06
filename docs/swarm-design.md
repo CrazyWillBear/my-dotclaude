@@ -86,9 +86,13 @@ gains a backend column:
 
 | tier | planner | implementer (an ordered CHAIN, cheapest first) | reviewer |
 |---|---|---|---|
-| trivial | none run (opus medium cell kept valid) | codex 6-luna xhigh → claude opus medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
+| trivial | none run (sonnet high cell kept valid) | codex 6-luna xhigh → claude sonnet medium (no plan; spawned through `spawn.sh` like standard) | claude opus low |
 | standard | claude opus medium | codex 6-luna xhigh → claude opus medium | claude opus medium |
-| complex | claude fable medium | claude opus medium | claude opus high |
+| complex | claude opus high | claude sonnet high | claude opus high |
+
+**Updated 2026-10-06 (the user table becomes the shipped default):** sonnet is back — it tops
+the trivial chain (6-luna → sonnet medium) and builds complex at high behind an opus-high plan;
+fable leaves the shipped table. Standard is unchanged (6-luna → opus).
 
 **Updated 2026-09-23 (6-sol dropped, opus fixes from round 1):** PRD #70's run showed luna
 builds fine but its fix rounds do not converge (5–6 review rounds per issue, fix rounds adding
@@ -191,7 +195,8 @@ affordable on the $20 codex plan. A review is a shorter turn than an implementat
 costs twice terra per token; the `turn.completed` usage on real runs decides it.
 
 The ad-hoc lane's claude-side substitution for a codex cell is the chain's TOP cell
-(`resolve-tier.sh <tier> $((implementer_chain-1))` — opus medium in the shipped table); a codex
+(`resolve-tier.sh <tier> $((implementer_chain-1))` — sonnet medium for trivial, opus medium for
+standard in the shipped table); a codex
 reviewer cell becomes opus. Fable never reviews. `resolve-tier.sh` prints twelve lines: the
 ten cells plus `implementer_attempt` and `implementer_chain`.
 
