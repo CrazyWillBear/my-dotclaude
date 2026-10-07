@@ -106,8 +106,9 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
 
 1. **`/grill-me`** interrogates you about the task — scope, constraints, edge cases,
    acceptance criteria — and emits a shared-understanding summary shaped to feed the PRD.
-2. **`/to-prd`** explores the repo, maps the testing seams, fills the PRD template, and
-   publishes it as one GitHub issue labelled `prd`.
+2. **`/to-prd`** captures the idea whole — goals, success, solution, and every technical and
+   product decision with its rationale — as a decision-record PRD, mapping the testing seam when
+   code behavior changes, and publishes it as one GitHub issue labelled `prd`.
 3. **`/to-issues`** breaks the PRD into **tracer-bullet vertical slices** (each cuts all
    layers and is demoable alone), publishing them in dependency order so each issue's
    `## Blocked by` section carries real `#N` refs — each labelled with its complexity

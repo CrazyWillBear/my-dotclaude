@@ -107,7 +107,7 @@ that builds it, just deferred. Either way it's schedulable, never a phantom.
 
 | Stage | Role in the guard |
 | --- | --- |
-| `/to-prd` | Names the **per-PRD central mechanism** (the outermost real interface) in the PRD body — extends the existing "highest test level" step. |
+| `/to-prd` | Names the **per-PRD central mechanism** (the outermost real interface) in the PRD's Testing Decisions when it changes code behavior — extends the existing "highest test level" step. A PRD with no Testing Decisions has `/to-issues` derive it from the Success checklist. |
 | `/to-issues` | Derives a `## Central mechanism` line per slice; default = build it thin-real; allows a `## Mock-debt` escape hatch. Labels the final e2e/staging slice `e2e-gate`. Ensures the `mock-debt` + `e2e-gate` labels exist. |
 | `implementer` | Builds its slice's central mechanism real. If it must mock it, writes a `## Mock-debt` declaration (`Mocked: <X>. Real wiring blocked by: #N \| deferred`) — declare-only; it's sandboxed and never edits the cross-issue graph. |
 | `my-review` | Reviews each built slice on its branch diff and audits its central mechanism vs its test. Declared mock → confirm + file `mock-debt` follow-up. Undeclared central mock → auto-convert + file. Gains a narrow, audit-scoped `gh issue create` for mock-debt (its general review stays report-only). |

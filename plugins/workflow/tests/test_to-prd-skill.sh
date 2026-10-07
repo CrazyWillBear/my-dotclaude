@@ -75,7 +75,7 @@ echo "test: the mock-drift guard and labels survive"
 assert_contains "central mechanism named"        "$content" "central mechanism"
 assert_contains "anti-mock-drift linked"         "$content" "anti-mock-drift"
 assert_contains "prd label applied"              "$content" "--label prd"
-assert_contains "never ready-for-agent"          "$content" "Do **not** label the PRD \`ready-for-agent\`"
+assert_contains "never ready-for-agent"          "$content" "**Do not** label the PRD \`ready-for-agent\`"
 assert_contains "/to-issues is the next step"    "$content" "/to-issues"
 
 # ---------------------------------------------------------------------------

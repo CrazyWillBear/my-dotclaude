@@ -5,8 +5,8 @@ routes work by **shape**: one explicit unit of work runs as a subagent chain, an
 PRD gets **one real `claude --bg` session per issue** in its own worktree, and anything ambiguous
 is discussed rather than built. It absorbed the old `/pipeline`; there is one front door.
 
-**`/to-prd`** and **`/to-issues`** are the manager's front half: `/to-prd` turns an aligned task
-into a PRD issue, and `/to-issues` slices a PRD (or a spec, or the current discussion) into the
+**`/to-prd`** and **`/to-issues`** are the manager's front half: `/to-prd` captures a thoroughly discussed idea
+as a decision-record PRD issue, and `/to-issues` slices a PRD (or a spec, or the current discussion) into the
 tiered, dependency-ordered `ready-for-agent` issues `/orchestrate` then builds.
 
 The [`context`](../context/README.md) plugin is a companion, not a dependency called at

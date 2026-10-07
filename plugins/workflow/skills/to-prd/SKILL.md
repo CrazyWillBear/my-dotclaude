@@ -1,49 +1,67 @@
 ---
 name: to-prd
-description: Turn an aligned task into a Product Requirements Doc and publish it as a labeled GitHub issue via gh — explore the repo, map the testing seam with me, fill the PRD template verbatim, then file it as a `prd`-labeled tracking issue (sliced later by /to-issues). Use for "/to-prd", "write a PRD", "turn this into a PRD issue".
-argument-hint: "[shared-understanding summary or task; defaults to the current discussion]"
+description: Capture a thoroughly discussed idea — a feature, a large change, or a design decision — whole as a Product Requirements Doc (problem, goals, success, solution, every decision with its rationale) and publish it as a labeled GitHub issue via gh, for /to-issues to slice. Use for "/to-prd", "write a PRD", "turn this into a PRD issue".
+argument-hint: "[task or idea; defaults to the current discussion]"
 model: inherit
 effort: xhigh
 allowed-tools: Read, Grep, Glob, Bash, AskUserQuestion
 ---
 
-Turn the task in `$ARGUMENTS` into a Product Requirements Doc and file it as a GitHub issue.
-Backend is **GitHub Issues via `gh`** — no `gh api`, no PRs.
+Capture the idea in `$ARGUMENTS` **whole** and file it as a GitHub issue. The PRD is the
+**decision record**: the one place that holds the goals, the success bar, and every decision —
+technical and non-technical — so `/to-issues` and the agents building the slices share the same
+context. Backend is **GitHub Issues via `gh`** — no `gh api`, no PRs.
 
 ## Steps
 
-1. **Start from the shared understanding — don't interview.** Synthesize the PRD from what's
-   already in the conversation; `/grill-me` is the interrogation step and should have run first.
-   If a `## Shared understanding` block exists, use it as the spine. If the context is too thin to
-   fill every PRD section, **stop and tell me to run `/grill-me` first** rather than interviewing
-   here — don't write a PRD on top of unanswered questions.
-2. **Explore the repo to ground the solution.** Learn what already exists so the Solution reuses
-   it instead of reinventing — what modules, patterns, and seams are in play. Learn the shape;
-   don't dump files.
-3. **Map the testing seam.** Identify the **highest sensible level** to test this behavior
-   (end-to-end > integration > unit — test through the outermost stable interface that proves
-   it). **Confirm the level with me via `AskUserQuestion`** before writing Testing Decisions.
-   That outermost real interface **is the feature's central mechanism** — the one load-bearing
-   behavior the whole thing must exercise *for real* by the end (not a mock of it). Name it in
-   one line; `/to-issues` derives each slice's piece from it, and it's what guards against
-   mock-drift (see [anti-mock-drift](../../../../docs/anti-mock-drift.md)).
-4. **Fill the PRD template VERBATIM** — these sections, in this order, every one substantive. A
-   PRD describes *behavior and decisions*, **not file paths** (no `src/...` — that's the issue
-   layer's job):
+1. **Start from the discussion — don't interview.** Run this after `/grill-me` or any
+   conversation that has thoroughly worked the idea, code or not (e.g. how to split work across
+   workers). Synthesize the PRD from what was said and decided; keep decisions, don't paraphrase
+   them away.
+2. **Ground it in the repo when code is involved.** Learn what already exists so the Solution
+   reuses it instead of reinventing. Learn the shape; don't dump files. Skip for a pure design
+   decision.
+3. **Close the gaps inline.** If a core section can't be written from the discussion, ask via
+   `AskUserQuestion` — don't file a PRD on top of unanswered questions. Record the rationale for
+   any decision you know it for. For a big decision (your judgment: costly to undo, chosen over a
+   real alternative, crosses components, touches cost, security or data) with no stated reason,
+   ask for it. Small decisions need no reason. Never invent a rationale.
+4. **Map the testing seam — only when the PRD changes code behavior.** Identify the **highest
+   sensible level** to test it (end-to-end > integration > unit — through the outermost stable
+   interface) and **confirm it via `AskUserQuestion`**. That outermost real interface is the
+   feature's **central mechanism**: the one load-bearing behavior that must be exercised *for
+   real* by the end, not mocked. Name it in one line; `/to-issues` derives each slice's piece from
+   it (see [anti-mock-drift](../../../../docs/anti-mock-drift.md)).
+5. **Write the PRD.** Core sections always, in this order; optional sections **omit entirely**
+   when they don't apply (no empty headings). Keep concrete names and paths when they were
+   decided. Do not add a slice plan — slicing is `/to-issues`' job.
    ```
    # <title>
    ## Problem
+   ## Goals
+   ## Success
    ## Solution
-   ## User Stories
-   ## Implementation Decisions
-   ## Testing Decisions
+   ## Technical Decisions
+   ## Product Decisions
    ## Out of Scope
-   ## Further Notes
+   ## User Stories        (optional)
+   ## Testing Decisions   (optional)
+   ## Open Questions      (optional)
    ```
-   "Out of Scope" must state the non-goals explicitly; "Testing Decisions" records the level you
-   confirmed in step 3 **and names the central mechanism** (the outermost real interface that
-   must be exercised, not mocked, before the feature ships).
-5. **Publish as a GitHub issue.**
+   - **Problem** — what's wrong or missing, with evidence where there is any.
+   - **Goals** — what we want, and why.
+   - **Success** — a **checklist** of observable outcomes, each with how it's verified, plus a
+     short prose description of what working looks like. `/to-issues` derives acceptance criteria
+     and the e2e-gate from it.
+   - **Solution** — the overall approach, in a few paragraphs.
+   - **Technical Decisions / Product Decisions** — each decision stated plainly, with its
+     rationale where known. Group by topic when there are many.
+   - **Out of Scope** — the non-goals, explicit.
+   - **User Stories** — only when distinct actors or flows are worth naming.
+   - **Testing Decisions** — only when step 4 ran: the confirmed level and the **central
+     mechanism**.
+   - **Open Questions** — only points deliberately deferred, not gaps from step 3.
+6. **Publish as a GitHub issue.**
    - Confirm `gh auth status` and the target repo (`gh repo view --json nameWithOwner`).
    - Ensure the label exists (ignore an "already exists" error):
      `gh label create prd --description "Product Requirements Doc; slice with /to-issues" 2>/dev/null || true`
@@ -52,6 +70,6 @@ Backend is **GitHub Issues via `gh`** — no `gh api`, no PRs.
    - **Do not** label the PRD `ready-for-agent`. That label is what `/orchestrate` builds, and a
      PRD is a multi-feature tracking doc, not a single buildable slice — `/to-issues` produces the
      `ready-for-agent` slices.
-6. **Report** the issue URL + number. Then point me at the next step: **`/to-issues <#>`** breaks
+7. **Report** the issue URL + number. Then point me at the next step: **`/to-issues <#>`** breaks
    the PRD into tracer-bullet vertical slices labeled `ready-for-agent` — those are what
    `/orchestrate` builds. The PRD itself stays `prd`-labeled and out of the loop.

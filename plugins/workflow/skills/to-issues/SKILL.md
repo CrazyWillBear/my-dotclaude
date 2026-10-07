@@ -35,10 +35,13 @@ trusts the PRD and starts at step 3.
    Prefer **many thin AFK-able slices** over a few fat ones. Per slice: its **dependencies**
    (which slices land first) and whether it needs a **human** (a design call, a secret, an
    external account, a judgement) → mark it **HITL**.
-   - **Name each slice's central mechanism** — its piece of the PRD's central mechanism (step 3
-     of `/to-prd`): the load-bearing behavior the slice exists to prove. A tracer is allowed to
-     be *thin*, but it must build that mechanism **real**, never a mock of it — a mock of the
-     central mechanism makes the slice's acceptance criterion vacuous (see
+   - **Name each slice's central mechanism** — its piece of the PRD's central mechanism (step 4
+     of `/to-prd`; in PRD mode, its `## Testing Decisions`): the load-bearing behavior the slice
+     exists to prove. If the PRD has no Testing Decisions (a design or infra decision), derive the
+     central mechanism from its Success checklist — the outermost real outcome a checked item
+     proves — and confirm it in the step-4 quiz. A tracer is allowed to be *thin*, but it must
+     build that mechanism **real**, never a mock of it — a mock of the central mechanism makes
+     the slice's acceptance criterion vacuous (see
      [anti-mock-drift](../../../../docs/anti-mock-drift.md)). Pure-logic slices that touch no
      external system have `none — pure logic`.
    - **Mark the gate slice.** The final slice that exercises the *whole* central mechanism
