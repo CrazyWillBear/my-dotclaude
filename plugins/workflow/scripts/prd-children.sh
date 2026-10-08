@@ -23,7 +23,9 @@
 # A "genuine" child carries a real `Part of #N` trailer on its own line.  GitHub's
 # --search is tokenized full-text, so it also returns prefix collisions (a slice
 # of #10 when you searched #1) and bodies that merely *quote* the convention in
-# prose.  Both are dropped by re-reading each candidate's body.
+# prose.  Both are dropped by re-reading each candidate's body.  When the search
+# comes back empty, every issue is listed with its body and filtered locally
+# instead, since the search index can miss real children.
 #
 # Backend: GitHub Issues via `gh` only — no `gh api`, no PR operations.
 # Fail open: missing dependencies, a missing argument, or gh errors exit 0
@@ -96,20 +98,33 @@ out = gh(
     "--json", "number,state,labels",
     "--limit", "200",
 )
-if not out:
-    sys.exit(0)
-
 try:
-    candidates = json.loads(out)
+    candidates = json.loads(out) if out else []
 except Exception:
-    sys.exit(0)
+    candidates = []
+
+if not candidates:
+    # The search index can miss real children (freshly renamed repo, bulk-created
+    # issues), and an empty result must not read as "no children".  Enumerate the
+    # repo's issues with their bodies and let the trailer regex decide.
+    # ponytail: capped at 1000 issues; page through if a repo outgrows that.
+    out = gh(
+        "issue", "list",
+        "--state", "all",
+        "--json", "number,state,labels,body",
+        "--limit", "1000",
+    )
+    try:
+        candidates = json.loads(out) if out else []
+    except Exception:
+        sys.exit(0)
 
 for child in candidates:
     number = child.get("number")
     if number is None:
         continue
 
-    body = get_body(number)
+    body = child["body"] if "body" in child else get_body(number)
     if body is not None and not exact_pattern.search(body):
         # Body fetched, no genuine trailer — a --search false positive.  Drop it.
         continue
