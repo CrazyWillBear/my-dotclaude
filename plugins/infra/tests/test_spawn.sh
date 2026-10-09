@@ -1253,7 +1253,7 @@ stale_pid="$(cat "$STALE/pid" 2>/dev/null || true)"
 # CLAUDE_CONFIG_DIR is pinned at an empty dir so this reads the shipped table, not the
 # developer's own.
 echo "test: the SHIPPED roster — 6-luna heads the trivial and standard chains, sonnet builds complex"
-for t in trivial:sonnet standard:opus; do
+for t in trivial:haiku standard:haiku; do
     top=${t#*:}; t=${t%%:*}
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
           bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)

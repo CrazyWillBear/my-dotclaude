@@ -3,15 +3,15 @@
     "planner":     { "backend": "claude", "model": "sonnet", "effort": "high" },
     "implementer": [
       { "backend": "codex",  "model": "gpt-6-luna",    "effort": "xhigh" },
-      { "backend": "claude", "model": "sonnet",        "effort": "medium" }
+      { "backend": "claude", "model": "haiku",         "effort": "xhigh" }
     ],
-    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "low" }
+    "reviewer":    { "backend": "claude", "model": "sonnet", "effort": "high" }
   },
   "standard": {
     "planner":     { "backend": "claude", "model": "opus",  "effort": "medium" },
     "implementer": [
       { "backend": "codex",  "model": "gpt-6-luna",    "effort": "xhigh" },
-      { "backend": "claude", "model": "opus",          "effort": "medium" }
+      { "backend": "claude", "model": "haiku",         "effort": "xhigh" }
     ],
     "reviewer":    { "backend": "claude", "model": "opus",  "effort": "medium" }
   },

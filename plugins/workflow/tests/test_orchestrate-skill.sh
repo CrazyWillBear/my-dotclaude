@@ -257,8 +257,8 @@ assert_contains "human-answer resumes re-pass the provisioned env" "$BODY" \
 
 echo "test: escalation by script — chain, attempt, stop, respawn, drain at the top (#104)"
 assert_matches "a script decides, never the worker" "$BODY" "script decides.*never the worker"
-assert_contains "the chain is named" "$BODY" "6-luna → opus"
-assert_contains "the trivial chain tops out on sonnet" "$BODY" "6-luna → sonnet for trivial"
+assert_contains "the chain is named" "$BODY" "6-luna → haiku"
+assert_contains "the trivial chain tops out on haiku" "$BODY" "6-luna → haiku for trivial"
 assert_contains "spawn takes the attempt" "$BODY" "--attempt 0"
 assert_matches "run on every wake" "$BODY" "On every wake"
 assert_matches "one line or nothing" "$BODY" "one line.*or .?.?nothing"

@@ -133,8 +133,8 @@ assert_equals "trivial: implementer_effort xhigh" "$(val "$OUT" implementer_effo
 assert_equals "trivial: implementer_backend codex" "$(val "$OUT" implementer_backend)" "codex"
 assert_equals "trivial: implementer_attempt 0" "$(val "$OUT" implementer_attempt)" "0"
 assert_equals "trivial: implementer_chain 2" "$(val "$OUT" implementer_chain)" "2"
-assert_equals "trivial: reviewer_model opus" "$(val "$OUT" reviewer_model)" "opus"
-assert_equals "trivial: reviewer_effort low" "$(val "$OUT" reviewer_effort)" "low"
+assert_equals "trivial: reviewer_model sonnet" "$(val "$OUT" reviewer_model)" "sonnet"
+assert_equals "trivial: reviewer_effort high" "$(val "$OUT" reviewer_effort)" "high"
 assert_equals "trivial: reviewer_backend claude" "$(val "$OUT" reviewer_backend)" "claude"
 
 run_tier standard
@@ -177,8 +177,8 @@ done
 run_tier standard __REAL__ 1
 assert_equals "standard attempt 1: exit 0" "$RC" "0"
 assert_equals "standard attempt 1: stderr empty" "$ERR" ""
-assert_equals "standard attempt 1: opus tops the chain (no 6-sol hop)" "$(val "$OUT" implementer_model)" "opus"
-assert_equals "standard attempt 1: at medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "standard attempt 1: haiku tops the chain (no 6-sol hop)" "$(val "$OUT" implementer_model)" "haiku"
+assert_equals "standard attempt 1: at xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 assert_equals "standard attempt 1: claude backend" "$(val "$OUT" implementer_backend)" "claude"
 assert_equals "standard attempt 1: attempt echoed" "$(val "$OUT" implementer_attempt)" "1"
 assert_equals "standard attempt 1: chain still 2" "$(val "$OUT" implementer_chain)" "2"
@@ -186,8 +186,8 @@ assert_equals "standard attempt 1: chain still 2" "$(val "$OUT" implementer_chai
 assert_equals "standard attempt 1: planner unchanged" "$(val "$OUT" planner_model)" "opus"
 assert_equals "standard attempt 1: reviewer unchanged" "$(val "$OUT" reviewer_effort)" "medium"
 run_tier trivial __REAL__ 1
-assert_equals "trivial attempt 1: sonnet tops the chain" "$(val "$OUT" implementer_model)" "sonnet"
-assert_equals "trivial attempt 1: at medium" "$(val "$OUT" implementer_effort)" "medium"
+assert_equals "trivial attempt 1: haiku tops the chain" "$(val "$OUT" implementer_model)" "haiku"
+assert_equals "trivial attempt 1: at xhigh" "$(val "$OUT" implementer_effort)" "xhigh"
 for t in trivial standard; do
     run_tier "$t"
     assert_not_contains "$t: 6-sol is out of the shipped chain" "$OUT" "gpt-6-sol"

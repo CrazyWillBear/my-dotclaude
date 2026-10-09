@@ -111,10 +111,10 @@ escalate() { rm -f "$WORK/gh-argv" "$WORK/body"; OUT="$(bash "$INFRA/escalate.sh
 posted() { grep -qx comment "$WORK/gh-argv" 2>/dev/null && echo yes || echo no; }
 
 # ---------------------------------------------------------------------------
-echo "test: the shipped chain resolves 6-luna → opus for a standard issue"
+echo "test: the shipped chain resolves 6-luna → haiku for a standard issue"
 R0="$(bash "$INFRA/resolve-tier.sh" standard 0)"; R1="$(bash "$INFRA/resolve-tier.sh" standard 1)"
 assert_contains "attempt 0 6-luna" "$R0" "implementer_model=gpt-6-luna"
-assert_contains "attempt 1 opus" "$R1" "implementer_model=opus"
+assert_contains "attempt 1 haiku" "$R1" "implementer_model=haiku"
 assert_contains "chain length 2" "$R0" "implementer_chain=2"
 
 echo "test: attempt 0 spawns 6-luna for real, through codex, with the plan in its prompt"
@@ -125,7 +125,7 @@ assert_contains "the worker is told to follow the Plan comment" "$out" "**Plan**
 assert_contains "and to stop on a deviation" "$out" "**Deviation**"
 
 # ---------------------------------------------------------------------------
-echo "SIGNAL 1: a failed report → escalate → respawn tops out on opus → handoff posted"
+echo "SIGNAL 1: a failed report → escalate → respawn tops out on haiku → handoff posted"
 rm -rf "$CODEX_ROOT"
 STUB_REPORT='{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"done-check red"}' \
     spawn --attempt 0 >/dev/null
@@ -140,7 +140,7 @@ assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "**Handoff** —
 assert_contains "handoff lists the branch's commit" "$(cat "$WORK/body")" "step 1: add f"
 assert_contains "handoff carries the last event-log activity" "$(cat "$WORK/body")" "pytest -q"
 out="$(spawn --attempt 1 --dry-run)"
-assert_arg "the respawn argv names the NEXT chain model" "$out" "opus"
+assert_arg "the respawn argv names the NEXT chain model" "$out" "haiku"
 assert_arg "which is the claude cell" "$out" "--bg"
 assert_contains "and the respawn is told it is one" "$out" "**Handoff**"
 assert_contains "onto the SAME worktree" "$out" "$WT"
@@ -166,7 +166,7 @@ assert_contains "aged log + live pid = stall" "$OUT" "stall: no event-log activi
 assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "attempt 0 replaced: stall"
 out="$(spawn --attempt 1 --dry-run)"
 assert_arg "the respawn tops out on claude" "$out" "--bg"
-assert_arg "at opus" "$out" "opus"
+assert_arg "at haiku" "$out" "haiku"
 kill -- -"$WPID" 2>/dev/null; WPID=""
 sleep 0.3
 
