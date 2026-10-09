@@ -828,8 +828,8 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
     CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.$RUNID.issue-$ISSUE.XXXXXX")" \
         || die "could not create private Claude session settings"
     CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
-    jq -n --args '{"env": reduce $ARGS.positional[] as $pair ({};
-        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])})}' \
+    jq -n --args '{"env": (reduce $ARGS.positional[] as $pair ({};
+        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])}))}' \
         -- "${ENVS[@]}" >"$CLAUDE_SETTINGS_FILE" 2>/dev/null \
         || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
     umask "$_env_umask"
