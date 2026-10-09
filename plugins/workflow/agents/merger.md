@@ -27,9 +27,11 @@ registry, or test file will collide). Resolving the conflict is the job, not an 
 
 ### Step 1 — run the fold first. Always. Before you merge anything by hand.
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" <base-branch> issue-<N1> issue-<N2> ...
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/merge-fold.sh" --allow-behind <base-branch> issue-<N1> issue-<N2> ...
 ```
-Run it from the **base repo path**, in ascending issue number. It folds every branch that merges
+Run it from the **base repo path**, in ascending issue number. The orchestrator's launch check
+already gated the starting base; `--allow-behind` lets upstream movement during the run pass without
+stalling the conflicted remainder. It folds every branch that merges
 **without a conflict** straight onto the base — deterministically, with no model and no test run —
 and prints one line per branch:
 

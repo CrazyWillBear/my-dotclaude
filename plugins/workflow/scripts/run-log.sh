@@ -5,12 +5,14 @@
 # Usage:
 #   bash run-log.sh append <runid> <event> ['{"json":"payload"}']
 #   bash run-log.sh replay <runid>        # every event, in order, as JSONL
-#   bash run-log.sh state  <runid>        # the folded state, as key=value lines
+#   bash run-log.sh state  <runid>        # the folded state, as key=value lines, plus one
+#                                         # follow-up=<n>:<child> waited=<deps> per follow-up
 #   bash run-log.sh path   <runid>        # where the log lives
 #
 # Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
-# planned · consulted · escalated. An unknown event is an error, so the vocabulary
-# cannot drift by accident.
+# planned · consulted · escalated · follow-up · integration-review. An unknown event is an error, so the
+# vocabulary cannot drift by accident. `follow-up` (#117) records the one place the run
+# adds to its own scope: parent, child, re-blocked.
 #
 # The issue thread is the coordination medium (decision 12), which makes almost
 # everything a run log would traditionally store redundant — and a stored copy is
@@ -20,17 +22,20 @@
 #   ----------          --------------
 #   spawned             session-status.sh / `claude agents --json`
 #   merged              git log <base>..orchestrate-<ts>
-#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS (claude-backed) OR $RUNDIR/rounds
-#                       (codex-backed, whose worker can also post that comment) — never a field
+#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS (claude-backed) OR the round lines
+#                       of $RUNDIR/rounds (codex-backed, whose worker can also post that comment) — never a field
 #   escalated + fix     the issue comment the escalation protocol requires
 #
 # `respawned` is genuinely underivable: nothing in git or GitHub records that a
-# session was killed and restarted. `held` is stored because a capped merge's hold is
-# an in-run judgment, not a fact on the issue. `planned` / `consulted` / `escalated`
+# session was killed and restarted. `held` is stored because a user's hold (or a failed
+# `follow-up.sh`'s fallback hold) is an in-run judgment, not a fact on the issue. A
+# capped merge no longer holds anything. `planned` / `consulted` / `escalated`
 # (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
 # they are stored here anyway, per issue with the attempt and the reason, because the
 # deviation rate is the DATA that later decides whether a cheaper model can take the
-# complex implementer slot — and that is a question across runs, not one thread.
+# complex implementer slot — and that is a question across runs, not one thread. The
+# escalation reasons include failed, quota, deviation-cap, review-cap, occupancy, stall,
+# no-progress and backstop; the last two end the issue loop without posting a Handoff.
 #
 # Append-only means no read-modify-write: no lost updates, and no format drift
 # after a compact. Each line gets a `ts` and the event name; the rest is yours.
@@ -81,9 +86,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|held|respawned|decision|planned|consulted|escalated) ;;
-            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated" ;;
+            scope|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review) ;;
+            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
@@ -123,6 +128,7 @@ import json, os, sys
 
 scope, held, respawns, decisions = [], [], {}, []
 planned, consulted, escalated = [], {}, {}
+followups, followup_rows = [], []
 bad = 0
 
 with open(os.environ["RUNLOG_FILE"]) as fh:
@@ -159,6 +165,9 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
             if n is not None:
                 d = consulted if event == "consulted" else escalated
                 d[n] = d.get(n, 0) + 1
+        elif event == "follow-up":
+            followups.append("%s:%s" % (rec.get("n"), rec.get("child")))
+            followup_rows.append((rec.get("n"), rec.get("child"), rec.get("reblocked") or []))
 
 out = ["runid=%s" % os.environ["RUNLOG_RUNID"]]
 out.append("scope=%s" % ",".join(str(n) for n in scope))
@@ -167,8 +176,11 @@ out.append("respawned=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(respawn
 out.append("planned=%s" % ",".join(str(n) for n in sorted(planned)))
 out.append("consulted=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(consulted.items())))
 out.append("escalated=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(escalated.items())))
+out.append("followups=%s" % ",".join(followups))
 for d in decisions:
     out.append("decision=%s" % d)
+for n, child, reblocked in followup_rows:
+    out.append("follow-up=%s:%s waited=%s" % (n, child, ",".join(str(x) for x in reblocked)))
 if bad:
     out.append("unparseable_lines=%d" % bad)
 print("\n".join(out))

@@ -14,6 +14,7 @@
 #   * --merged (re-admit guard AND blocker satisfaction), --held, --in-flight
 #   * every empty-set classification: complete scope, gate-held, busy, and the
 #     UNEXPLAINED empty that must exit non-zero
+#   * a held chain (transitive dependents) + hitl/prd is a designed empty
 #   * unknown-state issues: error by default, skipped with --skip-unknown
 #   * junk / missing / empty input fails loud
 #
@@ -181,6 +182,24 @@ assert_contains "and says so" "$(err)" "scope is complete"
 # nothing but skipped issues -> nothing was ever buildable: error.
 g=$(graph "" "" -- "$(issue 4 open hitl '')" "$(issue 5 open prd '')")
 printf '%s' "$g" | run >/dev/null; assert_equals "skipped-only is an error" "$?" "1"
+
+# A held issue shadows everything blocked behind it (directly or transitively): that
+# is a designed empty. An open OUT-OF-SCOPE blocker is not — it must still error.
+echo "test: a held chain plus hitl is a CLEAN empty"
+g=$(graph "" "1=open" -- "$(issue 1 open '' '')" "$(issue 2 open '' 1)" \
+                        "$(issue 4 open '' 2)" "$(issue 3 open hitl '')")
+printf '%s' "$g" | run --held 1 >/dev/null; rc=$?
+assert_equals "exit 0 — held, not broken" "$rc" "0"
+assert_contains "nothing-to-do" "$(err)" "nothing-to-do:"
+assert_contains "names the held issue" "$(err)" "#1 held"
+assert_contains "names the chain behind it" "$(err)" "blocked behind held: #2, #4"
+assert_contains "names the label skip" "$(err)" "skipped, by label: #3"
+echo "test: a held chain with an open out-of-scope blocker still ERRORS"
+g=$(graph "" "1=open,99=open" -- "$(issue 1 open '' '')" "$(issue 2 open '' 1,99)" \
+                                 "$(issue 3 open hitl '')")
+printf '%s' "$g" | run --held 1 >/dev/null; rc=$?
+assert_equals "exit 1" "$rc" "1"
+assert_contains "error:" "$(err)" "error:"
 
 echo "test: an all-hitl scope is an ERROR, not a clean empty"
 g=$(graph "" "" -- "$(issue 10 open hitl '')")

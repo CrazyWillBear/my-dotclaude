@@ -103,5 +103,10 @@ assert_contains "PRD is read-only" "$content" "never modify it"
 assert_not_contains "no gh issue edit against the PRD" "$content" "gh issue edit"
 
 # ---------------------------------------------------------------------------
+echo "test: a PRD with no Testing Decisions still gets a central mechanism and gate"
+assert_contains "derives the mechanism from the Success checklist" "$content" "Success checklist"
+assert_contains "confirms the derived mechanism in the quiz"       "$content" "no Testing Decisions"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

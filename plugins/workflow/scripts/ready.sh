@@ -14,7 +14,8 @@
 #   --merged     issue merged BY THIS RUN. Two jobs: never re-admit it (the run stays
 #                convergent whether or not the `gh issue close` ever lands — the 1.84M
 #                spin of #77 lacked exactly that), and satisfy its dependents' blockers.
-#   --held       dependent of a capped merge — held for the rest of the run.
+#   --held       the user's explicit hold on an issue — never "waiting on a blocker"
+#                (derived from the graph).
 #   --in-flight  already has a session/subagent on it.
 #   --skip-unknown  an unfetchable issue is logged and skipped instead of erroring.
 #
@@ -22,7 +23,8 @@
 #
 # When NOTHING is ready, stdout is empty and ONE line goes to stderr:
 #   `nothing-to-do: <why>`  + exit 0 — a DESIGNED empty (scope complete, everything
-#                             held/in flight, or e2e-gate issues held by open mock-debt).
+#                             held/in flight or blocked behind a held issue, or e2e-gate
+#                             issues held by open mock-debt).
 #   `error: <why>`          + exit 1 — an UNEXPLAINED empty. That is the #53/#70/#73
 #                             silent-empty class: all-hitl, blocked on an unclosed
 #                             out-of-scope issue, a `## Blocked by` ref aimed at a PR
@@ -173,6 +175,20 @@ gate_held = [i for i in remaining
 
 busy = [i["n"] for i in remaining if i["n"] in inflight or i["n"] in held]
 
+# Blocked BEHIND a held/in-flight issue, directly or transitively: waiting on work
+# this run owns, so a designed state. Every blocker must be closed, merged, or itself
+# in the chain — one open out-of-scope blocker keeps it unexplained (loud).
+chain = set(busy)
+grew = True
+while grew:
+    grew = False
+    for i in remaining:
+        bs = i.get("blockedBy") or []
+        if (i["n"] not in chain and bs and any(b in chain for b in bs)
+                and all(b in closed or b in merged or b in chain for b in bs)):
+            chain.add(i["n"]); grew = True
+shadowed = sorted(chain - set(busy))
+
 # WORK IN FLIGHT SETTLES IT. The unexplained-empty error is a LAUNCH guard: it exists
 # to catch a scope that can never start. Once anything is in flight the run is
 # demonstrably progressing, and an empty ready set just means the slots are full or
@@ -212,8 +228,13 @@ elif remaining and len(gate_held) == len(remaining):
     why = ("every remaining scoped issue (%s) is e2e-gate-held by open mock-debt (%s)"
            % (", ".join("#%d" % i["n"] for i in gate_held),
               ", ".join("#%d" % n for n in sorted(mock_debt))))
-elif remaining and len(busy) + len(gate_held) == len(remaining):
-    why = "nothing new to admit — %s in flight or held" % ", ".join("#%d" % n for n in sorted(busy))
+elif busy and all(i["n"] in chain or i["n"] in skipped
+                  or i["n"] in {g["n"] for g in gate_held} for i in remaining):
+    why = "nothing new to admit — %s held" % ", ".join("#%d" % n for n in sorted(busy))
+    if shadowed:
+        why += " · blocked behind held: %s" % ", ".join("#%d" % n for n in shadowed)
+    if skipped:
+        why += " · skipped, by label: %s" % ", ".join("#%d" % n for n in sorted(skipped))
 else:
     why = None
 

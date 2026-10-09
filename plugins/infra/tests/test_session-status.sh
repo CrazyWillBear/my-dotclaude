@@ -99,6 +99,13 @@ assert_contains "issue-77 gone" "$out" "orch-20260906-101500-issue-77 - - gone"
 assert_contains "expected-and-alive still reports its real state" "$out" "issue-12 aa11 background busy"
 assert_contains "flags accept #N" "$(run 20260906-101500 '#77')" "issue-77 - - gone"
 
+echo "test: an expected issue resolves a suffixed worker name"
+stub_claude 0 '[{ "id": "suf1", "kind": "background",
+                  "name": "orch-r2-issue-12-a1-r2", "state": "busy" }]'
+out=$(run r2 12)
+assert_contains "the suffixed worker is listed" "$out" "orch-r2-issue-12-a1-r2 suf1 background busy"
+assert_not_contains "the live issue is not also gone" "$out" "orch-r2-issue-12 - - gone"
+
 echo "test: both spellings of the same state normalize to one vocabulary"
 stub_claude 0 '[{ "id": "ff66", "kind": "background", "name": "orch-r1-issue-6", "state": "working" },
                 { "pid": 9, "kind": "interactive", "name": "orch-r1-issue-7", "status": "busy" }]'
@@ -212,19 +219,26 @@ sleep 300 & LIVE_PID=$!
 # Real, reaped pids rather than made-up numbers: a guessed "surely nothing owns that
 # number" is exactly the kind of assumption that fails on one machine and nowhere else.
 dead() { sleep 0 & local p=$!; wait "$p" 2>/dev/null; printf '%s' "$p"; }
-D1=$(dead); D2=$(dead); D3=$(dead)
+D1=$(dead); D2=$(dead); D3=$(dead); D4=$(dead)
 mkcodex 21 "$LIVE_PID" -          # still running
 mkcodex 22 "$D1" 0                # exited clean
 mkcodex 23 "$D2" 3                # exited non-zero
 mkcodex 24 "$D3" -                # died without recording a code
+mkcodex 26 "$D4" 0                # exited clean after reporting blocked infrastructure
+mkcodex 27 "$D1" 0                # a respawned worker records its full session name
+printf '%s\n' 'orch-rc1-issue-27-a1-r2' >"$CODEX_ROOT/rc1/issue-27/session-name"
+printf '%s' '{"issue":26,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}' \
+    >"$CODEX_ROOT/rc1/issue-26/last-message.txt"
 stub_claude 0 '[]'
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>"$WORK/err")
 assert_contains "a live pid is busy" "$out" "orch-rc1-issue-21 $LIVE_PID codex busy"
 assert_contains "exit 0 is done" "$out" "orch-rc1-issue-22 $D1 codex done"
+assert_contains "a clean blocked report stays blocked" "$out" "orch-rc1-issue-26 $D4 codex blocked"
 assert_contains "a non-zero exit is failed" "$out" "orch-rc1-issue-23 $D2 codex failed"
+assert_contains "codex status uses the recorded suffixed session name" "$out" "orch-rc1-issue-27-a1-r2 $D1 codex done"
 assert_contains "a dead pid with no exit code is failed, never silently fine" \
     "$out" "orch-rc1-issue-24 $D3 codex failed"
-assert_equals "four lines" "$(printf '%s\n' "$out" | wc -l)" "4"
+assert_equals "six lines" "$(printf '%s\n' "$out" | wc -l)" "6"
 assert_equals "sorted with everything else" "$(printf '%s\n' "$out" | sort)" "$out"
 kill "$LIVE_PID" 2>/dev/null
 
@@ -242,9 +256,10 @@ assert_not_contains "and never the terminal-looking answer" "$out" "issue-25 - c
 rm -rf "$CODEX_ROOT/rc1/issue-25"
 
 echo "test: an expected codex worker is not reported gone just because claude never heard of it"
-out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 22 77 2>"$WORK/err")
+out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 22 27 77 2>"$WORK/err")
 assert_contains "the codex worker reports its real state" "$out" "orch-rc1-issue-22 $D1 codex done"
 assert_not_contains "and is not also gone" "$out" "issue-22 - - gone"
+assert_not_contains "a suffixed codex worker is not also gone" "$out" "issue-27 - - gone"
 assert_contains "a genuinely absent one still is" "$out" "orch-rc1-issue-77 - - gone"
 
 echo "test: codex workers and claude sessions share one report"

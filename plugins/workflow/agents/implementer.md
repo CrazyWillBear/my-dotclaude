@@ -1,6 +1,6 @@
 ---
 name: implementer
-description: Implements one GitHub issue or work order end-to-end inside its own git worktree — reads the issue AND its comments, plans, builds TDD-first committing after every green sub-step, runs the project's done-check, and commits per repo convention. Used by /orchestrate as a subagent in the ad-hoc lane and for trivial-tier issues; a background worker session is not spawned as this agent but is pointed at this contract and follows it. Never merges, never opens a PR, never closes an issue, never touches another worktree or the base branch.
+description: Implements one GitHub issue or work order end-to-end inside its own git worktree — reads the issue AND its comments, plans, builds TDD-first committing after every green sub-step, runs the project's done-check, and commits per repo convention. Used by /orchestrate as a subagent in the ad-hoc lane (any tier); a session-lane worker (any tier, trivial included) is not spawned as this agent but is pointed at this contract and follows it. Never merges, never opens a PR, never closes an issue, never touches another worktree or the base branch.
 tools: Read, Edit, Write, Grep, Glob, Bash, Skill
 model: opus
 effort: max

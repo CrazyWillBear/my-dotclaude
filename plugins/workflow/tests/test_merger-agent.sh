@@ -67,6 +67,7 @@ assert_contains "the sha is read off the base branch" "$content" "rev-parse HEAD
 # merges that never needed it — and nothing else would catch that.
 echo "test: the merger runs merge-fold.sh first and only resolves the remainder"
 assert_contains "invokes the fold helper" "$content" "scripts/merge-fold.sh"
+assert_contains "remainder fold allows upstream drift after the launch check" "$content" 'scripts/merge-fold.sh" --allow-behind <base-branch>'
 assert_contains "the fold runs before any hand merge" "$content" "run the fold first"
 assert_contains "merged lines are not re-merged" "$content" "Do not re-merge it"
 assert_contains "the agent's job is the remainder" "$content" "resolve the remainder"

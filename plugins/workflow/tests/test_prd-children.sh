@@ -49,6 +49,7 @@ assert_empty()        { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected sile
 #   $WORK/issue_body/<N>        — JSON for `gh issue view <N> --json body`
 #   $WORK/issue_body_error/<N>  — sentinel: make that fetch exit non-zero
 #   $WORK/issue_list/<prd>      — JSON array for `gh issue list --search "Part of #<prd>"`
+#   $WORK/issue_list_all        — JSON array (with bodies) for a plain `gh issue list` (no --search)
 GH_BIN="$WORK/bin/gh"
 mkdir -p "$WORK/bin" "$WORK/issue_body" "$WORK/issue_body_error" "$WORK/issue_list"
 
@@ -78,7 +79,11 @@ if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
         esac
         shift
     done
-    if [ -f "$WORK_DIR/issue_list/$prd" ]; then
+    if [ -z "$prd" ] && [ -f "$WORK_DIR/issue_list_all" ]; then
+        cat "$WORK_DIR/issue_list_all"
+        exit 0
+    fi
+    if [ -n "$prd" ] && [ -f "$WORK_DIR/issue_list/$prd" ]; then
         cat "$WORK_DIR/issue_list/$prd"
         exit 0
     fi
@@ -145,6 +150,19 @@ set_list 4 '[{"number":9,"state":"open","labels":[{"name":"ready-for-agent"}]}]'
 out="$(run_children 4)"
 assert_contains "unverifiable candidate is kept, not dropped" "$out" "9 open ready-for-agent"
 rm -f "$WORK/issue_body_error/9"
+
+# ---------------------------------------------------------------------------
+echo "test: search returns [] -> fall back to enumerating issues and filter bodies locally"
+# GitHub's search index can miss real children (fresh/renamed repo, bulk-created
+# issues); an empty search must not read as "no children".
+printf '%s\n' '[{"number":20,"state":"open","labels":[{"name":"ready-for-agent"}],"body":"Part of #6\n"},
+                {"number":21,"state":"open","labels":[],"body":"Part of #60\n"},
+                {"number":22,"state":"closed","labels":[],"body":"Slice.\n\nPart of #6"}]' >"$WORK/issue_list_all"
+out="$(run_children 6)"
+assert_contains     "fallback finds the open child"       "$out" "20 open ready-for-agent"
+assert_contains     "fallback finds the closed child"     "$out" "22 closed -"
+assert_not_contains "fallback still drops prefix matches" "$out" "21 open"
+rm -f "$WORK/issue_list_all"
 
 # ---------------------------------------------------------------------------
 echo "test: a missing PRD argument is silent, exit 0 (never a usage explosion)"

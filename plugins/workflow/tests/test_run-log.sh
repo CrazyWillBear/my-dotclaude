@@ -119,11 +119,26 @@ r append run5 consulted '{"n":12}'
 r append run5 escalated '{"n":12,"reason":"failed","attempt":0}'
 r append run5 escalated '{"n":13,"reason":"stall","attempt":1}'
 r append run5 escalated '{"n":13,"reason":"deviation-cap","attempt":0}'
+r append run5 escalated '{"n":14,"reason":"no-progress","attempt":0}'
 out=$(r state run5)
 assert_contains "planned is a deduped set" "$out" "planned=12,13"
 assert_contains "consult counts per issue" "$out" "consulted=12:2"
-assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2"
+assert_contains "escalation counts per issue" "$out" "escalated=12:1,13:2,14:1"
 assert_contains "the escalation reasons survive replay for the pilot's numbers" "$(r replay run5)" '"reason": "deviation-cap"'
+assert_contains "terminal reasons survive replay" "$(r replay run5)" '"reason": "no-progress"'
+
+echo "test: follow-up folds parent:child (#117)"
+r append run6 follow-up '{"n":84,"child":131,"reblocked":[85,95]}'
+assert_contains "followups fold" "$(r state run6)" "followups=84:131"
+assert_contains "follow-up lists its waiting dependents" "$(r state run6)" "follow-up=84:131 waited=85,95"
+r append run6 follow-up '{"n":90,"child":132,"reblocked":[]}'
+assert_contains "a follow-up with no dependents" "$(r state run6)" "follow-up=90:132 waited="
+assert_contains "followups summary keeps both" "$(r state run6)" "followups=84:131,90:132"
+
+echo "test: integration-review is an accepted event (#121)"
+r append run7 integration-review '{"high":1,"medium":0,"low":2,"child":900}'
+assert_equals "append exits 0" "$?" "0"
+assert_contains "replay shows the event" "$(r replay run7)" '"event": "integration-review"'
 
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'
@@ -133,6 +148,7 @@ assert_contains "empty held" "$out" "held="
 assert_contains "empty planned" "$out" "planned="
 assert_contains "empty consulted" "$out" "consulted="
 assert_contains "empty escalated" "$out" "escalated="
+assert_contains "empty followups" "$out" "followups="
 
 echo "test: a torn line is COUNTED, never silently dropped"
 printf 'not json\n' >>"$(r path run2)"
@@ -142,7 +158,7 @@ assert_contains "and still folds the good ones" "$(r state run2)" "scope=12,13,1
 # ---------------------------------------------------------------------------
 echo "test: the vocabulary is closed"
 r append run1 spawned '{"n":12}' >/dev/null; assert_equals "unknown event exits 1" "$?" "1"
-assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated"
+assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review"
 assert_not_contains "and did not write it" "$(r replay run1)" '"event": "spawned"' 
 r append run1 >/dev/null; assert_equals "no event exits 1" "$?" "1"
 
