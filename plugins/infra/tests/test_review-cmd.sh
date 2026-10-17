@@ -70,7 +70,7 @@ export RESOLVE_TIER_ROOT="$CFG"
 run() {
     local errf="$WORK/err"
     ARGS=()
-    # read -d '' like the callers (mapfile is bash 4+; the kit promises macOS bash 3.2)
+    # read -d '' like the callers (mapfile is bash 4+; the callers stay bash-3.2-clean)
     while IFS= read -r -d '' _a; do ARGS+=("$_a"); done \
         < <(bash "$SCRIPT" "$@" 2>"$errf"; echo -n "$?" >"$WORK/rc")
     RC="$(cat "$WORK/rc")"

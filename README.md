@@ -39,13 +39,14 @@ Open Claude Code and paste one of these:
 ### Option B — run a script
 
 ```bash
-# developer (macOS / Linux / WSL)
+# developer (Linux / WSL)
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 # non-developer
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 ```
 
-macOS / Linux / WSL only. On Windows, run the scripts under WSL.
+Linux / WSL only. On Windows, run the scripts under WSL. macOS is not supported: Claude Code keeps
+its credentials in the Keychain there, and `/orchestrate`'s worker boxes link the credentials file.
 
 Then **restart Claude Code** so it loads the plugins.
 

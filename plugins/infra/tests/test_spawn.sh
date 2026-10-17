@@ -1139,10 +1139,9 @@ check_group() {
 echo "test: the recorded pid leads its own process group, so a stop can reach codex"
 check_group "group" "$CODEX_BIN:$PATH"
 
-echo "test: and it does so without setsid — macOS ships none, and the kit promises macOS"
-# `setsid` is util-linux, i.e. Linux-only, while README.md and AGENT_SETUP.md both promise
-# macOS / Linux / WSL. So the wrapper's group comes from bash's own job control (`set -m`),
-# a builtin, not from an external command. This shim fails the way a missing setsid would:
+echo "test: and it does so without setsid — the group comes from bash job control alone"
+# `setsid` is an external util-linux command; the wrapper's group comes from bash's own job
+# control (`set -m`), a builtin, so the kit does not depend on it. This shim fails the way a missing setsid would:
 # if spawn.sh reaches for it at all, no worker comes up and the group assertions go red.
 NOSETSID="$WORK/nosetsid"
 mkdir -p "$NOSETSID"

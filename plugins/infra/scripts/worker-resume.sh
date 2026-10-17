@@ -224,8 +224,8 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
 # reader would hand claude the first line of it (review round 2). An empty array is
 # review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
-# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
-# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and staying bash-3.2-clean costs
+# nothing (swarm.sh records the same rule).
 REVIEW_CMD=()
 # The role comes from the file spawn.sh wrote.
 SCOPED=""; [ "$(head -1 "$RUNDIR/role" 2>/dev/null)" = fix ] && SCOPED="$RUNDIR"

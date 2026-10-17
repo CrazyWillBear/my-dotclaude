@@ -485,8 +485,8 @@ BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)"
 # NUL-delimited, never newline-split: the prompt is one multi-line argument, and a line
 # reader would hand claude the first line of it (review round 2). An empty array is
 # review-cmd.sh's failure (it prints nothing on stdout then), and its stderr passes through.
-# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and macOS ships bash 3.2 while
-# README.md and AGENT_SETUP.md both promise macOS (swarm.sh records the same rule).
+# `read -d ''`, NOT `mapfile -d ''`: mapfile is bash 4+, and staying bash-3.2-clean costs
+# nothing (swarm.sh records the same rule).
 REVIEW_CMD=()
 # A fix round is a scoped re-review (#115); the build review is always full.
 SCOPED=""; [ "$ROLE" = fix ] && SCOPED="$RUNDIR"
@@ -563,8 +563,8 @@ printf '%s\n' "$SCHEMA" >"$RUNDIR/status-schema.json" \
 # puts a background job in a NEW group led by the pid `$!` reports, so `kill -- -$pid`
 # reaches the worker and nothing else.
 #
-# `set -m` is a bash builtin and deliberately NOT `setsid`, which is util-linux: macOS
-# ships none, and README.md and AGENT_SETUP.md both promise macOS. A non-interactive
+# `set -m` is a bash builtin and deliberately NOT `setsid`, an external util-linux command
+# the kit then would not need to depend on. A non-interactive
 # shell prints no job-control notification, and test_spawn.sh proves the group — with
 # setsid shimmed out — rather than trusting either claim.
 #
