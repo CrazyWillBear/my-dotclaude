@@ -55,6 +55,7 @@ STUB
 cat >"$INFRA/consult.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.consult"
+[ -z "${STUB_CONSULT_SLEEP:-}" ] || sleep "$STUB_CONSULT_SLEEP"
 [ -z "${STUB_CONSULT_FAIL:-}" ] || { echo "error: past the cap" >&2; exit 1; }
 STUB
 cat >"$INFRA/spawn.sh" <<'STUB'
@@ -303,6 +304,13 @@ ORCH_BUDGET=50 STUB_ESC="recurrence: src/a.py" STUB_REPORT="issue 15 fixed round
 assert_contains "the decide ran" "$OUT" "decided #15"
 assert_contains "and the fix round followed" "$(cat "$STUB_LOG.spawn")" "--role fix"
 if [ -e "$CODEX_RUN_ROOT/r1/issue-15/deferrals" ]; then no "the count was not reset"; else ok "a finished consult resets the count"; fi
+
+echo "test: past the cap a consult is still hard-capped, and a hung one holds the issue"
+reset; mkrun 18 1 build ''
+printf '2\n' >"$CODEX_RUN_ROOT/r1/issue-18/deferrals"
+CONSULT_TIMEOUT=1 STUB_CONSULT_SLEEP=5 STUB_REPORT="issue 18 escalate deviation: step 1" run --wait
+assert_contains "held, not deferred again" "$OUT" "held #18 consult timed out after 1s"
+assert_not_contains "and nothing resumed" "$(cat "$STUB_LOG.resume")" " 18 "
 
 echo "test: a plan that finished while workers run is collected on the timeout"
 reset; mkdir -p "$CODEX_RUN_ROOT/r1/plans"; printf '1\n' >"$CODEX_RUN_ROOT/r1/plans/30.rc"; : >"$CODEX_RUN_ROOT/r1/plans/30.started"

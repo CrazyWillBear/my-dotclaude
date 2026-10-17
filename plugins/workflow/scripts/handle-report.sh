@@ -143,16 +143,21 @@ escalate() {   # escalate <N> <tier> <worktree> <attempt> — escalate.sh, retri
 # timed <consult args…> — consult.sh inside what is left of this call's budget; 124 = deferred.
 #
 # A deferral is bounded: the issue's run dir counts them (`deferrals`), and past
-# HANDLE_MAX_DEFERRALS (default 2) the consult runs with no budget at all — the call may
-# overrun Bash's cap once, which beats re-asking the same opus call forever while every
-# other finished worker queues behind it. A finished consult resets the count.
+# HANDLE_MAX_DEFERRALS (default 2) the consult runs past the call's budget, capped only by
+# CONSULT_TIMEOUT (default 30 min) — the call may overrun Bash's cap once, which beats
+# re-asking the same opus call forever while every other finished worker queues behind it.
+# Hitting that hard cap returns 125: the caller holds the issue, never defers again. A
+# finished consult resets the count.
 timed_consult() {
     local n="$3" left c f
     f="$(issue_dir "$n")/deferrals"
     c="$(head -1 "$f" 2>/dev/null)"; c="${c:-0}"
     if [ "$c" -ge "${HANDLE_MAX_DEFERRALS:-2}" ]; then
-        bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null; local rc=$?
-        rm -f "$f"; return "$rc"
+        timeout "${CONSULT_TIMEOUT:-1800}" bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null
+        local rc=$?
+        rm -f "$f"
+        [ "$rc" -ne 124 ] || return 125
+        return "$rc"
     fi
     left="$(budget_left)"
     if [ "$left" -lt 60 ]; then echo $((c + 1)) >"$f"; return 124; fi
@@ -204,6 +209,8 @@ handle() {
             if [ "$rc" -eq 0 ]; then
                 runlog append "$RUNID" consulted "{\"n\":$n}" >/dev/null
                 echo "decided #$n $detail"
+            elif [ "$rc" -eq 125 ]; then
+                hold "$n" "decide timed out after ${CONSULT_TIMEOUT:-1800}s"; return
             elif [ "$rc" -eq 124 ]; then
                 # A real deferral: un-spend the fire escalate.sh just recorded for this round,
                 # so the next --wait re-reports this worker and asks for the decide again.
@@ -238,6 +245,8 @@ handle() {
                 runlog append "$RUNID" consulted "{\"n\":$n}" >/dev/null
                 resume_bg "$n" "Consult posted: read the newest **Consult** comment on #$n and follow its decision." \
                     && echo "consulted #$n; resumed"
+            elif [ "$rc" -eq 125 ]; then
+                hold "$n" "consult timed out after ${CONSULT_TIMEOUT:-1800}s"
             elif [ "$rc" -eq 124 ]; then
                 echo "deferred #$n its consult did not finish in this call; retried on the next --wait"
             else
