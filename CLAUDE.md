@@ -16,12 +16,12 @@ the repo itself. The global working rules in `~/.claude/CLAUDE.md` still apply o
 - `plugins/workflow/scripts/` — the deterministic half of `/orchestrate` (readiness, the one
   graph fetch, PRD scoping, run log, merge fold). Logic belongs here, not in skill prose: a
   script gets a real test, prose gets a grep.
-- `plugins/infra/` — scripts-only shared layer (`spawn.sh`, `session-status.sh`,
-  `check-inbound.sh`, `resolve-tier.sh` + `model-tiers.json`, `consult.sh` for the planner /
-  consult comment, `escalate.sh` for the chain escalation decision, `worker-stop.sh` to stop
-  finished workers). Its SessionStart hook runs
-  `link-kit.sh`, which links `~/.claude/kit/infra`; other plugins call infra only through that
-  path, never by relative path.
+- `plugins/infra/` — scripts-only shared layer (`spawn.sh` + `worker-cmd.sh` for one-shot
+  workers, `session-status.sh`, `resolve-tier.sh` + `model-tiers.json`, `consult.sh` for the
+  planner / consult comment, `escalate.sh` for the chain escalation decision) and `boxes/`, the
+  per-role `CLAUDE.md` of the worker boxes. Its SessionStart hook runs `link-kit.sh`, which links
+  `~/.claude/kit/infra` and `~/.claude/kit/personal-tools` and builds `~/.claude/kit/boxes/`;
+  other plugins call infra only through that path, never by relative path.
 - `plugins/swarm/` — roster-driven multi-session teams (`/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, `roster.sh` + `memory.sh`, briefs, charter).
 - `plugins/personal-tools/templates/` — starter CLAUDE.md + STYLEGUIDE.md the `init-*` skills fill into new projects.
 - `setup/` — install scripts (`setup-dev.sh`, `setup-simple.sh`) + `setup/lib/` helpers.
@@ -87,8 +87,8 @@ scripts.
 **Prose is grep-tested; behavior lives in scripts.** Nearly everything here is prose, and
 a grep can only prove a *string describing* the behavior is present. So the deterministic
 half of `/orchestrate` deliberately lives in `plugins/workflow/scripts/` (`ready.sh`,
-`run-log.sh`, `merge-fold.sh`) and `plugins/infra/scripts/` (`spawn.sh`, `session-status.sh`,
-`check-inbound.sh`, `resolve-tier.sh`, `consult.sh`, `escalate.sh`, `worker-stop.sh`), where each one is driven
+`run-log.sh`, `merge-fold.sh`) and `plugins/infra/scripts/` (`spawn.sh`, `worker-cmd.sh`,
+`session-status.sh`, `resolve-tier.sh`, `consult.sh`, `escalate.sh`), where each one is driven
 against real fixtures by its own `test_*.sh`. When you find yourself writing a rule into a
 skill that a script could enforce, that is a signal to move it. (The old `js`-block-in-
 markdown scheduler and its bespoke node harness are gone; `node` is no longer needed by

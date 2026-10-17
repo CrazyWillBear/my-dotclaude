@@ -70,15 +70,9 @@ assert_matches "absorbs pipeline" "$BODY" "absorbs .?/?pipeline"
 assert_not_matches "does not tell anyone to run /pipeline" "$BODY" "run .?/pipeline|use .?/pipeline"
 
 # ---------------------------------------------------------------------------
-echo "test: the cross-session message gate is called out before a run"
-assert_contains "names the setting" "$BODY" "crossSessionInbound"
-assert_matches "explains the permission-class mismatch" "$BODY" "permission-mode class"
-assert_matches "says it must be user-level" "$BODY" "may only .{0,2}tighten"
-assert_matches "states the cost honestly" "$BODY" "any. local Claude session without review|machine-wide relaxation"
-# The check must be RUN, not just described — prose protects nobody on a fresh install.
-assert_contains "runs the check script" "$BODY" "check-inbound.sh"
-assert_matches "handles all three exit codes" "$BODY" "exit 2|\\*\\*2\\*\\*"
-assert_matches "never refuses to start over a mere hold" "$BODY" "Never refuse to start over this"
+echo "test: workers report through their run dir — no cross-session message gate"
+assert_not_contains "no crossSessionInbound" "$BODY" "crossSessionInbound"
+assert_not_contains "no check-inbound.sh" "$BODY" "check-inbound"
 
 echo "test: Step 0 dispatch routes by shape"
 assert_matches "routes by SHAPE not size" "$BODY" "by SHAPE, not size|shape, not size"
@@ -138,7 +132,6 @@ echo "test: the spawn protocol's silent-failure traps"
 assert_matches "plain output is invisible" "$BODY" "invisible"
 assert_contains "workers report with SendMessage" "$BODY" "SendMessage"
 assert_contains "bypassPermissions" "$BODY" "bypassPermissions"
-assert_contains "the orchestrator address comes from --self" "$BODY" "session-status.sh --self"
 # The flags, the denylist and why each exists moved to infra's README (spawn.sh's own
 # test pins the actual flags — see plugins/infra/tests/test_spawn.sh); SKILL.md keeps a pointer.
 assert_contains "the full spawn protocol points at infra's README" "$BODY" "../../../infra/README.md#spawn-protocol"
@@ -301,9 +294,8 @@ echo "test: the session lane keeps the mock-debt declaration contract"
 assert_matches "points the session at the implementer contract" "$BODY" "boxes/implementer/CLAUDE.md"
 assert_matches "names the declaration" "$BODY" "Real wiring blocked by"
 
-echo "test: the orchestrator address is resolved once and passed"
-assert_contains "resolved with --self at setup" "$BODY" 'ORCH="$(bash'
-assert_matches "explains why not per-spawn" "$BODY" "rename mid-run"
+echo "test: workers are spawned with no orchestrator address"
+assert_not_contains "no --orchestrator on a worker spawn" "$BODY" '--orchestrator "$ORCH"'
 
 echo "test: recovery"
 assert_contains "stop, verify, respawn" "$BODY" "claude stop"
@@ -446,10 +438,10 @@ lines=$(wc -l <"$SKILL_FILE")
 if [ "$lines" -lt 720 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
-for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do
+for s in "resolve-tier.sh <tier>" spawn.sh consult.sh escalate.sh; do
     assert_contains "calls $s via ~/.claude/kit/infra" "$BODY" "bash ~/.claude/kit/infra/scripts/$s"
 done
-for s in session-status.sh check-inbound.sh resolve-tier.sh spawn.sh consult.sh escalate.sh; do
+for s in session-status.sh resolve-tier.sh spawn.sh consult.sh escalate.sh; do
     assert_not_contains "no plugin-root path to $s" "$BODY" '${CLAUDE_PLUGIN_ROOT}/scripts/'"$s"
 done
 assert_contains "fails loud without infra" "$BODY" "infra plugin not installed"

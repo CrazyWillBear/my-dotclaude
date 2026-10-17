@@ -38,7 +38,7 @@ plugins/workflow/
 └── README.md                         # this file
 ```
 
-`spawn.sh`, `session-status.sh`, `worker-stop.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live
+`spawn.sh`, `session-status.sh`, `resolve-tier.sh` and `model-tiers.json` live
 in the [`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
 
 ## Why it works this way

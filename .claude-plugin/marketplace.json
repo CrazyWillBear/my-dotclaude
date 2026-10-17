@@ -19,12 +19,12 @@
     {
       "name": "infra",
       "source": "./plugins/infra",
-      "description": "Scripts-only shared layer: background-session spawning, session state, inbound-message checks, and tier resolution. A SessionStart hook links ~/.claude/kit/infra to this plugin so other plugins call its scripts by one fixed path."
+      "description": "Scripts-only shared layer: one-shot worker spawning (codex, or claude -p in a per-role config box), worker state, escalation and tier resolution. A SessionStart hook links ~/.claude/kit/infra to this plugin and builds the worker boxes, so other plugins call its scripts by one fixed path."
     },
     {
       "name": "workflow",
       "source": "./plugins/workflow",
-      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD gets one real background Claude Code session per issue in its own git worktree, coordinating over the issue thread and reporting back by message — with my-review reviewing every built slice, a deterministic merge fold, and every irreversible GitHub write kept on the main thread. It also holds /classify-task and the manager's front half, /to-prd and /to-issues."
+      "description": "An autonomous dev loop: /orchestrate is a standing dispatcher that routes work by shape — one explicit unit runs as a subagent chain, an issue graph or PRD runs one boxed one-shot worker per issue in its own git worktree, coordinating over the issue thread — with an independent reviewer on every built slice, a deterministic merge fold, and one PR at the end. It also holds /classify-task and the manager's front half, /to-prd and /to-issues."
     },
     {
       "name": "swarm",

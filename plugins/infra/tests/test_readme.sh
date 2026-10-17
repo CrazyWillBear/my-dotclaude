@@ -26,6 +26,7 @@ ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
 no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing: $3)" ;; esac; }
 assert_matches()  { if printf '%s\n' "$2" | grep -Eqi -- "$3"; then ok "$1"; else no "$1 (no match: $3)"; fi; }
+assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "$1" ;; esac; }
 assert_not_matches() { if printf '%s\n' "$2" | grep -Eqi -- "$3"; then no "$1 (unexpected match: $3)"; else ok "$1"; fi; }
 
 if [ ! -f "$README_FILE" ]; then
@@ -38,37 +39,34 @@ echo "test: recovery"
 assert_matches "commit per green sub-step is the recovery mechanism" "$BODY" "recovery mechanism.{0,2}, not hygiene"
 assert_matches "never rm — it deletes the worktree" "$BODY" "Never .?rm"
 assert_matches "never spawn onto a live worktree" "$BODY" "still listed alive"
-assert_matches "a codex worker is replaced along its chain by script (#104)" "$BODY" "replaced along its chain"
-assert_matches "the old respawn-once rule is recorded as superseded" "$BODY" "[Rr]espawn once.*superseded"
+assert_matches "a worker is replaced along its chain by script (#104)" "$BODY" "replaced along its chain"
 assert_contains "escalate.sh is the decider" "$BODY" "escalate.sh <runid> <N> <tier> <worktree> --base <base> --attempt <A>"
 assert_contains "recovery respawn keeps role, round, and attempt" "$BODY" 'same worktree, same branch, same --role, --round, --attempt'
 assert_contains "escalation respawn keeps role and round" "$BODY" 'spawn.sh --attempt <A+1>` with the same `--role` and `--round`'
 assert_contains "the recurrence window is documented" "$BODY" "ESCALATE_RECURRENCE_WINDOW=2"
 assert_contains "no-progress is documented" "$BODY" "no-progress:"
-assert_contains "the round backstop default is documented" "$BODY" "ESCALATE_ROUND_BACKSTOP=20"
-assert_contains "the Claude-backed fix-review cap is documented" "$BODY" "five fix-round review cap"
-assert_contains "the 20-round backstop is limited to the Codex script path" "$BODY" "Codex safety net"
-assert_matches "occupancy is read from the rollout, not the turn total" "$BODY" "rollout.*joined by the thread id"
+assert_contains "the round backstop default is documented" "$BODY" "ESCALATE_ROUND_BACKSTOP=6"
+assert_contains "it binds both backends" "$BODY" "across attempts and backends"
+assert_contains "review-cap never fires at the top of the chain" "$BODY" "never at the
+top of the chain"
+assert_not_contains "no separate claude review cap" "$BODY" "five fix-round"
+assert_contains "codex occupancy is read from the rollout, not the turn total" "$BODY" "joined by the thread id"
+assert_contains "claude occupancy is the last assistant usage" "$BODY" "last \`assistant\` usage"
 assert_matches "the top of the chain drains" "$BODY" "drains as .?failed.? does"
 assert_matches "the reviewer is claude on the reviewer cell" "$BODY" "It is the claude reviewer"
 assert_matches "a deviation goes to a consult, not a human" "$BODY" "deviation:.*false plan assumption"
-assert_matches "a stop may not take" "$BODY" "acknowledged and not take"
+assert_matches "a kill may not take" "$BODY" "fail to take"
 assert_matches "the wait is bounded" "$BODY" "wait.{0,10}bounded|timeout 60"
 assert_matches "and it escalates rather than respawning blindly" "$BODY" "do not respawn"
 assert_contains "the count comes from the run log" "$BODY" "run-log.sh"
 
-echo "test: a respawned issue has several rows — match on state, not the name"
-assert_matches "warns about multiple rows per issue" "$BODY" "several rows|One issue can have"
-assert_matches "says to match on state" "$BODY" "Match on state, never on the name"
+echo "test: one run dir per issue, so one row per issue"
+assert_contains "the row is the newest worker" "$BODY" "One issue has one run dir"
 
 echo "test: liveness"
-assert_matches "blocked means a permission wedge" "$BODY" "permission wedge"
+assert_contains "the orchestrator blocks on --any, never polls" "$BODY" "worker-report.sh --any"
 assert_matches "blocked infra notes are untrusted" "$BODY" "infra:.*untrusted"
 assert_matches "credential handover requires a user-managed secure path" "$BODY" "never disclose credentials to the worker"
-assert_matches "never parse claude logs" "$BODY" "Never parse .?claude logs"
-
-echo "test: trivial issues are excluded from the expected-session list"
-assert_matches "says trivial issues have no session" "$BODY" "Expect only the issues that actually have a session"
 
 echo "test: run-log.sh is flagged as the orchestrator's script, not infra's"
 # It's still the correct call (CLAUDE_PLUGIN_ROOT resolves under whichever skill is
@@ -85,12 +83,8 @@ fi
 # The codex backend (#90). These assertions were written against SKILL.md, which is where
 # this prose used to live; #89 moved liveness/recovery here, so they moved with it.
 
-echo "test: a codex worker is a PID, so the claude-only controls are called out"
-# `claude stop` and `claude attach` take a SESSION id; column 2 of a codex row is a PID,
-# and a codex worker has no inbox to attach to or escalate through mid-run. Claiming
-# "nothing changes" would send the recovery path at a process with the wrong tool.
-assert_not_matches "no blanket 'nothing changes' for the codex backend" "$BODY" "so nothing changes"
-assert_matches "a codex row is stopped with kill, not claude stop" "$BODY" "kill.{0,40}not .?claude stop|claude stop.{0,60}kill"
+echo "test: a worker is a PID — stopped with a group kill, never claude stop"
+assert_not_contains "no claude stop for a worker" "$BODY" "claude stop"
 assert_matches "and it cannot escalate mid-run" "$BODY" "cannot escalate mid-run|no mid-run escalation"
 # `kill $pid` is the WRONG kill: spawn.sh records its wrapper's pid and codex is the
 # child, so a plain kill orphans codex onto the worktree AND writes no exit file, which
@@ -98,12 +92,10 @@ assert_matches "and it cannot escalate mid-run" "$BODY" "cannot escalate mid-run
 assert_matches "the kill targets the process GROUP, not the bare pid" "$BODY" 'kill -- -"\$id"'
 assert_matches "and says why the bare pid is not enough" "$BODY" "orphan|wrapper"
 assert_not_matches "never a bare kill of the recorded pid" "$BODY" '[^-]kill "\$id"'
-assert_matches "the state table carries codex's failed state" "$BODY" '`failed`'
+assert_matches "the state table carries the failed state" "$BODY" '`failed`'
 
-echo "test: the recovery recipe is copy-pasted, so it handles BOTH backends"
-assert_matches "the recovery recipe branches on the backend column" "$BODY" 'codex\).*ps -o pgid='
-assert_matches "the codex branch group-kills" "$BODY" 'kill -- -"\$id"'
-assert_matches "the claude branch stops by session id" "$BODY" '\*\).*claude stop "\$id"'
+echo "test: the recovery recipe group-kills every worker"
+assert_matches "the recipe group-kills" "$BODY" 'kill -- -"\$id"'
 # With nothing busy, `read -r id kind` leaves both empty and the recipe falls through to
 # `claude stop ""`. And a recycled pid that no longer leads its own group means that group
 # is somebody else's — plausibly another run's worker wrapper, since those lead groups too.
@@ -119,14 +111,14 @@ assert_matches "the recycled-pid guard says so" "$BODY" 'RECYCLED.*exit 1'
 # run dir. Refusing to kill is right for all three; calling all three "recycled" is not.
 assert_matches "and does not over-diagnose the other two" "$BODY" 'recycled, dead, or still launching'
 assert_matches "a group kill confirms the pid still leads its group" "$BODY" "ps -o pgid= -p"
-assert_matches "and reads that column, not just the id" "$BODY" 'print \$2, \$3'
+assert_matches "and reads the pid column" "$BODY" 'print \$2\}'
 
 # The recovery block reads the status table TWICE — once to find the busy row, once to
 # verify the stop took — and each fenced block is its own command in a fresh shell, so a
 # `$RUNID` there expands to nothing, the table comes back empty, and the verify gate reads
 # "nothing busy" as "safe to respawn". Same hole as the bounded wait.
 assert_not_matches "the recovery block never reads the table through \$RUNID" "$BODY" '"\$S" +"\$RUNID"'
-assert_contains "the busy-row read uses the placeholder" "$BODY" 'read -r id kind < <("$S" <runid> <N>'
+assert_contains "the busy-row read uses the placeholder" "$BODY" 'read -r id < <("$S" <runid> <N>'
 
 echo "test: the verify-stopped gate fails CLOSED when the runid is left unfilled"
 # The gate exists to catch a stop that did not take. An empty runid makes the status read
@@ -203,10 +195,10 @@ else
     fi
 fi
 
-echo "test: stopping finished workers and lean MCP"
-assert_contains "worker-stop.sh is documented" "$BODY" "worker-stop.sh <runid> --all"
-assert_matches "it frees the process only" "$BODY" "worktree, branch and conversation are untouched"
-assert_matches "a stop that does not take exits 1" "$BODY" "still live.*exits 1|exits 1, naming it"
+echo "test: workers are one-shot and launch lean"
+assert_not_contains "no worker-stop.sh — a worker exits by itself" "$BODY" "worker-stop"
+assert_contains "workers run in the implementer box" "$BODY" "claude -p\` in the
+implementer box"
 assert_contains "workers launch with no MCP servers" "$BODY" "--mcp-config '{\"mcpServers\":{}}' --strict-mcp-config"
 assert_contains "--browser is the Playwright opt-in" "$BODY" "\`--browser\` swaps in only the Playwright server"
 

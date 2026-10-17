@@ -3,7 +3,7 @@ name: orchestrate
 description: Dispatcher for agent work, routed by shape: one unit of work runs as a subagent chain; an issue graph or PRD (--issues or --prd N) runs one boxed worker per issue in its own worktree, tier-routed from each issue's tier label, gated by ready.sh, fold-merged, and reviewed; ambiguous work is discussed, not built. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[--max N=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
-allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
+allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion
 ---
 
 `/orchestrate` is the **standing dispatcher**. You talk to it all day; it decides what shape the
@@ -41,7 +41,7 @@ available — if `personal-tools:my-review` is **not** in your available agents,
 the missing piece ("personal-tools plugin not installed: my-review agent unavailable") and **stop**.
 Do not substitute another reviewer.
 
-Both lanes also need the **`infra`** plugin: `session-status.sh`, `check-inbound.sh` and
+Both lanes also need the **`infra`** plugin: `session-status.sh` and
 `resolve-tier.sh` live there and are called at `~/.claude/kit/infra/scripts/` (a symlink its
 SessionStart hook writes). If `~/.claude/kit/infra` is missing, **fail loud**
 ("infra plugin not installed: ~/.claude/kit/infra missing") and **stop**.
@@ -50,40 +50,6 @@ The **session lane** additionally needs the `claude` CLI on `PATH` (it spawns re
 `session-status.sh` fails loud if it is missing; do not paper over that by falling back to
 subagents — the lanes are not interchangeable, and silently building a 20-slice PRD in one
 session's context is the failure the lane split exists to prevent.
-
-### `crossSessionInbound` — check this before a session-lane run
-
-**A worker's report is HELD for the user's approval when the sender's permission-mode class
-differs from this session's.** Workers run `bypassPermissions` (they must — see the spawn
-protocol), so unless the orchestrator does too, **every** `issue <N> built …` report and every
-idle notice stops for a click. On a 20-slice PRD that is dozens of interruptions in a loop whose
-entire promise is that it runs unattended. Observed on a real run, not inferred.
-
-**Run the check — do not eyeball it:**
-
-```bash
-bash ~/.claude/kit/infra/scripts/check-inbound.sh
-```
-
-| exit | meaning | what to do |
-|---|---|---|
-| **0** | `accept` — reports will be delivered | proceed |
-| **1** | held for approval | **say so in the launch line and let the user decide.** A run that stops on every report still works; it just is not unattended. Never refuse to start over this — some users want to review every message |
-| **2** | `refuse` — reports will **never** arrive | **stop.** The session lane cannot work. Offer the ad-hoc lane instead |
-
-The fix, when they want one, is one setting in `~/.claude/settings.json`:
-
-```json
-{ "crossSessionInbound": "accept" }
-```
-
-Values are `accept` / `hold` / `refuse`; **unset means mode parity**, which is exactly why a
-`bypassPermissions` worker reporting to a prompting orchestrator gets held. It must be set at
-the **user** level — a repo's settings may only *tighten* it — and **before** the run.
-**Say what it costs first:** `accept` delivers messages from *any* local Claude session without
-review, a machine-wide relaxation in exchange for an unattended loop. Without it the session
-lane still works but stops for an approval on every report — **tell them up front**. The ad-hoc
-lane is unaffected — subagents are not cross-session.
 
 ---
 
@@ -245,7 +211,7 @@ excl="$(git rev-parse --git-common-dir)/info/exclude"
 grep -qxF '.worktrees/' "$excl" 2>/dev/null || printf '.worktrees/\n' >> "$excl"
 ```
 
-Say in the final report that this persistent mutation of the user's real repo outlives the run. **Resolve the run's own address once** and pass it to every spawn: `ORCH="$(bash ~/.claude/kit/infra/scripts/session-status.sh --self)"`. A rename mid-run of the model-generated display title would leave existing workers with an invalid address; `claude -n orch-<runid>` makes it stable.
+Say in the final report that this persistent mutation of the user's real repo outlives the run.
 
 ## Step 5 — the admission loop
 
@@ -290,12 +256,12 @@ model can, and historically did, hallucinate.
    tier's implementer chain (trivial and standard start on codex; trivial carries no plan):
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
-        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
+        "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --attempt 0
    ```
    **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it. **For a `needs-browser` issue, add `--browser` to every `spawn.sh` call in this file** (build, fix round, respawn).
    **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values. Keep the exact env pairs per issue in the orchestrator's live context and re-append the full set to every later worker launch or resume because the run log stores names only. Before each call, rebuild `resource_args=()` for that issue, then append `resource_args+=(--env "$pair")` for each actual pair; leave it empty if none. A real pair has the shape `--env DATABASE_URL=<actual-value>`:
    ```bash
-   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> ${resource_args[@]+"${resource_args[@]}"}
+   bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --attempt <A> ${resource_args[@]+"${resource_args[@]}"}
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
@@ -588,7 +554,6 @@ with real tests:
 | `spawn.sh` | the session command and the worker prompt contract |
 | `run-log.sh` | scope · held · respawned · decision · planned · consulted · escalated · follow-up · integration-review |
 | `follow-up.sh` | a capped issue's open findings → one scheduled follow-up that re-blocks its dependents, and the end-of-run integration review |
-| `check-inbound.sh` | whether worker reports can reach the orchestrator at all |
 | `merge-fold.sh` | the deterministic fold, the launch check, and the end-merge preview |
 | `scope-graph.sh` | the one graph fetch |
 | `prd-children.sh` / `prd-reap.sh` | PRD scoping and the end-of-run reap |
