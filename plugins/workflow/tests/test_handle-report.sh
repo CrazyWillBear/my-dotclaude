@@ -275,6 +275,27 @@ STUB_ESC="review-cap: still 1 high" STUB_REPORT="issue 18 built head=abc1234 rev
 if kill -0 "$LEADER" 2>/dev/null; then ok "the unrelated process lives"; kill -- -"$LEADER" 2>/dev/null; else no "a recycled pid was killed"; fi
 assert_contains "and the respawn still happened" "$OUT" "escalated #18 review-cap"
 
+echo "test: the timeout scan dry-runs first, skips finished workers, and never errors"
+reset; mkrun 15 1 build ''   # finished: exit present
+STUB_ESC="review-cap: still 1 high" STUB_WR_ERR="error: timed out" run --wait
+assert_not_contains "a finished worker is left for the next --wait to report" "$(cat "$STUB_LOG.esc")" "r1 15 "
+reset; mkrun 15 1 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-15/exit"
+STUB_ESC_ONLY=15 STUB_ESC="review-cap: still 1 high" STUB_WR_ERR="error: timed out" run --wait
+assert_contains "a running worker is checked with --dry-run" "$(cat "$STUB_LOG.esc")" "--attempt 1 --dry-run"
+assert_equals "and a non-runtime signal is never run for real" "$(grep -c 'r1 15 ' "$STUB_LOG.esc")" "1"
+assert_contains "so it only waits" "$OUT" "waiting:"
+reset; mkrun 15 1 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-15/exit"
+STUB_ESC_FAIL=1 STUB_WR_ERR="error: timed out" run --wait
+assert_not_contains "a failed scan is not an error line" "$OUT" "error:"
+
+echo "test: a decide that cannot finish in this call is a real deferral"
+reset; mkrun 15 1 fix '1 0 high, 1 medium, 0 low\n2 0 high, 1 medium, 0 low\n'
+printf '1\t2\tsrc/a.py\n' >"$CODEX_RUN_ROOT/r1/issue-15/recurrence"
+ORCH_BUDGET=50 STUB_ESC="recurrence: src/a.py" STUB_REPORT="issue 15 fixed round=1 head=abc1234 review=0 high, 1 medium, 0 low" run --wait
+assert_contains "deferred" "$OUT" "deferred #15 its decide did not finish"
+assert_equals "no fix round without the decision" "$(cat "$STUB_LOG.spawn")" ""
+assert_equals "and the fire is un-spent so it is asked again" "$(cat "$CODEX_RUN_ROOT/r1/issue-15/recurrence")" ""
+
 echo "test: one call at a time per run"
 reset; mkrun 12 0 build ''
 (STUB_WR_SLEEP=3 STUB_WR_ERR="error: timed out" bash "$WF/handle-report.sh" r1 --wait >/dev/null 2>&1 &)

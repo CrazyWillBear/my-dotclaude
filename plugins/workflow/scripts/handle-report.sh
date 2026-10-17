@@ -153,7 +153,7 @@ resume_bg() {   # resume_bg <N> <answer> — worker-resume.sh, backgrounded; the
     env_args "$n"
     ( set -m; nohup bash "$INFRA/worker-resume.sh" "$RUNID" "$n" "$(tier_of "$n")" "$(worktree_of "$n")" \
         --base "$ORCH_BRANCH" --attempt "$(attempt_of "$n")" --answer "$2" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
-        >"$d/resume.log" 2>&1 </dev/null & )
+        >"$d/resume.log" 2>&1 </dev/null 9>&- & )
     # It clears `exit` before it runs anything; until then the old terminal state would be
     # re-reported. A resume that never gets that far is held, not looped on.
     for _ in $(seq 1 30); do [ -e "$d/exit" ] || return 0; sleep 1; done
@@ -186,9 +186,16 @@ handle() {
                 echo "fix #$n round=$k attempt=$a ($h high, $m medium)"
             fi ;;
         recurrence)
-            if timed_consult decide "$RUNID" "$n" "$tier" "$wt" --attempt "$a"; then
+            timed_consult decide "$RUNID" "$n" "$tier" "$wt" --attempt "$a"; rc=$?
+            if [ "$rc" -eq 0 ]; then
                 runlog append "$RUNID" consulted "{\"n\":$n}" >/dev/null
                 echo "decided #$n $detail"
+            elif [ "$rc" -eq 124 ]; then
+                # A real deferral: un-spend the fire escalate.sh just recorded for this round,
+                # so the next --wait re-reports this worker and asks for the decide again.
+                sed -i "/^$a	$k	/d" "$(issue_dir "$n")/recurrence" 2>/dev/null
+                echo "deferred #$n its decide did not finish in this call; asked again on the next --wait"
+                return
             else
                 echo "decide refused #$n: $(tail -1 "$TMP/c.err") — fixing anyway"
             fi
@@ -244,24 +251,48 @@ case "$MODE" in
         if [ -f "$(issue_dir "$n")/paused" ]; then PAUSED+=("#$n ($(head -1 "$(issue_dir "$n")/paused"))")
         else WAITSET+=("$n"); fi
     done
+    # The wait leaves HANDLE_RESERVE seconds of this call's budget for handling what it
+    # returns (a decide or a consult runs inline) — a call that overruns Bash's cap is moved
+    # to the background and its lines are never read.
+    WAIT=$(( $(budget_left) - ${HANDLE_RESERVE:-420} ))
+    [ "$WAIT" -le "${HANDLE_WAIT_TIMEOUT:-240}" ] || WAIT="${HANDLE_WAIT_TIMEOUT:-240}"
+    [ "$WAIT" -ge 5 ] || WAIT=5
     if [ "${#WAITSET[@]}" -eq 0 ]; then
-        if [ "${#PAUSED[@]}" -gt 0 ]; then echo "paused: ${PAUSED[*]}"; else next; fi
+        # No worker to wait on. Plans may still be running: wait for one to finish, then let
+        # admit.sh collect it.
+        if ls "$RUN_DIR"/plans/*.started >/dev/null 2>&1; then
+            for _ in $(seq 1 "$((WAIT / 5))"); do
+                ls "$RUN_DIR"/plans/*.rc >/dev/null 2>&1 && break
+                sleep 5
+            done
+            next
+        elif [ "${#PAUSED[@]}" -gt 0 ]; then echo "paused: ${PAUSED[*]}"
+        else next; fi
         exit 0
     fi
     LINE="$(bash "$INFRA/worker-report.sh" --any "$RUNID" "${WAITSET[@]}" \
-        --timeout "${HANDLE_WAIT_TIMEOUT:-240}" --interval "${HANDLE_WAIT_INTERVAL:-10}" 2>"$TMP/wr.err")"; RC=$?
+        --timeout "$WAIT" --interval "${HANDLE_WAIT_INTERVAL:-10}" 2>"$TMP/wr.err")"; RC=$?
     if [ "$RC" -ne 0 ]; then
         if grep -q 'timed out' "$TMP/wr.err"; then
             # Nobody reported: look at the ones still running. A stall, a full context or a
             # worker that died without an exit code is only visible from out here.
+            # A DRY run first: escalate.sh's real run posts a Handoff and writes its marks, and
+            # on a worker that finished since the last poll it could fire a review-cap or a
+            # recurrence this scan would then throw away. Finished workers are skipped (the
+            # next --wait reports them); a failed scan is skipped too — a background check
+            # must never stop the run.
             ACTED=""
             for n in "${WAITSET[@]}"; do
+                [ ! -e "$(issue_dir "$n")/exit" ] || continue
                 a="$(attempt_of "$n")"; k="$(rounds_of "$n")"
                 role="$(head -1 "$(issue_dir "$n")/role" 2>/dev/null)"
-                reason="$(escalate "$n" "$(tier_of "$n")" "$(worktree_of "$n")" "$a")" \
-                    || { echo "error: escalate.sh failed for #$n: $(tail -1 "$TMP/esc.err")"; ACTED=1; continue; }
+                tier="$(tier_of "$n")"; wt="$(worktree_of "$n")"
+                reason="$(bash "$INFRA/escalate.sh" "$RUNID" "$n" "$tier" "$wt" --base "$ORCH_BRANCH" \
+                    --attempt "$a" --dry-run 2>/dev/null)" || continue
+                case "${reason%%:*}" in stall|occupancy|failed|quota) ;; *) continue ;; esac
+                reason="$(bash "$INFRA/escalate.sh" "$RUNID" "$n" "$tier" "$wt" --base "$ORCH_BRANCH" \
+                    --attempt "$a" 2>/dev/null)" || continue
                 case "${reason%%:*}" in
-                    "") ;;
                     stall|occupancy|failed|quota)
                         escalate_to_next "$n" "${reason%%:*}" "${reason#*: }" "$a" "${role:-build}" "${k:-0}"
                         ACTED=1 ;;

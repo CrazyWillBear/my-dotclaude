@@ -329,12 +329,14 @@ The same hook keeps two more addresses:
   older than 7 days are pruned on every start.
 
   **Credentials are shared, and a refresh can split them.** The CLI refreshes a token by writing a
-  new file and renaming it over the old, which replaces a box's symlink with a regular file. The
-  hook copies a box file that is NEWER than the user's back to `~/.claude/.credentials.json`
-  before re-linking, so a refresh is never lost and never clobbered. What it cannot cover: if a
-  refresh rotates the refresh token mid-run, the other side holds a stale one until the next
-  session start. A long-lived `claude setup-token` token given to the boxes would remove the
-  shared file altogether; that is a follow-up, not built.
+  new file and renaming it over the old, which replaces a box's symlink with a regular file. On
+  every start the hook copies back the box file with the latest `expiresAt` (never one without a
+  refresh token) if it beats the user's, then re-links. **Open risk:** each config dir has its
+  own refresh lock, so the boxes and the main session can refresh concurrently; if the server
+  rotates refresh tokens, the losing side's refresh is rejected and the CLI clears that side's
+  credentials — possibly the main login. Not yet verified either way. Giving the boxes a
+  long-lived `claude setup-token` token (`CLAUDE_CODE_OAUTH_TOKEN`) instead removes the shared
+  file; that is a follow-up, not built.
 
 ## Liveness and recovery
 

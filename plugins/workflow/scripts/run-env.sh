@@ -56,7 +56,7 @@ spawn_issue() {
     env_args "$n"
     has_label "$n" needs-browser && ENV_ARGS+=(--browser)
     bash "$INFRA/spawn.sh" "$RUNID" "$n" "$(tier_of "$n")" "$(worktree_of "$n")" "$ORCH_BRANCH" \
-        --role "$role" --round "$round" --attempt "$attempt" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} >/dev/null
+        --role "$role" --round "$round" --attempt "$attempt" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} >/dev/null 9>&-
 }
 
 # env_args <N> — ENV_ARGS=(--env K=V ...) from the issue's provisioned pairs. Values never
@@ -72,19 +72,23 @@ env_args() {
 # timeout keeps running in the background; without the lock the next call would admit the
 # same issues again. handle-report.sh holds it and exports ORCH_LOCKED, so the admit.sh it
 # calls does not wait on its own parent.
+#
+# The lock is fd 9. EVERY background process these scripts start — a worker, a detached
+# plan, a resume — must get `9>&-`: a flock belongs to the open file, so a child that
+# inherited fd 9 would hold the run's lock for its whole life.
+#
+# The call's wall-clock BUDGET (ORCH_DEADLINE) starts once the lock is held: a call that
+# waited on the lock must not inherit a budget it spent waiting. The wait is short — the
+# loser just says `waiting:` and is called again.
 run_lock() {
     [ -z "${ORCH_LOCKED:-}" ] || return 0
     exec 9>"$RUN_DIR/.lock" || die "cannot open $RUN_DIR/.lock"
-    if ! flock -w "${ORCH_LOCK_WAIT:-540}" 9; then
+    if ! flock -w "${ORCH_LOCK_WAIT:-20}" 9; then
         echo "waiting: another admit.sh or handle-report.sh is still running on run $RUNID"
         exit 0
     fi
     export ORCH_LOCKED=1
+    ORCH_DEADLINE=$(( $(date +%s) + ${ORCH_BUDGET:-570} ))
+    export ORCH_DEADLINE
 }
-
-# The wall-clock budget one call of admit.sh / handle-report.sh may use, inside Bash's
-# 10-minute cap. Work that would cross it is DEFERRED to the next call, never killed into a
-# hold: a plan or consult that times out leaves nothing posted and is simply retried.
-: "${ORCH_DEADLINE:=$(( $(date +%s) + ${ORCH_BUDGET:-570} ))}"
-export ORCH_DEADLINE
-budget_left() { echo $(( ORCH_DEADLINE - $(date +%s) )); }
+budget_left() { echo $(( ${ORCH_DEADLINE:-0} - $(date +%s) )); }

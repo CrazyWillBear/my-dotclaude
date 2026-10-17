@@ -151,15 +151,20 @@ assert_equals "exit 1" "$RC" "1"
 assert_contains "says why" "$ERR" "could not list PRD #20's children"
 assert_not_contains "no close offer" "$OUT" "0 open children"
 
-echo "test: an issue an earlier run already merged into this branch is dropped from scope"
+echo "test: a PRD child an earlier run already merged into this branch is dropped from scope"
 graph 13:standard:open
 (cd "$REPO" && bash "$WF/run-log.sh" append r0 merged "{\"n\":41,\"sha\":\"$(git -C "$REPO" rev-parse HEAD)\"}" >/dev/null)
 (cd "$REPO" && bash "$WF/run-log.sh" append r0 merged '{"n":13,"sha":"0123456789abcdef0123456789abcdef01234567"}' >/dev/null)
-run r5c --issues 41,13
+printf '41 open ready-for-agent\n13 open ready-for-agent\n' >"$STUB_CHILDREN"
+run r5c --prd 20
 assert_equals "exit 0" "$RC" "0"
 assert_contains "names it" "$OUT" "already-merged: 41"
 assert_equals "and fetches only the rest" "$(cat "$STUB_SCOPE_ARGS")" "13"
 assert_contains "a merge commit not in this branch does not count" "$OUT" "scope=13"
+graph 41:standard:open
+run r5d --issues 41
+assert_not_contains "an explicit --issues list is never filtered — a reopened issue builds again" "$OUT" "already-merged"
+assert_contains "it launches" "$OUT" "scope=41"
 
 echo "test: an empty allowlist stops the run"
 printf '27 open hitl\n' >"$STUB_CHILDREN"

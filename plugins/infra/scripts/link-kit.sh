@@ -61,20 +61,34 @@ fi
 
 # --- worker boxes -------------------------------------------------------------------
 BOX_ROOT="${CLAUDE_BOX_ROOT:-$HOME_DIR/.claude/kit/boxes}"
+
+# A token refresh inside a box replaces its credentials symlink with a regular file (the CLI
+# writes by rename), and from then on that file holds the live tokens. Before re-linking,
+# the box file with the LATEST `claudeAiOauth.expiresAt` across all boxes is copied back to
+# the user's (atomically, private) if it beats theirs — so a refresh is never lost and a
+# re-link never clobbers newer tokens. A file with no refresh token (a box that cleared its
+# credentials after a rejected refresh) is never copied. Residual risk, not covered: a
+# refresh that ROTATES the refresh token mid-run leaves the other side stale until the next
+# SessionStart (README § The stable address).
+expires() { jq -r 'if (.claudeAiOauth.refreshToken // "") == "" then -1 else (.claudeAiOauth.expiresAt // 0) end' "$1" 2>/dev/null || echo -1; }
+if command -v jq >/dev/null 2>&1; then
+    best=""; best_exp="$( [ -f "$CFG/.credentials.json" ] && expires "$CFG/.credentials.json" || echo -1)"
+    for role in implementer planner reviewer; do
+        f="$BOX_ROOT/$role/.credentials.json"
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        e="$(expires "$f")"
+        case "$e" in ''|*[!0-9-]*) continue ;; esac
+        [ "$e" -gt "${best_exp:--1}" ] 2>/dev/null && { best="$f"; best_exp="$e"; }
+    done
+    if [ -n "$best" ]; then
+        ( umask 077; cp -f "$best" "$CFG/.credentials.json.box-sync.$$" \
+            && mv -f "$CFG/.credentials.json.box-sync.$$" "$CFG/.credentials.json" ) 2>/dev/null
+    fi
+fi
 for role in implementer planner reviewer; do
     box="$BOX_ROOT/$role"
     mkdir -p "$box" || continue
-    # A token refresh inside a box replaces this symlink with a regular file (the CLI
-    # writes by rename). If that file is NEWER than the user's, it holds the live tokens:
-    # copy it back (atomically, private) before re-linking, so a refresh is never lost and a
-    # re-link never clobbers newer tokens with older ones. Residual risk, accepted for now:
-    # a refresh that ROTATES the refresh token mid-run leaves the other side stale until the
-    # next SessionStart (README § The stable address).
     creds="$box/.credentials.json"
-    if [ -f "$creds" ] && [ ! -L "$creds" ] && { [ ! -e "$CFG/.credentials.json" ] || [ "$creds" -nt "$CFG/.credentials.json" ]; }; then
-        ( umask 077; cp -f "$creds" "$CFG/.credentials.json.box-sync.$$" \
-            && mv -f "$CFG/.credentials.json.box-sync.$$" "$CFG/.credentials.json" ) 2>/dev/null
-    fi
     ln -sfn "$CFG/.credentials.json" "$creds" 2>/dev/null
     cp -f "$ROOT/boxes/$role/CLAUDE.md" "$box/CLAUDE.md" 2>/dev/null
     if [ "$role" = implementer ]; then

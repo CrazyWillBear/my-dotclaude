@@ -94,17 +94,22 @@ assert_equals "planner: no hooks" "$(jq -c . "$BOXES/planner/settings.json")" "{
 assert_equals "reviewer: no hooks" "$(jq -c . "$BOXES/reviewer/settings.json")" "{}"
 
 echo "test: a box that refreshed its token hands the newer file back, then is re-linked"
-printf 'old\n' >"$HOME/.claude/.credentials.json"; touch -d '1 hour ago' "$HOME/.claude/.credentials.json"
-rm -f "$BOXES/planner/.credentials.json"; printf 'refreshed\n' >"$BOXES/planner/.credentials.json"
+cred() { printf '{"claudeAiOauth":{"accessToken":"a","refreshToken":"%s","expiresAt":%s}}\n' "$1" "$2"; }
+cred main 1000 >"$HOME/.claude/.credentials.json"
+rm -f "$BOXES/planner/.credentials.json"; cred planner 2000 >"$BOXES/planner/.credentials.json"
+rm -f "$BOXES/reviewer/.credentials.json"; cred reviewer 3000 >"$BOXES/reviewer/.credentials.json"
 run
-assert_equals "the user's file now holds the box's newer tokens" "$(cat "$HOME/.claude/.credentials.json")" "refreshed"
+assert_contains "the LATEST expiry across the boxes wins, whatever the box order" "$(cat "$HOME/.claude/.credentials.json")" '"refreshToken":"reviewer"'
 assert_equals "the user's file stays private" "$(stat -c %a "$HOME/.claude/.credentials.json")" "600"
-assert_equals "and the box is a symlink again" "$(readlink "$BOXES/planner/.credentials.json")" "$HOME/.claude/.credentials.json"
-rm -f "$BOXES/reviewer/.credentials.json"; printf 'stale\n' >"$BOXES/reviewer/.credentials.json"
-touch -d '2 hours ago' "$BOXES/reviewer/.credentials.json"
+for role in planner reviewer; do
+    assert_equals "$role is a symlink again" "$(readlink "$BOXES/$role/.credentials.json")" "$HOME/.claude/.credentials.json"
+done
+rm -f "$BOXES/planner/.credentials.json"; cred planner 2500 >"$BOXES/planner/.credentials.json"
 run
-assert_equals "an OLDER box file never overwrites the user's" "$(cat "$HOME/.claude/.credentials.json")" "refreshed"
-assert_equals "it is simply re-linked" "$(readlink "$BOXES/reviewer/.credentials.json")" "$HOME/.claude/.credentials.json"
+assert_contains "an OLDER box file never overwrites the user's" "$(cat "$HOME/.claude/.credentials.json")" '"refreshToken":"reviewer"'
+rm -f "$BOXES/planner/.credentials.json"; printf '{"claudeAiOauth":{"accessToken":"","expiresAt":9999}}\n' >"$BOXES/planner/.credentials.json"
+run
+assert_contains "a cleared box file (no refresh token) is never copied" "$(cat "$HOME/.claude/.credentials.json")" '"refreshToken":"reviewer"'
 
 echo "test: CLAUDE_BOX_ROOT moves the boxes"
 CLAUDE_BOX_ROOT="$WORK/alt-boxes" run

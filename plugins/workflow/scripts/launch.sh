@@ -13,9 +13,10 @@
 #      children are all closed prints `prd #N: 0 open children` and `nothing-to-do: …`, exit 0:
 #      the caller offers the PRD close. NO children listed — gh failed, or the PRD is not
 #      sliced yet — is an error, never a close offer.
-#      Scoped issues an earlier run already merged into this branch (a `merged` event in this
-#      repo's run logs whose commit is an ancestor of HEAD) are dropped: `Closes #N` only fires
-#      when the PR lands on the default branch, so a merged slice can still be open.
+#      With --prd, children an earlier run already merged into this branch (a `merged` event
+#      in this repo's run logs whose commit is an ancestor of HEAD) are dropped: `Closes #N`
+#      only fires when the PR lands on the default branch, so a merged slice can still be
+#      open. An explicit --issues list is never filtered — a reopened issue is built again.
 #   3. the graph, fetched once (scope-graph.sh) — tiers come from its `tier` field (the
 #      highest `tier:*` label wins). Unlabelled issues: `missing-tier: 12 15`, exit 3, nothing
 #      written — the caller backfills with /classify-task and reruns. An unfetchable issue is
@@ -60,7 +61,7 @@ RUN_DIR="$RUNROOT/$RUNID"
 KIT="${HOME:-/nonexistent}/.claude/kit"
 BOXES="${CLAUDE_BOX_ROOT:-$KIT/boxes}"
 GAPS=()
-for c in claude gh jq git python3; do command -v "$c" >/dev/null 2>&1 || GAPS+=("$c not on PATH"); done
+for c in claude gh jq git python3 flock timeout nohup; do command -v "$c" >/dev/null 2>&1 || GAPS+=("$c not on PATH"); done
 [ -f "$INFRA/spawn.sh" ] || GAPS+=("infra scripts missing at $INFRA (start a session so link-kit.sh links ~/.claude/kit/infra)")
 [ -d "$KIT/personal-tools/agents" ] || GAPS+=("$KIT/personal-tools missing — the reviewer box loads my-review from it")
 for role in implementer planner reviewer; do
@@ -97,6 +98,7 @@ for n in $SCOPE; do case "${n#\#}" in ''|*[!0-9]*) die "not an issue number: '$n
 SCOPE="$(for n in $SCOPE; do printf '%s\n' "${n#\#}"; done | sort -nu | tr '\n' ' ')"
 RUNS="$(dirname "$(bash "$WF/run-log.sh" path probe 2>/dev/null)")"
 DONE=""
+[ -n "$PRD" ] || RUNS=/nonexistent
 for n in $SCOPE; do
     for sha in $(cat "$RUNS"/*.jsonl 2>/dev/null | jq -rR --argjson n "$n" \
             'fromjson? | select(type == "object" and .event == "merged" and .n == $n) | .sha // empty'); do
