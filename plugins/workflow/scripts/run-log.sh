@@ -9,9 +9,12 @@
 #                                         # follow-up=<n>:<child> waited=<deps> per follow-up
 #   bash run-log.sh path   <runid>        # where the log lives
 #
-# Events — THE WHOLE VOCABULARY, deliberately: scope · held · respawned · decision ·
-# planned · consulted · escalated · follow-up · integration-review. An unknown event is an error, so the
-# vocabulary cannot drift by accident. `follow-up` (#117) records the one place the run
+# Events — THE WHOLE VOCABULARY, deliberately: scope · admitted · merged · held · respawned ·
+# decision · planned · consulted · escalated · follow-up · integration-review. An unknown event
+# is an error, so the vocabulary cannot drift by accident. `admitted` / `merged` are what the
+# orchestration scripts (admit.sh, handle-report.sh) keep the in-flight set with across Bash
+# calls: a model holding that set in its head is the arithmetic this design keeps out of
+# prose. `state` folds them into `in_flight=` (admitted − merged − held) and `merged=`. `follow-up` (#117) records the one place the run
 # adds to its own scope: parent, child, re-blocked.
 #
 # The issue thread is the coordination medium (decision 12), which makes almost
@@ -20,10 +23,8 @@
 #
 #   not stored          recovered from
 #   ----------          --------------
-#   spawned             session-status.sh / `claude agents --json`
-#   merged              git log <base>..orchestrate-<ts>
-#   reviewed, cycles    COUNT THE REVIEW-ROUND COMMENTS (claude-backed) OR the round lines
-#                       of $RUNDIR/rounds (codex-backed, whose worker can also post that comment) — never a field
+#   spawned             session-status.sh / the run dir
+#   reviewed, cycles    the round lines of $RUNDIR/rounds — never a field
 #   escalated + fix     the issue comment the escalation protocol requires
 #
 # `respawned` is genuinely underivable: nothing in git or GitHub records that a
@@ -86,9 +87,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review) ;;
-            "") die "append needs an event: scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
+            scope|admitted|merged|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review) ;;
+            "") die "append needs an event: scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
@@ -127,6 +128,7 @@ PY
 import json, os, sys
 
 scope, held, respawns, decisions = [], [], {}, []
+admitted, merged = [], []
 planned, consulted, escalated = [], {}, {}
 followups, followup_rows = [], []
 bad = 0
@@ -146,6 +148,11 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
             for n in rec.get("issues") or []:
                 if n not in scope:
                     scope.append(n)
+        elif event in ("admitted", "merged"):
+            n = rec.get("n")
+            lst = admitted if event == "admitted" else merged
+            if n is not None and n not in lst:
+                lst.append(n)
         elif event == "held":
             n = rec.get("n")
             if n is not None and n not in held:
@@ -172,6 +179,8 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
 out = ["runid=%s" % os.environ["RUNLOG_RUNID"]]
 out.append("scope=%s" % ",".join(str(n) for n in scope))
 out.append("held=%s" % ",".join(str(n) for n in sorted(held)))
+out.append("merged=%s" % ",".join(str(n) for n in sorted(merged)))
+out.append("in_flight=%s" % ",".join(str(n) for n in sorted(admitted) if n not in merged and n not in held))
 out.append("respawned=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(respawns.items())))
 out.append("planned=%s" % ",".join(str(n) for n in sorted(planned)))
 out.append("consulted=%s" % ",".join("%s:%d" % (n, c) for n, c in sorted(consulted.items())))

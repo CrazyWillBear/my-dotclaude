@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+#
+# Tests for scripts/handle-report.sh — one case per row of its decision table.
+#
+# The REAL handle-report.sh runs beside the real admit.sh, ready.sh, run-log.sh and
+# merge-fold.sh (a copied workflow dir whose follow-up.sh is a stub), against a real git
+# repo with an orchestration worktree. Infra is a stub dir (worker-report.sh, escalate.sh,
+# consult.sh, spawn.sh, worker-resume.sh) plus the real resolve-tier.sh and env-pairs.sh.
+#
+# Run: bash plugins/workflow/tests/test_handle-report.sh   (non-zero if any fail)
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_WF="$(cd "$SCRIPT_DIR/../scripts" && pwd)"
+REAL_INFRA="$(cd "$SCRIPT_DIR/../../infra/scripts" && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK:?}"' EXIT
+
+pass=0
+fail=0
+ok() { pass=$((pass + 1)); printf '  PASS: %s\n' "$1"; }
+no() { fail=$((fail + 1)); printf '  FAIL: %s\n' "$1"; }
+assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '$2')"; fi; }
+assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '$2')" ;; esac; }
+assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
+
+export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs" STUB_LOG="$WORK/log"
+unset CLAUDE_PROJECT_DIR ESCALATE_REVIEW_CAP
+
+WF="$WORK/wf"; mkdir -p "$WF"
+for f in handle-report.sh run-env.sh admit.sh ready.sh run-log.sh merge-fold.sh; do cp "$REAL_WF/$f" "$WF/"; done
+cat >"$WF/follow-up.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.followup"
+echo "follow-up: #$2 → #900 (tier:$3) re-blocked none"
+STUB
+
+INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
+cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$INFRA/"
+cat >"$INFRA/worker-report.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.wr"
+[ -z "${STUB_WR_ERR:-}" ] || { echo "$STUB_WR_ERR" >&2; exit 1; }
+echo "$STUB_REPORT"
+STUB
+cat >"$INFRA/escalate.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.esc"
+[ -z "${STUB_ESC:-}" ] || echo "$STUB_ESC"
+STUB
+cat >"$INFRA/consult.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.consult"
+[ -z "${STUB_CONSULT_FAIL:-}" ] || { echo "error: past the cap" >&2; exit 1; }
+STUB
+cat >"$INFRA/spawn.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.spawn"
+STUB
+# Like the real one, it clears the run dir's `exit` before the resumed turn runs.
+cat >"$INFRA/worker-resume.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.resume"
+rm -f "${CODEX_RUN_ROOT:?}/${1:?}/issue-${2:?}/exit"
+STUB
+
+CFG="$WORK/cfg"; mkdir -p "$CFG"
+cat >"$CFG/model-tiers.json" <<'JSON'
+{
+  "trivial":  { "planner": { "backend": "claude", "model": "haiku", "effort": "low" },
+                "implementer": [ { "backend": "codex", "model": "gpt-6-luna", "effort": "high" },
+                                 { "backend": "codex", "model": "gpt-6-sol", "effort": "high" },
+                                 { "backend": "claude", "model": "sonnet", "effort": "high" } ],
+                "reviewer": { "backend": "claude", "model": "sonnet", "effort": "low" } },
+  "standard": { "planner": { "backend": "claude", "model": "opus", "effort": "medium" },
+                "implementer": [ { "backend": "codex", "model": "gpt-6-luna", "effort": "high" },
+                                 { "backend": "claude", "model": "opus", "effort": "medium" } ],
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "medium" } },
+  "complex":  { "planner": { "backend": "claude", "model": "opus", "effort": "high" },
+                "implementer": { "backend": "claude", "model": "opus", "effort": "high" },
+                "reviewer": { "backend": "claude", "model": "opus", "effort": "high" } }
+}
+JSON
+export RESOLVE_TIER_ROOT="$CFG"
+
+REPO="$WORK/repo"
+git init -q -b dev "$REPO"
+git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
+printf 'x\n' >"$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm init
+ORCH_WT="$WORK/orchwt"
+git -C "$REPO" worktree add -q -b orchestrate-r1 "$ORCH_WT" dev
+# issue-N branches: each adds its own file (merges clean); 19 and 20 both edit f (20 conflicts).
+mkbranch() {
+    git -C "$REPO" branch "issue-$1" orchestrate-r1
+    git -C "$REPO" worktree add -q "$REPO/.worktrees/r1/issue-$1" "issue-$1"
+    printf '%s\n' "${2:-$1}" >"$REPO/.worktrees/r1/issue-$1/${3:-f$1}"
+    git -C "$REPO/.worktrees/r1/issue-$1" add -A; git -C "$REPO/.worktrees/r1/issue-$1" commit -qm "issue $1"
+}
+for n in 11 12 13 14 15 16 17 18 21 22; do mkbranch "$n"; done
+mkbranch 19 nineteen f; mkbranch 20 twenty f
+
+GRAPH="$WORK/graph.json"
+python3 - "$GRAPH" <<'PY'
+import json, sys
+tiers = {11: "standard", 12: "standard", 13: "standard", 14: "standard", 15: "standard",
+         16: "complex", 17: "trivial", 18: "standard", 19: "standard", 20: "standard",
+         21: "standard", 22: "standard", 30: "standard"}
+issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"],
+           "tier": t, "body": "", "comments": "", "blockedBy": ([14] if n == 30 else [])}
+          for n, t in tiers.items()]
+json.dump({"issues": issues, "blockerStates": {"14": "open"}, "mockDebtOpen": []}, open(sys.argv[1], "w"))
+PY
+mkdir -p "$CODEX_RUN_ROOT/r1"
+cat >"$CODEX_RUN_ROOT/r1/run.env" <<EOF2
+RUNID=r1
+BASE_SHA=$(git -C "$REPO" rev-parse HEAD)
+BASE_BRANCH=dev
+BASE_REPO=$REPO
+ORCH_BRANCH=orchestrate-r1
+ORCH_WT=$ORCH_WT
+GRAPH=$GRAPH
+MAX=1
+PRD=
+SKIP_UNKNOWN=
+EOF2
+rl() { (cd "$REPO" && bash "$WF/run-log.sh" "$@"); }
+# Everything but 30 is "admitted" up front; MAX=1 keeps admit.sh from admitting more.
+for n in 11 12 13 14 15 16 17 18 19 20 21 22; do rl append r1 admitted "{\"n\":$n,\"tier\":\"x\"}" >/dev/null; done
+dead() { sleep 0 & local p=$!; wait "$p" 2>/dev/null; printf '%s' "$p"; }
+mkrun() {   # mkrun <N> <attempt> <role> <rounds-lines>
+    local d="$CODEX_RUN_ROOT/r1/issue-$1"; mkdir -p "$d"
+    printf 'orch-r1-issue-%s-a%s\n' "$1" "$2" >"$d/session-name"
+    printf '%s\n' "$3" >"$d/role"; printf "${4:-}" >"$d/rounds"
+    dead >"$d/pid"; printf '0\n' >"$d/exit"
+}
+reset() { for f in wr esc consult spawn resume followup; do : >"$STUB_LOG.$f"; done; unset STUB_ESC STUB_REPORT STUB_WR_ERR STUB_CONSULT_FAIL; }
+run() { OUT="$(cd "$ORCH_WT" && bash "$WF/handle-report.sh" r1 "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
+state() { rl state r1; }
+
+echo "test: a clean build is folded in, logged merged, and the slot refilled"
+reset; mkrun 11 0 build '1 0 high, 0 medium, 2 low\n'
+STUB_REPORT="issue 11 built head=abc1234 review=0 high, 0 medium, 2 low" run --wait
+assert_equals "exit 0" "$RC" "0"
+assert_contains "merged" "$OUT" "merged #11"
+assert_equals "the branch is on the orchestration branch" "$(git -C "$ORCH_WT" merge-base --is-ancestor issue-11 HEAD && echo yes)" "yes"
+assert_contains "logged merged" "$(state)" "merged=11"
+assert_contains "the wait set is the in-flight workers" "$(cat "$STUB_LOG.wr")" "--any r1 11 12"
+assert_contains "escalate.sh ran first, at the recorded attempt" "$(cat "$STUB_LOG.esc")" "r1 11 standard $REPO/.worktrees/r1/issue-11 --base orchestrate-r1 --attempt 0"
+assert_contains "admit.sh --next reports the in-flight set after" "$OUT" "in-flight:"
+
+echo "test: findings with no signal draw a fix round on the same attempt"
+reset; mkrun 12 0 build '1 1 high, 1 medium, 0 low\n'
+STUB_REPORT="issue 12 built head=abc1234 review=1 high, 1 medium, 0 low" run --wait
+assert_contains "the fix round" "$OUT" "fix #12 round=1 attempt=0"
+assert_contains "spawned as a fix, same attempt" "$(cat "$STUB_LOG.spawn")" "r1 12 standard $REPO/.worktrees/r1/issue-12 orchestrate-r1 --role fix --round 1 --attempt 0"
+
+echo "test: recurrence draws a decide, then the fix round"
+reset; mkrun 13 0 fix '1 0 high, 1 medium, 0 low\n2 0 high, 1 medium, 0 low\n'
+STUB_ESC="recurrence: src/a.py" STUB_REPORT="issue 13 fixed round=1 head=abc1234 review=0 high, 1 medium, 0 low" run --wait
+assert_contains "the decide" "$(cat "$STUB_LOG.consult")" "decide r1 13 standard"
+assert_contains "logged consulted" "$(state)" "consulted=13:1"
+assert_contains "then the fix round" "$(cat "$STUB_LOG.spawn")" "--role fix --round 2 --attempt 0"
+
+echo "test: no-progress caps the issue: logged, folded in, follow-up filed"
+reset; mkrun 14 1 fix '1 1 high, 0 medium, 0 low\n'
+STUB_ESC="no-progress: review 3 has 1 high+medium" STUB_REPORT="issue 14 fixed round=2 head=abc1234 review=1 high, 0 medium, 0 low" run --wait
+assert_contains "capped" "$OUT" "capped #14 no-progress"
+assert_contains "merged anyway" "$OUT" "merged #14"
+assert_contains "the follow-up" "$OUT" "follow-up: #14 → #900"
+assert_contains "follow-up.sh got the issue, tier and graph" "$(cat "$STUB_LOG.followup")" "r1 14 standard $GRAPH"
+assert_contains "logged escalated" "$(state)" "escalated=14:1"
+
+echo "test: review-cap respawns the FIX round at the next chain position"
+reset; mkrun 15 0 build '1 1 high, 0 medium, 0 low\n'
+STUB_ESC="review-cap: review 1 still has 1 high" STUB_REPORT="issue 15 built head=abc1234 review=1 high, 0 medium, 0 low" run --wait
+assert_contains "escalated" "$OUT" "escalated #15 review-cap → attempt 1"
+assert_contains "respawned as a fix at attempt 1" "$(cat "$STUB_LOG.spawn")" "r1 15 standard $REPO/.worktrees/r1/issue-15 orchestrate-r1 --role fix --round 1 --attempt 1"
+
+echo "test: quota skips the remaining codex positions to the claude cell"
+reset; mkrun 17 0 build ''
+STUB_ESC="quota: usage limit" STUB_REPORT="issue 17 failed quota" run --wait
+assert_contains "skips gpt-6-sol (attempt 1) for the claude cell (attempt 2)" "$OUT" "escalated #17 quota → attempt 2"
+
+echo "test: a deviation is consulted and the worker resumed, not shown to a human"
+reset; mkrun 18 0 build ''
+STUB_REPORT="issue 18 escalate deviation: step 2 assumed X" run --wait
+assert_contains "consulted and resumed" "$OUT" "consulted #18; resumed"
+for _ in 1 2 3 4 5; do [ -s "$STUB_LOG.resume" ] && break; sleep 0.5; done
+assert_contains "worker-resume got the consult pointer" "$(cat "$STUB_LOG.resume")" "read the newest **Consult** comment on #18"
+assert_contains "at the recorded attempt" "$(cat "$STUB_LOG.resume")" "--attempt 0"
+
+echo "test: a refused consult is a deviation-cap escalation"
+reset; mkrun 18 0 build ''
+STUB_CONSULT_FAIL=1 STUB_REPORT="issue 18 escalate deviation: again" run --wait
+assert_contains "escalated" "$OUT" "escalated #18 deviation-cap → attempt 1"
+
+echo "test: a question pauses the issue for the human; --wait then skips it"
+reset; mkrun 21 0 build ''
+STUB_REPORT="issue 21 escalate is the budget per request?" run --wait
+assert_contains "relayed verbatim" "$OUT" "escalate #21 is the budget per request?"
+reset; mkrun 12 0 fix '1 1 high, 1 medium, 0 low\n2 0 high, 0 medium, 0 low\n'
+STUB_REPORT="issue 12 fixed round=1 head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_not_contains "a paused issue is not waited on" "$(cat "$STUB_LOG.wr")" " 21"
+run --answer 21 "per request"
+assert_contains "--answer resumes it" "$OUT" "resumed #21"
+for _ in 1 2 3 4 5; do grep -q 'per request' "$STUB_LOG.resume" 2>/dev/null && break; sleep 0.5; done
+assert_contains "with the answer" "$(cat "$STUB_LOG.resume")" "--answer per request"
+
+echo "test: blocked infra pauses; --resource stores the pairs privately and respawns"
+reset; mkrun 22 0 build ''
+STUB_REPORT="issue 22 blocked infra: postgres" run --wait
+assert_contains "relayed" "$OUT" "blocked #22 infra: postgres"
+run --resource 22 --env DATABASE_URL=postgres://secret
+assert_contains "respawned with the NAME" "$OUT" "respawned #22 with DATABASE_URL"
+assert_equals "the pairs file is 0600" "$(stat -c %a "$CODEX_RUN_ROOT/r1/issue-22/env")" "600"
+assert_contains "the worker gets the value" "$(cat "$STUB_LOG.spawn")" "--env DATABASE_URL=postgres://secret"
+assert_not_contains "the run log never does" "$(rl replay r1)" "postgres://secret"
+reset; mkrun 22 0 build '1 1 high, 0 medium, 0 low\n'
+STUB_REPORT="issue 22 built head=abc1234 review=1 high, 0 medium, 0 low" run --wait
+assert_contains "every later spawn re-passes it" "$(cat "$STUB_LOG.spawn")" "--env DATABASE_URL=postgres://secret"
+
+echo "test: a conflict pauses for the merger; --merged lands it"
+reset; mkrun 19 0 build ''
+STUB_REPORT="issue 19 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "19 merges" "$OUT" "merged #19"
+reset; mkrun 20 0 build ''
+STUB_REPORT="issue 20 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "20 conflicts, and the caller is told what to do" "$OUT" "conflict #20 f — spawn workflow:merger"
+run --merged 20
+assert_equals "--merged refuses an unmerged branch" "$RC" "1"
+(cd "$ORCH_WT" && git merge -q -X theirs --no-edit issue-20 >/dev/null 2>&1)
+run --merged 20
+assert_contains "--merged logs it" "$OUT" "merged #20"
+assert_contains "and the log agrees" "$(state)" "merged=11,12,14,19,20"
+
+echo "test: a timeout says waiting; an unreadable report holds the issue"
+reset
+STUB_WR_ERR="error: timed out after 540s waiting" run --wait
+assert_contains "waiting" "$OUT" "waiting:"
+STUB_WR_ERR="error: issue 13 reported built but no independent review was recorded" run --wait
+assert_contains "held with the reason" "$OUT" "held #13 no readable report"
+
+echo "test: failure at the top of the chain drains the run"
+reset; mkrun 16 0 build ''
+STUB_ESC="failed: the worker exited 3" STUB_REPORT="issue 16 failed done-check red" run --wait
+assert_contains "drain" "$OUT" "drain: #16 failed at the top of its chain"
+assert_equals "nothing respawned" "$(cat "$STUB_LOG.spawn")" ""
+assert_contains "the drain is a recorded decision" "$(state)" "decision=drain: #16"
+assert_not_contains "admit.sh admits nothing after a drain, even with #30 unblocked" \
+    "$(cd "$ORCH_WT" && bash "$WF/admit.sh" r1 --next)" "admitted"
+
+echo "test: bad usage fails loud"
+run; assert_equals "no mode" "$RC" "1"
+run --answer 21; assert_equals "no answer" "$RC" "1"
+run --resource 22 DATABASE_URL=x; assert_equals "pairs need --env" "$RC" "1"
+OUT="$(bash "$WF/handle-report.sh" nope --wait 2>&1)"; assert_contains "unlaunched run" "$OUT" "no launched run"
+
+printf '\n%d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]

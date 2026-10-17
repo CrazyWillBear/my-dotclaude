@@ -140,6 +140,18 @@ r append run7 integration-review '{"high":1,"medium":0,"low":2,"child":900}'
 assert_equals "append exits 0" "$?" "0"
 assert_contains "replay shows the event" "$(r replay run7)" '"event": "integration-review"'
 
+echo "test: admitted / merged fold into merged= and in_flight= (admitted - merged - held)"
+r append run8 admitted '{"n":12,"tier":"standard"}'
+r append run8 admitted '{"n":13,"tier":"trivial"}'
+r append run8 admitted '{"n":14,"tier":"complex"}'
+r append run8 merged '{"n":12,"sha":"abc1234"}'
+r append run8 held '{"n":14,"why":"drained"}'
+out=$(r state run8)
+assert_contains "merged lists the merged issue" "$out" "merged=12"
+assert_contains "in_flight is what is neither merged nor held" "$out" "in_flight=13"
+r append run8 admitted '{"n":13,"tier":"trivial"}'
+assert_contains "a repeated admission is not double-counted" "$(r state run8)" "in_flight=13"
+
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'
 out=$(r state run3)
@@ -149,6 +161,8 @@ assert_contains "empty planned" "$out" "planned="
 assert_contains "empty consulted" "$out" "consulted="
 assert_contains "empty escalated" "$out" "escalated="
 assert_contains "empty followups" "$out" "followups="
+assert_contains "empty merged" "$out" "merged="
+assert_contains "empty in_flight" "$out" "in_flight="
 
 echo "test: a torn line is COUNTED, never silently dropped"
 printf 'not json\n' >>"$(r path run2)"
@@ -158,7 +172,7 @@ assert_contains "and still folds the good ones" "$(r state run2)" "scope=12,13,1
 # ---------------------------------------------------------------------------
 echo "test: the vocabulary is closed"
 r append run1 spawned '{"n":12}' >/dev/null; assert_equals "unknown event exits 1" "$?" "1"
-assert_contains "names the vocabulary" "$(err)" "scope | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review"
+assert_contains "names the vocabulary" "$(err)" "scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review"
 assert_not_contains "and did not write it" "$(r replay run1)" '"event": "spawned"' 
 r append run1 >/dev/null; assert_equals "no event exits 1" "$?" "1"
 
