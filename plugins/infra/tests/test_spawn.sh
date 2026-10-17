@@ -1410,5 +1410,29 @@ peer --dry-run --bogus >/dev/null; assert_equals "unknown peer flag exits 1" "$?
 peer --dry-run --name >/dev/null; assert_equals "a flag with no value exits 1" "$?" "1"
 
 # ---------------------------------------------------------------------------
+echo "test: a worker comes up with NO MCP servers unless it opts into the browser"
+# Every session starts its own copy of each configured server (Playwright, pdf-viewer, ...),
+# so dozens of workers cost gigabytes for tools none of them uses.
+out=$(dry r1 12 standard /w/issue-12 base)
+assert_arg "the config is passed" "$out" "--mcp-config"
+assert_arg "an empty server set" "$out" '{"mcpServers":{}}'
+assert_arg "strict, so user/plugin/claude.ai servers are ignored too" "$out" "--strict-mcp-config"
+# --mcp-config is variadic: strict must follow its one value, or the next flag is read as a config.
+mcp_line=$(printf '%s\n' "$out" | grep -nxF -- "--mcp-config" | cut -d: -f1)
+strict_line=$(printf '%s\n' "$out" | grep -nxF -- "--strict-mcp-config" | cut -d: -f1)
+assert_equals "--strict-mcp-config ends the variadic list" "$strict_line" "$((mcp_line + 2))"
+assert_not_contains "no playwright by default" "$out" "playwright"
+out=$(dry r1 12 standard /w/issue-12 base --browser)
+assert_arg "--browser adds the playwright server" "$out" '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}'
+assert_arg "--browser stays strict" "$out" "--strict-mcp-config"
+out=$(dry r1 12 standard /w/issue-12 base --role fix --round 2 --browser)
+assert_arg "a fix round honours --browser" "$out" "--strict-mcp-config"
+
+echo "test: the peer form keeps the machine's MCP servers"
+out=$(peer --dry-run)
+assert_not_contains "peer has no --mcp-config" "$out" "--mcp-config"
+peer --dry-run --browser >/dev/null; assert_equals "--browser is worker-only" "$?" "1"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

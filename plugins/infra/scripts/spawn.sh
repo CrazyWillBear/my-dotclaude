@@ -29,6 +29,7 @@
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
 #     --env NAME=VALUE      repeatable; passed to the worker launch, never logged
+#     --browser             give a CLAUDE worker the Playwright MCP server (default: none)
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
 #                           rotation stops the process and respawns under the same
@@ -88,6 +89,13 @@
 #   --model / --effort          a worker is routed by the issue's persisted tier, via
 #                               resolve-tier.sh. A PEER IS NOT TIER-ROUTED — its roster
 #                               row carries the model, so it passes them explicitly.
+#   --mcp-config ... --strict-mcp-config
+#                               worker only: the worker gets NO MCP servers (no user,
+#                               plugin or claude.ai ones), or only Playwright with --browser.
+#                               Every session starts its OWN copy of every configured
+#                               server, and a PRD run keeps dozens of sessions alive: 28
+#                               Playwright + 28 pdf-viewer processes cost ~9 GB. A worker
+#                               builds with Bash and gh and needs none of them.
 #   </dev/null                  an unattended session has nobody to answer a read on
 #                               stdin, and one blocked on it looks exactly like one
 #                               working.
@@ -119,6 +127,7 @@ need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 # claude unless a WORKER's tier row says codex — a peer needs an inbox and codex has none
 # (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
 NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
+MCP_ARGS=()   # worker form only; a peer keeps the machine's MCP servers
 EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
 ENVS=()    # validated worker environment pairs; exported only at a launch point
 
@@ -161,7 +170,7 @@ else
 # ---------------------------------------------------------------------------
 # WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--browser] [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -170,6 +179,7 @@ shift 5
 ROLE=build
 ROUND=1
 ATTEMPT=0
+BROWSER=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --role)         need $# --role;         ROLE="$2"; shift 2 ;;
@@ -177,6 +187,7 @@ while [ $# -gt 0 ]; do
         --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
         --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
         --env)          need $# --env;          ENVS+=("$2"); shift 2 ;;
+        --browser)      BROWSER=1; shift ;;
         --dry-run)      DRY=1; shift ;;
         *)              die "unknown flag $1" ;;
     esac
@@ -265,6 +276,12 @@ else
 # The worker's prompt: the issue protocol, build or fix.
 # ---------------------------------------------------------------------------
 EXTRA=(--add-dir "$WORKTREE")
+
+# Lean MCP set (see the header). `--mcp-config` is variadic like --disallowedTools, so
+# `--strict-mcp-config` sits right after it to end the list.
+MCP_JSON='{"mcpServers":{}}'
+[ -z "$BROWSER" ] || MCP_JSON='{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}'
+MCP_ARGS=(--mcp-config "$MCP_JSON" --strict-mcp-config)
 
 # STANDARD and COMPLEX build to a PLAN that is already on the thread (#104): consult.sh
 # runs the planner as a one-shot call on the planner cell's model BEFORE this spawn and
@@ -793,6 +810,7 @@ CMD=(claude --bg -n "$NAME"
      --model "$MODEL" --effort "$EFFORT"
      --permission-mode bypassPermissions
      --system-prompt-snapshot off
+     ${MCP_ARGS[@]+"${MCP_ARGS[@]}"}
      "${EXTRA[@]}"
      --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
                        "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
