@@ -350,11 +350,11 @@ if [ "$BACKEND" = codex ]; then
     # sandbox, and the verdict never passes through the thing that wrote the code. The
     # worker therefore reports an EMPTY review — worker-report.sh takes the counts from
     # the reviewer's own output file and ignores this field entirely.
-    REVIEW_STEP="6. Do NOT review your own diff, and do NOT run \`codex exec review\` — a nested codex
+    REVIEW_STEP="5. Do NOT review your own diff, and do NOT run \`codex exec review\` — a nested codex
    invocation cannot start inside your sandbox, and your own opinion of your own work is
    not a review. An INDEPENDENT reviewer runs automatically once you exit and posts the
    \"**Review round**\" comment itself. Skip straight to reporting"
-    REPORT_STEP="7. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
+    REPORT_STEP="6. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
    Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
    were launched with. EVERY field is required — send \"\" or 0 for the ones that do
    not apply. \"review\" is one of those: you did not review, so send \"\" and never a
@@ -375,7 +375,7 @@ if [ "$BACKEND" = codex ]; then
    infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
    with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
 else
-    REVIEW_STEP="6. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
+    REVIEW_STEP="5. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
    my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
    in exactly this shape (the \"Review round N\" heading is the run's cycle counter;
    nothing else records how many rounds this issue has had):
@@ -388,7 +388,7 @@ else
    Lows are listed, not fixed. Keep every line short: this comment is read by every
    future run that touches this issue. Do NOT fix what the review finds:
    a fresh session does that, so nobody is defending their own code."
-    REPORT_STEP="7. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
+    REPORT_STEP="6. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
    MUST use the SendMessage tool, addressed to \"$ORCH\", with exactly:
       issue $ISSUE built head=<sha> review=<H high, M medium, L low>
    or, if you could not finish:
@@ -410,6 +410,11 @@ escalate deviation."
    — never an escalate deviation."
 fi
 
+# The implementer contract ships in infra's implementer box — one source for every worker
+# and the workflow:implementer subagent. Named by absolute path: a codex worker has no
+# CLAUDE.md to load it from.
+CONTRACT="$(cd "$INFRA/.." && pwd)/boxes/implementer/CLAUDE.md"
+
 if [ "$ROLE" = build ]; then
     TASK="$(cat <<PROMPT
 You are the BUILD session for issue #$ISSUE, run $RUNID.
@@ -421,19 +426,16 @@ ${PLAN_STEP}1. Read the issue AND its comments first: \`gh issue view $ISSUE --c
    thread is the coordination medium — a ruling settled there is not in the body.
 2. Comment on the issue: "Tackled #$ISSUE on branch $BRANCH", plus anything a later
    reader genuinely needs. Keep it short; verbose comments poison every later run.
-3. If ./CONTEXT-MAP.md exists, read it. It is a HINT, not a contract — a pointer to a
-   file that moved costs you one failed Read, so ignore it where it disagrees with
-   reality.
-4. Build it TDD-first, and COMMIT AFTER EVERY GREEN SUB-STEP. That is the recovery
+3. Build it TDD-first, and COMMIT AFTER EVERY GREEN SUB-STEP. That is the recovery
    mechanism, not hygiene: if this session is killed, its replacement resumes from
    your last commit instead of restarting the issue.
    You are the implementer: follow the contract in
-   plugins/workflow/agents/implementer.md — dedup-search before writing new code,
+   $CONTRACT — dedup-search before writing new code,
    build the slice's central mechanism FOR REAL, and if you genuinely must defer real
    wiring, DECLARE it: "Mocked: <what>. Real wiring blocked by: #N | deferred to
-   integration", in the commit body and in your review comment. An undeclared central
+   integration", in the commit body and in your report. An undeclared central
    mock is the drift this whole loop exists to catch.
-5. Run the project's done-check. It must be green.
+4. Run the project's done-check. It must be green.
 $REVIEW_STEP
 $REPORT_STEP
 

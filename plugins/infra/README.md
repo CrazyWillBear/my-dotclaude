@@ -326,6 +326,18 @@ The link appears on the first session start after install, and is repointed on e
 start, so it follows version bumps. If a real directory sits at that path, the hook
 refuses and says so rather than delete it.
 
+The same hook keeps two more addresses:
+
+- **`~/.claude/kit/personal-tools`** — the personal-tools plugin root (its checkout sibling, or its
+  `installPath` from `installed_plugins.json`). The reviewer box loads `my-review` from it with
+  `--plugin-dir`, and the implementer box's hook runs its `worktree-guard.sh`.
+- **`~/.claude/kit/boxes/<role>/`** (`implementer`, `planner`, `reviewer`; moved by
+  `CLAUDE_BOX_ROOT`) — a per-role `CLAUDE_CONFIG_DIR` for one-shot `claude -p` workers: a symlink to
+  the user's `.credentials.json`, the role's `CLAUDE.md` from `boxes/<role>/`, and a `settings.json`
+  holding only the role's hooks (the implementer's worktree guard; nothing for the others). None of
+  the user's MCP servers, plugins, skills, memory or global `CLAUDE.md` load there. Box transcripts
+  older than 7 days are pruned on every start.
+
 ## Liveness and recovery
 
 **Subscribe, don't poll.** At spawn, `SendMessage` to the worker with `notify_when_idle: true` and
@@ -514,7 +526,7 @@ What goes where:
 | carries | where |
 |---|---|
 | review findings, decisions, notes a future reader needs | **the issue** — it cannot be regenerated |
-| the context map, worktree paths, scratch | **local files** — regenerable, and free to delete |
+| worktree paths, run dirs, scratch | **local files** — regenerable, and free to delete |
 
 A file index posted to an issue is **permanent garbage** that every future run pays to read.
 `scope-graph.sh` pulls comments into the graph, so everything on the issue is context forever.

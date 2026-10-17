@@ -158,12 +158,8 @@ assert_matches "claude-backed counts the comments, codex-backed counts the ledge
 # by agents/implementer.md (the contract every build session actually reads).
 assert_contains "the comment contract points at infra's README" "$BODY" "../../../infra/README.md#the-bus"
 
-echo "test: the context map"
-assert_contains "written at admission" "$BODY" "at **admission**"
-assert_contains "as a local file in the worktree" "$BODY" "CONTEXT-MAP.md"
-assert_matches "a hint, not a contract" "$BODY" "hint, not a contract"
-assert_matches "no staleness protocol" "$BODY" "no staleness protocol|no sha stamps"
-assert_matches "for the implementer only" "$BODY" "map is for the implementer only"
+echo "test: the context map is gone"
+assert_not_contains "no CONTEXT-MAP.md" "$BODY" "CONTEXT-MAP"
 
 echo "test: the planner — standard and complex, on the thread, before the spawn (#104)"
 assert_matches "standard and complex get a plan" "$BODY" "Standard and complex issues get a plan"
@@ -302,7 +298,7 @@ echo "test: the fix-round report shape is handled"
 assert_contains "fixed round= is documented" "$BODY" "fixed round="
 
 echo "test: the session lane keeps the mock-debt declaration contract"
-assert_matches "points the session at the implementer contract" "$BODY" "agents/implementer.md"
+assert_matches "points the session at the implementer contract" "$BODY" "boxes/implementer/CLAUDE.md"
 assert_matches "names the declaration" "$BODY" "Real wiring blocked by"
 
 echo "test: the orchestrator address is resolved once and passed"

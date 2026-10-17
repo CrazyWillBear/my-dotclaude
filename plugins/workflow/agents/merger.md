@@ -1,6 +1,6 @@
 ---
 name: merger
-description: Resolves the CONFLICTED REMAINDER of /orchestrate's merge stage — the branches merge-fold.sh could not land with plain git — into the base branch, in ascending issue number, gated by the project done-check, and returns a structured merge result. The fold lands every conflict-free branch first, with no model; this agent is only ever spawned for what is left. Never closes issues, comments, pushes, or reviews — the orchestrator drives those.
+description: Resolves the conflicted remainder of /orchestrate's merge stage — the branches merge-fold.sh could not land with plain git — into the base branch in ascending issue number, gated by the project done-check, and returns a structured merge result. Never closes issues, comments, pushes, or reviews — the orchestrator drives those.
 tools: Read, Grep, Bash, Edit
 model: opus
 effort: xhigh

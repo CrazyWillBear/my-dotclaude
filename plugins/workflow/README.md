@@ -110,9 +110,8 @@ skipped if you are already in one), with per-issue worktrees nested under it. Th
 ### The loop
 
 1. **`ready.sh`** over the frozen graph, minus what merged, is held, or is in flight.
-2. **Admit** the lowest-numbered ready issues up to `--max N` (default 8). For each: write a
-   `CONTEXT-MAP.md` into its worktree (one sonnet `Explore` at **admission**, so a dependent's map
-   reflects its merged blockers), cut the worktree, and **`spawn.sh`** the session.
+2. **Admit** the lowest-numbered ready issues up to `--max N` (default 8). For each: cut the
+   worktree and **`spawn.sh`** the session.
 3. **Subscribe, don't poll.** `SendMessage` with `notify_when_idle: true` and **no message** — a pure
    subscription that costs the worker nothing and fires once when it goes idle.
 4. **The session builds**, spawns `my-review` itself, posts a review-round comment on the issue, and
@@ -148,7 +147,7 @@ run reports its stop reason. Killing mid-flight strands branches that had alread
 Each agent reads the issue **and its comments**, does its job, and appends its own. **Findings never
 pass through the orchestrator** — which makes "manage, don't track" structural rather than a rule
 somebody has to remember. The issue carries what **cannot be regenerated** (review findings,
-decisions, notes to future readers); local files carry what can (the context map). Comment format is
+decisions, notes to future readers); local files carry what can (run dirs, worktree paths). Comment format is
 a contract, and **brevity is a correctness property**: a verbose review comment poisons every later
 run's context.
 

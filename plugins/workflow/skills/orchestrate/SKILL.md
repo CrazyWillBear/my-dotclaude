@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: The standing dispatcher for agent work — routes by SHAPE, not size. One unit of work with you present runs as a subagent chain (implementer → my-review → fold+merge); an issue graph or PRD runs as one real `claude --bg` session per issue, named `orch-<runid>-issue-<N>-a<attempt>` (fix rounds append `-r<round>`), spawned with the tier's model into its own git worktree, reporting back over SendMessage; anything ambiguous is discussed and nothing is built. Scope is always an explicit issue allowlist (--issues, or --prd N walked into its child slices, never a repo-wide label sweep), tiers come from each issue's persisted `tier:trivial|standard|complex` label, and the graph is fetched once with scope-graph.sh and frozen. Readiness (every `## Blocked by` ref closed, skip hitl, hold an e2e-gate while mock-debt is open) is computed by ready.sh, not by a model. The issue thread is the coordination medium: each agent reads the issue and its comments, does its job, appends its own, and findings never pass through the orchestrator. Merging is fold-first (merge-fold.sh lands every conflict-free branch with plain git; only the conflicted remainder reaches the merger agent), the end merge and the single PR are offered and gated on you, and every irreversible `gh` write stays on the main thread. Absorbs the old /pipeline. Use for "/orchestrate", "run the loop", "build the ready issues", "orchestrate this".
+description: Dispatcher for agent work, routed by shape: one unit of work runs as a subagent chain; an issue graph or PRD (--issues or --prd N) runs one boxed worker per issue in its own worktree, tier-routed from each issue's tier label, gated by ready.sh, fold-merged, and reviewed; ambiguous work is discussed, not built. Use for "/orchestrate", "run the loop", "build the ready issues".
 argument-hint: "[--max N=5] [--merge-split-at K=5] [--allow-behind] [--prd N] [--issues N,N,...] [--skip-unknown]"
 effort: high
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion, SendMessage, ListAgents
@@ -274,12 +274,11 @@ model can, and historically did, hallucinate.
 
 **To admit an issue:**
 
-1. **Context map** (see [The context map](#the-context-map)) — at **admission**, not at launch.
-2. **Worktree**:
+1. **Worktree**:
    ```bash
    git -C "$baseRepo" worktree add -b "issue-<N>" ".worktrees/<runid>/issue-<N>" "$baseBranch"
    ```
-3. **Plan** (`standard` and `complex` only — see [The planner](#the-planner)):
+2. **Plan** (`standard` and `complex` only — see [The planner](#the-planner)):
    ```bash
    bash ~/.claude/kit/infra/scripts/consult.sh plan "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>"
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" planned '{"n":<N>}'
@@ -287,7 +286,7 @@ model can, and historically did, hallucinate.
    It posts the `**Plan**` comment and prints one line. **Run it with a 10-minute Bash timeout**
    (an opus pass outlasts the default). A non-zero exit is a failed plan: do not spawn a worker
    onto an issue with no plan — report it and skip the issue.
-4. **Spawn** — every tier, `trivial` included, through `spawn.sh` at **attempt 0** of the
+3. **Spawn** — every tier, `trivial` included, through `spawn.sh` at **attempt 0** of the
    tier's implementer chain (trivial and standard start on codex; trivial carries no plan):
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
@@ -300,12 +299,12 @@ model can, and historically did, hallucinate.
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/run-log.sh" append "$RUNID" respawned '{"n":<N>,"reason":"infra","env":["DATABASE_URL"]}'
    ```
    **Know the id, not just the name.** `claude stop` and `claude attach` take an **id** (`Usage: claude stop <id>`) and reject a session name outright — the name addresses `SendMessage`, the id controls the process. `claude --bg` prints a banner *containing* the id rather than a bare id, so don't parse spawn's output: read it from **`session-status.sh <runid>`, column 2**, when you need it.
-5. **Subscribe** — immediately after the spawn, `SendMessage` to the exact full name printed by
+4. **Subscribe** — immediately after the spawn, `SendMessage` to the exact full name printed by
    `spawn.sh` (for example, `orch-<runid>-issue-<N>-a0`) with `notify_when_idle: true` and
    **no message**. See [Liveness](#liveness).
 
 **The session is the implementer.** `spawn.sh`'s prompt points it at
-`plugins/workflow/agents/implementer.md` and names the obligation that cannot be lost: build the
+the implementer contract in infra's `boxes/implementer/CLAUDE.md` and names the obligation that cannot be lost: build the
 slice's **central mechanism for real**, and where real wiring genuinely must be deferred,
 **declare** it (`Mocked: <what>. Real wiring blocked by: #N`). An undeclared central mock is the
 drift the whole `/to-prd`→`/to-issues`→`/orchestrate` chain exists to catch, and a session that
@@ -403,39 +402,6 @@ workers with `--strict-mcp-config` and no servers; a `needs-browser` issue gets 
 The issue thread is the coordination medium: each agent reads it, does its job, and appends its
 own comment, so findings never pass through the orchestrator; see [infra's
 README](../../../infra/README.md#the-bus) for the comment contract and the review-round format.
-
----
-
-# The context map
-
-One **sonnet `Explore`** at **admission** — not at launch. A dependent's map should reflect its
-**merged blockers**, and at launch those blockers have not been built yet.
-
-Write it to the issue's worktree as `CONTEXT-MAP.md`. Flat: **path + one line each**. No structure,
-no summaries of summaries.
-
-```
-src/billing/retry.py — the retry loop this issue changes
-src/billing/client.py — calls it; owns the idempotency key
-tests/test_retry.py — the existing coverage
-```
-
-**Also grep the project's own docs for concepts these files already use.** If the
-project's `CLAUDE.md` names a doc where table/column/field semantics live (a schema
-doc) or keeps a `## Decisions` section (typically in an architecture doc), grep it for
-any identifier that also appears in the files just listed, and fold a hit in as its own
-line, quoting the doc directly:
-
-```
-docs/SCHEMA.md:893 — "Gmail's thread ids are per-mailbox, not globally unique"
-```
-
-**It is a hint, not a contract.** A pointer to a file that moved costs the implementer one failed
-`Read`. **No sha stamps, no staleness protocol** — a session that doubts the map deletes it and
-re-runs `Explore`.
-
-**The map is for the implementer only.** The reviewer has the **diff**, and `my-review`'s scope is
-the change plus its grepped neighbours; a map would widen it.
 
 ---
 
