@@ -18,7 +18,9 @@
 RUNDIR="${1:-}"
 [ -n "$RUNDIR" ] && [ -f "$RUNDIR/events.jsonl" ] || exit 0
 [ -s "$RUNDIR/last-message.txt" ] && exit 0
-REPORT="$(jq -cR 'fromjson? | select(type == "object" and .type == "result") | .structured_output // empty' \
-    "$RUNDIR/events.jsonl" 2>/dev/null | tail -1)"
+# The LAST result event first, THEN its report: a resumed turn that ended with no
+# structured output must not fall back to the previous turn's report.
+REPORT="$(jq -cR 'fromjson? | select(type == "object" and .type == "result")' \
+    "$RUNDIR/events.jsonl" 2>/dev/null | tail -1 | jq -c '.structured_output // empty' 2>/dev/null)"
 [ -z "$REPORT" ] || printf '%s\n' "$REPORT" >"$RUNDIR/last-message.txt"
 exit 0

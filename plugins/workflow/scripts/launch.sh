@@ -9,9 +9,13 @@
 #   1. dependency checks — the kit links, the three worker boxes, claude, gh, jq, git;
 #      codex only when a scoped tier's chain uses it. Any gap: `error: …`, exit 1.
 #   2. the allowlist — `--issues` literally, or `--prd N`'s open `ready-for-agent` children
-#      (not hitl/prd) via prd-children.sh. Never a repo-wide query (#77 defect A). A PRD with
-#      no open children prints `prd #N: 0 open children` and `nothing-to-do: …`, exit 0: the
-#      caller offers the PRD close.
+#      (not hitl/prd) via prd-children.sh. Never a repo-wide query (#77 defect A). A PRD whose
+#      children are all closed prints `prd #N: 0 open children` and `nothing-to-do: …`, exit 0:
+#      the caller offers the PRD close. NO children listed — gh failed, or the PRD is not
+#      sliced yet — is an error, never a close offer.
+#      Scoped issues an earlier run already merged into this branch (a `merged` event in this
+#      repo's run logs whose commit is an ancestor of HEAD) are dropped: `Closes #N` only fires
+#      when the PR lands on the default branch, so a merged slice can still be open.
 #   3. the graph, fetched once (scope-graph.sh) — tiers come from its `tier` field (the
 #      highest `tier:*` label wins). Unlabelled issues: `missing-tier: 12 15`, exit 3, nothing
 #      written — the caller backfills with /classify-task and reruns. An unfetchable issue is
@@ -75,6 +79,7 @@ ORCH_WT="$BASE_REPO/.claude/worktrees/$ORCH_BRANCH"
 # --- 2. the allowlist ----------------------------------------------------------------
 if [ -n "$PRD" ]; then
     CHILDREN="$(bash "$WF/prd-children.sh" "$PRD")"
+    [ -n "$CHILDREN" ] || die "could not list PRD #$PRD's children (gh failed, or it has no slices yet)"
     OPEN="$(printf '%s\n' "$CHILDREN" | awk '$2 == "open"' | grep -c . || true)"
     echo "prd #$PRD: $OPEN open children"
     if [ "$OPEN" -eq 0 ]; then
@@ -90,6 +95,19 @@ else
 fi
 for n in $SCOPE; do case "${n#\#}" in ''|*[!0-9]*) die "not an issue number: '$n'" ;; esac; done
 SCOPE="$(for n in $SCOPE; do printf '%s\n' "${n#\#}"; done | sort -nu | tr '\n' ' ')"
+RUNS="$(dirname "$(bash "$WF/run-log.sh" path probe 2>/dev/null)")"
+DONE=""
+for n in $SCOPE; do
+    for sha in $(cat "$RUNS"/*.jsonl 2>/dev/null | jq -rR --argjson n "$n" \
+            'fromjson? | select(type == "object" and .event == "merged" and .n == $n) | .sha // empty'); do
+        case "$sha" in ''|*[!0-9a-f]*) continue ;; esac
+        if git merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then DONE="$DONE $n"; break; fi
+    done
+done
+if [ -n "$DONE" ]; then
+    echo "already-merged:$DONE"
+    SCOPE="$(for n in $SCOPE; do case " $DONE " in *" $n "*) ;; *) printf '%s ' "$n" ;; esac; done)"
+fi
 [ -n "${SCOPE// /}" ] || die "the allowlist is empty — nothing to build (an empty scope is never widened)"
 
 # --- 3. the graph and the tiers ------------------------------------------------------
@@ -145,6 +163,7 @@ mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
 GRAPH="$RUN_DIR/graph.json"
 cp "$TMP/graph.json" "$GRAPH"
 {
+    # shellcheck disable=SC2034  # read through ${!v} below
     SKIP_UNKNOWN="$SKIP"
     for v in RUNID BASE_SHA BASE_BRANCH BASE_REPO ORCH_BRANCH ORCH_WT GRAPH MAX PRD SKIP_UNKNOWN; do
         printf '%s=%q\n' "$v" "${!v}"

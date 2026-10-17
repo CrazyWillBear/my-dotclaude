@@ -25,7 +25,7 @@ assert_equals() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (want '$3' got '
 assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '$2')" ;; esac; }
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 
-export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs" STUB_LOG="$WORK/log"
+export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs" STUB_LOG="$WORK/log" HANDLE_RETRY_SLEEP=0
 unset CLAUDE_PROJECT_DIR ESCALATE_REVIEW_CAP
 
 WF="$WORK/wf"; mkdir -p "$WF"
@@ -41,12 +41,15 @@ cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$INFRA/"
 cat >"$INFRA/worker-report.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.wr"
+[ -z "${STUB_WR_SLEEP:-}" ] || sleep "$STUB_WR_SLEEP"
 [ -z "${STUB_WR_ERR:-}" ] || { echo "$STUB_WR_ERR" >&2; exit 1; }
 echo "$STUB_REPORT"
 STUB
 cat >"$INFRA/escalate.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.esc"
+[ -z "${STUB_ESC_FAIL:-}" ] || { echo "error: could not read issue comments" >&2; exit 1; }
+[ -z "${STUB_ESC_ONLY:-}" ] || [ "$2" = "$STUB_ESC_ONLY" ] || exit 0
 [ -z "${STUB_ESC:-}" ] || echo "$STUB_ESC"
 STUB
 cat >"$INFRA/consult.sh" <<'STUB'
@@ -134,7 +137,9 @@ mkrun() {   # mkrun <N> <attempt> <role> <rounds-lines>
     printf '%s\n' "$3" >"$d/role"; printf "${4:-}" >"$d/rounds"
     dead >"$d/pid"; printf '0\n' >"$d/exit"
 }
-reset() { for f in wr esc consult spawn resume followup; do : >"$STUB_LOG.$f"; done; unset STUB_ESC STUB_REPORT STUB_WR_ERR STUB_CONSULT_FAIL; }
+reset() { for f in wr esc consult spawn resume followup; do : >"$STUB_LOG.$f"; done; unset STUB_ESC STUB_REPORT STUB_WR_ERR STUB_CONSULT_FAIL STUB_ESC_FAIL STUB_WR_SLEEP STUB_ESC_ONLY; }
+# live_leader — a sleeping process that leads its own group, like spawn.sh's wrapper.
+live_leader() { set -m; sleep 300 & LEADER=$!; set +m; }
 run() { OUT="$(cd "$ORCH_WT" && bash "$WF/handle-report.sh" r1 "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
 state() { rl state r1; }
 
@@ -240,6 +245,43 @@ STUB_WR_ERR="error: timed out after 540s waiting" run --wait
 assert_contains "waiting" "$OUT" "waiting:"
 STUB_WR_ERR="error: issue 13 reported built but no independent review was recorded" run --wait
 assert_contains "held with the reason" "$OUT" "held #13 no readable report"
+
+echo "test: on a timeout, a STALLED running worker is escalated from outside"
+reset; mkrun 15 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-15/exit"
+live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-15/pid"
+STUB_ESC_ONLY=15 STUB_WR_ERR="error: timed out after 240s waiting" STUB_ESC="stall: no event-log activity for 21 minutes" run --wait
+assert_contains "escalated" "$OUT" "escalated #15 stall → attempt 1"
+assert_contains "escalate.sh looked at the running worker" "$(cat "$STUB_LOG.esc")" "r1 15 standard"
+if kill -0 "$LEADER" 2>/dev/null; then no "the stalled worker survived"; kill -- -"$LEADER" 2>/dev/null; else ok "the stalled worker was group-killed"; fi
+assert_contains "and respawned in its role" "$(cat "$STUB_LOG.spawn")" "--role build --round 1 --attempt 1"
+
+echo "test: a transient escalate.sh failure is retried, then reported — never a hold"
+reset; mkrun 15 0 build '1 0 high, 0 medium, 0 low\n'
+STUB_ESC_FAIL=1 STUB_REPORT="issue 15 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_equals "retried once" "$(grep -c 'r1 15 ' "$STUB_LOG.esc")" "2"
+assert_contains "an error line for the caller" "$OUT" "error: escalate.sh failed for #15"
+assert_not_contains "never held" "$(state | sed -n 's/^held=//p')" "15"
+
+echo "test: backstop on a FAILED report ends the issue — no respawn"
+reset; mkrun 17 0 fix ''
+STUB_ESC="backstop: 6 review rounds" STUB_REPORT="issue 17 failed tests red" run --wait
+assert_contains "ended" "$OUT" "held #17 ended: backstop"
+assert_equals "nothing respawned" "$(cat "$STUB_LOG.spawn")" ""
+
+echo "test: a worker that already wrote exit is never killed — its pid may be recycled"
+reset; mkrun 18 0 build '1 1 high, 0 medium, 0 low\n'
+live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-18/pid"
+STUB_ESC="review-cap: still 1 high" STUB_REPORT="issue 18 built head=abc1234 review=1 high, 0 medium, 0 low" run --wait
+if kill -0 "$LEADER" 2>/dev/null; then ok "the unrelated process lives"; kill -- -"$LEADER" 2>/dev/null; else no "a recycled pid was killed"; fi
+assert_contains "and the respawn still happened" "$OUT" "escalated #18 review-cap"
+
+echo "test: one call at a time per run"
+reset; mkrun 12 0 build ''
+(STUB_WR_SLEEP=3 STUB_WR_ERR="error: timed out" bash "$WF/handle-report.sh" r1 --wait >/dev/null 2>&1 &)
+sleep 1
+OUT="$(cd "$ORCH_WT" && ORCH_LOCK_WAIT=0 bash "$WF/handle-report.sh" r1 --wait 2>/dev/null)"
+assert_contains "the second call waits its turn" "$OUT" "waiting: another admit.sh or handle-report.sh is still running"
+sleep 3
 
 echo "test: failure at the top of the chain drains the run"
 reset; mkrun 16 0 build ''

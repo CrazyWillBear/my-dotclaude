@@ -13,6 +13,10 @@
 # time (git's ref locks), the plans and spawns run in parallel — one opus plan per issue
 # is minutes, and Bash calls are capped at ten.
 #
+# One call at a time per run (run_lock), inside a wall-clock budget (ORCH_DEADLINE): a plan
+# that would cross it is deferred — `deferred #N …`, nothing logged, the worktree kept and
+# reused by the next pass. An existing issue-<N> worktree or branch is reused, never refused.
+#
 # --next reads merged / held / in-flight from run-log.sh and asks ready.sh what is
 # admissible; readiness is never computed here. A recorded drain (`decision` "drain: …")
 # stops all admission.
@@ -20,8 +24,10 @@
 # Output, one line per outcome:
 #   admitted #N tier=<t> attempt=0
 #   held #N <why>
+#   deferred #N <why>
 # then exactly one of:
 #   in-flight: 12,13            something is running
+#   waiting: …                  nothing running, but a plan was deferred — call again
 #   nothing-to-do: <why>        nothing running and nothing admissible (ready.sh's reason)
 #   error: <why>                ready.sh's unexplained empty — stop and report (exit 1)
 
@@ -31,6 +37,7 @@ set -uo pipefail
 
 [ $# -eq 2 ] || die "usage: admit.sh <runid> <N> | admit.sh <runid> --next"
 load_run "$1"
+run_lock
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -39,17 +46,27 @@ prepare() {
     local n="$1" wt
     [ -n "$(tier_of "$n")" ] || { hold "$n" "no tier in the graph (not in scope?)"; return 1; }
     wt="$(worktree_of "$n")"
-    git -C "$BASE_REPO" worktree add -q -b "issue-$n" "$wt" "$ORCH_BRANCH" >/dev/null 2>"$TMP/wt-$n.err" \
-        || { hold "$n" "worktree: $(tail -1 "$TMP/wt-$n.err")"; return 1; }
+    # Reuse what an earlier, deferred or interrupted pass left: the worktree, or the branch.
+    if [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "issue-$n" ]; then return 0; fi
+    if git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$n"; then
+        git -C "$BASE_REPO" worktree add -q "$wt" "issue-$n" >/dev/null 2>"$TMP/wt-$n.err"
+    else
+        git -C "$BASE_REPO" worktree add -q -b "issue-$n" "$wt" "$ORCH_BRANCH" >/dev/null 2>"$TMP/wt-$n.err"
+    fi || { hold "$n" "worktree: $(tail -1 "$TMP/wt-$n.err")"; return 1; }
 }
 
 # launch <N> — the parallel half: plan (non-trivial), spawn, log.
 launch() {
-    local n="$1" tier
+    local n="$1" tier left rc
     tier="$(tier_of "$n")"
     if [ "$tier" != trivial ]; then
-        if ! bash "$INFRA/consult.sh" plan "$RUNID" "$n" "$tier" "$(worktree_of "$n")" \
-                >"$TMP/plan-$n.out" 2>"$TMP/plan-$n.err" </dev/null; then
+        left="$(budget_left)"
+        [ "$left" -ge 60 ] || { echo "deferred #$n no time left for its plan in this call"; return; }
+        timeout "$left" bash "$INFRA/consult.sh" plan "$RUNID" "$n" "$tier" "$(worktree_of "$n")" \
+            >"$TMP/plan-$n.out" 2>"$TMP/plan-$n.err" </dev/null; rc=$?
+        if [ "$rc" -eq 124 ]; then
+            echo "deferred #$n its plan did not finish in this call; the next pass replans"; return
+        elif [ "$rc" -ne 0 ]; then
             hold "$n" "plan failed: $(tail -1 "$TMP/plan-$n.err")"; return
         fi
         runlog append "$RUNID" planned "{\"n\":$n}" >/dev/null
@@ -118,8 +135,18 @@ for n in $READY; do
 done
 [ "${#PICK[@]}" -eq 0 ] || admit_all "${PICK[@]}"
 # Every pick held and nothing running: the next pass sees them held and may find others.
-# It terminates — each pass holds at least one more issue or admits one.
-if [ "${#PICK[@]}" -gt 0 ] && [ -z "$(run_state in_flight | tr -d ' ')" ]; then
+# It terminates — each pass holds at least one more issue or admits one. Not after a
+# deferral, which held nothing.
+if [ "${#PICK[@]}" -gt 0 ] && [ -z "$(run_state in_flight | tr -d ' ')" ] \
+   && ! grep -q '^deferred' "$TMP"/out-* 2>/dev/null; then
+    rm -rf "${TMP:?}"
     exec bash "$0" "$RUNID" --next
 fi
-in_flight_line || echo "${WHY:-nothing-to-do: nothing admissible}"
+# A deferred plan is work still to do: never let it read as the end of the run.
+if ! in_flight_line; then
+    if grep -q '^deferred' "$TMP"/out-* 2>/dev/null; then
+        echo "waiting: deferred plans — call handle-report.sh $RUNID --wait again"
+    else
+        echo "${WHY:-nothing-to-do: nothing admissible}"
+    fi
+fi

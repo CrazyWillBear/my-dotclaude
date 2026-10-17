@@ -36,6 +36,7 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\necho "nothin
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
+if [ "$1" = repo ]; then echo "${STUB_DEFAULT:-dev}"; exit 0; fi
 printf '%s\n' "$@" >"$STUB_LOG.gh"
 while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$STUB_LOG.body"; shift; done
 echo "https://github.com/o/r/pull/7"
@@ -114,6 +115,14 @@ if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa.jsonl" ] || [ -e "$CLAU
     no "this run's transcript survived"; else ok "this run's transcript removed"; fi
 if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-other.jsonl" ]; then ok "an unrelated transcript kept"; else no "an unrelated transcript was removed"; fi
 assert_contains "and says what it cleaned" "$OUT" "2 worker transcript path(s) removed"
+
+assert_not_contains "on the default branch, no close warning" "$OUT" "will NOT close"
+
+echo "test: a PR into a non-default branch says loudly that GitHub will not close the slices"
+git -C "$UPSTREAM" update-ref -d refs/heads/orchestrate-r1
+OUT="$(STUB_DEFAULT=main bash "$WF/end-run.sh" r1 2>/dev/null)"
+assert_contains "in the output" "$OUT" "GitHub will NOT close #11, #12"
+assert_contains "and atop the PR body" "$(head -1 "$STUB_LOG.body")" "targets dev, not the default branch main"
 
 echo "test: nothing merged — no push, no PR, and it says so"
 ORCH2="$WORK/orch2"; git -C "$REPO" worktree add -q -b orchestrate-r2 "$ORCH2" dev

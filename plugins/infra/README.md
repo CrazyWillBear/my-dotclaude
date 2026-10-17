@@ -328,6 +328,14 @@ The same hook keeps two more addresses:
   the user's MCP servers, plugins, skills, memory or global `CLAUDE.md` load there. Box transcripts
   older than 7 days are pruned on every start.
 
+  **Credentials are shared, and a refresh can split them.** The CLI refreshes a token by writing a
+  new file and renaming it over the old, which replaces a box's symlink with a regular file. The
+  hook copies a box file that is NEWER than the user's back to `~/.claude/.credentials.json`
+  before re-linking, so a refresh is never lost and never clobbered. What it cannot cover: if a
+  refresh rotates the refresh token mid-run, the other side holds a stale one until the next
+  session start. A long-lived `claude setup-token` token given to the boxes would remove the
+  shared file altogether; that is a follow-up, not built.
+
 ## Liveness and recovery
 
 **Block, don't poll.** The orchestrator waits on its in-flight workers with one call —

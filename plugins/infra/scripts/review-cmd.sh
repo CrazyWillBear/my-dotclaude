@@ -13,8 +13,9 @@
 # roster's "reviewer: opus" was silently false for every codex worker, and the review ran
 # on codex's default model with a fixed prompt nobody could shape (docs/swarm-design.md
 # § Codex backend, #100). This argv is `claude -p` IN THE REVIEWER BOX (a per-role
-# CLAUDE_CONFIG_DIR link-kit.sh builds: the user's credentials, a reviewer CLAUDE.md, no
-# hooks, no plugins, no MCP servers), running AS the `my-review` agent — `--plugin-dir
+# CLAUDE_CONFIG_DIR link-kit.sh builds: the user's credentials, a reviewer CLAUDE.md, no user
+# hooks or MCP servers, and of the plugins only personal-tools — whose own hooks therefore
+# load too; none is a Stop hook), running AS the `my-review` agent — `--plugin-dir
 # ~/.claude/kit/personal-tools --agent my-review` — on the commit range: one session, not a
 # launcher that spawns a subagent. ~7k tokens to start instead of a full user config's ~44k.
 #

@@ -67,3 +67,24 @@ env_args() {
     [ -f "$(issue_dir "$1")/env" ] || return 0
     while IFS= read -r -d '' pair; do ENV_ARGS+=(--env "$pair"); done <"$(issue_dir "$1")/env"
 }
+
+# run_lock — one admit/handle-report at a time per run. A Bash call that outlives its
+# timeout keeps running in the background; without the lock the next call would admit the
+# same issues again. handle-report.sh holds it and exports ORCH_LOCKED, so the admit.sh it
+# calls does not wait on its own parent.
+run_lock() {
+    [ -z "${ORCH_LOCKED:-}" ] || return 0
+    exec 9>"$RUN_DIR/.lock" || die "cannot open $RUN_DIR/.lock"
+    if ! flock -w "${ORCH_LOCK_WAIT:-540}" 9; then
+        echo "waiting: another admit.sh or handle-report.sh is still running on run $RUNID"
+        exit 0
+    fi
+    export ORCH_LOCKED=1
+}
+
+# The wall-clock budget one call of admit.sh / handle-report.sh may use, inside Bash's
+# 10-minute cap. Work that would cross it is DEFERRED to the next call, never killed into a
+# hold: a plan or consult that times out leaves nothing posted and is simply retried.
+: "${ORCH_DEADLINE:=$(( $(date +%s) + ${ORCH_BUDGET:-570} ))}"
+export ORCH_DEADLINE
+budget_left() { echo $(( ORCH_DEADLINE - $(date +%s) )); }

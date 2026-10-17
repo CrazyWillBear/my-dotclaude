@@ -79,6 +79,10 @@ rm -f "$R/last-message.txt"
 printf '%s\n' '{"type":"result","is_error":true}' >"$R/events.jsonl"
 bash "$REPORT" "$R"
 if [ -e "$R/last-message.txt" ]; then no "a result with no report invented one"; else ok "no structured_output, no file"; fi
+rm -f "$R/last-message.txt"
+printf '%s\n' '{"type":"result","structured_output":{"status":"escalate"}}' '{"type":"result","is_error":true}' >"$R/events.jsonl"
+bash "$REPORT" "$R"
+if [ -e "$R/last-message.txt" ]; then no "a resumed turn with no report took the previous turn's"; else ok "the previous turn's report is never reused"; fi
 bash "$REPORT" "$WORK/nowhere"; assert_equals "a missing run dir exits 0" "$?" "0"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

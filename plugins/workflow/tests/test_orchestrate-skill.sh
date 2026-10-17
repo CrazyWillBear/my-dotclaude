@@ -71,7 +71,7 @@ assert_contains "enters the orchestration worktree by path" "$BODY" 'EnterWorktr
 echo "test: the loop — admit once, then handle-report --wait with a 10-minute timeout"
 assert_contains "admit.sh --next" "$BODY" 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/admit.sh" <runid> --next'
 assert_contains "handle-report.sh --wait" "$BODY" 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/handle-report.sh" <runid> --wait'
-assert_contains "the Bash timeout" "$BODY" "timeout: 600000"
+assert_contains "the Bash timeout covers every call" "$BODY" "**Every call here gets a 10-minute Bash timeout (\`timeout: 600000\`)**"
 assert_contains "until nothing-to-do" "$BODY" "until it prints \`nothing-to-do:\`"
 assert_matches "never polls" "$BODY" "never poll"
 

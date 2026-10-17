@@ -664,7 +664,7 @@ bash -c '
                     2>>"$rundir/review-stderr.log")"
                 if [ -n "$counts" ]; then
                     # THE LEDGER escalate.sh counts review rounds from — in the run dir,
-                    # which the worker cannot write; the thread copy is for humans and
+                    # which a codex worker cannot write (a claude one could — the accepted gap); the thread copy is for humans and
                     # the fix round, and a worker can forge a comment there. A round is a
                     # line starting with a digit; the finding<TAB>… entries beside it are
                     # emitted by review-counts.sh, the only parser of the review (#110).

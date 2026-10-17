@@ -74,7 +74,9 @@
 # each attempt is judged on evidence it produced. THE ANCHOR LIVES IN THE RUN DIR, not on
 # the thread: when this script posts a handoff it records `{attempt, mark}` (the comment
 # count at that moment) in `$RUNDIR/handoff.json`, and later wakes scan `comments[mark:]`.
-# A worker may post comments (`gh issue comment` is allowed) but cannot reach the run dir,
+# (Holds for a CODEX worker, whose sandbox cannot reach the run dir. A claude worker runs
+# with bypassPermissions and could write it — the accepted not-a-sandbox gap, docs/swarm-
+# design.md § Roster.) A codex worker may post comments (`gh issue comment` is allowed) but cannot reach the run dir,
 # so it cannot post a fake `**Handoff**` to reset its own count — which is what anchoring
 # on the thread would have allowed (review round 2). The same record is what stops a
 # handoff being posted twice for one attempt. (`failed` needs no scoping — spawn.sh clears

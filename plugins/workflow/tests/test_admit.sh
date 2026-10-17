@@ -126,6 +126,20 @@ OUT="$(cd "$REPO" && bash "$ADMIT" r2 --next 2>/dev/null)"
 assert_contains "says drained" "$OUT" "nothing-to-do: drained (drain: #10"
 assert_equals "spawns nothing" "$(cat "$STUB_LOG.spawn")" ""
 
+echo "test: a plan that would cross the call's budget is DEFERRED — nothing held — and the next pass reuses its worktree"
+mkdir -p "$CODEX_RUN_ROOT/r4"; sed 's/^RUNID=r1/RUNID=r4/; s/^MAX=3/MAX=1/' "$CODEX_RUN_ROOT/r1/run.env" >"$CODEX_RUN_ROOT/r4/run.env"
+git -C "$REPO" worktree remove --force "$REPO/.worktrees/r1/issue-11" >/dev/null 2>&1
+git -C "$REPO" branch -D issue-11 >/dev/null 2>&1
+sed -i "s|^BASE_REPO=.*|BASE_REPO=$REPO|" "$CODEX_RUN_ROOT/r4/run.env"
+: >"$STUB_LOG.spawn"
+OUT="$(cd "$REPO" && ORCH_BUDGET=30 bash "$ADMIT" r4 11 2>/dev/null)"
+assert_contains "deferred" "$OUT" "deferred #11"
+assert_not_contains "never held" "$(cd "$REPO" && bash "$RUNLOG" state r4)" "held=11"
+assert_equals "nothing spawned" "$(cat "$STUB_LOG.spawn")" ""
+OUT="$(cd "$REPO" && bash "$ADMIT" r4 11 2>/dev/null)"
+assert_contains "the next pass admits it on the same worktree" "$OUT" "admitted #11"
+assert_contains "spawned onto the reused worktree" "$(cat "$STUB_LOG.spawn")" "$REPO/.worktrees/r4/issue-11"
+
 echo "test: a single admission, and refusals"
 mkdir -p "$CODEX_RUN_ROOT/r3"; sed 's/^RUNID=r1/RUNID=r3/; s/^ORCH_BRANCH=orchestrate-r1/ORCH_BRANCH=orchestrate-r1/' "$CODEX_RUN_ROOT/r1/run.env" >"$CODEX_RUN_ROOT/r3/run.env"
 git -C "$REPO" worktree remove --force "$REPO/.worktrees/r1/issue-10" >/dev/null 2>&1; git -C "$REPO" branch -D issue-10 >/dev/null 2>&1

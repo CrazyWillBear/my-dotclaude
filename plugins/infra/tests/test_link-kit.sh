@@ -93,6 +93,19 @@ assert_contains "implementer: the hook runs worktree-guard through the kit link"
 assert_equals "planner: no hooks" "$(jq -c . "$BOXES/planner/settings.json")" "{}"
 assert_equals "reviewer: no hooks" "$(jq -c . "$BOXES/reviewer/settings.json")" "{}"
 
+echo "test: a box that refreshed its token hands the newer file back, then is re-linked"
+printf 'old\n' >"$HOME/.claude/.credentials.json"; touch -d '1 hour ago' "$HOME/.claude/.credentials.json"
+rm -f "$BOXES/planner/.credentials.json"; printf 'refreshed\n' >"$BOXES/planner/.credentials.json"
+run
+assert_equals "the user's file now holds the box's newer tokens" "$(cat "$HOME/.claude/.credentials.json")" "refreshed"
+assert_equals "the user's file stays private" "$(stat -c %a "$HOME/.claude/.credentials.json")" "600"
+assert_equals "and the box is a symlink again" "$(readlink "$BOXES/planner/.credentials.json")" "$HOME/.claude/.credentials.json"
+rm -f "$BOXES/reviewer/.credentials.json"; printf 'stale\n' >"$BOXES/reviewer/.credentials.json"
+touch -d '2 hours ago' "$BOXES/reviewer/.credentials.json"
+run
+assert_equals "an OLDER box file never overwrites the user's" "$(cat "$HOME/.claude/.credentials.json")" "refreshed"
+assert_equals "it is simply re-linked" "$(readlink "$BOXES/reviewer/.credentials.json")" "$HOME/.claude/.credentials.json"
+
 echo "test: CLAUDE_BOX_ROOT moves the boxes"
 CLAUDE_BOX_ROOT="$WORK/alt-boxes" run
 if [ -f "$WORK/alt-boxes/reviewer/CLAUDE.md" ]; then ok "box root override honoured"; else no "box root override ignored"; fi

@@ -8,9 +8,13 @@
 #   bash handle-report.sh <runid> --answer <N> <text>       # a human answered #N's question
 #   bash handle-report.sh <runid> --resource <N> --env K=V…  # a human provisioned #N's resource
 #
-# --wait blocks in worker-report.sh --any on the in-flight workers (run-log.sh) that are not
-# PAUSED on a human or a merger. On a timeout it prints `waiting: …` and exits 0 — the caller
-# simply calls it again, inside Bash's 10-minute cap. A report is then handled:
+# --wait blocks in worker-report.sh --any (≤ HANDLE_WAIT_TIMEOUT, default 240 s) on the
+# in-flight workers (run-log.sh) that are not PAUSED on a human or a merger. On a timeout it
+# runs escalate.sh on every worker still running — a stall or a full context is only visible
+# from outside — acts on what fires, and otherwise prints `waiting: …`; the caller calls it
+# again. One call at a time per run (run_lock), inside a wall-clock budget: a plan or consult
+# that would cross it is deferred to the next call, never turned into a hold. A report is
+# then handled:
 #
 #   report                     escalate.sh says         action
 #   built/fixed, 0 high+med    (nothing)                fold it in (merge-fold.sh) → merged / conflict
@@ -38,6 +42,7 @@ USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> |
 [ $# -ge 2 ] || die "$USAGE"
 load_run "$1"; shift
 MODE="$1"; shift
+run_lock
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -61,6 +66,8 @@ capped() {
 # kill_worker <N> — group-kill the wrapper (it leads its own group), bounded wait.
 kill_worker() {
     local pid
+    # A worker that wrote `exit` is gone; its pid may already belong to someone else.
+    [ ! -e "$(issue_dir "$1")/exit" ] || return 0
     pid="$(head -1 "$(issue_dir "$1")/pid" 2>/dev/null)"
     case "$pid" in ''|*[!0-9]*) return 0 ;; esac
     kill -0 "$pid" 2>/dev/null || return 0
@@ -74,6 +81,7 @@ kill_worker() {
 # escalate_to_next <N> <reason> <detail> <attempt> <role> <round>
 escalate_to_next() {
     local n="$1" reason="$2" detail="$3" a="$4" role="$5" round="$6" tier chain next b
+    [ "$role" = fix ] || { role=build; round=1; }
     tier="$(tier_of "$n")"
     kill_worker "$n" || { hold "$n" "could not stop the worker (pid not a live group leader) — not respawning onto its worktree"; return; }
     runlog append "$RUNID" escalated "$(jq -cn --argjson n "$n" --arg r "$reason" --argjson a "$a" '{n: $n, reason: $r, attempt: $a}')" >/dev/null
@@ -126,6 +134,19 @@ fold() {
     esac
 }
 
+escalate() {   # escalate <N> <tier> <worktree> <attempt> — escalate.sh, retried once
+    bash "$INFRA/escalate.sh" "$RUNID" "$1" "$2" "$3" --base "$ORCH_BRANCH" --attempt "$4" 2>"$TMP/esc.err" && return
+    sleep "${HANDLE_RETRY_SLEEP:-5}"
+    bash "$INFRA/escalate.sh" "$RUNID" "$1" "$2" "$3" --base "$ORCH_BRANCH" --attempt "$4" 2>"$TMP/esc.err"
+}
+
+# timed <consult args…> — consult.sh inside what is left of this call's budget; 124 = deferred.
+timed_consult() {
+    local left; left="$(budget_left)"
+    [ "$left" -ge 60 ] || return 124
+    timeout "$left" bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null
+}
+
 resume_bg() {   # resume_bg <N> <answer> — worker-resume.sh, backgrounded; the next --wait reads it
     local n="$1" d
     d="$(issue_dir "$n")"
@@ -141,14 +162,16 @@ resume_bg() {   # resume_bg <N> <answer> — worker-resume.sh, backgrounded; the
 
 # handle "<report line>"
 handle() {
-    local line="$1" n status rest tier a k role reason key detail h m wt
+    local line="$1" n status rest tier a k role reason key detail h m wt rc
     n="$(printf '%s' "$line" | awk '{print $2}')"; status="$(printf '%s' "$line" | awk '{print $3}')"
     rest="${line#issue "$n" "$status"}"; rest="${rest# }"
     tier="$(tier_of "$n")"; a="$(attempt_of "$n")"; k="$(rounds_of "$n")"; k="${k:-0}"
     role="$(head -1 "$(issue_dir "$n")/role" 2>/dev/null)"; role="${role:-build}"
     wt="$(worktree_of "$n")"
-    reason="$(bash "$INFRA/escalate.sh" "$RUNID" "$n" "$tier" "$wt" --base "$ORCH_BRANCH" --attempt "$a" 2>"$TMP/esc.err")" \
-        || { hold "$n" "escalate.sh failed: $(tail -1 "$TMP/esc.err")"; return; }
+    # Retried once: its thread read is a `gh` call, and a blip must not end a reviewed issue.
+    # Still failing → an error line and the issue stays in flight (re-reported next call).
+    reason="$(escalate "$n" "$tier" "$wt" "$a")" \
+        || { echo "error: escalate.sh failed for #$n: $(tail -1 "$TMP/esc.err")"; return; }
     key="${reason%%:*}"; detail="${reason#*: }"
     case "$status" in
     built|fixed)
@@ -163,7 +186,7 @@ handle() {
                 echo "fix #$n round=$k attempt=$a ($h high, $m medium)"
             fi ;;
         recurrence)
-            if bash "$INFRA/consult.sh" decide "$RUNID" "$n" "$tier" "$wt" --attempt "$a" >/dev/null 2>"$TMP/c.err" </dev/null; then
+            if timed_consult decide "$RUNID" "$n" "$tier" "$wt" --attempt "$a"; then
                 runlog append "$RUNID" consulted "{\"n\":$n}" >/dev/null
                 echo "decided #$n $detail"
             else
@@ -179,16 +202,23 @@ handle() {
         *)
             escalate_to_next "$n" "$key" "$detail" "$a" fix "$k" ;;
         esac ;;
-    failed)
-        if [ -n "$key" ]; then escalate_to_next "$n" "$key" "$detail" "$a" "$role" "$k"
-        else drain "$n" "failed: $rest"; fi ;;
-    escalate)
-        if [ -n "$key" ]; then escalate_to_next "$n" "$key" "$detail" "$a" "$role" "$k"
+    failed|escalate)
+        case "$key" in
+        no-progress|backstop)
+            # The issue's loop is over and there is nothing built to merge: end it, no respawn.
+            hold "$n" "ended: $reason"; return ;;
+        "") ;;
+        *)  escalate_to_next "$n" "$key" "$detail" "$a" "$role" "$k"; return ;;
+        esac
+        if [ "$status" = failed ]; then drain "$n" "failed: $rest"
         elif [ "${rest#deviation:}" != "$rest" ]; then
-            if bash "$INFRA/consult.sh" consult "$RUNID" "$n" "$tier" "$wt" --attempt "$a" >/dev/null 2>"$TMP/c.err" </dev/null; then
+            timed_consult consult "$RUNID" "$n" "$tier" "$wt" --attempt "$a"; rc=$?
+            if [ "$rc" -eq 0 ]; then
                 runlog append "$RUNID" consulted "{\"n\":$n}" >/dev/null
                 resume_bg "$n" "Consult posted: read the newest **Consult** comment on #$n and follow its decision." \
                     && echo "consulted #$n; resumed"
+            elif [ "$rc" -eq 124 ]; then
+                echo "deferred #$n its consult did not finish in this call; retried on the next --wait"
             else
                 escalate_to_next "$n" deviation-cap "consult refused: $(tail -1 "$TMP/c.err")" "$a" "$role" "$k"
             fi
@@ -219,10 +249,27 @@ case "$MODE" in
         exit 0
     fi
     LINE="$(bash "$INFRA/worker-report.sh" --any "$RUNID" "${WAITSET[@]}" \
-        --timeout "${HANDLE_WAIT_TIMEOUT:-540}" --interval "${HANDLE_WAIT_INTERVAL:-10}" 2>"$TMP/wr.err")"; RC=$?
+        --timeout "${HANDLE_WAIT_TIMEOUT:-240}" --interval "${HANDLE_WAIT_INTERVAL:-10}" 2>"$TMP/wr.err")"; RC=$?
     if [ "$RC" -ne 0 ]; then
         if grep -q 'timed out' "$TMP/wr.err"; then
-            echo "waiting: $(printf '%s ' "${WAITSET[@]}" | xargs | tr ' ' ',')"; exit 0
+            # Nobody reported: look at the ones still running. A stall, a full context or a
+            # worker that died without an exit code is only visible from out here.
+            ACTED=""
+            for n in "${WAITSET[@]}"; do
+                a="$(attempt_of "$n")"; k="$(rounds_of "$n")"
+                role="$(head -1 "$(issue_dir "$n")/role" 2>/dev/null)"
+                reason="$(escalate "$n" "$(tier_of "$n")" "$(worktree_of "$n")" "$a")" \
+                    || { echo "error: escalate.sh failed for #$n: $(tail -1 "$TMP/esc.err")"; ACTED=1; continue; }
+                case "${reason%%:*}" in
+                    "") ;;
+                    stall|occupancy|failed|quota)
+                        escalate_to_next "$n" "${reason%%:*}" "${reason#*: }" "$a" "${role:-build}" "${k:-0}"
+                        ACTED=1 ;;
+                esac
+            done
+            if [ -n "$ACTED" ]; then next
+            else echo "waiting: $(printf '%s ' "${WAITSET[@]}" | xargs | tr ' ' ',')"; fi
+            exit 0
         fi
         N="$(sed -n 's/^error: issue \([0-9]*\) .*/\1/p' "$TMP/wr.err" | head -1)"
         [ -n "$N" ] || { echo "error: worker-report.sh: $(tail -1 "$TMP/wr.err")"; exit 0; }

@@ -11,7 +11,11 @@
 #      or the local branch when it has none.
 #   3. `git push -u origin orchestrate-<runid>` and `gh pr create` into the LAUNCH branch. The
 #      body is the per-issue table plus one `Closes #N` per merged slice: the slices close when
-#      the PR merges. The run itself never closes an issue and never merges the PR.
+#      the PR merges. GitHub honours `Closes` only on the DEFAULT branch, so a PR into any other
+#      branch (a `dev` workflow) says so loudly, in the body and the output: those slices must
+#      be closed by hand after the merge (the next launch skips them either way — launch.sh
+#      drops issues already merged into its branch). The run never closes an issue and never
+#      merges the PR.
 #   4. cleanup: session-gc.sh --run <runid>; every issue's provisioned env file; this run's
 #      worker transcripts in the boxes (by the session ids in its event logs).
 #
@@ -70,7 +74,13 @@ for i in graph.get("issues") or []:
     print("| #%s | %s | %s | %s | %s |" % (n, title, i.get("tier") or "-", out, ", ".join(esc.get(n, [])) or "-"))
 PY
 MERGED="$(run_state merged)"
+DEFAULT="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
+NOCLOSE=""
+if [ -n "${MERGED// /}" ] && [ -n "$DEFAULT" ] && [ "$DEFAULT" != "$BASE_BRANCH" ]; then
+    NOCLOSE="NOTE: this PR targets $BASE_BRANCH, not the default branch $DEFAULT — GitHub will NOT close $(printf '%s' "$MERGED" | xargs | sed 's/[0-9][0-9]*/#&/g; s/ /, /g') when it merges. Close them by hand after merging."
+fi
 {
+    [ -z "$NOCLOSE" ] || { echo "> $NOCLOSE"; echo; }
     cat "$TMP/table.md"
     echo
     echo "- $INTEG"
@@ -116,4 +126,5 @@ echo
 echo "$INTEG"
 echo "$PREVIEW"
 echo "cleanup: ${GC:-session-gc gave no output}; env files removed; $GONE worker transcript path(s) removed"
+[ -z "$NOCLOSE" ] || echo "$NOCLOSE"
 echo "$PR"

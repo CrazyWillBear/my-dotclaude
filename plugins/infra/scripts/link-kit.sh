@@ -64,7 +64,18 @@ BOX_ROOT="${CLAUDE_BOX_ROOT:-$HOME_DIR/.claude/kit/boxes}"
 for role in implementer planner reviewer; do
     box="$BOX_ROOT/$role"
     mkdir -p "$box" || continue
-    ln -sfn "$CFG/.credentials.json" "$box/.credentials.json" 2>/dev/null
+    # A token refresh inside a box replaces this symlink with a regular file (the CLI
+    # writes by rename). If that file is NEWER than the user's, it holds the live tokens:
+    # copy it back (atomically, private) before re-linking, so a refresh is never lost and a
+    # re-link never clobbers newer tokens with older ones. Residual risk, accepted for now:
+    # a refresh that ROTATES the refresh token mid-run leaves the other side stale until the
+    # next SessionStart (README § The stable address).
+    creds="$box/.credentials.json"
+    if [ -f "$creds" ] && [ ! -L "$creds" ] && { [ ! -e "$CFG/.credentials.json" ] || [ "$creds" -nt "$CFG/.credentials.json" ]; }; then
+        ( umask 077; cp -f "$creds" "$CFG/.credentials.json.box-sync.$$" \
+            && mv -f "$CFG/.credentials.json.box-sync.$$" "$CFG/.credentials.json" ) 2>/dev/null
+    fi
+    ln -sfn "$CFG/.credentials.json" "$creds" 2>/dev/null
     cp -f "$ROOT/boxes/$role/CLAUDE.md" "$box/CLAUDE.md" 2>/dev/null
     if [ "$role" = implementer ]; then
         # The primary-checkout guard every interactive session has, so a boxed worker that

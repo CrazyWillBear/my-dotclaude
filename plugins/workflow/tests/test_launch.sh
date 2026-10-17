@@ -144,6 +144,23 @@ assert_contains "the count" "$OUT" "prd #20: 0 open children"
 assert_contains "and nothing to do" "$OUT" "nothing-to-do:"
 if [ -e "$CODEX_RUN_ROOT/r5" ]; then no "launched anyway"; else ok "launched nothing"; fi
 
+echo "test: a PRD whose children cannot be listed is an error, never a close offer"
+: >"$STUB_CHILDREN"
+run r5b --prd 20
+assert_equals "exit 1" "$RC" "1"
+assert_contains "says why" "$ERR" "could not list PRD #20's children"
+assert_not_contains "no close offer" "$OUT" "0 open children"
+
+echo "test: an issue an earlier run already merged into this branch is dropped from scope"
+graph 13:standard:open
+(cd "$REPO" && bash "$WF/run-log.sh" append r0 merged "{\"n\":41,\"sha\":\"$(git -C "$REPO" rev-parse HEAD)\"}" >/dev/null)
+(cd "$REPO" && bash "$WF/run-log.sh" append r0 merged '{"n":13,"sha":"0123456789abcdef0123456789abcdef01234567"}' >/dev/null)
+run r5c --issues 41,13
+assert_equals "exit 0" "$RC" "0"
+assert_contains "names it" "$OUT" "already-merged: 41"
+assert_equals "and fetches only the rest" "$(cat "$STUB_SCOPE_ARGS")" "13"
+assert_contains "a merge commit not in this branch does not count" "$OUT" "scope=13"
+
 echo "test: an empty allowlist stops the run"
 printf '27 open hitl\n' >"$STUB_CHILDREN"
 run r6 --prd 20
