@@ -517,6 +517,8 @@ assert_not_contains "never the moved tip" "$(cat "$WORK/review-argv" 2>/dev/null
 assert_not_contains "never the slice's own head" "$(cat "$WORK/review-argv" 2>/dev/null)" \
     "$(git -C "$SLICE" rev-parse HEAD)..HEAD"
 git -C "$ORIGIN" branch -f base "$FORK"
+run r1 92 standard "$SLICE" --answer "x" --base --octopus
+assert_equals "an option-shaped base is refused (merge-base --octopus prints HEAD)" "$RC" "1"
 
 echo "test: a resumed FIX worker gets a scoped re-review"
 mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'

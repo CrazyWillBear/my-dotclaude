@@ -381,6 +381,10 @@ assert_not_contains "never the moved tip" "$rv_moved" "$(git -C "$ORIGIN" rev-pa
 assert_not_contains "never the slice's own head" "$rv_moved" "$(git -C "$SLICE" rev-parse HEAD)..HEAD"
 git -C "$ORIGIN" branch -f base "$FORK"
 
+echo "test: an option-shaped base is refused, not read as a flag (merge-base --octopus prints HEAD)"
+codex_dry r9 12 standard "$REPO" --octopus >/dev/null; rc=$?
+assert_equals "refused" "$rc" "1"
+
 echo "test: a CODEX reviewer cell is reviewed on opus anyway — reviews are claude"
 CFG_MIXED="$WORK/cfg-mixed"
 mkdir -p "$CFG_MIXED"

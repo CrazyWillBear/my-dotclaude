@@ -478,7 +478,7 @@ fi
 # A SHA resolved before the worker starts cannot be moved by anything the worker does.
 # The FORK POINT, not the tip: a base that moved on since the worktree was cut (a sibling
 # merged while this slice planned) would make that sibling's work read as reverts.
-BASE_SHA="$(git -C "$WORKTREE" merge-base "$BASE" HEAD 2>/dev/null)" \
+BASE_SHA="$(git -C "$WORKTREE" merge-base "$BASE^{commit}" HEAD 2>/dev/null)" \
     || die "cannot resolve base branch '$BASE' to a fork point in $WORKTREE"
 
 # The reviewer prints its verdict to STDOUT; the wrapper below captures it to review.txt
