@@ -476,8 +476,10 @@ fi
 # would empty its own diff and an honest reviewer would return a clean verdict on it —
 # the same "graded its own work" outcome as the self-review, reached through git instead.
 # A SHA resolved before the worker starts cannot be moved by anything the worker does.
-BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
-    || die "cannot resolve base branch '$BASE' to a commit in $WORKTREE"
+# The FORK POINT, not the tip: a base that moved on since the worktree was cut (a sibling
+# merged while this slice planned) would make that sibling's work read as reverts.
+BASE_SHA="$(git -C "$WORKTREE" merge-base "$BASE" HEAD 2>/dev/null)" \
+    || die "cannot resolve base branch '$BASE' to a fork point in $WORKTREE"
 
 # The reviewer prints its verdict to STDOUT; the wrapper below captures it to review.txt
 # and points TMPDIR at a scratch dir beside the disposable checkout (#99) — both created

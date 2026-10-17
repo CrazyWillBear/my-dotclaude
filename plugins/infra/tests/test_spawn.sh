@@ -361,6 +361,17 @@ assert_contains "the finding shape" "$rv" "- [P1]"
 assert_contains "the clean literal" "$rv" "No findings."
 assert_contains "the base as a SHA in the range" "$rv" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')..HEAD"
 assert_arg "no edits" "$rv" "Edit"
+
+echo "test: the range starts at the fork point, not a base that moved on (e2e 20261017)"
+# A slice whose worktree was cut while its plan ran, before a sibling merged into the
+# base, was reviewed two-dot against the new tip: the sibling's work read as reverts.
+FORK="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$ORIGIN" commit -q --allow-empty -m "sibling merged" >/dev/null 2>&1
+git -C "$ORIGIN" branch -f base HEAD
+rv_moved=$(review_argv "$(codex_dry r9 12 standard "$REPO" base)")
+assert_contains "the fork point" "$rv_moved" "$FORK..HEAD"
+assert_not_contains "never the moved tip" "$rv_moved" "$(git -C "$ORIGIN" rev-parse base)..HEAD"
+git -C "$ORIGIN" branch -f base "$FORK"
 assert_arg "no pushes" "$rv" "Bash(git push:*)"
 assert_arg "no review-round comment of its own — the wrapper posts that" "$rv" "Bash(gh issue comment:*)"
 

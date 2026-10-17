@@ -216,8 +216,8 @@ fi
 # A SHA, resolved before the resumed worker runs, for the same reason spawn.sh pins one:
 # `refs/` is a writable root, so a base resolved by NAME afterwards could be moved to HEAD
 # by the worker, emptying its own diff and buying an honest clean verdict.
-BASE_SHA="$(git -C "$WORKTREE" rev-parse --verify "$BASE^{commit}" 2>/dev/null)" \
-    || die "cannot resolve base '$BASE' to a commit in $WORKTREE"
+BASE_SHA="$(git -C "$WORKTREE" merge-base "$BASE" HEAD 2>/dev/null)" \
+    || die "cannot resolve base '$BASE' to a fork point in $WORKTREE"
 # The scratch dir a test runner inside the review may write to (#99) — see review-cmd.sh
 # for why the review itself never runs from $WORKTREE, and spawn.sh's wrapper for the
 # identical clone-and-cleanup this script mirrors below.
