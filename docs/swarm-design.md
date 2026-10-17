@@ -53,7 +53,7 @@ plugin holds every script other plugins need, and nothing else calls across.
 | plugin | holds | calls into |
 |---|---|---|
 | **context** | the four hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan` | nothing |
-| **infra** | scripts only: `spawn.sh`, `session-status.sh`, `check-inbound.sh`, the backend switch, `model-tiers.json` + `resolve-tier.sh`, and `link-kit.sh` (the stable-address hook) | nothing |
+| **infra** | scripts only: `spawn.sh`, `session-status.sh`, `worker-stop.sh`, `check-inbound.sh`, the backend switch, `model-tiers.json` + `resolve-tier.sh`, and `link-kit.sh` (the stable-address hook) | nothing |
 | **workflow** | `/orchestrate`, `/classify-task`, `/to-prd`, `/to-issues`, the graph + merge scripts, the three agents | infra |
 | **swarm** | `/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, charter + brief templates, memory tiers | infra |
 | **personal-tools** | everything left | nothing |

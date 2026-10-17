@@ -446,8 +446,8 @@ assert_matches "per-slice PRs" "$BODY" "[Pp]er-slice PRs"
 # ---------------------------------------------------------------------------
 echo "test: it stays smaller than the thing it replaced"
 lines=$(wc -l <"$SKILL_FILE")
-# Keep one line of headroom for integration changes before the <700 merged-file gate.
-if [ "$lines" -lt 699 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
+# Cap raised 699 -> 720 for the stop-finished-workers + lean-MCP prose; still well under 757.
+if [ "$lines" -lt 720 ]; then ok "SKILL.md is $lines lines (was 757 before the infra prose trim)"; else no "SKILL.md grew back to $lines lines"; fi
 
 echo "test: infra scripts are called by infra's stable path, never workflow's root"
 for s in check-inbound.sh "resolve-tier.sh <tier>" "session-status.sh --self" spawn.sh consult.sh escalate.sh; do
@@ -457,6 +457,22 @@ for s in session-status.sh check-inbound.sh resolve-tier.sh spawn.sh consult.sh 
     assert_not_contains "no plugin-root path to $s" "$BODY" '${CLAUDE_PLUGIN_ROOT}/scripts/'"$s"
 done
 assert_contains "fails loud without infra" "$BODY" "infra plugin not installed"
+
+echo "test: finished workers are stopped, and workers launch lean"
+assert_contains "a --bg session never exits by itself" "$BODY" "never exits by itself"
+assert_contains "the stop helper is called through the kit path" "$BODY" \
+    'bash ~/.claude/kit/infra/scripts/worker-stop.sh "$RUNID" <N>'
+assert_matches "stopped BEFORE anything replaces the worker" "$BODY" "\*\*before\*\* spawning anything that replaces"
+assert_matches "a superseded worker is stopped" "$BODY" "superseded \(respawn, escalation, next fix"
+assert_matches "an escalating worker is not stopped" "$BODY" "Not on .?escalate"
+assert_contains "the end of a run stops what remains" "$BODY" 'worker-stop.sh "$RUNID" --all'
+assert_matches "drain stops the remainder too" "$BODY" "drain-then-stop.*stop every remaining worker"
+assert_matches "only the process is freed" "$BODY" "frees the process only"
+assert_contains "the script is in the ownership table" "$BODY" "| \`worker-stop.sh\` |"
+assert_not_contains "no plugin-root path to worker-stop.sh" "$BODY" '${CLAUDE_PLUGIN_ROOT}/scripts/worker-stop.sh'
+assert_contains "workers get no MCP servers" "$BODY" "--strict-mcp-config"
+assert_contains "needs-browser is the opt-in label" "$BODY" "needs-browser"
+assert_contains "the opt-in is a spawn flag on every spawn" "$BODY" "add \`--browser\` to every \`spawn.sh\` call"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

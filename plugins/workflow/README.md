@@ -38,7 +38,7 @@ plugins/workflow/
 └── README.md                         # this file
 ```
 
-`spawn.sh`, `session-status.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live
+`spawn.sh`, `session-status.sh`, `worker-stop.sh`, `check-inbound.sh`, `resolve-tier.sh` and `model-tiers.json` live
 in the [`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
 
 ## Why it works this way
@@ -167,6 +167,11 @@ tier's implementer chain (6-luna → haiku for trivial and standard) by `escalat
 `failed` report, a third deviation, a review round with high or medium findings, a stall, a full context
 — never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
 because nothing in git or GitHub records that a session was killed or a model changed.
+
+A `--bg` session never exits on its own, so the orchestrator stops each worker (`worker-stop.sh`) the
+moment its job is over — a handled report, a superseding respawn or fix round, a merged issue — and
+every remaining one at the end of the run or a drain. Workers start with **no MCP servers**
+(`--strict-mcp-config`); an issue labeled `needs-browser` gets only Playwright (`spawn.sh --browser`).
 
 An escalating worker messages the orchestrator, which **offers both** mediation and
 `claude attach <id>` (column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the

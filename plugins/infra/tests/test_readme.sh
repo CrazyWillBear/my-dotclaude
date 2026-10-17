@@ -203,5 +203,12 @@ else
     fi
 fi
 
+echo "test: stopping finished workers and lean MCP"
+assert_contains "worker-stop.sh is documented" "$BODY" "worker-stop.sh <runid> --all"
+assert_matches "it frees the process only" "$BODY" "worktree, branch and conversation are untouched"
+assert_matches "a stop that does not take exits 1" "$BODY" "still live.*exits 1|exits 1, naming it"
+assert_contains "workers launch with no MCP servers" "$BODY" "--mcp-config '{\"mcpServers\":{}}' --strict-mcp-config"
+assert_contains "--browser is the Playwright opt-in" "$BODY" "\`--browser\` swaps in only the Playwright server"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

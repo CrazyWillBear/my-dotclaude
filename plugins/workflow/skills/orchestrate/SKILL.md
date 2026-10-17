@@ -158,7 +158,7 @@ issue. **A claude session costs ≈40k tokens to start**; a `codex exec` worker 
 `tier:trivial` starts on codex (6-luna) like `standard`, and a claude session is paid for only
 when a chain escalates to its top cell or the tier is `complex`.
 
-**One session per issue. Never a reused per-slot session.** A reused slot carries the previous issue's context into the next build — which is precisely the poisoning the fresh-context reviewer exists to prevent. When an issue is done, its session exits.
+**One session per issue. Never a reused per-slot session.** A reused slot carries the previous issue's context into the next build — which is precisely the poisoning the fresh-context reviewer exists to prevent. When an issue is done, you stop its session ([Stop finished workers](#stop-finished-workers)) — a `--bg` session never exits by itself.
 
 ## Names and paths
 
@@ -206,6 +206,7 @@ Read each scoped issue's labels; take its tier from `tier:trivial` / `tier:stand
 - **Missing → backfill.** Run `/classify-task <N> --no-confirm` (Explore-grounded), then persist with `gh label create tier:<t> --description "complexity tier: <t>" 2>/dev/null || true` and `gh issue edit <N> --add-label tier:<t>`; the next run reads the label.
 - **Auto-accept.** **Never prompt** to confirm or override a tier. Report backfills in the launch line; use the `source=user|shipped|fallback` row printed by the Step 0 probe there.
 - **Conflicting labels** → the **highest tier wins** (complex > standard > trivial); warn because under-tiering wastes an attempt on a model too cheap for the work.
+- **`needs-browser`** → the issue's claude workers get the Playwright MCP server (`spawn.sh --browser`); every other worker gets **no** MCP servers (see [Lean sessions](#lean-sessions)). Note which scoped issues carry it; no backfill, no prompt.
 
 ## Step 3 — the graph, fetched once
 
@@ -292,7 +293,7 @@ model can, and historically did, hallucinate.
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> \
         "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt 0
    ```
-   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it.
+   **Keep the attempt per issue** — unlike a cycle count, nothing re-derives it from the thread or the ledger; every later spawn passes the same `--attempt` unless [escalation](#escalation-by-script) moved it. **For a `needs-browser` issue, add `--browser` to every `spawn.sh` call in this file** (build, fix round, respawn).
    **Handing over a resource.** When a worker reports `issue <N> blocked infra: <what>` and you have provisioned it, stop the worker and respawn it onto the same worktree with the same `--role`/`--round`/`--attempt`, adding one `--env NAME=VALUE` per value (`worker-resume.sh` takes the same flag). Log the names, never the values. Keep the exact env pairs per issue in the orchestrator's live context and re-append the full set to every later worker launch or resume because the run log stores names only. Before each call, rebuild `resource_args=()` for that issue, then append `resource_args+=(--env "$pair")` for each actual pair; leave it empty if none. A real pair has the shape `--env DATABASE_URL=<actual-value>`:
    ```bash
    bash ~/.claude/kit/infra/scripts/spawn.sh "$RUNID" <N> <tier> "$baseRepo/.worktrees/$RUNID/issue-<N>" "$baseBranch" --orchestrator "$ORCH" --attempt <A> ${resource_args[@]+"${resource_args[@]}"}
@@ -362,7 +363,26 @@ comment count — see [The bus](#the-bus). A codex-backed issue's count is inste
 are not rounds) in `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/rounds` when that
 file exists, falling back to the thread when it does not.
 
-**Failure is drain-then-stop, not kill.**
+**Failure is drain-then-stop, not kill.** Finish in-flight work, admit nothing new, then [stop every remaining worker](#stop-finished-workers) and report.
+
+## Stop finished workers
+
+A `--bg` session never exits by itself (~160 MB idle each; one PRD run left 21). Stop it the moment its
+job is over; the id lookup, bounded wait and verification are the script's:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-stop.sh "$RUNID" <N>   # all attempts and rounds of one issue
+```
+
+Run it **before** spawning anything that replaces the worker, when a `built` / `fixed` / `failed`
+report is handled and its branch recorded, the worker is superseded (respawn, escalation, next fix
+round), or the issue is merged or ended `no-progress` / `backstop`. Not on `escalate` or a pending
+`blocked infra:` — that session is waiting on you. Exit 1 means a session is still live: do not spawn
+onto its worktree; tell the user. It frees the process only — the worktree, the branch and the
+conversation (`claude attach <id>`) survive. Codex rows are skipped (they exit by themselves), and an
+idle notice from a worker already stopped is not a report.
+
+At the end of a run, and on every drain or failure path, `worker-stop.sh "$RUNID" --all` stops what remains.
 
 ---
 
@@ -370,6 +390,11 @@ file exists, falling back to the thread when it does not.
 
 `spawn.sh` owns the flags — `bypassPermissions`, the write denylist, the invisible-output trap —
 and its test pins every one of them; see [infra's README](../../../infra/README.md#spawn-protocol).
+
+## Lean sessions
+
+Each session starts its own copy of every MCP server on the machine, so `spawn.sh` launches claude
+workers with `--strict-mcp-config` and no servers; a `needs-browser` issue gets `--browser` (Playwright only).
 
 ---
 
@@ -436,7 +461,7 @@ posts `**Deviation**` and pauses; `consult.sh consult` answers on the planner's 
 # Liveness
 
 Subscribe at spawn (`notify_when_idle: true`, no message) and never poll. Session states, codex PID control, and the `stop` → verify → respawn procedure are in [infra's README](../../../infra/README.md#liveness-and-recovery).
-For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session ends (respawn, escalation, superseded by a fix-round session, or its issue merged), verify the stop, then remove its settings file and private directory per infra's README.
+For a Claude worker with provisioned env, save the Claude settings file path printed by `spawn.sh` beside its id. When its session ends (job done, respawn, escalation, superseded by a fix-round session, or its issue merged), `worker-stop.sh` verifies the stop; then remove its settings file and private directory per infra's README.
 
 After spawning, wait on worker messages and idle notices and handle each wake immediately. Do not poll on a timer; the long idle tick is a fallback only when the event wait is unavailable, not the normal interval between checks.
 
@@ -510,8 +535,8 @@ untouched for 20 minutes while alive and not in its post-build review (own budge
 context past 256K. `no-progress:` and `backstop:` end the loop with no handoff or respawn. On other
 signals it has posted `**Handoff**`. Then:
 
-1. **Stop the worker** — the group kill from [infra's README](../../../infra/README.md#recovery)
-   for a codex row; verify nothing is still busy.
+1. **Stop the worker** — `worker-stop.sh "$RUNID" <N>` for a claude row, the group kill from
+   [infra's README](../../../infra/README.md#recovery) for a codex row; verify nothing is still busy.
 2. `run-log.sh append "$RUNID" escalated '{"n":<N>,"reason":"<reason>","attempt":<A>}'`.
 3. **Respawn at `--attempt <A+1>` onto the same worktree** (same `--role`/`--round`), re-passing
    every provisioned pair: `spawn.sh "$RUNID" <N> <tier> <worktree> "$BASE" --attempt <A+1> ${resource_args[@]+"${resource_args[@]}"}`.
@@ -604,6 +629,7 @@ with real tests:
 | `resolve-tier.sh` | tier + attempt → {model, effort, backend}, and the chain length |
 | `consult.sh` | the plan and the consult, posted to the thread |
 | `escalate.sh` | whether a codex worker is replaced, and the handoff comment |
+| `worker-stop.sh` | stopping a finished claude worker (one issue, or `--all`), verified |
 
 ---
 
@@ -613,6 +639,9 @@ The run ends when `ready.sh` reports a **designed empty** with nothing in flight
 finishes. Then, on the main thread and in this order — **close first**, so a failed close is loud
 instead of buried under a success table:
 
+0. **Stop every remaining worker:** `bash ~/.claude/kit/infra/scripts/worker-stop.sh "$RUNID" --all`
+   (see [Stop finished workers](#stop-finished-workers)). Worktrees and branches are untouched.
+   If it exits 1, name the live session in the report.
 1. **Merge and PR — offered, not taken.**
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/follow-up.sh" --integration "$RUNID" "$base" "$(git rev-parse HEAD)" "$GRAPH"

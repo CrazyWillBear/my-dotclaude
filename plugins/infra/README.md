@@ -11,6 +11,7 @@ plugins/infra/
 ├── scripts/
 │   ├── link-kit.sh              # SessionStart: point ~/.claude/kit/infra at this plugin's root
 │   ├── spawn.sh                 # start (or print) a worker (one issue, at a chain --attempt) or a peer (one role): `claude --bg`, or `codex exec` when the cell says codex
+│   ├── worker-stop.sh           # stop a run's finished claude workers (one issue or --all), verified; frees the process only
 │   ├── env-pairs.sh             # shared NAME=VALUE validation for spawn and resume
 │   ├── session-status.sh        # session state from `claude agents --json` + the codex run dir; --self resolves this session's name, --peers resolves roster roles to ids
 │   ├── check-inbound.sh         # pre-run: can worker reports reach the orchestrator? (crossSessionInbound)
@@ -33,7 +34,7 @@ reinvention this kit replaces.
 
 ```bash
 # worker: tier-routed model, fenced to its worktree, started from it
-bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix] [--env NAME=VALUE]...
+bash ~/.claude/kit/infra/scripts/spawn.sh <runid> <issue> <tier> <worktree> <base> [--role build|fix] [--env NAME=VALUE]... [--browser]
 
 # peer: named by its role, carrying the charter and its brief
 bash ~/.claude/kit/infra/scripts/spawn.sh peer --name swe-manager \
@@ -60,6 +61,14 @@ Workers are named `orch-<runid>-issue-<N>-a<attempt>`; fix rounds append `-r<rou
 `spawn.sh` prints the complete name it used to stderr while retaining its existing stdout
 result, and `session-status.sh <runid> <N>` treats any such attempt name as that issue's
 session.
+
+**A claude worker gets no MCP servers.** Every session starts its own copy of each configured
+server, and a long-lived PRD run keeps dozens of sessions resident, so `spawn.sh` launches a worker
+with `--mcp-config '{"mcpServers":{}}' --strict-mcp-config` — ignoring user, plugin and claude.ai
+servers alike. `--browser` swaps in only the Playwright server (`npx @playwright/mcp@latest`) for an
+issue that needs a real browser; pass it on every spawn of that issue (build, fix round, respawn).
+A peer keeps the machine's servers. A resident session's cost is cut the other way by
+[`worker-stop.sh`](#stopping-a-finished-worker).
 
 ## The roster: smart planner, cheap implementer chain, claude reviewer (PRD #104)
 
@@ -367,6 +376,23 @@ dying is in `stderr.log` beside the event log; nothing else records it.
 
 **Never parse `claude logs`.** It is a raw ANSI screen dump — cursor moves and spinner frames, not
 a transcript.
+
+### Stopping a finished worker
+
+A `claude --bg` session stays resident (~160 MB plus its MCP servers) after it reports, until
+stopped. The orchestrator stops each one as soon as its job is over:
+
+```bash
+bash ~/.claude/kit/infra/scripts/worker-stop.sh <runid> <issue>   # every live attempt/round of one issue
+bash ~/.claude/kit/infra/scripts/worker-stop.sh <runid> --all     # every live worker of the run
+```
+
+It calls `claude stop <id>` (column 2) for each live `background` row of the run's worker names,
+then waits bounded (`WORKER_STOP_WAIT`, default 30 s) for the stop to take; a session still live
+after that exits 1, naming it. The worktree, branch and conversation are untouched
+(`claude attach <id>` still works). Codex rows, stopped/done rows and other runs' workers are
+skipped; nothing live exits 0 with `nothing to stop`, so a repeat is safe. It also serves as the
+stop step of the recovery procedure below for a claude row.
 
 ### Recovery
 
