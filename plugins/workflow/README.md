@@ -1,9 +1,9 @@
 # workflow
 
 **`/orchestrate`** — the **standing dispatcher**, versioned here with the rest of my setup. It
-routes work by **shape**: one explicit unit of work runs as a subagent chain, an issue graph or
-PRD gets **one real `claude --bg` session per issue** in its own worktree, and anything ambiguous
-is discussed rather than built. It absorbed the old `/pipeline`; there is one front door.
+routes work by **shape**: one explicit unit of work goes to **`/adhoc`** (a subagent chain), an
+issue graph or PRD runs **one boxed, one-shot worker per issue** in its own worktree, and anything
+ambiguous is discussed rather than built. It absorbed the old `/pipeline`; there is one front door.
 
 **`/to-prd`** and **`/to-issues`** are the manager's front half: `/to-prd` captures a thoroughly discussed idea
 as a decision-record PRD issue, and `/to-issues` slices a PRD (or a spec, or the current discussion) into the
@@ -18,7 +18,8 @@ hand an in-flight `/orchestrate` run to a fresh session.
 plugins/workflow/
 ├── .claude-plugin/plugin.json        # manifest
 ├── skills/
-│   ├── orchestrate/SKILL.md          # /orchestrate — the dispatcher and both its lanes
+│   ├── orchestrate/SKILL.md          # /orchestrate — the dispatcher and the session lane's runbook
+│   ├── adhoc/SKILL.md                # /adhoc — one explicit unit of work as a subagent chain
 │   ├── classify-task/SKILL.md        # /classify-task — tier a task; the roster is resolved via infra's resolve-tier.sh
 │   ├── to-prd/SKILL.md               # /to-prd — write a PRD, file it as a labeled GitHub issue
 │   └── to-issues/SKILL.md            # /to-issues <#> — slice a PRD into vertical-slice issues, tiered for /orchestrate
@@ -45,164 +46,72 @@ plugins/workflow/
 `spawn.sh`, `session-status.sh`, `resolve-tier.sh` and `model-tiers.json` live
 in the [`infra`](../infra/README.md) plugin; workflow calls them at `~/.claude/kit/infra/scripts/`.
 
-## Why it works this way
-
-The loop used to run inside the **Workflow** tool. That kept per-issue chatter out of the main
-conversation, but it foreclosed the thing this design needs: **a Workflow has no messaging
-primitive**. `agent()` is one-shot, there is no inbox, and a running script cannot reach a running
-agent. So the loop moved to the **main thread**, where it drives real background Claude Code
-sessions that can be messaged, attached to, killed and respawned.
-
-**The orchestrator is never a subagent.** A subagent's `SendMessage` goes out under its *parent
-session's* address and replies land in the parent's conversation — a subagent orchestrator would
-talk and never hear back.
-
-## Step 0 — dispatch
-
-| what you said | lane |
-|---|---|
-| one unit of work, explicit, and you are present | **ad-hoc** — a subagent chain |
-| an issue graph or PRD (`--prd`, `--issues`) | **session lane** — one `claude --bg` session per issue |
-| ambiguous — the goal, the place, or "done" is missing | **discuss; build nothing** |
-
-"Explicit" means **what**, **where** and **done** are all answerable from the message alone. The
-lane is **announced in one line, not asked** — the announcement is the veto window.
-
-## The ad-hoc lane
-
-Classify → worktree → (plan, complex only) → build → `my-review` → capped fix rounds → fold →
-**offer** the merge. This is what `/pipeline` used to be. It never spawns a session, never writes a
-run log, and never opens a PR.
-
 ## The session lane
 
-**One session per issue, never reused.** A reused slot carries the previous issue's context into
-the next build — the exact poisoning the fresh-context reviewer exists to prevent. A session costs
-**≈40k tokens** to start, which only pays for long parallel work, so `tier:trivial` issues get a
-subagent instead and only `standard` / `complex` get a session.
+`SKILL.md` is a **runbook over scripts**: the model runs them, relays what they print for a human,
+and acts on three kinds of line. Every decision is a script's, with a real test.
 
-Names carry the run and worker position: sessions are `orch-<runid>-issue-<N>-a<attempt>`
-(fix rounds append `-r<round>`), and worktrees are `.worktrees/<runid>/issue-<N>`.
-`claude agents --json` is **global** and concurrent orchestrator runs are the intended usage — without
-the prefix one run can see, wake and **stop** another run's workers.
+1. **`launch.sh`** — dependency checks (kit links, worker boxes, CLIs), the **explicit allowlist**
+   (`--issues`, or `--prd N`'s open `ready-for-agent` children via `prd-children.sh`), the graph
+   fetched **once** (`scope-graph.sh`), tiers from `tier:*` labels (missing → `missing-tier:`, the
+   skill backfills with `/classify-task` and reruns), the launch fetch check (`merge-fold.sh`), the
+   orchestration worktree `orchestrate-<runid>`, and `run.env` for every later script.
+2. **`admit.sh --next`** — `ready.sh` over the frozen graph, minus what is merged, held or in flight
+   (all from `run-log.sh`); the lowest ready issues fill `--max` (default 8) slots: a worktree off
+   the orchestration branch, a `**Plan**` from `consult.sh` for standard and complex, then
+   `spawn.sh` at attempt 0.
+3. **`handle-report.sh --wait`** — blocks on the in-flight workers (`worker-report.sh --any`) and
+   handles the first report by table: clean → fold it in; findings → a fix round on the same model;
+   `escalate.sh` says otherwise → a decide, a capped merge with a follow-up, or a respawn on the next
+   model of the tier's chain (at the top: drain); a deviation → `consult.sh consult` and a resumed
+   worker; a question, a missing resource or a merge conflict → printed for the human or the
+   `merger` agent. Then `admit.sh --next` refills the slot.
+4. **`end-run.sh`** — the integration review, the end-merge preview, a push and **one PR** into the
+   launch branch with `Closes #N` per merged slice, then cleanup.
 
-**The run only ever builds an explicit allowlist.** `--issues N,N,...` is a literal list, `--prd N`
-walks PRD #N's child slices (`prd-children.sh`), and with neither flag the skill infers the open PRD
-(asking if there's more than one). The loop **never runs a repo-wide `ready-for-agent` query** — one
-that did swept an unrelated issue into a PRD's branch (#77). The allowlist is **frozen at launch**, so
-**nothing the run files can be built by the run** except the capped merge's `follow-up.sh` issue:
-it enters the frozen graph and blocks the capped issue's dependents until it merges.
+**A worker is a process, not a session.** Codex workers are `codex exec`; claude workers are
+`claude -p` in the **implementer box** (`~/.claude/kit/boxes/implementer`, a per-role config dir with
+the implementer contract as its `CLAUDE.md` and none of the user's plugins, skills, memory or MCP
+servers). Both leave the same run dir — event stream, schema'd report, pid, exit — and both are
+reviewed by the same sibling reviewer (`my-review` in the reviewer box) after they exit. Fix rounds
+are fresh workers that read the issue's latest `**Review round**` comment.
 
-**The tier is a label, not a guess.** `tier:trivial` / `tier:standard` / `tier:complex`, set by
-`/to-issues` at slice time, **read** at launch and **backfilled** when missing (real `classify-task`,
-Explore-grounded, auto-accepted — a tier is **never** an interactive prompt). Conflicting labels
-resolve to the **highest** tier. Edit the label to change how an issue routes; there is no tier flag.
+**The issue thread is the bus.** Each agent reads the issue **and its comments**, does its job, and
+appends its own; **findings never pass through the orchestrator**. The issue carries what cannot be
+regenerated (review findings, decisions, notes to future readers); run dirs and worktrees carry what
+can. **Brevity is a correctness property**: every later run reads every comment.
 
-**The graph is fetched once.** `scope-graph.sh` prints the whole scoped graph as one JSON document —
-bodies, comments, labels, tiers, `## Blocked by` refs, the state of every ref (in scope or not), and
-the open `mock-debt` ledger. Readiness is then computed by **`ready.sh`**, never by a model: a
-topological sweep is arithmetic a model can hallucinate. `ready.sh` also **classifies an empty ready
-set** — a designed empty (scope complete, everything held or in flight, an `e2e-gate` held by open
-mock-debt) exits 0 and says why; an unexplained one (all-`hitl`, a blocker outside the scope, a
-`## Blocked by` ref aimed at a PR) exits **1**, because a clean empty success that reads as "all done"
-is the failure mode this whole design keeps circling back to.
+**Recovery.** Workers **commit after every green sub-step**, which caps the loss from a kill at one
+sub-step and makes killing on suspicion affordable. `escalate.sh` decides from countable evidence —
+a failure, a third deviation, the second review of an attempt still carrying high or medium findings,
+a stall, a full context — never by asking the worker. `ESCALATE_ROUND_BACKSTOP=6` bounds every
+issue's review rounds; a capped issue merges and its open findings become one follow-up issue that
+blocks its dependents.
 
-**The whole run executes in one orchestration worktree** off the launch branch (`EnterWorktree`,
-skipped if you are already in one), with per-issue worktrees nested under it. The merged result is
-**left on the orchestration branch** — the run never merges back to the launch branch.
+`/orchestrate` **hard-depends** on the `personal-tools` `my-review` agent, which owns the
+`mock-debt` filing from its central-mechanism audit. The loop never merges the PR and never closes an
+issue: the slices close when you merge it.
 
-### The loop
+## Design notes
 
-1. **`ready.sh`** over the frozen graph, minus what merged, is held, or is in flight.
-2. **Admit** the lowest-numbered ready issues up to `--max N` (default 8). For each: cut the
-   worktree and **`spawn.sh`** the session.
-3. **Subscribe, don't poll.** `SendMessage` with `notify_when_idle: true` and **no message** — a pure
-   subscription that costs the worker nothing and fires once when it goes idle.
-4. **The session builds**, spawns `my-review` itself, posts a review-round comment on the issue, and
-   **reports and exits**. A session's plain output is **invisible** to other agents, so every spawn
-   prompt tells it to report with `SendMessage` — miss that line and the orchestrator waits forever.
-5. **Fix rounds are fresh sessions** (`--role fix`), told to work from the issue's latest review-round
-   comment. Nothing compounds, and the fixer is not defending its own code. The per-attempt
-   `review-cap` moves a second review with open high/medium findings up the model chain. A recurring
-   finding triggers `recurrence:` → `consult.sh decide` before the next fix round; if that round does
-   not reduce high + medium, `no-progress:` ends the loop. Claude-backed attempts retain the five fix-round review cap
-   (initial build review free), counted across attempts from thread comments; after a `Decision`, they also stop as
-   `no-progress` if high + medium does not fall. `ESCALATE_ROUND_BACKSTOP=20` is the Codex script's issue-wide
-   safety net. Review counts come from the authoritative source per
-   backend — the thread's review-round comments for a claude-backed issue, `$RUNDIR/rounds` for a
-   codex-backed one (its worker can post that comment too) — never a field kept separately.
-6. **Merge is a fold first.** `merge-fold.sh` lands every conflict-free branch with plain git, testing
-   each with `git merge-tree --write-tree` before touching the working tree; only the **conflicted
-   remainder** reaches the `merger` agent (**opus**, never tier-routed). It is a *fold*, not a filter:
-   conflict-freeness is relative to the accumulating base.
-7. **In-run merges are automatic; the end merge and the single PR are offered.** Gating in-run merges
-   would deadlock the run. One PR at the end keeps the network, CI and the permission classifier out
-   of the linearization point.
-8. **Closes happen on the main thread, and every close is verified.** An irreversible outward-facing
-   write belongs where the conversational context can account for it: run from a low-context subagent,
-   this exact call was killed by a safety classifier, the ready set never drained, and the loop rebuilt
-   the same issues for 1.84M tokens (#77).
-
-**A failure drains the run; it doesn't kill it.** Admission stops, in-flight work finishes, and the
-run reports its stop reason. Killing mid-flight strands branches that had already earned their merge.
-
-### The issue thread is the bus
-
-Each agent reads the issue **and its comments**, does its job, and appends its own. **Findings never
-pass through the orchestrator** — which makes "manage, don't track" structural rather than a rule
-somebody has to remember. The issue carries what **cannot be regenerated** (review findings,
-decisions, notes to future readers); local files carry what can (run dirs, worktree paths). Comment format is
-a contract, and **brevity is a correctness property**: a verbose review comment poisons every later
-run's context.
-
-### Liveness and recovery
-
-`session-status.sh <runid>` classifies each worker `busy` / `idle` / `blocked` (a permission wedge) /
-`done` / `stopped` / `failed` (codex workers) / `gone`, and **fails loud** if `claude` is missing or returns junk — silence there would read
-as "every session finished". **Never parse `claude logs`**: it is a raw ANSI screen dump.
-
-Workers **commit after every green sub-step**. That is the *recovery mechanism*, not hygiene: it caps
-the loss from a kill at one sub-step, which is what makes killing on **suspicion** affordable and
-resolves the otherwise-unresolvable "busy or wedged?" call. Recovery is **`stop` → verify stopped →
-respawn** onto the same worktree — with the session **id**, since `claude stop` rejects a name — never `rm` (it deletes the worktree being recovered), and never
-onto a worktree whose previous session is still alive. A **codex** worker is replaced along its
-tier's implementer chain (6-luna → haiku for trivial and standard) by `escalate.sh`, from countable evidence — a
-`failed` report, a third deviation, a review round with high or medium findings, a stall, a full context
-— never by asking it; at the top of the chain the run drains. The counts come from `run-log.sh`,
-because nothing in git or GitHub records that a session was killed or a model changed.
-
-A `--bg` session never exits on its own, so the orchestrator stops each worker (`worker-stop.sh`) the
-moment its job is over — a handled report, a superseding respawn or fix round, a merged issue — and
-every remaining one at the end of the run or a drain. Workers start with **no MCP servers**
-(`--strict-mcp-config`); an issue labeled `needs-browser` gets only Playwright (`spawn.sh --browser`).
-
-An escalating worker messages the orchestrator, which **offers both** mediation and
-`claude attach <id>` (column 2 of `session-status.sh`) — attach for anything about code, so the code never enters the
-orchestrator's context. An escalated session is **exempt from the deadline** while you are engaged,
-and must **report the resolution** back before continuing.
-
-### Context discipline
-
-The orchestrator **never reads a source file, never runs `git diff`, never runs the done-check, never
-opens a findings file**. Workers report fixed-shape status lines; artifacts go to files or issue
-comments; the orchestrator passes paths and numbers. Target ≈**50 tokens per issue**. Summaries are
-**on demand only** — a haiku agent for "what happened on #14?", a reviewer-model agent for "is #14's
-code right?".
-
-Deterministic logic lives in **scripts**, not in prose: prose can only be grep-tested, and every
-script here is driven against real fixtures by its own test.
-
-**Before a session-lane run, `check-inbound.sh` asks whether worker reports can reach the
-orchestrator at all.** Workers run `bypassPermissions`, and a
-peer message whose permission-mode class differs from the receiving session's is **held for the
-user's approval** — so without `{"crossSessionInbound": "accept"}` in `~/.claude/settings.json`,
-every worker report interrupts the loop it was supposed to run without. It has to be user-level (a
-repo may only tighten it), and it is a real relaxation: `accept` delivers messages from *any* local
-session, not only this run's workers. Observed on a live run.
-
-`/orchestrate` **hard-depends** on the `personal-tools` `my-review` agent and fails loud at launch if
-it is missing. my-review **owns** the `mock-debt` filing from its central-mechanism audit. PR merges
-stay a human decision; the loop never merges PRs.
+- **Why the main thread.** The loop relays human questions, spawns the merger, and enters and
+  leaves the orchestration worktree — all things a subagent cannot do for the user. It moved off the
+  Workflow tool, which has no way to wait on or talk to a running worker.
+- **Why scripts, not prose.** A model doing a topological sweep, counting rounds or remembering an
+  attempt number across turns hallucinates (#77's 1.84M-token loop rebuilt the same issues). Prose
+  can only be grep-tested; a script gets fixtures.
+- **Why boxed one-shot workers.** A full user config costs a worker ~44k tokens before it reads its
+  task (hundreds of MCP tools, every plugin skill, the global `CLAUDE.md`, memory); a box costs
+  ~21k, the reviewer box ~7k. One-shot processes also leave no registry rows (one machine had 394
+  finished `orch-*` sessions) and need no inbox, so the cross-session message gate is gone.
+- **Why the allowlist is frozen.** A repo-wide `ready-for-agent` query once built an unrelated issue
+  into a PRD's branch (#77). Nothing the run files is built by the run, except a capped merge's
+  follow-up, which enters the frozen graph through `follow-up.sh`.
+- **Why a fold, then a merger.** `git merge-tree` decides conflict-freeness for free; only the
+  conflicted remainder needs a model, and conflict-freeness is relative to the accumulating base.
+- **Why one PR, and `Closes #N`.** In-run merges are automatic (gating them deadlocks the run); the
+  end merge is a human decision. Closing on merge keeps every irreversible GitHub write on the
+  user's side of that decision.
 
 ## The orchestrate gate
 
