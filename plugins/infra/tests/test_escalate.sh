@@ -53,6 +53,9 @@ cat >"$CFG/model-tiers.json" <<'JSON'
 }
 JSON
 export RESOLVE_TIER_ROOT="$CFG"
+# Most review-cap cases below were written at a cap of 1 (escalate on the first round with
+# findings); pin it so they keep meaning that. The shipped default (2) has its own case.
+export ESCALATE_REVIEW_CAP=1
 
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
@@ -256,6 +259,16 @@ printf '{"attempt": 0, "mark": 2, "rounds_mark": 2}\n' >"$RUNDIR/handoff.json"
 run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
 mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
+
+echo "test: the shipped review-cap default is 2 — one fix round on the same model first"
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+rm -f "$RUNDIR/handoff.json"
+OUT="$(env -u ESCALATE_REVIEW_CAP bash "$SCRIPT" r1 12 standard "$REPO" --base base --attempt 0 2>/dev/null)"
+assert_empty "the first round with findings is a fix round at the default" "$OUT"
+printf '1 0 high, 1 medium, 0 low\n2 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+OUT="$(env -u ESCALATE_REVIEW_CAP bash "$SCRIPT" r1 12 standard "$REPO" --base base --attempt 0 --dry-run 2>/dev/null)"
+assert_contains "the second still carrying findings escalates" "$OUT" "review-cap: review 2"
 
 echo "test: review-cap — the FIRST round with high or medium findings, from the RUN-DIR ledger"
 # The shipped standard chain is luna → opus: luna builds, and any review with findings hands the fix

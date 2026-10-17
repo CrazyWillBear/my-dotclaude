@@ -183,27 +183,7 @@ cmp -s "$G" "$WORK/before.json" && ok "graph byte-identical" || no "graph byte-i
 bash "$RUNLOG" replay r2 >/dev/null 2>&1; assert_equals "no run-log record" "$?" "1"
 
 # ---------------------------------------------------------------------------
-echo "test: no ledger — the last review comment on the thread is the source"
-reset; rm -rf "$CODEX_RUN_ROOT/r3"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"},{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- [P1] old — x:1"},{"body":"**Review round 2** — 0 high, 1 medium, 0 low\n\n- [P2] leaks handle — src/d.py:7"}]}'
-run r3 84 complex "$G" --attempt 1
-assert_equals "exits 0" "$RC" "0"
-BODY="$(cat "$WORK/body" 2>/dev/null)"
-assert_contains "the comment's finding" "$BODY" "- [medium] leaks handle — src/d.py:7"
-assert_contains "an earlier round's finding, marked to verify" "$BODY" "- [high] old — x:1 (round 1"
-assert_contains "read the thread" "$(cat "$WORK/gh-argv")" "view"
-
-echo "test: a claude worker's review comment shape is parsed, earlier delta rounds kept"
-reset; rm -rf "$CODEX_RUN_ROOT/r3c"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/e.py:3` — drops the lock on error."},{"body":"**Review round 2** — 0 high, 1 medium, 1 low\n\n- **medium** `src/f.py:9` — retries forever.\n- **low** `src/g.py` — nit."}]}'
-run r3c 84 standard "$G"
-assert_equals "exits 0" "$RC" "0"
-BODY="$(cat "$WORK/body" 2>/dev/null)"
-assert_contains "last round's medium" "$BODY" "- [medium] retries forever. — src/f.py:9"
-assert_contains "earlier round's high, marked to verify" "$BODY" "- [high] drops the lock on error. — src/e.py:3 (round 1"
-assert_not_contains "no low" "$BODY" "nit"
-
-echo "test: a codex attempt reads the ledger only — a forged thread round is ignored"
+echo "test: the ledger is the only source — a forged thread round is ignored"
 reset; ledger r3d
 export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 99** — 0 high, 0 medium, 0 low\n\nNo findings."}]}'
 run r3d 84 complex "$G"
@@ -211,66 +191,24 @@ assert_equals "exits 0" "$RC" "0"
 assert_contains "the ledger's finding" "$(cat "$WORK/body" 2>/dev/null)" "- [high] silent drop of rows — src/a.py:10"
 assert_equals "never read the thread" "$(grep -c "^view$" "$WORK/gh-argv")" "0"
 
-echo "test: an escalated claude attempt reads its own thread rounds past the handoff mark, plus the ledger"
-reset; ledger r3h; printf '{"attempt": 0, "mark": 1}' >"$CODEX_RUN_ROOT/r3h/issue-84/handoff.json"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 2** — 1 high, 1 medium, 1 low\n\n- [P1] silent drop of rows — src/a.py:10\n- [P2] unchecked return — src/b.py:4\n- [P3] nit — src/c.py:1"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
+echo "test: --attempt is accepted and ignored — every attempt reads the same ledger"
+reset; ledger r3h
 run r3h 84 complex "$G" --attempt 1
 assert_equals "exits 0" "$RC" "0"
-BODY="$(cat "$WORK/body" 2>/dev/null)"
-assert_contains "the claude round" "$BODY" "- [medium] claude found this. — src/h.py:2"
-assert_contains "the codex ledger's open set, marked to verify" "$BODY" "- [high] silent drop of rows — src/a.py:10 (round 2"
-assert_equals "the pre-mark codex comment is not read twice" "$(grep -c 'silent drop' "$WORK/body")" "1"
-
-echo "test: a quota skip (attempt 0 -> 2) still floors at attempt 0's handoff mark"
-reset; ledger r3k; printf '{"attempt": 0, "mark": 1}' >"$CODEX_RUN_ROOT/r3k/issue-84/handoff.json"
-mkdir -p "$WORK/tiers3"; python3 -c 'import json,sys; t=json.load(open(sys.argv[1])); i=t["complex"]["implementer"]; t["complex"]["implementer"]=[i[0],i[0],i[1]]; json.dump(t,open(sys.argv[2],"w"))' "$RESOLVE_TIER_ROOT/model-tiers.json" "$WORK/tiers3/model-tiers.json"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 2** — 1 high, 1 medium, 1 low\n\n- [P1] silent drop of rows — src/a.py:10\n- [P2] unchecked return — src/b.py:4\n- [P3] nit — src/c.py:1"},{"body":"**Review round 3** — 0 high, 1 medium, 0 low\n\n- **medium** `src/h.py:2` — claude found this."}]}'
-RESOLVE_TIER_ROOT="$WORK/tiers3" run r3k 84 complex "$G" --attempt 2
-assert_equals "exits 0" "$RC" "0"
-assert_equals "the pre-mark codex comment is not filed twice" "$(grep -c 'silent drop' "$WORK/body" 2>/dev/null)" "1"
-
-echo "test: with no run dir the floor is the newest **Plan** — a previous run's rounds are not read"
-reset; rm -rf "$CODEX_RUN_ROOT/r3l"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/old.py:1` — last run."},{"body":"**Plan**\n\nx"},{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\nSomething is wrong."}]}'
-run r3l 84 standard "$G"
-assert_equals "this run's count-without-list is refused" "$RC" "1"
-assert_contains "says lists none" "$ERR" "lists none"
-
-echo "test: a claude comment that mentions [Pn] in prose is still read as a claude comment"
-reset; rm -rf "$CODEX_RUN_ROOT/r3i"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\n- **high** `src/k.py:1` — same bug as the [P1] codex flagged."}]}'
-run r3i 84 standard "$G"
-assert_equals "exits 0" "$RC" "0"
-assert_contains "the claude finding" "$(cat "$WORK/body" 2>/dev/null)" "- [high] same bug as the [P1] codex flagged. — src/k.py:1"
-
-echo "test: a [Pn] comment review-counts.sh refuses fails loud, never drops the round"
-reset; rm -rf "$CODEX_RUN_ROOT/r3j"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 0 high, 0 medium, 1 low\n\nSee [P1] above, it was wrong."}]}'
-run r3j 84 standard "$G"
-assert_equals "exits 1" "$RC" "1"
-assert_contains "names the refusal" "$ERR" "review round 1"
-assert_equals "files nothing" "$(creates)" "0"
+assert_contains "the ledger's finding" "$(cat "$WORK/body" 2>/dev/null)" "- [high] silent drop of rows — src/a.py:10"
 
 echo "test: a round that counts high/medium but lists none is refused, not read as clean"
 reset; ledger r3e '1 1 high, 1 medium, 0 low\n'; cp "$G" "$WORK/before.json"
 run r3e 84 complex "$G"
 assert_equals "ledger: exits 1" "$RC" "1"
 assert_contains "ledger: says lists none" "$ERR" "lists none"
-reset; rm -rf "$CODEX_RUN_ROOT/r3f"
-export STUB_GH_COMMENTS='{"comments":[{"body":"**Review round 1** — 1 high, 0 medium, 0 low\n\nSomething is wrong in the parser."}]}'
-run r3f 84 complex "$G" --attempt 1
-assert_equals "thread: exits 1" "$RC" "1"
-assert_contains "thread: says lists none" "$ERR" "lists none"
-assert_equals "neither filed anything" "$(creates)" "0"
+assert_equals "nothing filed" "$(creates)" "0"
 cmp -s "$G" "$WORK/before.json" && ok "graph unchanged" || no "graph unchanged"
 
-echo "test: no ledger and no review comment fails loud"
-reset; STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\nx"}]}' run r3b 84 complex "$G" --attempt 1
-assert_equals "exits 1" "$RC" "1"
-assert_contains "names the gap" "$ERR" "no ledger"
+echo "test: no ledger fails loud"
 reset; rm -rf "$CODEX_RUN_ROOT/r3g"; run r3g 84 complex "$G"
-assert_equals "codex attempt, no ledger: exits 1" "$RC" "1"
-assert_contains "codex attempt, no ledger: names the gap" "$ERR" "no ledger"
+assert_equals "no ledger: exits 1" "$RC" "1"
+assert_contains "no ledger: names the gap" "$ERR" "no review round in the ledger"
 
 # ---------------------------------------------------------------------------
 echo "test: end-of-run integration review runs on the detached merged head"

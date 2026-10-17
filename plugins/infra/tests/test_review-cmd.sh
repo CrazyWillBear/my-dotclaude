@@ -26,6 +26,8 @@ SCRIPT="$PLUGIN_ROOT/scripts/review-cmd.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+export HOME="$WORK/home"
+unset CLAUDE_BOX_ROOT
 
 pass=0
 fail=0
@@ -86,8 +88,9 @@ echo "test: integration mode targets the whole range, cross-issue only"
 unset RESOLVE_TIER_ROOT
 run integration "$SHA" "$HEAD" standard
 assert_equals "integration mode exits 0" "$RC" "0"
-assert_equals "integration argv begins claude -p --model opus" \
-    "${ARGS[0]:-} ${ARGS[1]:-} ${ARGS[2]:-} ${ARGS[3]:-}" "claude -p --model opus"
+assert_equals "integration argv begins in the reviewer box: claude -p --model opus" \
+    "${ARGS[0]:-} ${ARGS[1]:-} ${ARGS[2]:-} ${ARGS[3]:-} ${ARGS[4]:-} ${ARGS[5]:-}" \
+    "env CLAUDE_CONFIG_DIR=$HOME/.claude/kit/boxes/reviewer claude -p --model opus"
 assert_contains "prompt names the full commit range" "$OUT" "$SHA..$HEAD"
 assert_contains "prompt says per-issue reviews already happened" "$OUT" "Per-issue reviews already happened"
 assert_contains "prompt asks only for cross-issue problems" "$OUT" "cross-issue"
@@ -124,7 +127,16 @@ echo "test: the base is in the prompt as a SHA, and the issue is named for the a
 assert_contains "the commit range" "$OUT" "$SHA..HEAD"
 assert_contains "reviewed as one unit" "$OUT" "ONE unit"
 assert_contains "the issue number for the central-mechanism audit" "$OUT" "issue #12"
-assert_contains "it spawns my-review, not a home-grown checklist" "$OUT" "personal-tools:my-review"
+echo "test: the session IS my-review, loaded from the kit link, in a box with no MCP servers"
+assert_arg "--plugin-dir" "$OUT" "--plugin-dir"
+assert_arg "the personal-tools kit link" "$OUT" "$HOME/.claude/kit/personal-tools"
+assert_arg "--agent" "$OUT" "--agent"
+assert_arg "my-review" "$OUT" "my-review"
+assert_arg "no MCP servers" "$OUT" '{"mcpServers":{}}'
+assert_arg "strictly" "$OUT" "--strict-mcp-config"
+assert_contains "it is told it IS the agent" "$OUT" "You ARE the my-review agent"
+assert_not_contains "and never to spawn one" "$OUT" "Spawn the"
+assert_not_contains "no subagent_type" "$OUT" "subagent_type"
 
 echo "test: the prompt pins the shape review-counts.sh parses"
 assert_contains "the finding item shape" "$OUT" "- [P1] <one-line title> — <path>:<line>"
@@ -152,7 +164,7 @@ if [ -n "$p" ] && [ -n "$d" ] && [ "$p" -eq "$((d + 1))" ]; then ok "prompt righ
 assert_equals "the multi-line prompt is ONE argument: element count = lines before -- plus one" \
     "$ARGC" "$((d + 1))"
 assert_equals "and it is the last element" "$(printf '%s' "${ARGS[$((ARGC - 1))]}" | head -1)" \
-    "You are the INDEPENDENT REVIEWER for issue #12. This checkout is a disposable clone"
+    "You are the INDEPENDENT REVIEWER for issue #12. You ARE the my-review agent. Spawn no subagents. Your ENTIRE output is the findings list below. This checkout is a"
 assert_contains "carrying the whole prompt" "${ARGS[$((ARGC - 1))]}" "No findings."
 
 echo "test: full mode is unchanged — no re-review language"

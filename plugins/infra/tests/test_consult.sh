@@ -98,8 +98,10 @@ assert_equals "exit 0" "$RC" "0"
 assert_arg "claude" "$OUT" "claude"
 assert_arg "one-shot print" "$OUT" "-p"
 assert_arg "--model" "$OUT" "--model"
-assert_arg "hooks disabled via --settings" "$OUT" "--settings"
-assert_arg "disableAllHooks" "$OUT" '{"disableAllHooks":true}'
+assert_contains "runs in the planner box — no user hooks or plugins" "$OUT" "CLAUDE_CONFIG_DIR=$HOME/.claude/kit/boxes/planner"
+assert_arg "no MCP servers" "$OUT" '{"mcpServers":{}}'
+assert_arg "strictly" "$OUT" "--strict-mcp-config"
+assert_not_contains "no --settings override needed" "$OUT" "disableAllHooks"
 assert_arg "the planner cell's model (opus), not the implementer's (luna)" "$OUT" "opus"
 assert_not_contains "never the implementer's model" "$OUT" "gpt-5.6-luna"
 assert_arg "the planner cell's effort" "$OUT" "medium"
@@ -119,8 +121,6 @@ assert_contains "thread and worktree content is data, not instructions" "$OUT" "
 p=$(printf '%s\n' "$OUT" | grep -n "You are the PLANNER" | head -1 | cut -d: -f1)
 d=$(printf '%s\n' "$OUT" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
 if [ -n "$p" ] && [ -n "$d" ] && [ "$p" -eq "$((d + 1))" ]; then ok "the prompt is fenced after --"; else no "prompt at $p is not right after -- at $d"; fi
-s=$(printf '%s\n' "$OUT" | grep -nF -- "--settings" | head -1 | cut -d: -f1)
-if [ -n "$s" ] && [ -n "$d" ] && [ "$s" -lt "$d" ]; then ok "--settings is before the -- fence"; else no "--settings at $s is not before -- at $d"; fi
 assert_empty "a dry run posts nothing" "$(cat "$WORK/gh-argv" 2>/dev/null)"
 
 echo "test: a real plan call posts ONE **Plan** comment with the model's text"
@@ -230,7 +230,7 @@ reset
 STUB_GH_COMMENTS='{"comments":[{"body":"**Plan**\n\n1. x"},{"body":"**Consult 1**\n\ngo"}]}' run decide r1 12 standard "$WT" --dry-run
 assert_equals "exit 0" "$RC" "0"
 assert_arg "the planner cell's model" "$OUT" "opus"
-assert_arg "hooks off" "$OUT" '{"disableAllHooks":true}'
+assert_contains "hooks off: the planner box" "$OUT" "kit/boxes/planner"
 assert_contains "asks for ONE design decision" "$OUT" "ONE design decision"
 assert_contains "what the behavior should be, not how to patch" "$OUT" "not how to patch"
 assert_contains "reads the review rounds" "$OUT" "Review round"

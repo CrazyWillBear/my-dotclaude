@@ -94,6 +94,12 @@ gains a backend column:
 the trivial chain (6-luna → sonnet medium) and builds complex at high behind an opus-high plan;
 fable leaves the shipped table. Standard is unchanged (6-luna → opus).
 
+**Updated 2026-10-17 (boxed workers, review-cap 2, backstop 6):** every worker — codex or
+`claude -p` in the implementer box — is judged by `escalate.sh`, so the claude-only "five fix
+rounds" rule is gone. `ESCALATE_REVIEW_CAP` defaults to 2 (one fix round on the same model before
+the chain moves), review-cap never fires at the top of a chain, and `ESCALATE_ROUND_BACKSTOP=6`
+bounds every issue's loop across attempts and backends.
+
 **Updated 2026-09-23 (6-sol dropped, opus fixes from round 1):** PRD #70's run showed luna
 builds fine but its fix rounds do not converge (5–6 review rounds per issue, fix rounds adding
 new highs), and every issue paid two codex hops before reaching opus. The chain is now

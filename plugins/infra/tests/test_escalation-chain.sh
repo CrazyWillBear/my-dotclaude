@@ -199,7 +199,7 @@ STUB_REPORT='{"issue":12,"status":"built","round":0,"head":"abc1234","review":""
 wait_exit
 assert_contains "the claude reviewer ran and worker-report renders the clean verdict" \
     "$(bash "$INFRA/worker-report.sh" r1 12 --interval 1 --timeout 20 2>/dev/null)" "issue 12 built head=abc1234 review=0 high, 0 medium, 0 low"
-assert_equals "the reviewer got its prompt as one argument" "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
+assert_equals "the reviewer got its prompt as one argument" "$(cat "$WORK/review-argc" 2>/dev/null)" "32"
 escalate --attempt 0
 assert_empty "no signal" "$OUT"
 

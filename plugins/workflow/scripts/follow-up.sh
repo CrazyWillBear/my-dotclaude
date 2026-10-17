@@ -15,17 +15,11 @@
 # place the run adds to its own scope (PRD #109), so it refuses a parent outside the
 # frozen graph, and a second call for the same parent.
 #
-# Open findings: the source is decided by the backend resolve-tier.sh gives the issue's
-# LAST attempt (--attempt, default 0) — never by round numbers on a thread anyone can write.
-#   codex   the run-dir ledger ($CODEX_RUN_ROOT/<runid>/issue-<N>/rounds, #110) only: its last
-#           round's finding lines — a scoped codex re-review restates every finding still open.
-#   claude  the thread's `**Review round N**` comments posted in THIS attempt (past the run
-#           dir's handoff.json mark, else the newest **Plan** — consult.sh's floor), every round's findings with earlier
-#           rounds marked to verify, since a claude fix round reviews only its delta; plus,
-#           after an escalation, the ledger's last round as the codex attempts' open set.
-#           A comment with `- **high** \`path\` — text` lines is read here; one without them
-#           but with `[Pn]` goes through infra's review-counts.sh --findings, and its refusal
-#           is fatal.
+# Open findings: the run-dir ledger ($CODEX_RUN_ROOT/<runid>/issue-<N>/rounds, #110) only —
+# its last round's finding lines. Every worker, either backend, is reviewed by the same
+# wrapper, and a scoped re-review restates every finding still open, so the last round is
+# the open set. Never the thread: anyone can write a comment there. `--attempt` is accepted
+# for old callers and ignored.
 # A round whose heading counts high/medium but lists none is refused, never read as clean.
 # Only lows open → nothing filed, nothing touched, exit 0.
 #
@@ -222,79 +216,10 @@ PY
 )" || exit 1
 
 # --- the open findings -----------------------------------------------------------
-BACKEND="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null | sed -n 's/^implementer_backend=//p')"
-LEDGER_LAST=""
-if [ -f "$RUNDIR/rounds" ]; then
-    LEDGER_LAST="$(grep '^[0-9]' "$RUNDIR/rounds" | tail -1)"
-    [ -n "$LEDGER_LAST" ] || die "no review round in $RUNDIR/rounds"
-fi
-case "$BACKEND" in
-codex)
-    [ -n "$LEDGER_LAST" ] || die "no ledger at $RUNDIR/rounds for codex attempt $ATTEMPT of #$ISSUE"
-    read -r R H _ M _ <<<"$LEDGER_LAST"
-    keep_open "$R" <"$RUNDIR/rounds" >"$TMP/findings"
-    ;;
-claude)
-    gh issue view "$ISSUE" --json comments >"$TMP/comments.json" || die "gh issue view #$ISSUE failed"
-    THREAD_LAST="$(FOLLOWUP_COMMENTS="$TMP/comments.json" FOLLOWUP_OUT="$TMP/thread" \
-        FOLLOWUP_RUNDIR="$RUNDIR" FOLLOWUP_ATTEMPT="$ATTEMPT" python3 <<"PY2"
-import json, os, re, subprocess, sys, tempfile
-comments = json.load(open(os.environ["FOLLOWUP_COMMENTS"])).get("comments") or []
-# THIS attempt's comments only, consult.sh's floor: past the mark the last handoff recorded
-# when it ended an earlier attempt; else past the newest **Plan** (this run's start)
-mark = None
-try:
-    m = json.load(open(os.path.join(os.environ["FOLLOWUP_RUNDIR"], "handoff.json")))
-    if 0 <= int(m.get("attempt", -1)) < int(os.environ["FOLLOWUP_ATTEMPT"]):
-        mark = max(0, min(len(comments), int(m.get("mark", 0))))
-except (OSError, ValueError, TypeError):
-    pass
-if mark is None:
-    mark = max([i for i, c in enumerate(comments) if (c.get("body") or "").lstrip().startswith("**Plan**")] or [0])
-rows, last = [], ""
-for c in comments[mark:]:
-    body = c.get("body") or ""
-    m = re.match(r"\*\*Review round (\d+)\*\*[^\n]*?(\d+) high, (\d+) medium", body)
-    if not m:
-        continue
-    r, text = m.group(1), body.split("\n", 1)[1] if "\n" in body else ""
-    last = "%s %s %s" % m.groups()
-    # a claude worker's own comment: - **high** `path:line` — what is wrong
-    bold = re.findall(r"(?m)^[ \t]*[-*][ \t]*\*\*(high|medium|low)\*\*[ \t]*(.*)$", text)
-    for sev, rest in bold:
-        loc = re.match(r"`([^`]*)`[ \t]*(?:—[ \t]*)?(.*)$", rest)
-        path, title = (loc.group(1), loc.group(2)) if loc else ("", rest)
-        rows.append("finding\t%s\t%s\t%s\t%s" % (r, sev, " ".join(title.split()), " ".join(path.split())))
-    if not bold and re.search(r"\[P[0-9]\]", text):
-        # the reviewer's own [Pn] shape (codex wrapper) — infra's parser, never a second
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
-            fh.write(text)
-        p = subprocess.run(["bash", os.path.join(os.environ["FOLLOWUP_INFRA_DIR"], "review-counts.sh"),
-                            fh.name, "--findings", r], capture_output=True, text=True)
-        os.unlink(fh.name)
-        if p.returncode != 0:
-            print("error: review round %s on the thread is unreadable: %s" % (r, p.stderr.strip()), file=sys.stderr)
-            sys.exit(1)
-        rows += p.stdout.splitlines()
-open(os.environ["FOLLOWUP_OUT"], "w").write("".join(l + "\n" for l in rows))
-print(last)
-PY2
-)" || die "cannot read the review comments on #$ISSUE"
-    # after an escalation the ledger holds the codex attempts' open set: carry it, marked to verify
-    [ -z "$LEDGER_LAST" ] || keep_open "${LEDGER_LAST%% *}" <"$RUNDIR/rounds" >>"$TMP/thread"
-    if [ -n "$THREAD_LAST" ]; then
-        read -r R H M <<<"$THREAD_LAST"
-    elif [ -n "$LEDGER_LAST" ]; then
-        read -r R H _ M _ <<<"$LEDGER_LAST"
-    else
-        die "no ledger at $RUNDIR/rounds and no **Review round** comment on #$ISSUE"
-    fi
-    # a claude fix round reviews only its delta, so an earlier round's finding may still be
-    # open unrestated: carry every round's, the earlier ones marked to verify first
-    awk -F'\t' '$1=="finding" && ($3=="high"||$3=="medium")' "$TMP/thread" >"$TMP/findings"
-    ;;
-*) die "resolve-tier.sh gave no implementer backend for tier $TIER attempt $ATTEMPT" ;;
-esac
+LEDGER_LAST="$(grep '^[0-9]' "$RUNDIR/rounds" 2>/dev/null | tail -1)"
+[ -n "$LEDGER_LAST" ] || die "no review round in the ledger at $RUNDIR/rounds for #$ISSUE"
+read -r R H _ M _ <<<"$LEDGER_LAST"
+keep_open "$R" <"$RUNDIR/rounds" >"$TMP/findings"
 # a count with no list is drift, never a clean round
 if [ $((H + M)) -gt 0 ] && ! awk -F'\t' -v r="$R" '$2==r{f=1} END{exit !f}' "$TMP/findings"; then
     die "review round $R reports $H high, $M medium but lists none — refusing to read it as clean"

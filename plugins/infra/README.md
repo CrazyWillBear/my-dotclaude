@@ -208,8 +208,7 @@ for a human, surfaced as before. `consult.sh plan` is the same script in another
 before the build spawn for standard and complex issues; `consult.sh decide` is the third, run on
 `recurrence:` to post a design decision as the next `**Consult N**`.
 
-Each one-shot call disables settings and plugin hooks with `--settings
-'{"disableAllHooks":true}'` and refuses to post output without `**Decision**` (consult) or
+Each one-shot call runs in the planner box (no user hooks, plugins or MCP servers) and refuses to post output without `**Decision**` (consult) or
 `## Acceptance criteria` (plan). It avoids `--bare`, which requires API-key authentication.
 
 `--base` is required: the resumed turn ends with an independent review, and without a base
@@ -424,8 +423,8 @@ bash ~/.claude/kit/infra/scripts/escalate.sh <runid> <N> <tier> <worktree> --bas
 
 which prints `<reason>: <detail>` or nothing, from artifacts that already exist — a `failed`
 report or crash, a third `**Deviation**` comment (consults are capped at two), the
-`ESCALATE_REVIEW_CAP`-th `**Review round**` of the attempt (default 1: the first) still carrying
-high or medium findings — so with the shipped chains luna builds and haiku fixes; never at the
+`ESCALATE_REVIEW_CAP`-th `**Review round**` of the attempt (default 2: the first fix round's)
+still carrying high or medium findings — one fix round on the same model, then the next; never at the
 top of the chain, where there is nowhere stronger to go — a context at or past 256K (a claude
 worker's last `assistant` usage in `events.jsonl`; a codex worker's own rollout under
 `~/.codex/sessions`, joined by the thread id — the event log's `turn.completed` usage is the

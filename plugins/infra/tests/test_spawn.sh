@@ -327,7 +327,7 @@ review_argv() { printf '%s\n' "$1" | sed -n '/^--REVIEW--$/,$p'; }
 rv=$(review_argv "$out_tv")
 assert_arg "the reviewer is claude" "$rv" "claude"
 assert_arg "one-shot" "$rv" "-p"
-assert_contains "spawning my-review" "$rv" "personal-tools:my-review"
+assert_contains "running as my-review" "$rv" "You ARE the my-review agent"
 assert_arg "at the REVIEWER cell's model" "$rv" "sonnet"
 assert_arg "and the REVIEWER cell's effort" "$rv" "low"
 assert_not_contains "never at the implementer's model" "$rv" "gpt-5.6-luna"
@@ -891,10 +891,11 @@ else
     ok "the disposable checkout and scratch dir are cleaned up after the review"
 fi
 assert_contains "a reviewer really ran" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
-# 25 = -p, --model M, --effort E, --permission-mode X, --disallowedTools + 15 rules, --, and
+# 32 = -p, --model M, --effort E, --permission-mode X, --plugin-dir P, --agent A, --mcp-config J,
+# --strict-mcp-config, --disallowedTools + 15 rules, --, and
 # the prompt as ONE argument. A newline-split reader hands claude 52 and it keeps line one.
 assert_equals "the multi-line prompt reached claude as ONE argument" \
-    "$(cat "$WORK/review-argc" 2>/dev/null)" "25"
+    "$(cat "$WORK/review-argc" 2>/dev/null)" "32"
 assert_contains "against a base SHA, not the branch name it was passed" \
     "$(cat "$WORK/review-argv" 2>/dev/null)" "$(git -C "$REPO" rev-parse --verify 'base^{commit}')"
 assert_not_contains "never the branch name" \

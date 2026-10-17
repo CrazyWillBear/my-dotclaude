@@ -54,8 +54,8 @@
 #                  Handoff, no second area's decide) until the fix round's review lands a
 #                  new one. Skipped once this attempt's consults reach the cap — a decide is
 #                  a consult — so review-cap takes over.
-#   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 1:
-#                  the very first) still has high or medium findings — the fix session is
+#   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 2:
+#                  the first fix round's review) still has high or medium findings — the fix session is
 #                  spawned at the next chain position. Never at the top of the chain. With the shipped luna → opus/sonnet
 #                  chains a codex build with findings is fixed on claude from fix round 1;
 #                  luna builds fine but its fix rounds did not converge (PRD #70 ran 5–6
@@ -104,7 +104,7 @@
 # real counts:
 #   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
 #   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=6 (review rounds per issue, every attempt)
-#   ESCALATE_REVIEW_CAP=1 (which review of an attempt, still carrying high/medium, escalates)
+#   ESCALATE_REVIEW_CAP=2 (which review of an attempt, still carrying high/medium, escalates)
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
@@ -148,7 +148,7 @@ case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
 ESC_BACKSTOP="${ESCALATE_ROUND_BACKSTOP:-6}"
 case "$ESC_BACKSTOP" in ''|*[!0-9]*) die "ESCALATE_ROUND_BACKSTOP must be a number, got '$ESC_BACKSTOP'" ;; esac
-ESC_REVIEW_CAP="${ESCALATE_REVIEW_CAP:-1}"
+ESC_REVIEW_CAP="${ESCALATE_REVIEW_CAP:-2}"
 case "$ESC_REVIEW_CAP" in ''|0|*[!0-9]*) die "ESCALATE_REVIEW_CAP must be a number of 1 or more, got '$ESC_REVIEW_CAP'" ;; esac
 # An UNKNOWN tier must not reach resolve-tier.sh: it answers one with the claude-only
 # FALLBACK roster (exit 0, its WARN discarded below), which reads here as "claude-backed,
