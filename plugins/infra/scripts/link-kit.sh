@@ -80,9 +80,17 @@ if command -v jq >/dev/null 2>&1; then
         case "$e" in ''|*[!0-9-]*) continue ;; esac
         [ "$e" -gt "${best_exp:--1}" ] 2>/dev/null && { best="$f"; best_exp="$e"; }
     done
+    # Only `claudeAiOauth` is taken from the box: the rest of the user's file (MCP server
+    # OAuth tokens, which rotate too) is theirs and newer than any box snapshot.
     if [ -n "$best" ]; then
-        ( umask 077; cp -f "$best" "$CFG/.credentials.json.box-sync.$$" \
+        ( umask 077
+          if [ -f "$CFG/.credentials.json" ]; then
+              jq -c --slurpfile b "$best" '.claudeAiOauth = $b[0].claudeAiOauth' "$CFG/.credentials.json"
+          else
+              jq -c '{claudeAiOauth}' "$best"
+          fi >"$CFG/.credentials.json.box-sync.$$" \
             && mv -f "$CFG/.credentials.json.box-sync.$$" "$CFG/.credentials.json" ) 2>/dev/null
+        rm -f "$CFG/.credentials.json.box-sync.$$"
     fi
 fi
 for role in implementer planner reviewer; do

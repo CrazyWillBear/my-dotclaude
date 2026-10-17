@@ -95,11 +95,12 @@ assert_equals "reviewer: no hooks" "$(jq -c . "$BOXES/reviewer/settings.json")" 
 
 echo "test: a box that refreshed its token hands the newer file back, then is re-linked"
 cred() { printf '{"claudeAiOauth":{"accessToken":"a","refreshToken":"%s","expiresAt":%s}}\n' "$1" "$2"; }
-cred main 1000 >"$HOME/.claude/.credentials.json"
+printf '{"claudeAiOauth":{"accessToken":"a","refreshToken":"main","expiresAt":1000},"mcpOAuth":{"srv":"user-newest"}}\n' >"$HOME/.claude/.credentials.json"
 rm -f "$BOXES/planner/.credentials.json"; cred planner 2000 >"$BOXES/planner/.credentials.json"
 rm -f "$BOXES/reviewer/.credentials.json"; cred reviewer 3000 >"$BOXES/reviewer/.credentials.json"
 run
 assert_contains "the LATEST expiry across the boxes wins, whatever the box order" "$(cat "$HOME/.claude/.credentials.json")" '"refreshToken":"reviewer"'
+assert_contains "the user's MCP tokens are kept, not reverted to the box snapshot" "$(cat "$HOME/.claude/.credentials.json")" '"srv":"user-newest"'
 assert_equals "the user's file stays private" "$(stat -c %a "$HOME/.claude/.credentials.json")" "600"
 for role in planner reviewer; do
     assert_equals "$role is a symlink again" "$(readlink "$BOXES/$role/.credentials.json")" "$HOME/.claude/.credentials.json"

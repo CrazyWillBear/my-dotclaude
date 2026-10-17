@@ -81,7 +81,7 @@ start() {
     # Detached: its own group (set -m), no stdin, and fd 9 (the run lock) closed, so it
     # neither blocks the next call nor dies with this one.
     ( set -m; nohup bash -c 'timeout "$1" bash "$2" plan "$3" "$4" "$5" "$6" >"$7.out" 2>"$7.err" </dev/null
-                             echo $? >"$7.rc"' _ "${PLAN_TIMEOUT:-1800}" "$INFRA/consult.sh" \
+                             echo $? >"$7.rc.tmp" && mv -f "$7.rc.tmp" "$7.rc"' _ "${PLAN_TIMEOUT:-1800}" "$INFRA/consult.sh" \
         "$RUNID" "$n" "$tier" "$(worktree_of "$n")" "$PLANS/$n" </dev/null >/dev/null 2>&1 9>&- & )
     echo "planning #$n tier=$tier"
 }

@@ -296,6 +296,27 @@ assert_contains "deferred" "$OUT" "deferred #15 its decide did not finish"
 assert_equals "no fix round without the decision" "$(cat "$STUB_LOG.spawn")" ""
 assert_equals "and the fire is un-spent so it is asked again" "$(cat "$CODEX_RUN_ROOT/r1/issue-15/recurrence")" ""
 
+echo "test: a deferral is bounded — past the limit the consult runs without a budget"
+reset; mkrun 15 1 fix '1 0 high, 1 medium, 0 low\n2 0 high, 1 medium, 0 low\n'
+printf '2\n' >"$CODEX_RUN_ROOT/r1/issue-15/deferrals"
+ORCH_BUDGET=50 STUB_ESC="recurrence: src/a.py" STUB_REPORT="issue 15 fixed round=1 head=abc1234 review=0 high, 1 medium, 0 low" run --wait
+assert_contains "the decide ran" "$OUT" "decided #15"
+assert_contains "and the fix round followed" "$(cat "$STUB_LOG.spawn")" "--role fix"
+if [ -e "$CODEX_RUN_ROOT/r1/issue-15/deferrals" ]; then no "the count was not reset"; else ok "a finished consult resets the count"; fi
+
+echo "test: a plan that finished while workers run is collected on the timeout"
+reset; mkdir -p "$CODEX_RUN_ROOT/r1/plans"; printf '1\n' >"$CODEX_RUN_ROOT/r1/plans/30.rc"; : >"$CODEX_RUN_ROOT/r1/plans/30.started"
+STUB_WR_ERR="error: timed out" run --wait
+assert_contains "collected (held here: the stub plan failed)" "$OUT" "held #30 plan failed"
+
+echo "test: the human's input is never dropped on a busy run"
+(exec 9>"$CODEX_RUN_ROOT/r1/.lock"; flock 9; sleep 3) &
+sleep 0.5
+OUT="$(cd "$ORCH_WT" && ORCH_LOCK_WAIT=0 bash "$WF/handle-report.sh" r1 --answer 21 "x" 2>&1)"; RC=$?
+assert_equals "exit 1" "$RC" "1"
+assert_contains "an error to retry, not waiting:" "$OUT" "error: run r1 is busy"
+wait
+
 echo "test: one call at a time per run"
 reset; mkrun 12 0 build ''
 (STUB_WR_SLEEP=3 STUB_WR_ERR="error: timed out" bash "$WF/handle-report.sh" r1 --wait >/dev/null 2>&1 &)

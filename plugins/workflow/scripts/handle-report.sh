@@ -42,7 +42,7 @@ USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> |
 [ $# -ge 2 ] || die "$USAGE"
 load_run "$1"; shift
 MODE="$1"; shift
-run_lock
+if [ "$MODE" = --wait ]; then run_lock; else run_lock strict; fi
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -141,10 +141,24 @@ escalate() {   # escalate <N> <tier> <worktree> <attempt> — escalate.sh, retri
 }
 
 # timed <consult args…> — consult.sh inside what is left of this call's budget; 124 = deferred.
+#
+# A deferral is bounded: the issue's run dir counts them (`deferrals`), and past
+# HANDLE_MAX_DEFERRALS (default 2) the consult runs with no budget at all — the call may
+# overrun Bash's cap once, which beats re-asking the same opus call forever while every
+# other finished worker queues behind it. A finished consult resets the count.
 timed_consult() {
-    local left; left="$(budget_left)"
-    [ "$left" -ge 60 ] || return 124
-    timeout "$left" bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null
+    local n="$3" left c f
+    f="$(issue_dir "$n")/deferrals"
+    c="$(head -1 "$f" 2>/dev/null)"; c="${c:-0}"
+    if [ "$c" -ge "${HANDLE_MAX_DEFERRALS:-2}" ]; then
+        bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null; local rc=$?
+        rm -f "$f"; return "$rc"
+    fi
+    left="$(budget_left)"
+    if [ "$left" -lt 60 ]; then echo $((c + 1)) >"$f"; return 124; fi
+    timeout "$left" bash "$INFRA/consult.sh" "$@" >/dev/null 2>"$TMP/c.err" </dev/null; local rc=$?
+    if [ "$rc" -eq 124 ]; then echo $((c + 1)) >"$f"; else rm -f "$f"; fi
+    return "$rc"
 }
 
 resume_bg() {   # resume_bg <N> <answer> — worker-resume.sh, backgrounded; the next --wait reads it
@@ -298,7 +312,8 @@ case "$MODE" in
                         ACTED=1 ;;
                 esac
             done
-            if [ -n "$ACTED" ]; then next
+            # A plan that finished meanwhile is collected now, not when some worker next reports.
+            if [ -n "$ACTED" ] || ls "$RUN_DIR"/plans/*.rc >/dev/null 2>&1; then next
             else echo "waiting: $(printf '%s ' "${WAITSET[@]}" | xargs | tr ' ' ',')"; fi
             exit 0
         fi

@@ -80,10 +80,14 @@ env_args() {
 # The call's wall-clock BUDGET (ORCH_DEADLINE) starts once the lock is held: a call that
 # waited on the lock must not inherit a budget it spent waiting. The wait is short — the
 # loser just says `waiting:` and is called again.
+# run_lock [strict] — `strict` is for a call carrying the human's input (an answer, a
+# resource, a merger's landing): losing the race must be an error to retry, never a
+# `waiting:` line the runbook ignores, which would drop that input.
 run_lock() {
     [ -z "${ORCH_LOCKED:-}" ] || return 0
     exec 9>"$RUN_DIR/.lock" || die "cannot open $RUN_DIR/.lock"
     if ! flock -w "${ORCH_LOCK_WAIT:-20}" 9; then
+        [ "${1:-}" != strict ] || die "run $RUNID is busy (another admit.sh or handle-report.sh) — retry this command"
         echo "waiting: another admit.sh or handle-report.sh is still running on run $RUNID"
         exit 0
     fi
