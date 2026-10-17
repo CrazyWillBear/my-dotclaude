@@ -105,7 +105,7 @@ SESSIONS="$WORK/sessions"; export CODEX_SESSIONS_ROOT="$SESSIONS"
 RUNDIR="$CODEX_ROOT/r1/issue-12"
 export STUB_GH_ARGV="$WORK/gh-argv" STUB_GH_BODY="$WORK/body" STUB_REVIEW_ARGC="$WORK/review-argc"
 
-spawn() { bash "$INFRA/spawn.sh" r1 12 standard "$WT" base --orchestrator orch-main "$@" 2>"$WORK/err"; }
+spawn() { bash "$INFRA/spawn.sh" r1 12 standard "$WT" base "$@" 2>"$WORK/err"; }
 wait_exit() { for _ in $(seq 1 25); do [ -f "$RUNDIR/exit" ] && return; sleep 0.2; done; }
 escalate() { rm -f "$WORK/gh-argv" "$WORK/body"; OUT="$(bash "$INFRA/escalate.sh" r1 12 standard "$WT" --base base "$@" 2>"$WORK/eerr")"; RC=$?; }
 posted() { grep -qx comment "$WORK/gh-argv" 2>/dev/null && echo yes || echo no; }
@@ -141,7 +141,7 @@ assert_contains "handoff lists the branch's commit" "$(cat "$WORK/body")" "step 
 assert_contains "handoff carries the last event-log activity" "$(cat "$WORK/body")" "pytest -q"
 out="$(spawn --attempt 1 --dry-run)"
 assert_arg "the respawn argv names the NEXT chain model" "$out" "haiku"
-assert_arg "which is the claude cell" "$out" "--bg"
+assert_arg "which is the claude cell" "$out" "-p"
 assert_contains "and the respawn is told it is one" "$out" "**Handoff**"
 assert_contains "onto the SAME worktree" "$out" "$WT"
 
@@ -165,7 +165,7 @@ escalate --attempt 0
 assert_contains "aged log + live pid = stall" "$OUT" "stall: no event-log activity for 30 minutes"
 assert_contains "handoff names attempt 0" "$(cat "$WORK/body")" "attempt 0 replaced: stall"
 out="$(spawn --attempt 1 --dry-run)"
-assert_arg "the respawn tops out on claude" "$out" "--bg"
+assert_arg "the respawn tops out on claude" "$out" "-p"
 assert_arg "at haiku" "$out" "haiku"
 kill -- -"$WPID" 2>/dev/null; WPID=""
 sleep 0.3

@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/spawn.sh — the worker OR peer session command.
+# Tests for scripts/spawn.sh — the one-shot worker (codex or boxed `claude -p`) OR the
+# `claude --bg` peer.
 #
-# Every assertion here is about a way an unattended session dies quietly: a name
-# without the run prefix (one run stops another's workers), a permission mode that
-# deadlocks on the first prompt, a denylist that lets a worker merge or close, a
-# denylist so wide the worker cannot comment on its own issue, or a prompt that
-# forgets to say "report with SendMessage" — after which the orchestrator waits
-# forever for output that was never addressed to it.
+# Every assertion here is about a way an unattended worker dies quietly: a permission mode
+# that deadlocks on the first prompt, a denylist that lets a worker merge or close, a
+# denylist so wide the worker cannot comment on its own issue, a report the run dir never
+# receives, or a review that never ran.
 #
-# The dry-run assertions below can only prove a string is SOMEWHERE in the argv list.
-# That is not enough, and it once wasn't: `--disallowedTools` is a VARIADIC option, so
-# a prompt placed after it is parsed as more deny rules and the session comes up with
-# no task at all — while every string assertion still passed. So the first test here
-# runs the real exec path against a STUB `claude` and checks where the prompt LANDS.
+# The dry-run assertions can only prove a string is SOMEWHERE in the argv list. That is
+# not enough: `--disallowedTools` is a VARIADIC option, so a prompt placed after it is
+# parsed as more deny rules and the worker comes up with no task at all — so the prompt's
+# POSITION is checked too, and real spawns run against stub CLIs.
 #
 # Run: bash plugins/infra/tests/test_spawn.sh   (non-zero if any fail)
 
@@ -31,6 +29,10 @@ trap 'rm -rf "$WORK"' EXIT
 # and finds resolve-tier.sh / session-status.sh beside itself, so no link is needed.
 export HOME="$WORK/home"
 mkdir -p "$HOME"
+# A real spawn of a claude worker refuses a missing implementer box; give it one.
+export CLAUDE_BOX_ROOT="$WORK/boxes"
+mkdir -p "$CLAUDE_BOX_ROOT/implementer"
+printf '# box\n' >"$CLAUDE_BOX_ROOT/implementer/CLAUDE.md"
 export CODEX_ETC_ROOT="$WORK/etc-codex"
 mkdir -p "$CODEX_ETC_ROOT"
 
@@ -49,7 +51,11 @@ assert_arg() { if printf '%s\n' "$2" | grep -qxF -- "$3"; then ok "$1"; else no 
 # directions. A test that cannot fail is worse than no test.
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got '$2')"; fi; }
 
-dry() { bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"; }
+# A worker reports through its run dir and takes no --orchestrator; a peer still needs one.
+dry() {
+    if [ "${1:-}" = peer ]; then bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"
+    else bash "$SPAWN" "$@" --dry-run 2>"$WORK/err"; fi
+}
 err() { cat "$WORK/err"; }
 
 # The roster a worker resolves decides which BACKEND it spawns through, so the tests
@@ -100,253 +106,6 @@ cat >"$CFG_CODEX/model-tiers.json" <<'JSON'
 }
 JSON
 export RESOLVE_TIER_ROOT="$CFG_CLAUDE"
-
-# A stub `claude` that dumps its argv, one per line, so the real exec path is testable.
-# It also echoes its stdin: an unattended session that inherits the caller's stdin can
-# block forever reading it, so the redirect is a flag-equivalent and is asserted below.
-BIN="$WORK/bin"
-mkdir -p "$BIN"
-cat >"$BIN/claude" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$@"
-printf 'STDIN:['; cat; printf ']\n'
-settings=""
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --settings) settings="$2"; shift 2 ;;
-        *) shift ;;
-    esac
-done
-# A running --bg daemon does not inherit arbitrary variables from this launcher.
-unset DATABASE_URL FOO
-if [ -n "$settings" ]; then
-    DATABASE_URL="$(jq -r '.env.DATABASE_URL // ""' "$settings")"
-    FOO="$(jq -r '.env.FOO // ""' "$settings")"
-fi
-[ -n "${STUB_SETTINGS_OUT:-}" ] && printf '%s\n' "$settings" >"$STUB_SETTINGS_OUT"
-[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
-STUB
-chmod +x "$BIN/claude"
-
-# ---------------------------------------------------------------------------
-echo "test: the prompt actually LANDS as the prompt, not as a deny rule"
-mkdir -p "$WORK/wt"
-argv=$(PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main)
-# `--` must separate the variadic deny list from the prompt, and the prompt must be
-# the LAST argument, after it. Without that the session starts with no task, goes
-# idle, and `idle` is this design's DONE signal for a background worker.
-assert_contains "argv carries a -- terminator" "$argv" "--"
-# The prompt is one multi-line argument, so compare LINE POSITIONS: its first line
-# must be the line immediately after the `--`, and nothing may sit between them.
-sep=$(printf '%s\n' "$argv" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
-prompt_line=$(printf '%s\n' "$argv" | grep -n "BUILD session for issue #12" | head -1 | cut -d: -f1)
-if [ -n "$sep" ] && [ -n "$prompt_line" ] && [ "$prompt_line" -eq "$((sep + 1))" ]; then
-    ok "the prompt is the argument immediately after --"
-else
-    no "the prompt is not fenced off from the variadic deny list (-- at line $sep, prompt at $prompt_line)"
-fi
-assert_contains "and the prompt survives whole" "$argv" "MUST use the SendMessage tool"
-assert_contains "and it is the LAST argument" "$(printf '%s\n' "$argv" | sed -n "$((sep + 1)),\$p")" "Never merge, never open a PR"
-denies=$(printf '%s\n' "$argv" | grep -cxF "Bash(git merge:*)")
-assert_equals "the deny rules still land" "$denies" "1"
-
-echo "test: the session never inherits the caller's stdin"
-argv=$(PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main <<<"LEAKED")
-assert_contains "stdin is empty" "$argv" "STDIN:[]"
-assert_not_contains "nothing leaked through" "$argv" "LEAKED"
-
-# ---------------------------------------------------------------------------
-echo "test: the command carries the run-prefixed name and the tier's roster"
-out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
-assert_arg "background" "$out" "--bg"
-assert_arg "run-prefixed session name includes the initial attempt" "$out" "orch-20260906-101500-issue-12-a0"
-assert_contains "spawn prints the full session name" "$(err)" "session name: orch-20260906-101500-issue-12-a0"
-assert_arg "standard tier -> sonnet implementer" "$out" "sonnet"
-out_c=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
-assert_arg "complex tier -> opus implementer" "$out_c" "opus"
-assert_not_contains "and not the standard model" "$(printf '%s\n' "$out_c" | grep -A1 -- '--model')" "sonnet"
-
-echo "test: an unattended session never comes up able to prompt"
-assert_arg "bypassPermissions" "$out" "bypassPermissions"
-assert_arg "--add-dir the worktree" "$out" "/w/issue-12"
-
-# `on` (the default) records the rendered system prompt on the first request and replays
-# it on every resume, so a resumed session would keep a stale charter forever.
-assert_arg "system prompt is re-rendered, not snapshotted" "$out" "--system-prompt-snapshot"
-assert_arg "snapshot off" "$out" "off"
-
-echo "test: the denylist keeps the irreversible writes on the main thread"
-assert_arg "no git merge" "$out" "Bash(git merge:*)"
-assert_arg "no git worktree" "$out" "Bash(git worktree:*)"
-assert_arg "no gh pr" "$out" "Bash(gh pr:*)"
-assert_arg "no gh issue close" "$out" "Bash(gh issue close:*)"
-assert_arg "no gh issue edit" "$out" "Bash(gh issue edit:*)"
-assert_arg "no gh api — it can close, edit and merge around every other rule" "$out" "Bash(gh api:*)"
-assert_arg "no gh repo" "$out" "Bash(gh repo:*)"
-
-echo "test: push and issue comment stay ALLOWED — the thread is the bus"
-assert_not_contains "push not denied" "$out" "Bash(git push"
-assert_not_contains "comment not denied" "$out" "Bash(gh issue comment"
-
-echo "test: the prompt tells the worker plain output is invisible"
-assert_contains "names SendMessage" "$out" "SendMessage"
-assert_contains "says output is invisible" "$out" "INVISIBLE"
-assert_contains "addresses the orchestrator by name" "$out" '"orch-main"'
-assert_contains "fixed-shape status line" "$out" "issue 12 built head="
-
-echo "test: the build prompt carries the load-bearing protocol"
-assert_contains "reads the issue comments first" "$out" "--comments"
-assert_contains "posts the tackled comment" "$out" "Tackled #12"
-assert_contains "commit per green sub-step is framed as RECOVERY" "$out" "COMMIT AFTER EVERY GREEN SUB-STEP"
-assert_contains "spawns my-review itself" "$out" "personal-tools:my-review"
-assert_contains "does not fix its own findings" "$out" "a fresh session does that"
-assert_not_contains "no context map" "$out" "CONTEXT-MAP"
-assert_contains "points at the box contract by absolute path" "$out" "$(cd "$SCRIPT_DIR/.." && pwd)/boxes/implementer/CLAUDE.md"
-assert_contains "escalation path" "$out" "escalate"
-
-echo "test: standard and complex build to the PLAN on the thread; trivial self-plans (#104)"
-# The plan is posted to the issue by consult.sh BEFORE the build spawn, so the worker
-# receives it the way it receives everything else — by reading the thread. Nobody spawns
-# a planner from inside the build session any more.
-out_p=$(dry 20260906-101500 12 complex /w/issue-12 orchestrate-20260906)
-assert_contains "complex follows the Plan comment" "$out_p" "**Plan**"
-assert_not_contains "and spawns no planner of its own" "$out_p" "workflow:planner"
-out_s=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906)
-assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
-assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
-assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
-# CLAUDE-backed (this roster's standard cell is claude): the pause is SendMessage, not the
-# codex-only status/note shape — a claude worker has neither field (review round 9). Giving
-# every backend the codex shape left a claude worker unable to emit its own pause mechanism.
-assert_contains "a CLAUDE worker's pause is SendMessage, with the deviation: prefix" "$out_s" \
-    "issue 12 escalate deviation: <the same three lines>"
-assert_contains "a CLAUDE worker can report missing infrastructure as blocked" "$out_s" \
-    "issue 12 blocked infra: <what is missing>"
-assert_not_contains "never the codex-only status/note shape it cannot emit" "$out_s" '"note" = "deviation: "'
-assert_not_contains "trivial has no plan" "$(dry r1 12 trivial /w base)" "**Plan**"
-
-echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
-CFG_CHAIN="$WORK/cfg-chain"
-mkdir -p "$CFG_CHAIN"
-cat >"$CFG_CHAIN/model-tiers.json" <<'JSON'
-{
-  "trivial": {
-    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
-    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
-                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
-    "reviewer":    { "backend": "claude", "model": "opus", "effort": "low" }
-  },
-  "standard": {
-    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
-    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
-                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
-    "reviewer":    { "backend": "claude", "model": "opus", "effort": "medium" }
-  },
-  "complex": {
-    "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },
-    "implementer": { "backend": "claude", "model": "opus",  "effort": "medium" },
-    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
-  }
-}
-JSON
-out_a0=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base)
-assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
-assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
-out_a1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 1)
-assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
-assert_arg "attempt 1 is part of the session name" "$out_a1" "orch-r1-issue-12-a1"
-assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
-assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
-assert_contains "and to continue from the last commit" "$out_a1" "last commit"
-RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt 2 >/dev/null
-assert_equals "past the top of the chain exits 1 — the orchestrator drains there, never respawns" "$?" "1"
-assert_contains "and says so" "$(err)" "chain"
-RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --attempt x >/dev/null
-assert_equals "a non-numeric attempt exits 1" "$?" "1"
-# `dry` is a shell FUNCTION: on bash < 4.4, a var assigned in front of a function call can
-# leak into the CURRENT shell instead of staying scoped to that call (fixed in 4.4; this
-# repo promises macOS's bash 3.2). Both calls above are direct — not wrapped in $(...), so
-# nothing forked a subshell to contain it — restore the file's own default explicitly.
-RESOLVE_TIER_ROOT="$CFG_CLAUDE"
-out_f1=$(RESOLVE_TIER_ROOT="$CFG_CHAIN" dry r1 12 standard /w/issue-12 base --role fix --round 2 --attempt 1)
-assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
-assert_arg "a fix session name includes attempt and round" "$out_f1" "orch-r1-issue-12-a1-r2"
-assert_contains "spawn prints that full fix session name" "$(err)" "session name: orch-r1-issue-12-a1-r2"
-
-echo "test: --role fix is a fresh session working from the review comment"
-out=$(dry 20260906-101500 12 standard /w/issue-12 orchestrate-20260906 --role fix --round 2)
-assert_arg "the default attempt is included in a fix session name" "$out" "orch-20260906-101500-issue-12-a0-r2"
-assert_contains "says which round" "$out" "FIX ROUND 2"
-assert_contains "did not write this code" "$out" "You did not write this code"
-assert_contains "reads the review comment" "$out" "Review round"
-assert_contains "a newer Consult decision replaces re-patching" "$out" "implement the decision"
-assert_contains "reports the round back" "$out" "round=2"
-assert_not_contains "does not re-post the tackled comment" "$out" "Tackled #12"
-
-echo "test: --orchestrator resolves from this session when omitted"
-# Stub `session-status.sh --self` to a KNOWN, distinctive name and assert THAT NAME is
-# what the worker is told to report to. The old shape of this test asserted only that
-# "SendMessage" appeared in the prompt — a string every worker prompt carries
-# unconditionally — so it passed whether the resolution worked, was deleted, or died.
-#
-# The stub is reached by RELOCATING the real spawn.sh, never by editing it: spawn.sh
-# resolves its siblings from its OWN directory, so an untouched copy placed beside stub
-# siblings picks them up for free. A sed-rewritten copy would not be the script that ships.
-SPAWN_DIR="$(cd "$(dirname "$SPAWN")" && pwd)"
-mk_infra() {   # mk_infra <dir> <self-name|-> — stub siblings plus the REAL spawn.sh
-    mkdir -p "$1"
-    cp "$SPAWN_DIR/resolve-tier.sh" "$SPAWN_DIR/check-inbound.sh" \
-       "$SPAWN_DIR/common-git-dir.sh" "$1/"
-    cp "$SPAWN" "$1/spawn.sh"
-    if [ "$2" = - ]; then
-        printf '#!/usr/bin/env bash\nexit 1\n' >"$1/session-status.sh"
-    else
-        # The generated stub uses these expansions when it runs, not while being written.
-        # shellcheck disable=SC2016
-        printf '#!/usr/bin/env bash\n[ "${1:-}" = --self ] || exit 1\nprintf "%%s\\n" "%s"\n' \
-            "$2" >"$1/session-status.sh"
-    fi
-    chmod +x "$1/session-status.sh"
-}
-
-mk_infra "$WORK/infra-ok" "test-orchestrator-unique-name-xyz"
-out=$(RESOLVE_TIER_ROOT="$CFG_CLAUDE" bash "$WORK/infra-ok/spawn.sh" \
-      r1 12 standard "$WORK/wt" base --dry-run 2>"$WORK/err"); rc=$?
-assert_equals "spawn succeeds with a resolvable name" "$rc" "0"
-assert_contains "the RESOLVED name is the address the worker reports to" \
-    "$out" "test-orchestrator-unique-name-xyz"
-
-echo "test: --orchestrator fails loud when the session name cannot be resolved"
-mk_infra "$WORK/infra-bad" -
-out=$(RESOLVE_TIER_ROOT="$CFG_CLAUDE" bash "$WORK/infra-bad/spawn.sh" \
-      r1 12 standard "$WORK/wt" base --dry-run 2>"$WORK/err"); rc=$?
-assert_equals "exits 1 rather than spawning a worker with no address" "$rc" "1"
-assert_contains "and says how to fix it" "$(err)" "pass --orchestrator NAME"
-
-# ---------------------------------------------------------------------------
-echo "test: bad input fails loud instead of spawning something wrong"
-bash "$SPAWN" r1 >/dev/null 2>"$WORK/err"; assert_equals "too few args exits 1" "$?" "1"
-assert_contains "prints usage" "$(err)" "usage:"
-dry r1 twelve standard /w base >/dev/null; assert_equals "non-numeric issue exits 1" "$?" "1"
-dry r1 12 standard /w base --role sideways >/dev/null; assert_equals "bad role exits 1" "$?" "1"
-dry r1 12 standard /w base --round two >/dev/null; assert_equals "a non-numeric round exits 1" "$?" "1"
-dry r1 12 standard /w base --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
-assert_contains "names the flag" "$(err)" "unknown flag"
-
-echo "test: an unknown tier still spawns — resolve-tier.sh falls back to the claude-only roster"
-out=$(dry r1 12 nonsense /w/issue-12 base); assert_arg "fallback roster" "$out" "opus"
-
-echo "test: a real spawn refuses a worktree that does not exist"
-bash "$SPAWN" r1 12 standard "$WORK/nope" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
-assert_equals "exits 1" "$?" "1"
-assert_contains "says which path" "$(err)" "worktree does not exist"
-
-echo "test: without its infra siblings, spawn fails loud instead of guessing a roster"
-mkdir -p "$WORK/lone"
-cp "$SPAWN" "$WORK/lone/spawn.sh"
-bash "$WORK/lone/spawn.sh" r1 12 standard /w base --dry-run --orchestrator orch-main >/dev/null 2>"$WORK/err"
-assert_equals "exits 1" "$?" "1"
-assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
 
 # ---------------------------------------------------------------------------
 # The CODEX backend. A tier whose implementer row says `backend: codex` spawns through
@@ -446,7 +205,7 @@ RUNDIR="$CODEX_ROOT/r9/issue-12"
 
 codex_dry() {
     CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-        bash "$SPAWN" "$@" --dry-run --orchestrator orch-main 2>"$WORK/err"
+        bash "$SPAWN" "$@" --dry-run 2>"$WORK/err"
 }
 
 echo "test: a codex-tier worker spawns through codex exec, not claude"
@@ -490,15 +249,13 @@ else
     no "the prompt at line $p is not after the flags (--output-schema at $o)"
 fi
 
-echo "test: the codex worker is told how to report — it has no SendMessage tool"
-assert_contains "says outright it has no SendMessage tool" "$out" "NO SendMessage tool"
-assert_not_contains "and is never told to use one" "$out" "MUST use the SendMessage tool"
+echo "test: the codex worker is told how to report — its final message"
+assert_contains "says nobody reads its prose" "$out" "Nobody reads your prose"
+assert_not_contains "and is never told to use SendMessage" "$out" "SendMessage"
 assert_contains "its final message is the report" "$out" "output schema"
 assert_contains "fixed-shape JSON status" "$out" '"status": "built"'
 assert_contains "reports an EMPTY review — it did not review" "$out" '"review": ""'
 assert_contains "and is told not to review itself" "$out" "Do NOT review your own diff"
-assert_contains "naming the nested-sandbox reason" "$out" "nested codex
-   invocation cannot start inside your sandbox"
 
 echo "test: a codex dry run leaves no run dir behind"
 # session-status.sh reads a run dir with a pid file as a live worker, and one without a
@@ -507,7 +264,7 @@ echo "test: a codex dry run leaves no run dir behind"
 # may this one.
 rm -rf "$CODEX_ROOT/dryonly"
 CODEX_RUN_ROOT="$CODEX_ROOT/dryonly" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main >/dev/null 2>&1
+    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run >/dev/null 2>&1
 if [ -e "$CODEX_ROOT/dryonly" ]; then
     no "the dry run created $CODEX_ROOT/dryonly — a phantom worker session-status reads as busy"
 else
@@ -528,7 +285,7 @@ mkdir -p "$CODEX_ROOT/schemafail/r9/issue-12/status-schema.json"
 # passes or fails on whether the developer happens to have codex installed — green on a
 # machine that does, red in CI, which is exactly how it was caught.
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/schemafail" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>&1
 rc=$?
 assert_equals "an unwritable schema exits non-zero" "$rc" "1"
 if [ -e "$CODEX_ROOT/schemafail/r9/issue-12" ]; then
@@ -549,9 +306,7 @@ assert_not_contains "and is not told to spawn an agent it cannot spawn" \
     "$out_cx" "workflow:planner"
 assert_contains "a codex worker pauses on a deviation with the escalate status" \
     "$out_cx" "**Deviation**"
-# The codex-only shape belongs ONLY here — a codex worker has status/note fields (from
-# --output-schema) that a claude worker does not (review round 9).
-assert_contains "a CODEX worker's pause DOES use the status/note shape" "$out_cx" \
+assert_contains "a CODEX worker's pause uses the status/note shape" "$out_cx" \
     '"note" = "deviation: "'
 assert_contains "a CODEX worker can report missing infrastructure as blocked" "$out_cx" \
     'infra: <what is missing>'
@@ -632,10 +387,233 @@ cat >"$CFG_MIXED/model-tiers.json" <<'JSON'
 }
 JSON
 out_mx=$(CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_MIXED" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run --orchestrator orch-main 2>"$WORK/err")
+    bash "$SPAWN" r9 12 standard "$REPO" base --dry-run 2>"$WORK/err")
 assert_contains "it still spawns a reviewer" "$out_mx" "--REVIEW--"
 assert_arg "on opus" "$(review_argv "$out_mx")" "opus"
 assert_not_contains "never a codex model for the reviewer" "$(review_argv "$out_mx")" "gpt-5.6-sol"
+
+# ---------------------------------------------------------------------------
+# The CLAUDE backend. A claude-tier worker is a one-shot `claude -p` in the IMPLEMENTER BOX
+# (a per-role CLAUDE_CONFIG_DIR link-kit.sh builds), launched through the SAME wrapper and
+# run dir as codex. Its argv comes from worker-cmd.sh.
+CLAUDE_BIN="$WORK/claudebin"
+mkdir -p "$CLAUDE_BIN"
+# The worker half of the stub: a call carrying --json-schema is the WORKER; anything else
+# is the reviewer, handed to the reviewer stub above. The worker records its argv, cwd,
+# config dir and env, then streams what `claude -p --output-format stream-json` does: an
+# init event with the session id, an assistant event with usage, and a result event whose
+# structured_output is the report.
+cat >"$CLAUDE_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+case " $* " in *" --json-schema "*) ;; *) exec "$STUB_REVIEWER" "$@" ;; esac
+printf '%s\n' "$@" >"${STUB_WORKER_ARGV:-/dev/null}"
+pwd >"${STUB_WORKER_CWD:-/dev/null}"
+printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" >"${STUB_WORKER_CFG:-/dev/null}"
+[ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
+{ printf 'STDIN:['; cat; printf ']\n'; } >&2
+printf '{"type":"system","subtype":"init","session_id":"sess-123"}\n'
+printf '{"type":"assistant","session_id":"sess-123","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5}}}\n'
+[ -n "${STUB_CLAUDE_SLEEP:-}" ] && sleep "$STUB_CLAUDE_SLEEP"
+if [ -z "${STUB_CLAUDE_NO_RESULT:-}" ]; then
+    head="$(git rev-parse HEAD)"
+    printf '{"type":"result","session_id":"sess-123","is_error":false,"structured_output":{"issue":12,"status":"%s","round":0,"head":"%s","review":"","note":""}}\n' \
+        "${STUB_CLAUDE_STATUS:-built}" "$head"
+fi
+exit "${STUB_CLAUDE_EXIT:-0}"
+STUB
+chmod +x "$CLAUDE_BIN/claude"
+export STUB_REVIEWER="$CODEX_BIN/claude" STUB_WORKER_ARGV="$WORK/claude-worker-argv"
+
+claude_dry() { CODEX_RUN_ROOT="$CODEX_ROOT" bash "$SPAWN" "$@" --dry-run 2>"$WORK/err"; }
+worker_argv() { printf '%s\n' "$1" | sed '/^--REVIEW--$/,$d'; }
+
+echo "test: a claude-tier worker is a one-shot claude -p in the implementer box"
+out=$(claude_dry 20260906-101500 12 standard "$REPO" base)
+w=$(worker_argv "$out")
+assert_equals "the box rides in through env" "$(printf '%s\n' "$w" | sed -n 1,3p | tr '\n' ' ')" \
+    "env CLAUDE_CONFIG_DIR=$CLAUDE_BOX_ROOT/implementer claude "
+assert_arg "one-shot" "$w" "-p"
+assert_not_contains "never a --bg session" "$w" "--bg"
+assert_contains "spawn prints the full session name" "$(err)" "session name: orch-20260906-101500-issue-12-a0"
+assert_arg "standard tier -> sonnet implementer" "$w" "sonnet"
+assert_arg "complex tier -> opus implementer" "$(worker_argv "$(claude_dry r1 12 complex "$REPO" base)")" "opus"
+assert_arg "bypassPermissions" "$w" "bypassPermissions"
+assert_arg "--add-dir the worktree" "$w" "$REPO"
+assert_arg "system prompt is re-rendered, not snapshotted" "$w" "--system-prompt-snapshot"
+assert_arg "streams JSON events" "$w" "stream-json"
+assert_arg "verbose, which stream-json needs" "$w" "--verbose"
+assert_arg "the report is forced into the schema" "$w" "--json-schema"
+assert_contains "the schema names the status field" "$w" '"status"'
+assert_contains "and a reviewer follows the worker" "$out" "--REVIEW--"
+
+echo "test: the denylist keeps the irreversible writes on the main thread"
+for rule in "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)" "Bash(gh issue close:*)" \
+            "Bash(gh issue edit:*)" "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)"; do
+    assert_arg "denies $rule" "$w" "$rule"
+done
+assert_not_contains "push not denied" "$w" "Bash(git push"
+assert_not_contains "comment not denied" "$w" "Bash(gh issue comment"
+
+echo "test: the prompt lands as the prompt, after --, and last"
+sep=$(printf '%s\n' "$w" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
+prompt_line=$(printf '%s\n' "$w" | grep -n "BUILD session for issue #12" | head -1 | cut -d: -f1)
+if [ -n "$sep" ] && [ -n "$prompt_line" ] && [ "$prompt_line" -eq "$((sep + 1))" ]; then
+    ok "the prompt is the argument immediately after --"
+else
+    no "the prompt is not fenced off from the variadic deny list (-- at line $sep, prompt at $prompt_line)"
+fi
+assert_contains "and it ends the worker argv" "$(printf '%s\n' "$w" | sed -n "$((sep + 1)),\$p")" "Never merge, never open a PR"
+
+echo "test: the worker reports with its final message, never SendMessage"
+assert_contains "nobody reads its prose" "$w" "Nobody reads your prose"
+assert_not_contains "no SendMessage" "$w" "SendMessage"
+assert_contains "fixed-shape JSON status" "$w" '"status": "built"'
+assert_contains "reports an EMPTY review" "$w" '"review": ""'
+assert_contains "and is told not to review itself" "$w" "Do NOT review your own diff"
+assert_not_contains "never spawns my-review itself" "$w" "personal-tools:my-review"
+
+echo "test: the build prompt carries the load-bearing protocol"
+assert_contains "reads the issue comments first" "$w" "--comments"
+assert_contains "posts the tackled comment" "$w" "Tackled #12"
+assert_contains "commit per green sub-step is framed as RECOVERY" "$w" "COMMIT AFTER EVERY GREEN SUB-STEP"
+assert_not_contains "no context map" "$w" "CONTEXT-MAP"
+assert_contains "points at the box contract by absolute path" "$w" "$(cd "$SCRIPT_DIR/.." && pwd)/boxes/implementer/CLAUDE.md"
+assert_contains "escalation path" "$w" "escalate"
+
+echo "test: standard and complex build to the PLAN on the thread; trivial self-plans (#104)"
+out_p=$(claude_dry r1 12 complex "$REPO" base)
+assert_contains "complex follows the Plan comment" "$out_p" "**Plan**"
+assert_not_contains "and spawns no planner of its own" "$out_p" "workflow:planner"
+out_s=$(claude_dry r1 12 standard "$REPO" base)
+assert_contains "standard follows the Plan comment too" "$out_s" "**Plan**"
+assert_contains "and is told to stop on a false plan assumption, not improvise" "$out_s" "**Deviation**"
+assert_contains "the deviation names step, finding and attempt" "$out_s" "which step"
+assert_contains "the pause is the escalate status with the deviation: prefix" "$out_s" '"note" = "deviation: "'
+assert_contains "missing infrastructure is reported as blocked" "$out_s" 'infra: <what is missing>'
+assert_not_contains "trivial has no plan" "$(worker_argv "$(claude_dry r1 12 trivial "$REPO" base)")" "**Plan**"
+
+echo "test: --attempt selects the chain position, and a respawn is told it is one (#104)"
+CFG_CHAIN="$WORK/cfg-chain"
+mkdir -p "$CFG_CHAIN"
+cat >"$CFG_CHAIN/model-tiers.json" <<'JSON'
+{
+  "trivial": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "low" }
+  },
+  "standard": {
+    "planner":     { "backend": "claude", "model": "opus", "effort": "medium" },
+    "implementer": [ { "backend": "claude", "model": "haiku", "effort": "max" },
+                     { "backend": "claude", "model": "opus",  "effort": "medium" } ],
+    "reviewer":    { "backend": "claude", "model": "opus", "effort": "medium" }
+  },
+  "complex": {
+    "planner":     { "backend": "claude", "model": "fable", "effort": "medium" },
+    "implementer": { "backend": "claude", "model": "opus",  "effort": "medium" },
+    "reviewer":    { "backend": "claude", "model": "opus",  "effort": "high" }
+  }
+}
+JSON
+out_a0=$(worker_argv "$(RESOLVE_TIER_ROOT="$CFG_CHAIN" claude_dry r1 12 standard "$REPO" base)")
+assert_arg "attempt 0 (default) is the chain head" "$out_a0" "haiku"
+assert_not_contains "a first attempt is not told it is a replacement" "$out_a0" "**Handoff**"
+out_a1=$(worker_argv "$(RESOLVE_TIER_ROOT="$CFG_CHAIN" claude_dry r1 12 standard "$REPO" base --attempt 1)")
+assert_arg "attempt 1 is the next cell" "$out_a1" "opus"
+assert_contains "attempt 1 is part of the session name" "$(err)" "orch-r1-issue-12-a1"
+assert_not_contains "and not the head" "$(printf '%s\n' "$out_a1" | grep -A1 -- '--model')" "haiku"
+assert_contains "a respawn is told to read the Handoff comment" "$out_a1" "**Handoff**"
+assert_contains "and to continue from the last commit" "$out_a1" "last commit"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" claude_dry r1 12 standard "$REPO" base --attempt 2 >/dev/null
+assert_equals "past the top of the chain exits 1 — the orchestrator drains there, never respawns" "$?" "1"
+assert_contains "and says so" "$(err)" "chain"
+RESOLVE_TIER_ROOT="$CFG_CHAIN" claude_dry r1 12 standard "$REPO" base --attempt x >/dev/null
+assert_equals "a non-numeric attempt exits 1" "$?" "1"
+RESOLVE_TIER_ROOT="$CFG_CLAUDE"
+out_f1=$(worker_argv "$(RESOLVE_TIER_ROOT="$CFG_CHAIN" claude_dry r1 12 standard "$REPO" base --role fix --round 2 --attempt 1)")
+assert_arg "a fix round at attempt 1 also runs the next cell" "$out_f1" "opus"
+assert_contains "a fix session name includes attempt and round" "$(err)" "session name: orch-r1-issue-12-a1-r2"
+
+echo "test: --role fix is a fresh worker working from the review comment"
+out=$(worker_argv "$(claude_dry r1 12 standard "$REPO" base --role fix --round 2)")
+assert_contains "the default attempt is included in a fix session name" "$(err)" "orch-r1-issue-12-a0-r2"
+assert_contains "says which round" "$out" "FIX ROUND 2"
+assert_contains "did not write this code" "$out" "You did not write this code"
+assert_contains "reads the review comment" "$out" "Review round"
+assert_contains "a newer Consult decision replaces re-patching" "$out" "implement the decision"
+assert_contains "reports the round back" "$out" '"round": 2'
+assert_not_contains "does not re-post the tackled comment" "$out" "Tackled #12"
+
+echo "test: a worker takes no --orchestrator — it reports through its run dir"
+claude_dry r1 12 standard "$REPO" base --orchestrator orch-main >/dev/null
+assert_equals "--orchestrator on a worker exits 1" "$?" "1"
+assert_contains "as an unknown flag" "$(err)" "unknown flag --orchestrator"
+
+echo "test: bad input fails loud instead of spawning something wrong"
+bash "$SPAWN" r1 >/dev/null 2>"$WORK/err"; assert_equals "too few args exits 1" "$?" "1"
+assert_contains "prints usage" "$(err)" "usage:"
+dry r1 twelve standard "$REPO" base >/dev/null; assert_equals "non-numeric issue exits 1" "$?" "1"
+dry r1 12 standard "$REPO" base --role sideways >/dev/null; assert_equals "bad role exits 1" "$?" "1"
+dry r1 12 standard "$REPO" base --round two >/dev/null; assert_equals "a non-numeric round exits 1" "$?" "1"
+dry r1 12 standard "$REPO" base --bogus >/dev/null; assert_equals "unknown flag exits 1" "$?" "1"
+assert_contains "names the flag" "$(err)" "unknown flag"
+
+echo "test: an unknown tier still spawns — resolve-tier.sh falls back to the claude-only roster"
+assert_arg "fallback roster" "$(worker_argv "$(claude_dry r1 12 nonsense "$REPO" base)")" "opus"
+
+echo "test: a spawn refuses a worktree that does not exist"
+bash "$SPAWN" r1 12 standard "$WORK/nope" base >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "says which path" "$(err)" "worktree does not exist"
+
+echo "test: without its infra siblings, spawn fails loud instead of guessing a roster"
+mkdir -p "$WORK/lone"
+cp "$SPAWN" "$WORK/lone/spawn.sh"
+bash "$WORK/lone/spawn.sh" r1 12 standard "$REPO" base --dry-run >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "names the missing script" "$(err)" "resolve-tier.sh"
+
+echo "test: a real claude spawn runs the worker from its worktree, in the box, through the wrapper"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/claude-worker-cwd" "$WORK/claude-worker-cfg" "$WORK/review-argv"
+STUB_WORKER_CWD="$WORK/claude-worker-cwd" STUB_WORKER_CFG="$WORK/claude-worker-cfg" \
+    STUB_REVIEW_ARGV="$WORK/review-argv" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >"$WORK/out" 2>"$WORK/err" <<<"LEAKED"
+assert_equals "prints the run dir" "$(cat "$WORK/out")" "$RUNDIR"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+for f in events.jsonl last-message.txt pid exit status-schema.json session-name backend review.txt; do
+    if [ -f "$RUNDIR/$f" ]; then ok "wrote $f"; else no "missing $RUNDIR/$f"; fi
+done
+assert_equals "backend is recorded" "$(cat "$RUNDIR/backend" 2>/dev/null)" "claude"
+assert_equals "exit 0 recorded" "$(cat "$RUNDIR/exit" 2>/dev/null)" "0"
+assert_equals "the worker ran FROM its worktree" "$(cat "$WORK/claude-worker-cwd" 2>/dev/null)" "$REPO"
+assert_equals "in the implementer box" "$(cat "$WORK/claude-worker-cfg" 2>/dev/null)" "$CLAUDE_BOX_ROOT/implementer"
+assert_contains "the stream is the event log" "$(cat "$RUNDIR/events.jsonl")" '"subtype":"init"'
+assert_contains "the report was extracted from the result event" \
+    "$(cat "$RUNDIR/last-message.txt" 2>/dev/null)" '"status":"built"'
+assert_contains "stdin is closed" "$(cat "$RUNDIR/stderr.log")" "STDIN:[]"
+assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/stderr.log")" "LEAKED"
+assert_contains "and the independent reviewer ran after it" "$(cat "$WORK/review-argv" 2>/dev/null)" "-p"
+assert_contains "the round was recorded in the ledger" "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 0 high, 1 medium, 0 low"
+
+echo "test: a claude worker that crashes before reporting leaves no report to misread"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv"
+STUB_CLAUDE_NO_RESULT=1 STUB_CLAUDE_EXIT=3 STUB_REVIEW_ARGV="$WORK/review-argv" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "the exit code is the one claude returned" "$(cat "$RUNDIR/exit" 2>/dev/null)" "3"
+if [ -e "$RUNDIR/last-message.txt" ]; then no "a report was invented for a crashed worker"; else ok "no report is invented"; fi
+assert_empty "and nothing was reviewed" "$(cat "$WORK/review-argv" 2>/dev/null)"
+
+echo "test: a real claude spawn with no implementer box fails loud"
+rm -rf "$CODEX_ROOT"
+PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_BOX_ROOT="$WORK/nobox" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
+assert_equals "exits 1" "$?" "1"
+assert_contains "names the missing box" "$(err)" "implementer box is missing"
+if [ -e "$CODEX_ROOT" ]; then no "left a run dir behind"; else ok "and leaves no run dir behind"; fi
 
 echo "test: a real codex spawn writes events, last-message, pid and exit files"
 # Bash 3.2 treats an empty array expansion as unbound under `set -u`. The no-env
@@ -647,7 +625,7 @@ else
 fi
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err" <<<"LEAKED"
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err" <<<"LEAKED"
 # the spawn returns immediately; the worker runs in the background
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 for f in events.jsonl last-message.txt pid exit status-schema.json session-name; do
@@ -667,33 +645,26 @@ assert_contains "stdin is closed — codex blocks forever on an open one" \
 assert_not_contains "nothing leaked through" "$(cat "$RUNDIR/events.jsonl")" "LEAKED"
 
 echo "test: --env reaches real Claude and Codex workers without entering argv or run files"
-argv=$(STUB_ENV_OUT="$WORK/env-claude" STUB_SETTINGS_OUT="$WORK/settings-claude" \
-    PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard \
-    "$WORK/wt" base --orchestrator orch-main --env DATABASE_URL=postgres://x --env FOO=bar)
-assert_equals "Claude worker receives both --env values" "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
-assert_contains "Claude gets a per-session settings file" "$argv" "--settings"
-assert_not_contains "Claude argv does not contain the value" "$argv" "postgres://x"
-claude_settings="$(cat "$WORK/settings-claude" 2>/dev/null)"
-case "$(basename "$(dirname "$claude_settings")")" in
-    claude-env.r1.issue-12.*) ok "settings dir is named for its run and issue, so the run end can sweep it" ;;
-    *) no "settings dir is not named claude-env.r1.issue-12.* (got '$claude_settings')" ;;
-esac
-assert_contains "successful dispatch prints the private settings path for cleanup" \
-    "$argv" "Claude settings file: $claude_settings"
-if [ -n "$claude_settings" ] && [ -f "$claude_settings" ] \
-   && [ "$(jq -r '.env.DATABASE_URL' "$claude_settings")" = 'postgres://x' ]; then
-    ok "private Claude settings remain readable after dispatch for later session requests"
-else
-    no "private Claude settings disappeared or lost the value after dispatch"
-fi
-rm -f -- "$claude_settings"
-rmdir -- "$(dirname "$claude_settings")"
+rm -rf "$CODEX_ROOT"
+STUB_ENV_OUT="$WORK/env-claude" STUB_HOST_ENV_OUT="$WORK/host-env-claude" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x --env FOO=bar \
+    >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "Claude worker receives both --env values in its process" \
+    "$(cat "$WORK/env-claude" 2>/dev/null)" "postgres://x|bar"
+assert_equals "host reviewer of a claude worker receives neither value" \
+    "$(cat "$WORK/host-env-claude" 2>/dev/null)" '|'
+assert_not_contains "Claude argv does not contain the value" "$(cat "$WORK/claude-worker-argv" 2>/dev/null)" "postgres://x"
+assert_not_contains "no --settings file is used any more" "$(cat "$WORK/claude-worker-argv" 2>/dev/null)" "--settings"
+leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
+assert_empty "Claude run dir never contains the env value" "$leak"
 
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     STUB_ENV_OUT="$WORK/env-codex" STUB_HOST_ENV_OUT="$WORK/host-env-codex" \
     bash "$SPAWN" r9 12 standard "$REPO" base \
-    --orchestrator orch-main --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
+    --env 'DATABASE_URL=postgres://x?sslmode=require' --env FOO=bar \
     >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_equals "Codex worker receives a value containing '=' intact" \
@@ -703,7 +674,7 @@ assert_equals "host reviewer receives neither worker value" \
 leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
 assert_empty "Codex run dir never contains the env value" "$leak"
 
-out=$(dry r1 12 standard /w base --env DATABASE_URL=postgres://x)
+out=$(dry r1 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "Claude dry run exits 0" "$?" "0"
 assert_not_contains "Claude dry run never prints the env value" "$out" "postgres://x"
 out=$(codex_dry r9 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
@@ -723,7 +694,7 @@ mkdir -p "$HOME/.codex"
 printf 'export DOTENV_API_TOKEN=dotenv-canary\n# COMMENTED_TOKEN=x\n' >"$HOME/.codex/.env"
 out=$(env 'npm_config_//reg/:_authToken=npm-canary' CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
     bash "$SPAWN" r9 12 standard "$REPO" base --env STRIPE_API_KEY=private-canary \
-    --dry-run --orchestrator orch-main 2>"$WORK/err")
+    --dry-run 2>"$WORK/err")
 excl=$(printf '%s\n' "$out" | grep '^shell_environment_policy.exclude=')
 assert_contains "Codex re-excludes a non-identifier host secret name" "$excl" '"npm_config_//reg/:_authToken"'
 assert_contains "Codex re-excludes a secret name loaded from CODEX_HOME/.env" "$excl" '"DOTENV_API_TOKEN"'
@@ -823,8 +794,8 @@ assert_contains "filters table refusal names shell_environment_policy" "$(err)" 
 rm -f "$HOME/.codex/config.toml"
 
 echo "test: invalid --env values are rejected before a worker starts"
-STUB_ENV_OUT="$WORK/env-bad" PATH="$BIN:$PATH" \
-    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main --env NOEQUALS \
+STUB_ENV_OUT="$WORK/env-bad" PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv-claude" \
+    bash "$SPAWN" r1 12 standard "$REPO" base --env NOEQUALS \
     >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "malformed Claude --env exits 1" "$rc" "1"
@@ -834,7 +805,7 @@ if [ ! -e "$WORK/env-bad" ]; then ok "malformed Claude --env spawns nothing"; el
 
 rm -rf "$CODEX_ROOT/badenv"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main --env NOEQUALS \
+    bash "$SPAWN" r9 12 standard "$REPO" base --env NOEQUALS \
     >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "malformed Codex --env exits 1" "$rc" "1"
@@ -842,13 +813,13 @@ assert_contains "malformed Codex --env says NAME=VALUE" "$(err)" "NAME=VALUE"
 assert_not_contains "malformed Codex --env never echoes the argument" "$(err)" "NOEQUALS"
 if [ ! -e "$CODEX_ROOT/badenv" ]; then ok "malformed Codex --env creates no run dir"; else no "malformed Codex --env created a run dir"; fi
 
-PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv-claude" bash "$SPAWN" r1 12 standard "$REPO" base \
     --env 1BAD=x >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "invalid env name exits 1" "$rc" "1"
 assert_contains "invalid env name is identified" "$(err)" "not a valid variable name"
 
-PATH="$BIN:$PATH" bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv-claude" bash "$SPAWN" r1 12 standard "$REPO" base \
     --env >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "bare --env exits 1" "$rc" "1"
@@ -865,8 +836,8 @@ for name in BASH_ENV PATH GIT_CONFIG_COUNT GIT_CONFIG_CUSTOM GIT_CONFIG_PARAMETE
     assert_not_contains "$name rejection never echoes its value" "$(err)" "private-canary"
 done
 
-STUB_ENV_OUT="$WORK/env-reserved" PATH="$BIN:$PATH" \
-    bash "$SPAWN" r1 12 standard "$WORK/wt" base --orchestrator orch-main \
+STUB_ENV_OUT="$WORK/env-reserved" PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/badenv-claude" \
+    bash "$SPAWN" r1 12 standard "$REPO" base \
     --env BASH_ENV=private-canary >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "Claude spawn rejects a reserved shell variable" "$rc" "1"
@@ -878,7 +849,7 @@ else no "Claude spawn started with a reserved name"; fi
 rm -rf "$CODEX_ROOT/reserved-git"
 PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT/reserved-git" \
     RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" r9 12 standard "$REPO" base \
-    --orchestrator orch-main --env GIT_CONFIG_COUNT=1 >"$WORK/out" 2>"$WORK/err"
+    --env GIT_CONFIG_COUNT=1 >"$WORK/out" 2>"$WORK/err"
 rc=$?
 assert_equals "Codex spawn rejects a Git routing variable" "$rc" "1"
 assert_contains "Codex spawn explains the reserved name" "$(err)" "reserved"
@@ -898,7 +869,7 @@ STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_AR
 - [P2] three — c:3
 a real finding is described above' \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 if [ -f "$RUNDIR/review.txt" ]; then ok "the reviewer's verdict was written"
 else no "no $RUNDIR/review.txt — the wrapper did not run the reviewer"; fi
@@ -962,7 +933,7 @@ STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
 - [P2] three — c:3
 - [P1] four — d:4' \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 1 \
     >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 FIX_REVIEW_ARGV="$(cat "$WORK/review-argv" 2>/dev/null)"
@@ -997,7 +968,7 @@ ROUND_TWO="$(cat "$RUNDIR/rounds")"
 rm -f "$WORK/gh-argv"
 STUB_GH_ARGV="$WORK/gh-argv" STUB_REVIEW_TEXT='- [fixed] three — c:3' \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 2 --orchestrator orch-main \
+    bash "$SPAWN" r9 12 standard "$REPO" base --role fix --round 2 \
     >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_equals "an omitted prior finding adds no ledger round" "$(cat "$RUNDIR/rounds")" "$ROUND_TWO"
@@ -1055,13 +1026,13 @@ run_numbered_review() {
     fi
 }
 run_numbered_review 1 "$CFG_CODEX" \
-    r9 12 standard "$REPO" base --orchestrator orch-main
+    r9 12 standard "$REPO" base
 run_numbered_review 2 "$CFG_CODEX" \
-    r9 12 standard "$REPO" base --role fix --round 1 --orchestrator orch-main
+    r9 12 standard "$REPO" base --role fix --round 1
 run_numbered_review 3 "$CFG_CODEX_CHAIN" \
-    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1
 run_numbered_review 4 "$CFG_CODEX_CHAIN" \
-    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1 --orchestrator orch-main
+    r9 12 standard "$REPO" base --role fix --round 1 --attempt 1
 assert_equals "four reviews append ledger numbers 1..4" \
     "$(grep '^[0-9]' "$RUNDIR/rounds" | cut -d' ' -f1 | tr '\n' ',')" "1,2,3,4,"
 assert_equals "each review's finding is filed under its own round" \
@@ -1076,7 +1047,7 @@ echo "test: a FAILED reviewer leaves no verdict — the wrapper fails CLOSED"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/gh-argv"
 STUB_REVIEW_EXIT=3 STUB_GH_ARGV="$WORK/gh-argv" \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 if [ -f "$RUNDIR/review.txt" ]; then no "a failed reviewer left review.txt behind"
 else ok "the failed reviewer's output was deleted, not left to be misread"; fi
@@ -1103,7 +1074,7 @@ cp "$CODEX_BIN/codex" "$WORK/codex-build-backup"
 cp "$CODEX_BIN/codex-escalate" "$CODEX_BIN/codex"
 STUB_REVIEW_ARGV="$WORK/review-argv" STUB_GH_ARGV="$WORK/gh-argv" \
     PATH="$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_empty "no reviewer ran on an escalation" "$(cat "$WORK/review-argv" 2>/dev/null)"
 assert_empty "and no review comment was posted" "$(cat "$WORK/gh-argv" 2>/dev/null)"
@@ -1113,7 +1084,7 @@ echo "test: a codex worker that dies non-zero records it"
 rm -rf "$CODEX_ROOT"
 PATH="$CODEX_BIN:$PATH" STUB_CODEX_EXIT=3 CODEX_RUN_ROOT="$CODEX_ROOT" \
     RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
 assert_equals "the exit code is the one codex returned" "$(cat "$RUNDIR/exit" 2>/dev/null)" "3"
 
@@ -1134,7 +1105,7 @@ check_group() {
     rm -rf "$CODEX_ROOT"
     PATH="$spath" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
         RESOLVE_TIER_ROOT="$CFG_CODEX" \
-        bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+        bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
     for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$RUNDIR/pid" ] && break; sleep 0.2; done
     wpid="$(cat "$RUNDIR/pid" 2>/dev/null)"
     pgid="$(ps -o pgid= -p "$wpid" 2>/dev/null | tr -d ' ')"
@@ -1186,7 +1157,7 @@ rm -rf "$CODEX_ROOT"
 t0=$SECONDS
 out=$(PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=8 CODEX_RUN_ROOT="$CODEX_ROOT" \
       RESOLVE_TIER_ROOT="$CFG_CODEX" \
-      bash "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main 2>/dev/null)
+      bash "$SPAWN" r9 12 standard "$REPO" base 2>/dev/null)
 assert_equals "prints the run dir" "$out" "$RUNDIR"
 if [ "$((SECONDS - t0))" -lt 4 ]; then
     ok "and returns at once"
@@ -1203,7 +1174,7 @@ printf 'You are the swe-manager.\n' >"$WORK/pb.md"
 printf 'CHARTER line.\n' >"$WORK/pc.md"
 assert_not_contains "a peer stays claude whatever the tier table says" \
     "$(RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" peer --name p --brief "$WORK/pb.md" \
-        --charter "$WORK/pc.md" --model opus --effort high --orchestrator orch-main \
+        --charter "$WORK/pc.md" --model opus --effort high \
         --dry-run 2>/dev/null)" "codex"
 
 echo "test: a re-spawn clears the previous turn's report and exit code"
@@ -1220,7 +1191,7 @@ printf '%s' '{"issue":12,"status":"built","round":0,"head":"aaaaaaa","review":"9
     >"$STALE/last-message.txt"
 PATH="$CODEX_BIN:$PATH" STUB_CODEX_SLEEP=30 CODEX_RUN_ROOT="$CODEX_ROOT" \
     RESOLVE_TIER_ROOT="$CFG_CODEX" bash "$SPAWN" rstale 12 standard "$REPO" base \
-    --role fix --round 2 --orchestrator orch-main >/dev/null 2>&1
+    --role fix --round 2 >/dev/null 2>&1
 # Require the pid FIRST: this spawn's stderr and exit code are discarded above, so a spawn
 # that died after the `rm` — a failed schema write takes the run dir with it — would leave
 # an empty dir and green both assertions below while proving nothing.
@@ -1257,18 +1228,18 @@ echo "test: the SHIPPED roster — 6-luna heads the trivial and standard chains,
 for t in trivial:haiku standard:haiku; do
     top=${t#*:}; t=${t%%:*}
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
-          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run 2>/dev/null)
     assert_arg "shipped $t attempt 0 spawns codex" "$out" "exec"
     assert_arg "shipped $t attempt 0 is 6-luna" "$out" "gpt-6-luna"
     out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
-          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --orchestrator orch-main --attempt 1 2>/dev/null)
-    assert_arg "shipped $t attempt 1 tops out on claude" "$out" "--bg"
+          bash "$SPAWN" r9 12 "$t" "$REPO" base --dry-run --attempt 1 2>/dev/null)
+    assert_arg "shipped $t attempt 1 tops out on claude" "$out" "-p"
     assert_arg "at $top" "$out" "$top"
     assert_not_contains "no 6-sol hop" "$out" "gpt-6-sol"
 done
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" CLAUDE_CONFIG_DIR="$WORK/nousercfg" env -u RESOLVE_TIER_ROOT \
-      bash "$SPAWN" r9 12 complex "$REPO" base --dry-run --orchestrator orch-main 2>/dev/null)
-assert_arg "shipped complex spawns claude" "$out" "--bg"
+      bash "$SPAWN" r9 12 complex "$REPO" base --dry-run 2>/dev/null)
+assert_arg "shipped complex spawns claude" "$out" "-p"
 assert_arg "shipped complex builds on sonnet" "$out" "sonnet"
 assert_not_contains "shipped complex never routes to codex" "$out" "codex exec"
 
@@ -1277,12 +1248,12 @@ echo "test: a runid carrying a path component is refused before it reaches mkdir
 # schema write — `rm -rf`s. The caller is a model assembling argv by hand, and run-log.sh
 # already guards the identical value, so spawn.sh must too.
 CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" "../../escape" 12 standard "$REPO" base --orchestrator orch-main --dry-run \
+    bash "$SPAWN" "../../escape" 12 standard "$REPO" base --dry-run \
     >/dev/null 2>"$WORK/err"
 assert_equals "exits 1 on a traversal runid" "$?" "1"
 assert_contains "names the value and what is allowed" "$(err)" "runid may only contain"
 CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" ".." 12 standard "$REPO" base --orchestrator orch-main --dry-run >/dev/null 2>"$WORK/err"
+    bash "$SPAWN" ".." 12 standard "$REPO" base --dry-run >/dev/null 2>"$WORK/err"
 assert_equals "a bare .. runid is refused too — every character is allowed, the path step is not" "$?" "1"
 
 echo "test: a real codex spawn with NO codex CLI fails loud, naming the user-table fix (review fix 3)"
@@ -1299,7 +1270,7 @@ for d in "${_dirs[@]}"; do
 done
 rm -rf "$CODEX_ROOT/nocodex"
 PATH="$NOCODEX" CODEX_RUN_ROOT="$CODEX_ROOT/nocodex" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    "$(command -v bash)" "$SPAWN" r9 12 standard "$REPO" base --orchestrator orch-main >/dev/null 2>"$WORK/err"
+    "$(command -v bash)" "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "says the CLI is missing" "$(err)" "codex CLI is not installed"
 assert_contains "and how to route around it" "$(err)" "model-tiers.json"
@@ -1308,7 +1279,7 @@ if [ -e "$CODEX_ROOT/nocodex" ]; then no "left a run dir behind"; else ok "and l
 echo "test: a codex worker with no resolvable git dir fails loud instead of silently not committing"
 mkdir -p "$WORK/nogit"
 CODEX_RUN_ROOT="$CODEX_ROOT" RESOLVE_TIER_ROOT="$CFG_CODEX" \
-    bash "$SPAWN" r9 12 standard "$WORK/nogit" base --orchestrator orch-main --dry-run \
+    bash "$SPAWN" r9 12 standard "$WORK/nogit" base --dry-run \
     >/dev/null 2>"$WORK/err"
 assert_equals "exits 1" "$?" "1"
 assert_contains "says why" "$(err)" "git"
@@ -1342,6 +1313,10 @@ assert_contains "addressed to the orchestrator" "$out" '"orch-main"'
 assert_not_contains "a peer is not fenced to a worktree" "$out" "--add-dir"
 
 echo "test: a peer's prompt lands after --, like a worker's"
+BIN="$WORK/peerbin"
+mkdir -p "$BIN"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@"\nprintf "STDIN:["; cat; printf "]\\n"\n' >"$BIN/claude"
+chmod +x "$BIN/claude"
 argv=$(PATH="$BIN:$PATH" peer)
 sep=$(printf '%s\n' "$argv" | grep -nxF -- "--" | tail -1 | cut -d: -f1)
 prompt_line=$(printf '%s\n' "$argv" | grep -n "You are the swe-manager" | head -1 | cut -d: -f1)
@@ -1414,7 +1389,7 @@ peer --dry-run --name >/dev/null; assert_equals "a flag with no value exits 1" "
 echo "test: a worker comes up with NO MCP servers unless it opts into the browser"
 # Every session starts its own copy of each configured server (Playwright, pdf-viewer, ...),
 # so dozens of workers cost gigabytes for tools none of them uses.
-out=$(dry r1 12 standard /w/issue-12 base)
+out=$(dry r1 12 standard "$REPO" base)
 assert_arg "the config is passed" "$out" "--mcp-config"
 assert_arg "an empty server set" "$out" '{"mcpServers":{}}'
 assert_arg "strict, so user/plugin/claude.ai servers are ignored too" "$out" "--strict-mcp-config"
@@ -1423,10 +1398,10 @@ mcp_line=$(printf '%s\n' "$out" | grep -nxF -- "--mcp-config" | cut -d: -f1)
 strict_line=$(printf '%s\n' "$out" | grep -nxF -- "--strict-mcp-config" | cut -d: -f1)
 assert_equals "--strict-mcp-config ends the variadic list" "$strict_line" "$((mcp_line + 2))"
 assert_not_contains "no playwright by default" "$out" "playwright"
-out=$(dry r1 12 standard /w/issue-12 base --browser)
+out=$(dry r1 12 standard "$REPO" base --browser)
 assert_arg "--browser adds the playwright server" "$out" '{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}'
 assert_arg "--browser stays strict" "$out" "--strict-mcp-config"
-out=$(dry r1 12 standard /w/issue-12 base --role fix --round 2 --browser)
+out=$(dry r1 12 standard "$REPO" base --role fix --round 2 --browser)
 assert_arg "a fix round honours --browser" "$out" "--strict-mcp-config"
 
 echo "test: the peer form keeps the machine's MCP servers"

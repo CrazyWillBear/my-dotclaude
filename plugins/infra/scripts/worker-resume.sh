@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# worker-resume.sh — answer a CODEX worker's escalation by resuming its thread.
+# worker-resume.sh — answer a worker's escalation by resuming its conversation.
 #
-# A codex worker has no inbox, so it escalates by ENDING its turn: `status: escalate`
-# with the question in `note`, which worker-report.sh surfaces as
-# `issue <N> escalate <question>`. Its process is then gone — but its THREAD is not.
-# Every `codex exec` run persists under `~/.codex/sessions/`, so the answer goes back by
-# resuming, and the worker continues with everything it had rather than restarting.
+# A worker has no inbox, so it escalates by ENDING its turn: `status: escalate` with the
+# question in `note`, which worker-report.sh surfaces as `issue <N> escalate <question>`.
+# Its process is then gone — but its conversation is not. A codex thread persists under
+# `~/.codex/sessions/` (`codex exec resume <thread_id>`); a boxed claude worker's session
+# persists in its box (`claude -p --resume <session_id>`, the id from the stream's init
+# event). The answer goes back by resuming, and the worker continues with everything it had.
+#
+# The run dir's `pid` is this script's own pid for the whole resumed turn, so a caller that
+# backgrounds it sees the worker as busy — not as a dead pid with no exit, which reads failed.
 #
 # Usage:
 #   bash worker-resume.sh <runid> <issue> <tier> <worktree> --base BRANCH --answer TEXT \
@@ -27,6 +31,9 @@
 # this script hands rendering to worker-report.sh rather than keeping a second copy of
 # it, so a resumed turn reports exactly like a first one. Exit codes are worker-report's:
 # 0 with one line is a real result, 1 with empty stdout means we cannot say what happened.
+#
+# A CLAUDE resume is built by worker-cmd.sh, the same builder spawn.sh uses, so it runs in
+# the same box with the same flags.
 #
 # THE FLAGS ARE NOT OPTIONAL AND NOT COPIED FROM THE SPAWN BY CODEX. Verified on
 # codex-cli 0.154 (2026-09-16): `resume` inherits NONE of the sandbox. The same thread,
@@ -91,16 +98,22 @@ case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9.
 [ -d "$WORKTREE" ] || die "no such worktree: $WORKTREE"
 
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
-[ -d "$RUNDIR" ] || die "no codex run dir for issue $ISSUE: $RUNDIR"
+[ -d "$RUNDIR" ] || die "no run dir for issue $ISSUE: $RUNDIR"
 [ -f "$RUNDIR/status-schema.json" ] || die "missing $RUNDIR/status-schema.json — cannot force the report shape"
 
-# The thread id is already here: spawn.sh redirects codex's --json stream into
-# events.jsonl, whose `thread.started` event carries it. Nothing extra had to be captured
-# at spawn time. (If this is ever empty, the rollout whose session_meta.cwd is the
-# worktree is the recovery path — see docs/swarm-design.md § Codex backend.)
-[ -f "$RUNDIR/events.jsonl" ] || die "missing $RUNDIR/events.jsonl — no thread id to resume"
-THREAD="$(sed -n 's/.*"thread_id":"\([^"]*\)".*/\1/p' "$RUNDIR/events.jsonl" | head -1)"
-[ -n "$THREAD" ] || die "no thread_id in $RUNDIR/events.jsonl — nothing to resume"
+# The conversation id is already here: spawn.sh redirects the worker's stream into
+# events.jsonl — codex's `thread.started` event carries `thread_id`, claude's `system/init`
+# event carries `session_id`. Nothing extra had to be captured at spawn time.
+[ -f "$RUNDIR/events.jsonl" ] || die "missing $RUNDIR/events.jsonl — no conversation id to resume"
+RUN_BACKEND="$(head -1 "$RUNDIR/backend" 2>/dev/null)"; RUN_BACKEND="${RUN_BACKEND:-codex}"
+if [ "$RUN_BACKEND" = claude ]; then
+    THREAD="$(jq -rR 'fromjson? | select(type == "object" and .type == "system" and .subtype == "init") | .session_id // empty' \
+        "$RUNDIR/events.jsonl" 2>/dev/null | head -1)"
+    [ -n "$THREAD" ] || die "no init session_id in $RUNDIR/events.jsonl — nothing to resume"
+else
+    THREAD="$(sed -n 's/.*"thread_id":"\([^"]*\)".*/\1/p' "$RUNDIR/events.jsonl" | head -1)"
+    [ -n "$THREAD" ] || die "no thread_id in $RUNDIR/events.jsonl — nothing to resume"
+fi
 
 # The tier decides the model, and it must be the SAME backend: resuming a claude-backed
 # worker through codex would start a stranger on its branch.
@@ -110,12 +123,14 @@ MODEL="$(printf '%s\n'   "$ROSTER" | sed -n 's/^implementer_model=//p'   | head 
 EFFORT="$(printf '%s\n'  "$ROSTER" | sed -n 's/^implementer_effort=//p'  | head -1)"
 BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head -1)"
 [ -n "$MODEL" ] && [ -n "$EFFORT" ] || die "could not resolve a roster for tier '$TIER'"
-[ "$BACKEND" = codex ] || die "tier '$TIER' is backend '$BACKEND', not codex — a claude worker is resumed by talking to its session, not by this script"
+[ "$BACKEND" = codex ] || BACKEND=claude
+[ "$BACKEND" = "$RUN_BACKEND" ] || die "tier '$TIER' attempt $ATTEMPT is backend '$BACKEND' but the run dir's worker is '$RUN_BACKEND' — wrong --attempt?"
 
 # The SAME resolution the spawn used, from the same script — not a second copy. A resume
 # that resolved this differently would hand the worker a different writable root than its
 # spawn did, and the worker would not find out until it could not commit. `--roots` is the
 # narrowed set: objects, refs, logs and this worktree's own git dir, never hooks/ or config.
+# Run for both backends: it is also the containment check before anything runs there.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
 
 PROMPT="Your escalation was answered. Here is the answer:
@@ -125,9 +140,8 @@ $ANSWER
 Continue the issue from exactly where you stopped — you still have your full context, so
 do not start over and do not re-read what you already read.
 
-Do NOT review your own diff and do NOT run \`codex exec review\` — a nested codex
-invocation cannot start inside your sandbox, and your own opinion of your own work is not
-a review. An independent reviewer runs automatically once you exit.
+Do NOT review your own diff — your own opinion of your own work is not a review. An
+independent reviewer runs automatically once you exit.
 
 When you are done, REPORT, THEN STOP. Your FINAL MESSAGE is the report and it must be
 JSON matching the output schema you were launched with. Every field is required; send \"\"
@@ -140,6 +154,7 @@ the new question in \"note\" — do not guess. Missing infrastructure you cannot
 database, a service, a credential)? \"status\": \"blocked\" with \"note\" = \"infra: <what is missing>\"
 — never an escalate deviation."
 
+if [ "$BACKEND" = codex ]; then
 CMD=(codex exec resume "$THREAD"
      -m "$MODEL"
      -c "model_reasoning_effort=$EFFORT"
@@ -157,6 +172,19 @@ CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$PROMPT")
+else
+    if [ -z "$DRY" ]; then
+        _box="${CLAUDE_BOX_ROOT:-${HOME:-/nonexistent}/.claude/kit/boxes}/implementer"
+        [ -f "$_box/CLAUDE.md" ] || die "the implementer box is missing ($_box)"
+    fi
+    BROWSER_ARG=""; [ ! -e "$RUNDIR/browser" ] || BROWSER_ARG=--browser
+    CMD=()
+    while IFS= read -r -d '' _arg; do CMD+=("$_arg"); done \
+        < <(bash "$INFRA/worker-cmd.sh" "$MODEL" "$EFFORT" "$WORKTREE" \
+                "$(cat "$RUNDIR/status-schema.json")" ${BROWSER_ARG:+"$BROWSER_ARG"} \
+                --resume "$THREAD" -- "$PROMPT")
+    [ "${#CMD[@]}" -gt 0 ] || die "could not build the claude resume command"
+fi
 
 # NEVER resume onto a worker that is still running. Checked BEFORE the dry run returns, so
 # `--dry-run` is a real safety preview rather than only a command printer. Below, the first
@@ -220,6 +248,8 @@ while IFS= read -r -d '' _arg; do REVIEW_CMD+=("$_arg"); done \
 # They are cleared AFTER the worker exits instead (below), mirroring spawn.sh's wrapper.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
+# This script IS the worker for the length of the turn: a live pid with no exit reads busy.
+printf '%s\n' "$$" >"$RUNDIR/pid"
 
 
 # Foreground, unlike spawn.sh. An escalation is inherently synchronous — the orchestrator
@@ -231,6 +261,8 @@ rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/stderr.log" "$RUNDIR/re
     cd "$WORKTREE" && "${CMD[@]}"
 ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
 CODE=$?
+# A claude worker has no -o: its report is the stream's last result event.
+bash "$INFRA/claude-report.sh" "$RUNDIR"
 # Anything the worker just resumed may have left at review-checkout/review-scratch is gone
 # BEFORE the clone below trusts either path (#99) — same placement and reasoning as
 # spawn.sh's wrapper: a worker able to reach the run dir (a non-default CODEX_RUN_ROOT) and

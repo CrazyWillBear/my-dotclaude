@@ -43,6 +43,16 @@ mkdir -p "$BIN"
 cat >"$BIN/claude" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = agents ]; then echo "[]"; exit 0; fi
+# A RESUMED claude worker (worker-cmd.sh --resume): records its argv, config dir and pid
+# file, then streams a new turn whose result carries the report.
+case " $* " in *" --resume "*)
+    printf '%s\n' "$@" >"${STUB_WORKER_ARGV:-/dev/null}"
+    printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" >"${STUB_WORKER_CFG:-/dev/null}"
+    cat "${STUB_PIDFILE:-/dev/null}" >"${STUB_WORKER_PID:-/dev/null}" 2>/dev/null
+    printf '{"type":"system","subtype":"init","session_id":"sess-95"}\n'
+    printf '{"type":"result","is_error":false,"structured_output":{"issue":95,"status":"built","round":0,"head":"%s","review":"","note":""}}\n' "$(git rev-parse HEAD)"
+    exit 0 ;;
+esac
 if [ "${1:-}" = -p ]; then
     [ -n "${STUB_HOST_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_HOST_ENV_OUT"
     printf '%s\n' "$@" >"${STUB_REVIEW_ARGV:-/dev/null}"
@@ -308,9 +318,9 @@ assert_equals "and the events.jsonl it would have resumed is untouched" \
 echo "test: it refuses what it cannot safely resume"
 mkrun 83
 run r1 83 complex "$REPO" --answer "x" --dry-run
-assert_equals "a claude-backed tier exits 1" "$RC" "1"
+assert_equals "a tier whose backend is not the run dir's exits 1" "$RC" "1"
 assert_empty "and prints no command" "$OUT"
-assert_contains "says why" "$ERR" "not codex"
+assert_contains "says why" "$ERR" "wrong --attempt"
 
 rm -f "$CODEX_ROOT/r1/issue-83/events.jsonl"
 run r1 83 standard "$REPO" --answer "x" --dry-run
@@ -326,7 +336,47 @@ assert_contains "says so" "$ERR" "no thread_id"
 
 run r1 999 standard "$REPO" --answer "x" --dry-run
 assert_equals "no run dir exits 1" "$RC" "1"
-assert_contains "names it" "$ERR" "no codex run dir"
+assert_contains "names it" "$ERR" "no run dir for issue 999"
+
+echo "test: a claude worker is resumed by session id, in the box, with the spawn's flags"
+mkclaude() {
+    local d="$CODEX_ROOT/r1/issue-$1"
+    rm -rf "$d"; mkdir -p "$d"
+    printf 'claude\n' >"$d/backend"
+    printf '{"type":"system","subtype":"init","session_id":"sess-%s"}\n{"type":"result","structured_output":{"issue":%s,"status":"escalate","round":0,"head":"","review":"","note":"deviation: x"}}\n' "$1" "$1" >"$d/events.jsonl"
+    printf '{"type":"object"}\n' >"$d/status-schema.json"
+    printf '0\n' >"$d/exit"
+    printf '{"issue":%s,"status":"escalate","round":0,"head":"","review":"","note":"deviation: x"}\n' "$1" >"$d/last-message.txt"
+    printf 'build\n' >"$d/role"
+}
+mkclaude 95
+export CLAUDE_BOX_ROOT="$WORK/boxes"
+run r1 95 complex "$REPO" --answer "use the adapter" --dry-run
+assert_equals "dry run exits 0" "$RC" "0"
+assert_equals "the box rides in through env" "$(printf '%s\n' "$OUT" | sed -n 1,3p | tr '\n' ' ')" \
+    "env CLAUDE_CONFIG_DIR=$WORK/boxes/implementer claude "
+assert_arg "one-shot" "$OUT" "-p"
+assert_arg "resumes the session" "$OUT" "--resume"
+assert_arg "by the init event's session id" "$OUT" "sess-95"
+assert_arg "at the tier's model" "$OUT" "opus"
+assert_arg "into the schema" "$OUT" "--json-schema"
+assert_arg "fenced to the worktree" "$OUT" "$REPO"
+assert_contains "the answer is the prompt" "$OUT" "use the adapter"
+assert_not_contains "never a nested codex review" "$OUT" "codex exec review"
+run r1 95 complex "$REPO" --answer "use the adapter"
+assert_equals "a real claude resume without its box exits 1" "$RC" "1"
+assert_contains "naming the box" "$ERR" "implementer box is missing"
+mkdir -p "$WORK/boxes/implementer"; printf '# box\n' >"$WORK/boxes/implementer/CLAUDE.md"
+mkclaude 95
+STUB_WORKER_ARGV="$WORK/w-argv" STUB_WORKER_CFG="$WORK/w-cfg" \
+    STUB_PIDFILE="$CODEX_ROOT/r1/issue-95/pid" STUB_WORKER_PID="$WORK/w-pid" \
+    run r1 95 complex "$REPO" --answer "use the adapter"
+assert_equals "a real claude resume exits 0" "$RC" "0"
+assert_contains "and renders the resumed turn's report" "$OUT" "issue 95 built head=$(git -C "$REPO" rev-parse HEAD)"
+assert_equals "in the implementer box" "$(cat "$WORK/w-cfg" 2>/dev/null)" "$WORK/boxes/implementer"
+assert_contains "the pid file named a live process while the worker ran" "$(cat "$WORK/w-pid" 2>/dev/null)" "$(printf '%s' "$(cat "$CODEX_ROOT/r1/issue-95/pid")")"
+assert_contains "the new report replaced the escalation" "$(cat "$CODEX_ROOT/r1/issue-95/last-message.txt")" '"status":"built"'
+unset CLAUDE_BOX_ROOT
 
 echo "test: usage errors fail immediately and loudly"
 run r1 80 standard "$REPO" --dry-run

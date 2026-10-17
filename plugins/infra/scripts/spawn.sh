@@ -2,17 +2,15 @@
 #
 # spawn.sh — start (or print) one background agent, in one of two forms.
 #
-# A worker's TIER decides its BACKEND. `backend: claude` (and every peer) is a
-# `claude --bg` session; `backend: codex` is a `codex exec` process instead — same
-# contract, different everything else. See § CODEX below and docs/swarm-design.md
-# § Codex backend. The shipped table routes trivial and standard through codex first
-# (PRD #104); a user table at ${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json overrides it.
+# A WORKER is one-shot and owns one issue: a single process that builds (or fixes) it,
+# exits, and is then reviewed by an independent sibling process. Its TIER decides its
+# BACKEND: `backend: codex` is a `codex exec` process, `backend: claude` a `claude -p`
+# process in the IMPLEMENTER BOX (~/.claude/kit/boxes/implementer, built by link-kit.sh;
+# argv from worker-cmd.sh). Both run through the SAME wrapper and leave the SAME run dir
+# (§ THE RUN DIR below) — the backend changes the command, nothing else.
 #
-# A WORKER is one-shot and owns one issue; it exits when the issue is built. A PEER is
-# a standing role session that idles between briefs and is rotated by handoff. Both are
-# the same command with different framing, which is why they share one builder here:
-# diverging them is how the three copies this kit replaces drifted apart
-# (docs/swarm-design.md § Topology, § Charter, § Lifecycle).
+# A PEER is a standing role session that idles between briefs and is rotated by handoff:
+# a `claude --bg` session (docs/swarm-design.md § Topology, § Charter, § Lifecycle).
 #
 # Usage:
 #   bash spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [options]   # worker
@@ -28,7 +26,7 @@
 #                           script refuses — the orchestrator drains there, it never wraps.
 #                           A respawn is told it is one: the **Handoff** comment on the
 #                           thread and the branch's commits are its whole inheritance.
-#     --env NAME=VALUE      repeatable; passed to the worker launch, never logged
+#     --env NAME=VALUE      repeatable; exported into the worker's process, never logged
 #     --browser             give a CLAUDE worker the Playwright MCP server (default: none)
 #   peer:
 #     --name NAME           the role name. This IS the session's stable address: a
@@ -41,29 +39,21 @@
 #     --handoff FILE        rotating a peer: prepend a read-this-first instruction
 #                           naming the predecessor's handoff doc
 #     --autocompact WINDOW  compaction backstop (default 400k, § Rotation)
+#     --orchestrator NAME   who the peer reports to; resolved from this session when
+#                           omitted (session-status.sh --self)
 #   both:
-#     --orchestrator NAME   who the session reports to; resolved from this session
-#                           when omitted (session-status.sh --self)
 #     --dry-run             print the command instead of running it
 #
-# On a real CLAUDE spawn this EXECS claude, whose stdout is a short banner CONTAINING
-# the new session's id (`claude stop <id>   stop this session`) — not a bare id, so do
-# not parse it. Read the id from `session-status.sh <runid>`, column 2.
+# A real WORKER spawn backgrounds the wrapper, prints its run dir, and returns. Column 2 of
+# `session-status.sh <runid>` is then the WRAPPER's pid, which leads its own process group:
+# stop it with a group kill — `kill -- -<pid>` — which takes the worker and its reviewer
+# with it; a plain `kill` orphans the worker onto the worktree.
 #
-# You need it: `claude stop` and `claude attach` take that id — `Usage: claude stop
-# <id>` — and reject a session NAME outright. The name addresses SendMessage; the id
-# controls the process. A CODEX spawn instead backgrounds the process, prints its run
-# dir, and returns: column 2 is then a PID, which `claude stop` does not take. It is the
-# WRAPPER's pid and its group leader, so stop it with a group kill — `kill -- -<pid>` —
-# which takes codex with it; a plain `kill` orphans codex onto the worktree.
+# A real PEER spawn EXECS `claude --bg`, whose stdout is a banner CONTAINING the session id
+# (`claude stop <id>`). Read the id from `session-status.sh --peers`, column 2.
 #
-# Why each flag is here — these are the ways an unattended session dies quietly:
+# Why the peer's flags are here (the worker's are documented in worker-cmd.sh):
 #
-#   -n orch-<runid>-issue-<N>-a<attempt>[-r<round>]   worker only: the run prefix and
-#                               attempt/round. `claude agents --json` is global and
-#                               concurrent runs are intended; without the prefix one run
-#                               can stop another run's workers. A peer is named by its
-#                               role instead — see --name above.
 #   --permission-mode bypassPermissions
 #                               an unattended session in manual or acceptEdits mode
 #                               deadlocks on its FIRST prompt with nobody to answer.
@@ -72,41 +62,13 @@
 #                               the conversation's first request and replays it verbatim
 #                               forever, so a rotated peer would keep the charter text it
 #                               was born with. Off re-renders it every request.
-#   --add-dir <worktree>        worker only: fences the FILE tools to this issue's
-#                               worktree. KNOWN LIMIT, ACCEPTED: it does not fence Bash.
-#                               The containment is the denylist plus worktree isolation,
-#                               not a sandbox. A peer works in the caller's cwd.
 #   --disallowedTools ...       the irreversible, outward-facing writes stay on the
-#                               main thread (#77: a close fired from a low-context
-#                               worker was killed by a safety classifier, correctly).
-#                               `git push` and `gh issue comment` are deliberately
-#                               ALLOWED — a comment is additive, and the issue thread
-#                               is the coordination medium. `gh api` / `gh repo` /
-#                               `gh workflow` / `gh release` are denied too: `gh api`
-#                               can close, edit and merge, so denying `gh pr` alone
-#                               fenced nothing. IDENTICAL for both forms: a peer has
-#                               more standing, not more reach.
-#   --model / --effort          a worker is routed by the issue's persisted tier, via
-#                               resolve-tier.sh. A PEER IS NOT TIER-ROUTED — its roster
-#                               row carries the model, so it passes them explicitly.
-#   --mcp-config ... --strict-mcp-config
-#                               worker only: the worker gets NO MCP servers (no user,
-#                               plugin or claude.ai ones), or only Playwright with --browser.
-#                               Every session starts its OWN copy of every configured
-#                               server, and a PRD run keeps dozens of sessions alive: 28
-#                               Playwright + 28 pdf-viewer processes cost ~9 GB. A worker
-#                               builds with Bash and gh and needs none of them.
+#                               main thread (#77). The list is worker-cmd.sh's — IDENTICAL
+#                               for both forms: a peer has more standing, not more reach.
+#   --model / --effort          a peer is not tier-routed: its roster row carries them.
 #   </dev/null                  an unattended session has nobody to answer a read on
 #                               stdin, and one blocked on it looks exactly like one
 #                               working.
-#
-# The prompt's last section is load-bearing for every form: an agent's plain text output
-# is invisible to everyone else, so it is told, explicitly, how to report. A claude
-# session reports with SendMessage. A codex worker HAS NO SendMessage — its report is
-# the schema'd final message in `last-message.txt`, and its prompt says so instead.
-# Miss that and whoever spawned it waits forever.
-#
-# `claude` has no --cwd, so a worker's session is started FROM its worktree.
 
 set -uo pipefail
 
@@ -123,12 +85,9 @@ die() { echo "error: $*" >&2; exit 1; }
 # is exactly the silent stall this design is organized against. Demand the value.
 need() { [ "$1" -ge 2 ] || die "$2 requires a value"; }
 
-# Each form fills these, and the tail below builds one command out of them. BACKEND is
-# claude unless a WORKER's tier row says codex — a peer needs an inbox and codex has none
-# (docs/swarm-design.md § Deliberately not built), so the peer form never touches it.
+# Each form fills these. BACKEND is claude unless a WORKER's tier row says codex; the peer
+# form never touches it.
 NAME=""; MODEL=""; EFFORT=""; TASK=""; ORCH=""; DRY=""; WORKTREE=""; BACKEND=claude
-MCP_ARGS=()   # worker form only; a peer keeps the machine's MCP servers
-EXTRA=()   # the per-form flags; never empty, so "${EXTRA[@]}" is safe under set -u
 ENVS=()    # validated worker environment pairs; exported only at a launch point
 
 if [ "${1:-}" = peer ]; then
@@ -168,9 +127,9 @@ usable charter "$CHARTER"
 
 else
 # ---------------------------------------------------------------------------
-# WORKER — one issue, one-shot. Unchanged: callers pass the same argv as always.
+# WORKER — one issue, one-shot.
 # ---------------------------------------------------------------------------
-[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--orchestrator NAME] [--env NAME=VALUE]... [--browser] [--dry-run]
+[ $# -ge 5 ] || die "usage: spawn.sh <runid> <issue> <tier> <worktree> <base-branch> [--role build|fix] [--round N] [--attempt N] [--env NAME=VALUE]... [--browser] [--dry-run]
        spawn.sh peer --name NAME --brief FILE --charter FILE --model M --effort E [--handoff FILE] [--autocompact WINDOW] [--orchestrator NAME] [--dry-run]"
 
 RUNID="$1"; ISSUE="${2#\#}"; TIER="$3"; WORKTREE="$4"; BASE="$5"
@@ -185,7 +144,6 @@ while [ $# -gt 0 ]; do
         --role)         need $# --role;         ROLE="$2"; shift 2 ;;
         --round)        need $# --round;        ROUND="$2"; shift 2 ;;
         --attempt)      need $# --attempt;      ATTEMPT="$2"; shift 2 ;;
-        --orchestrator) need $# --orchestrator; ORCH="$2"; shift 2 ;;
         --env)          need $# --env;          ENVS+=("$2"); shift 2 ;;
         --browser)      BROWSER=1; shift ;;
         --dry-run)      DRY=1; shift ;;
@@ -233,19 +191,17 @@ fi
 # emit an unknown one, so anything that is not codex is the claude path.
 [ "$BACKEND" = codex ] || BACKEND=claude
 
-# The reviewer cell is resolved by review-cmd.sh, at the point the reviewer is built —
-# not here. It used to be read here to interpolate `-m` into the worker's own review
-# step, and that step is gone (§ CODEX below): the worker no longer reviews anything.
+# The reviewer cell is resolved by review-cmd.sh, at the point the reviewer is built.
 
 NAME="orch-$RUNID-issue-$ISSUE-a$ATTEMPT"
 [ "$ROLE" = fix ] && NAME="$NAME-r$ROUND"
 BRANCH="issue-$ISSUE"
 fi
 
-# The session's report address, for BOTH forms. A session that cannot name who it
-# reports to reports into the void, so this fails LOUD rather than spawning a session
-# nobody hears.
-if [ -z "$ORCH" ]; then
+# A PEER's report address. A peer that cannot name who it reports to reports into the
+# void, so this fails LOUD rather than spawning a session nobody hears. A worker reports
+# through its run dir and needs none.
+if [ -z "$WORKTREE" ] && [ -z "$ORCH" ]; then
     ORCH="$(bash "$INFRA/session-status.sh" --self 2>/dev/null)" \
         || die "could not resolve this session's name — pass --orchestrator NAME"
     [ -n "$ORCH" ] || die "could not resolve this session's name — pass --orchestrator NAME"
@@ -269,44 +225,21 @@ REPORT WITH SendMessage. Your plain text output is INVISIBLE to every other sess
 anything anyone else needs MUST go through the SendMessage tool, addressed to \"$ORCH\".
 Stop every worker you spawn before you go idle."
 
-EXTRA=(--append-system-prompt "$(cat "$CHARTER")" --autocompact "$AUTOCOMPACT")
 
 else
 # ---------------------------------------------------------------------------
 # The worker's prompt: the issue protocol, build or fix.
 # ---------------------------------------------------------------------------
-EXTRA=(--add-dir "$WORKTREE")
-
-# Lean MCP set (see the header). `--mcp-config` is variadic like --disallowedTools, so
-# `--strict-mcp-config` sits right after it to end the list.
-MCP_JSON='{"mcpServers":{}}'
-[ -z "$BROWSER" ] || MCP_JSON='{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest"]}}}'
-MCP_ARGS=(--mcp-config "$MCP_JSON" --strict-mcp-config)
-
 # STANDARD and COMPLEX build to a PLAN that is already on the thread (#104): consult.sh
 # runs the planner as a one-shot call on the planner cell's model BEFORE this spawn and
-# posts a **Plan** comment, so a cheap implementer executes a plan a smart one wrote, and
-# the plan reaches the worker the way everything does — by reading the issue. The
+# posts a **Plan** comment, so a cheap implementer executes a plan a smart one wrote. The
 # orchestrator never reads it. Trivial self-plans. The one rule that makes the split safe:
 # a false plan assumption is a STOP, never an improvisation — the worker posts a
-# **Deviation** comment and pauses (the pause mechanism is backend-shaped, below), a
-# consult on the planner's model answers it, and the worker is resumed with the decision.
-# BACKEND-SHAPED PAUSE. A false plan assumption is a THIRD backend-varying step, same as
-# review and report (below): codex has no SendMessage, and a claude worker has no
-# status/note fields — those only exist because --output-schema forces them. Giving every
-# worker the codex shape (as a first pass here did) leaves a claude worker with a pause
-# mechanism it cannot emit: the deviation either reaches the orchestrator with no
-# "deviation: " prefix (routed to a human, stalling an unattended run) or reaches nobody.
-if [ "$BACKEND" = codex ]; then
-    PLAN_PAUSE="and STOP with status \"escalate\" and \"note\" = \"deviation: \" followed
+# **Deviation** comment and ends its turn with status `escalate`, a consult on the
+# planner's model answers it, and worker-resume.sh resumes it with the decision.
+PLAN_PAUSE="and STOP with status \"escalate\" and \"note\" = \"deviation: \" followed
    by the same three lines — the \"deviation: \" prefix is how the orchestrator tells a
    deviation from a question."
-else
-    PLAN_PAUSE="and use SendMessage, addressed to \"$ORCH\", with exactly:
-      issue $ISSUE escalate deviation: <the same three lines>
-   then wait. The \"deviation: \" prefix is how the orchestrator tells a deviation from a
-   question — it is not optional."
-fi
 PLAN_STEP=""
 if [ "$TIER" != trivial ]; then
     PLAN_STEP="0. A \"**Plan**\" comment is on the thread. FOLLOW IT step by step — it was written on a
@@ -329,44 +262,31 @@ last commit — never restart the issue.
 "
 fi
 
-# How the worker REVIEWS and how it REPORTS are the two steps the backend changes, and
-# they are the two that strand the run when they are wrong. A codex worker has no
-# SendMessage tool and no subagents: telling it to use either produces a session that
-# finishes the work and then reports into nothing, which reads to the orchestrator
-# exactly like a worker still thinking. Its final message IS its report (`--output-schema`
-# forces the shape), and the claude reviewer is run FOR it as a sibling process after it
-# exits (review-cmd.sh; docs/swarm-design.md § Codex backend).
-if [ "$BACKEND" = codex ]; then
-    # DO NOT tell the worker to review itself. It was told exactly that until #96's e2e
-    # gate caught what happens: `codex exec review` NESTED inside this worker's own
-    # sandbox always fails ("failed to initialize in-process app-server client: Read-only
-    # file system") because ~/.codex is not among its writable_roots — and the worker,
-    # holding a required `review` field it had to fill, substituted its OWN judgement of
-    # its OWN diff and reported "0 high, 0 medium, 0 low" as though the independent
-    # reviewer had run. Nothing downstream could tell the difference.
-    #
-    # The review now runs as a SIBLING process after this worker exits (REVIEW_CMD
-    # below), which fixes both halves: a top-level codex invocation is not inside anyone's
-    # sandbox, and the verdict never passes through the thing that wrote the code. The
-    # worker therefore reports an EMPTY review — worker-report.sh takes the counts from
-    # the reviewer's own output file and ignores this field entirely.
-    REVIEW_STEP="5. Do NOT review your own diff, and do NOT run \`codex exec review\` — a nested codex
-   invocation cannot start inside your sandbox, and your own opinion of your own work is
-   not a review. An INDEPENDENT reviewer runs automatically once you exit and posts the
+# The worker NEITHER reviews NOR reports in prose. Its final message IS its report — the
+# status schema forces the shape (codex `--output-schema`, claude `--json-schema`) — and
+# the claude reviewer runs FOR it as a sibling process after it exits (review-cmd.sh).
+#
+# DO NOT tell the worker to review itself. It was told exactly that until #96's e2e gate
+# caught what happens: a codex worker's nested `codex exec review` cannot start inside its
+# sandbox, and the worker, holding a required `review` field, substituted its OWN judgement
+# of its OWN diff and reported "0 high, 0 medium, 0 low" as though the independent reviewer
+# had run. worker-report.sh takes the counts from the reviewer's own output file and
+# ignores the worker's `review` field entirely.
+REVIEW_STEP="5. Do NOT review your own diff — your own opinion of your own work is not a
+   review. An INDEPENDENT reviewer runs automatically once you exit and posts the
    \"**Review round**\" comment itself. Skip straight to reporting"
-    REPORT_STEP="6. REPORT, THEN STOP. You have NO SendMessage tool and your prose reaches nobody.
-   Your FINAL MESSAGE is the report, and it must be JSON matching the output schema you
-   were launched with. EVERY field is required — send \"\" or 0 for the ones that do
-   not apply. \"review\" is one of those: you did not review, so send \"\" and never a
-   count you made up:
+REPORT_STEP="6. REPORT, THEN STOP. Nobody reads your prose. Your FINAL MESSAGE is the report,
+   and it must be JSON matching the output schema you were launched with. EVERY field is
+   required — send \"\" or 0 for the ones that do not apply. \"review\" is one of those:
+   you did not review, so send \"\" and never a count you made up:
       {\"issue\": $ISSUE, \"status\": \"built\", \"round\": 0, \"head\": \"<sha>\", \"review\": \"\", \"note\": \"\"}
    or, if you could not finish, \"status\": \"failed\" with the reason in \"note\". Stuck
    on something only a human can answer? \"status\": \"escalate\", question in \"note\". Missing
    infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
    with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
-    FIX_REVIEW_STEP="4. Do NOT re-review the delta yourself. The independent reviewer runs again after
+FIX_REVIEW_STEP="4. Do NOT re-review the delta yourself. The independent reviewer runs again after
    you exit and posts the next round's comment"
-    FIX_REPORT_STEP="5. REPORT, THEN STOP. You have NO SendMessage tool — your FINAL MESSAGE is the
+FIX_REPORT_STEP="5. REPORT, THEN STOP. Nobody reads your prose — your FINAL MESSAGE is the
    report, as JSON matching the output schema you were launched with. Every field is
    required; send \"\" for any that does not apply, \"review\" included — the reviewer
    fills that in, not you:
@@ -374,41 +294,6 @@ if [ "$BACKEND" = codex ]; then
    or the same shape with \"status\": \"failed\" and the reason in \"note\". Missing
    infrastructure you cannot create (a database, a service, a credential)? \"status\": \"blocked\"
    with \"note\" = \"infra: <what is missing>\" — never an escalate deviation."
-else
-    REVIEW_STEP="5. Spawn the my-review agent (personal-tools:my-review) on your diff against $BASE.
-   my-review is REPORT-ONLY — it posts nothing. YOU post its findings, as a comment
-   in exactly this shape (the \"Review round N\" heading is the run's cycle counter;
-   nothing else records how many rounds this issue has had):
-
-      **Review round 1** — 1 high, 2 medium, 3 low
-
-      - **high** \`path/file.py:42\` — one line, what is wrong and why it matters.
-      - **medium** \`path/test_file.py\` — one line.
-
-   Lows are listed, not fixed. Keep every line short: this comment is read by every
-   future run that touches this issue. Do NOT fix what the review finds:
-   a fresh session does that, so nobody is defending their own code."
-    REPORT_STEP="6. REPORT, THEN STOP. Your plain text output is INVISIBLE to the orchestrator. You
-   MUST use the SendMessage tool, addressed to \"$ORCH\", with exactly:
-      issue $ISSUE built head=<sha> review=<H high, M medium, L low>
-   or, if you could not finish:
-      issue $ISSUE failed <one short line why>
-
-Never merge, never open a PR, never close or edit the issue. If you are stuck on
-something only a human can answer, SendMessage \"$ORCH\" with \"issue $ISSUE escalate
-<question>\" and wait. Or, if infrastructure you cannot create is missing (a database, a
-service, a credential), send: issue $ISSUE blocked infra: <what is missing> — never an
-escalate deviation."
-    FIX_REVIEW_STEP="4. Spawn the my-review agent (personal-tools:my-review) on the delta since the last
-   review, then POST its findings YOURSELF as the next \"**Review round**\" comment, in
-   the same shape as the previous one, incrementing the round number. The reviewer
-   POSTS NOTHING itself, and that comment is the run's cycle counter."
-    FIX_REPORT_STEP="5. REPORT, THEN STOP — plain output is invisible. SendMessage to \"$ORCH\":
-      issue $ISSUE fixed round=$ROUND head=<sha> review=<H high, M medium, L low>
-   or \"issue $ISSUE failed <one short line why>\". Or, if infrastructure you cannot create is
-   missing (a database, a service, a credential): issue $ISSUE blocked infra: <what is missing>
-   — never an escalate deviation."
-fi
 
 # The implementer contract ships in infra's implementer box — one source for every worker
 # and the workflow:implementer subagent. Named by absolute path: a codex worker has no
@@ -471,25 +356,60 @@ PROMPT
 fi
 fi
 
-if [ "$BACKEND" = codex ]; then
+if [ -n "$WORKTREE" ]; then
 # ---------------------------------------------------------------------------
-# CODEX — a one-shot worker through `codex exec`. Worker form only; verified against
-# codex-cli 0.154 (docs/swarm-design.md § Codex backend).
+# THE RUN DIR — a one-shot worker, either backend (codex verified against codex-cli 0.154;
+# docs/swarm-design.md § Codex backend).
 #
-# Codex has NO agent list, so unlike a claude session there is nothing to ask about its
-# state afterwards. These four files ARE the session: the `--json` event stream, the `-o`
-# final message (shaped by --output-schema), the pid, and the exit code.
-# session-status.sh reads exactly this layout.
+# A worker is a PROCESS in no agent list, so there is nothing to ask about its state
+# afterwards. These files ARE the session: the event stream (events.jsonl), the schema'd
+# final message (last-message.txt — codex writes it with `-o`, claude-report.sh extracts a
+# claude worker's from the stream), the pid, the exit code, and `backend`, which tells
+# session-status.sh, worker-report.sh, escalate.sh and worker-resume.sh which parser to use.
 # ---------------------------------------------------------------------------
 [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
 
-# THE SHIPPED TABLE IS CODEX-FIRST (#104), and this kit installs on other machines. Without
-# this check a missing CLI surfaces as a generic `failed` worker with no hint why. On the
-# real path only: a dry run must build its argv without the binary, as the tests do.
-if [ -z "$DRY" ] && ! command -v codex >/dev/null 2>&1; then
-    die "tier '$TIER' attempt $ATTEMPT routes to codex but the codex CLI is not installed — write a claude-only table at \${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json"
+# Without these checks a missing CLI or box surfaces as a generic `failed` worker with no
+# hint why. On the real path only: a dry run must build its argv without them, as the
+# tests do.
+if [ -z "$DRY" ]; then
+    if [ "$BACKEND" = codex ]; then
+        command -v codex >/dev/null 2>&1 \
+            || die "tier '$TIER' attempt $ATTEMPT routes to codex but the codex CLI is not installed — write a claude-only table at \${CLAUDE_CONFIG_DIR:-~/.claude}/model-tiers.json"
+    else
+        command -v claude >/dev/null 2>&1 \
+            || die "tier '$TIER' attempt $ATTEMPT routes to claude but the claude CLI is not installed"
+        _box="${CLAUDE_BOX_ROOT:-${HOME:-/nonexistent}/.claude/kit/boxes}/implementer"
+        [ -f "$_box/CLAUDE.md" ] \
+            || die "the implementer box is missing ($_box) — start a Claude Code session so infra's link-kit.sh builds it"
+    fi
 fi
 
+# The worker's fixed-shape status report. The schema is what turns the final message from
+# prose into something a caller can read without a model in the loop. EVERY property is
+# required and additionalProperties is false: that is strict structured-output shape, and a
+# schema that leaves a property optional is rejected outright rather than relaxed. Unused
+# fields come back empty — the prompt says so.
+SCHEMA='{
+  "type": "object",
+  "properties": {
+    "issue":  { "type": "integer" },
+    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate", "blocked"] },
+    "round":  { "type": "integer" },
+    "head":   { "type": "string" },
+    "review": { "type": "string" },
+    "note":   { "type": "string" }
+  },
+  "required": ["issue", "status", "round", "head", "review", "note"],
+  "additionalProperties": false
+}'
+
+# Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
+# no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
+# session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
+RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
+
+if [ "$BACKEND" = codex ]; then
 # Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
 # issue and then cannot commit — and says so only in its final message. Fail here
@@ -500,11 +420,6 @@ fi
 # worktree's own git dir, but NOT hooks/ or config, the two things git executes — or dies
 # loudly. See common-git-dir.sh for why the whole common dir is not granted.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
-
-# Nothing is CREATED here — only named. A dry run must leave no trace: a run dir with
-# no pid in it is a worker session-status.sh reports as BUSY (the launch-window rule —
-# session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
-RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the
@@ -534,6 +449,15 @@ CMD+=(--json
      -o "$RUNDIR/last-message.txt"
      --output-schema "$RUNDIR/status-schema.json"
      "$TASK")
+else
+# The claude worker's argv comes from worker-cmd.sh, the one builder worker-resume.sh uses
+# too. NUL-delimited: the prompt and the schema are multi-line arguments.
+CMD=()
+while IFS= read -r -d '' _arg; do CMD+=("$_arg"); done \
+    < <(bash "$INFRA/worker-cmd.sh" "$MODEL" "$EFFORT" "$WORKTREE" "$SCHEMA" \
+            ${BROWSER:+--browser} -- "$TASK")
+[ "${#CMD[@]}" -gt 0 ] || die "could not build the claude worker command"
+fi
 
 # THE INDEPENDENT REVIEWER. A SIBLING of the worker, never its child: the wrapper below
 # runs it only after the worker's process has exited, so it starts on the host with a
@@ -612,33 +536,18 @@ mkdir -p "$RUNDIR" || die "cannot create codex run dir: $RUNDIR"
 # with the previous round's reason.
 rm -f "$RUNDIR/last-message.txt" "$RUNDIR/exit" "$RUNDIR/pid" "$RUNDIR/reviewing" \
       "$RUNDIR/review.txt" "$RUNDIR/review-stderr.log"
-# worker-resume.sh reads this because it has no --role flag.
+# worker-resume.sh reads these because it has no --role / --browser flag, and every reader
+# of the run dir picks its parser by `backend`.
 printf '%s\n' "$ROLE" >"$RUNDIR/role"
+printf '%s\n' "$BACKEND" >"$RUNDIR/backend"
+if [ -n "$BROWSER" ]; then : >"$RUNDIR/browser"; else rm -f "$RUNDIR/browser"; fi
 printf '%s\n' "$NAME" >"$RUNDIR/session-name" \
     || die "cannot record worker session name in $RUNDIR/session-name"
 
-# The worker's fixed-shape status report. `--output-schema` is what turns the final
-# message from prose into something a caller can read without a model in the loop.
-# EVERY property is required and additionalProperties is false: that is strict
-# structured-output shape, and a schema that leaves a property optional is rejected
-# outright rather than relaxed. Unused fields come back empty — the prompt says so.
 # On failure the dir goes with it: a pidless run dir is BUSY forever to session-status.sh,
 # so leaving one behind stalls /orchestrate's recovery gate with no way out.
-cat >"$RUNDIR/status-schema.json" <<'SCHEMA' || { rm -rf "$RUNDIR"; die "cannot write $RUNDIR/status-schema.json"; }
-{
-  "type": "object",
-  "properties": {
-    "issue":  { "type": "integer" },
-    "status": { "type": "string", "enum": ["built", "fixed", "failed", "escalate", "blocked"] },
-    "round":  { "type": "integer" },
-    "head":   { "type": "string" },
-    "review": { "type": "string" },
-    "note":   { "type": "string" }
-  },
-  "required": ["issue", "status", "round", "head", "review", "note"],
-  "additionalProperties": false
-}
-SCHEMA
+printf '%s\n' "$SCHEMA" >"$RUNDIR/status-schema.json" \
+    || { rm -rf "$RUNDIR"; die "cannot write $RUNDIR/status-schema.json"; }
 
 
 # Wrapped so the recorded pid stays alive until the exit code is written:
@@ -646,13 +555,13 @@ SCHEMA
 # the exit file appearing would read as a worker that died without a code.
 #
 # `set -m`, not a bare `&`, because THE RECORDED PID MUST BE KILLABLE. It names the
-# WRAPPER; codex is its child. `kill $pid` on its own reaps the wrapper, orphans codex
+# WRAPPER; the worker is its child. `kill $pid` on its own reaps the wrapper, orphans it
 # onto the worktree, and writes no exit file — which session-status.sh reads as `failed`,
 # clearing /orchestrate's respawn gate for a second worker on a worktree the orphan is
 # still writing. And a bare `&` leaves the wrapper in SPAWN.SH'S OWN process group, so
 # the obvious fix — kill the group — would take the orchestrator down with it. Job control
 # puts a background job in a NEW group led by the pid `$!` reports, so `kill -- -$pid`
-# reaches codex and nothing else.
+# reaches the worker and nothing else.
 #
 # `set -m` is a bash builtin and deliberately NOT `setsid`, which is util-linux: macOS
 # ships none, and README.md and AGENT_SETUP.md both promise macOS. A non-interactive
@@ -661,7 +570,8 @@ SCHEMA
 #
 # Its own stdout/stderr go to /dev/null: a background worker holding the caller's `$( )`
 # pipe open for its whole run turns this spawn into a blocking wait.
-# </dev/null because codex BLOCKS FOREVER on an open stdin.
+# </dev/null because codex BLOCKS FOREVER on an open stdin. The worker runs FROM its
+# worktree: claude has no --cwd (codex's -C makes it a no-op there).
 #
 # The wrapper runs TWO processes in sequence: the worker, then the independent reviewer.
 # ORDER IS THE CONTRACT. `exit` is what session-status.sh calls terminal and what makes
@@ -685,7 +595,7 @@ SCHEMA
 # fail the run: the counts still reached worker-report.sh, and a lost comment costs the
 # fix round its detail, not its correctness.
 # Only names cross argv into the wrapper; the values travel in its environment.
-# Remove them there as soon as Codex exits, before any host-side git, gh or reviewer.
+# Remove them there as soon as the worker exits, before any host-side git, gh or reviewer.
 ENV_NAMES=()
 if [ "${#ENVS[@]}" -gt 0 ]; then
     for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done
@@ -693,7 +603,7 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
 fi
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; shift 5
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; shift 6
     env_names=()
     while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
     shift
@@ -701,9 +611,11 @@ bash -c '
     while [ $# -gt 0 ] && [ "$1" != "--REVIEW--" ]; do worker+=("$1"); shift; done
     [ $# -eq 0 ] || shift
     review=("$@")
-    "${worker[@]}" >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
+    (cd "$worktree" && "${worker[@]}") >"$rundir/events.jsonl" 2>"$rundir/stderr.log" </dev/null
     rc=$?
     for name in "${env_names[@]}"; do unset "$name"; done
+    # A claude worker has no -o: its report is the stream'\''s last result event.
+    bash "$report" "$rundir"
     # Anything the worker may have left at the reviewer path is gone before the reviewer
     # writes: with a non-default CODEX_RUN_ROOT the run dir can land somewhere the worker
     # could reach, and a planted verdict must never outlive the worker that planted it. The
@@ -787,7 +699,7 @@ bash -c '
     rm -f "$rundir/reviewing"
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
-       "$INFRA/review-counts.sh" \
+       "$INFRA/review-counts.sh" "$INFRA/claude-report.sh" \
     ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m
@@ -800,23 +712,23 @@ printf '%s\n' "$RUNDIR"
 exit 0
 fi
 
-# `--` BEFORE THE PROMPT IS LOAD-BEARING. `--disallowedTools` is a VARIADIC option:
-# it consumes every following non-option token, so a prompt placed after it is
-# parsed as more deny rules, word by word. An unknown deny rule is only a WARNING,
-# so with --bg there is no error at all — the session starts with NO TASK, does
-# nothing, and goes idle. `idle` is this design's DONE signal for a background
-# worker, so the orchestrator would read every never-started worker as finished and
-# merge a run that built nothing. That is the silent-empty catastrophe, delivered by
-# an argv ordering. Verified against the installed CLI, both the break and the fix.
+# ---------------------------------------------------------------------------
+# PEER — a `claude --bg` session.
+#
+# `--` BEFORE THE PROMPT IS LOAD-BEARING. `--disallowedTools` is a VARIADIC option: it
+# consumes every following non-option token, so a prompt placed after it is parsed as more
+# deny rules, word by word. An unknown deny rule is only a WARNING, so with --bg there is no
+# error at all — the session starts with NO TASK and goes idle.
+# ---------------------------------------------------------------------------
+DENY=()
+while IFS= read -r -d '' _arg; do DENY+=("$_arg"); done < <(bash "$INFRA/worker-cmd.sh" --deny)
+[ "${#DENY[@]}" -gt 0 ] || die "could not read the shared tool denylist"
 CMD=(claude --bg -n "$NAME"
      --model "$MODEL" --effort "$EFFORT"
      --permission-mode bypassPermissions
      --system-prompt-snapshot off
-     ${MCP_ARGS[@]+"${MCP_ARGS[@]}"}
-     "${EXTRA[@]}"
-     --disallowedTools "Bash(git merge:*)" "Bash(git worktree:*)" "Bash(gh pr:*)"
-                       "Bash(gh issue close:*)" "Bash(gh issue edit:*)"
-                       "Bash(gh api:*)" "Bash(gh repo:*)" "Bash(gh workflow:*)" "Bash(gh release:*)"
+     --append-system-prompt "$(cat "$CHARTER")" --autocompact "$AUTOCOMPACT"
+     --disallowedTools "${DENY[@]}"
      -- "$TASK")
 
 # --dry-run prints ONE ARGUMENT PER LINE, unquoted — that is what makes the flag set
@@ -828,41 +740,6 @@ if [ -n "$DRY" ]; then
     exit 0
 fi
 
-# `claude` has no --cwd. A worker is started FROM its worktree; a peer stays in the
-# caller's cwd, which is the project root its role works in.
-if [ -n "$WORKTREE" ]; then
-    [ -d "$WORKTREE" ] || die "worktree does not exist: $WORKTREE"
-    cd "$WORKTREE" || die "cannot enter worktree: $WORKTREE"
-fi
-# </dev/null: an unattended session must never inherit the caller's stdin. It has nobody
-# to answer a read, and a session blocked on one looks exactly like a session working.
+# A peer stays in the caller's cwd, which is the project root its role works in.
 printf 'session name: %s\n' "$NAME" >&2
-if [ "${#ENVS[@]}" -gt 0 ]; then
-    # Claude's --bg dispatcher filters arbitrary launcher environment variables, and an
-    # export can instead contaminate a daemon that it starts. Put this worker's values in
-    # per-session settings, which Claude carries with the dispatch. The file is private
-    # and outside the run dir. It must remain for the session's lifetime: --bg returns
-    # before the session has finished reading it, and later requests read it again.
-    _env_umask="$(umask)"
-    umask 077
-    CLAUDE_SETTINGS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/claude-env.$RUNID.issue-$ISSUE.XXXXXX")" \
-        || die "could not create private Claude session settings"
-    CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
-    jq -n --args '{"env": (reduce $ARGS.positional[] as $pair ({};
-        ($pair | index("=")) as $eq | . + {($pair[:$eq]): ($pair[$eq + 1:])}))}' \
-        -- "${ENVS[@]}" >"$CLAUDE_SETTINGS_FILE" 2>/dev/null \
-        || { rm -rf -- "$CLAUDE_SETTINGS_DIR"; die "could not prepare Claude session settings"; }
-    umask "$_env_umask"
-
-    CLAUDE_CMD=("${CMD[0]}" --settings "$CLAUDE_SETTINGS_FILE" "${CMD[@]:1}")
-    "${CLAUDE_CMD[@]}" </dev/null
-    _claude_rc=$?
-    # A failed dispatch did not create a session, so its settings are no longer needed.
-    if [ "$_claude_rc" -eq 0 ]; then
-        printf 'Claude settings file: %s\n' "$CLAUDE_SETTINGS_FILE"
-    else
-        rm -rf -- "$CLAUDE_SETTINGS_DIR"
-    fi
-    exit "$_claude_rc"
-fi
 exec "${CMD[@]}" </dev/null

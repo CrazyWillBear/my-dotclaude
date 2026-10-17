@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 #
-# worker-report.sh — block until one CODEX worker finishes, then print its report in the
+# worker-report.sh — block until one worker finishes, then print its report in the
 # session lane's own vocabulary.
 #
-# WHY THIS EXISTS. A claude worker reports with `SendMessage`: the orchestrator subscribes
-# at spawn with `notify_when_idle` and the next thing that happens is a message. A
-# `codex exec` worker is a PROCESS — no inbox, no SendMessage — and its report is the
-# schema'd final message in `last-message.txt`, which NOTHING read before this script
-# (#96). A flipped roster without this leaves the orchestrator waiting on a session that
-# does not exist, forever. That is why the roster flip was held.
+# WHY THIS EXISTS. A worker — codex or boxed `claude -p` — is a PROCESS with no inbox, and
+# its report is the schema'd final message in its run dir's `last-message.txt` (codex
+# writes it with `-o`; spawn.sh's wrapper extracts a claude worker's from its stream).
+# This script is the one place that file is read and rendered.
 #
 # The orchestrator still does not poll. It makes ONE blocking call — per worker, or per
 # SET with --any — and gets back the same one-line report it already branches on, so the
@@ -101,14 +99,12 @@ case "$RUNID" in .|..|*[!A-Za-z0-9._-]*) die "runid may only contain [A-Za-z0-9.
 [ -f "$INFRA/session-status.sh" ] || die "missing infra sibling: $INFRA/session-status.sh"
 
 CODEX_ROOT="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID"
-# Fail now rather than after a 2-hour wait. No run dir means no codex worker was ever
-# spawned for this issue — a caller that reached here with a claude-backed worker is
-# asking the wrong question, and should be told so immediately. EVERY issue in the set
-# is checked: one claude-backed number mixed into an --any set would otherwise just
-# never match, and the whole call would time out with nothing to show for it.
+# Fail now rather than after a 2-hour wait. No run dir means no worker was ever spawned
+# for this issue. EVERY issue in the set is checked: one bad number mixed into an --any
+# set would otherwise just never match, and the whole call would time out.
 for i in $ISSUES; do
     [ -d "$CODEX_ROOT/issue-$i" ] || \
-        die "no codex run dir for issue $i: $CODEX_ROOT/issue-$i (is this worker codex-backed?)"
+        die "no run dir for issue $i: $CODEX_ROOT/issue-$i (was it spawned in this run?)"
 done
 
 START=$SECONDS
@@ -117,15 +113,13 @@ STATE=""
 
 while : ; do
     OUT="$(bash "$INFRA/session-status.sh" "$RUNID" 2>/dev/null)"
-    # Column 3 is the backend, column 4 the state. Filtering on `codex` keeps a CLAUDE
-    # session sharing the run prefix out of the answer: it reports over SendMessage and
-    # has no last-message.txt, so rendering it here would exit 1 on a worker that is
-    # perfectly healthy. A row that is not terminal, or not in the asked-for set, simply
-    # does not match and the loop waits — the same "keep waiting rather than guess" the
-    # single-worker form had for an unknown state spelling.
+    # Column 3 is the backend, column 4 the state. Only run-dir workers (codex or claude)
+    # qualify: a `claude --bg` session sharing the run prefix has no last-message.txt, so
+    # rendering it here would exit 1 on a session that is perfectly healthy. A row that is
+    # not terminal, or not in the asked-for set, simply does not match and the loop waits.
     HIT="$(printf '%s\n' "$OUT" | awk -v pre="orch-$RUNID-issue-" -v want=" $ISSUES " '
         BEGIN { plen = length(pre) }
-        $3 == "codex" && ($4 == "done" || $4 == "failed" || $4 == "blocked") && substr($1, 1, plen) == pre {
+        ($3 == "codex" || $3 == "claude") && ($4 == "done" || $4 == "failed" || $4 == "blocked") && substr($1, 1, plen) == pre {
             n = substr($1, plen + 1)
             if (n !~ /^[0-9]+(-a[0-9]+(-r[0-9]+)?)?$/) next
             sub(/-a[0-9]+(-r[0-9]+)?$/, "", n)

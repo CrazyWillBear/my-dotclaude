@@ -108,6 +108,16 @@ assert_equals "exit 0" "$RC" "0"
 assert_equals "the exact report line" "$OUT" \
     "issue 41 built head=abc1234 review=1 high, 2 medium, 3 low"
 
+echo "test: a claude-backed worker reports through the same run dir"
+mkrun r1 49 "$(dead)" 0 \
+  '{"issue":49,"status":"built","round":0,"head":"bcd2345","review":"","note":""}'
+printf 'claude\n' >"$CODEX_ROOT/r1/issue-49/backend"
+mkreview r1 49 0 1 0
+run r1 49 --interval 1 --timeout 20
+assert_equals "exit 0" "$RC" "0"
+assert_equals "the claude worker's report line" "$OUT" \
+    "issue 49 built head=bcd2345 review=0 high, 1 medium, 0 low"
+
 echo "test: worker-report resolves an attempt and fix-round suffix back to its issue"
 mkrun r1 48 "$(dead)" 0 \
   '{"issue":48,"status":"fixed","round":3,"head":"feed123","review":"","note":""}'
@@ -261,7 +271,7 @@ echo "test: --any refuses a set holding an issue with no codex run dir"
 run --any r5 80 998 --interval 1 --timeout 5
 assert_equals "exit 1" "$RC" "1"
 assert_empty "nothing on stdout" "$OUT"
-assert_contains "names the missing one" "$ERR" "no codex run dir for issue 998"
+assert_contains "names the missing one" "$ERR" "no run dir for issue 998"
 
 echo "test: two issues WITHOUT --any is refused rather than half-answered"
 # Reporting the first and dropping the second would strand that worker with nobody
@@ -494,7 +504,7 @@ assert_contains "same guard as spawn.sh" "$ERR" "runid may only contain"
 
 run r1 999 --interval 1 --timeout 5
 assert_equals "no run dir exits 1" "$RC" "1"
-assert_contains "names the missing dir" "$ERR" "no codex run dir"
+assert_contains "names the missing dir" "$ERR" "no run dir for issue"
 
 run r1 41 --bogus
 assert_equals "unknown flag exits 1" "$RC" "1"
