@@ -498,6 +498,26 @@ run r1 86 standard "$REPO" --answer "x" --round 4 --dry-run
 assert_equals "resume refuses the removed --round flag" "$RC" "1"
 assert_contains "and reports an unknown flag" "$ERR" "unknown flag"
 
+echo "test: the resumed review starts at the fork point, not a base that moved on"
+SLICE="$WORK/slice"
+FORK="$(git -C "$ORIGIN" rev-parse base)"
+git -C "$ORIGIN" worktree add -q -b slice "$SLICE" base >/dev/null 2>&1
+git -C "$SLICE" commit -q --allow-empty -m "slice work"
+git -C "$ORIGIN" commit -q --allow-empty -m "sibling merged" >/dev/null 2>&1
+git -C "$ORIGIN" branch -f base HEAD
+rm -f "$WORK/review-argv"
+mkrun 92 '{"issue":92,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":92,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    STUB_REVIEW_TEXT='No findings.' \
+    run r1 92 standard "$SLICE" --answer "x" --base base
+assert_equals "the moved-base resume exits 0" "$RC" "0"
+assert_contains "the fork point" "$(cat "$WORK/review-argv" 2>/dev/null)" "$FORK..HEAD"
+assert_not_contains "never the moved tip" "$(cat "$WORK/review-argv" 2>/dev/null)" \
+    "$(git -C "$ORIGIN" rev-parse base)..HEAD"
+assert_not_contains "never the slice's own head" "$(cat "$WORK/review-argv" 2>/dev/null)" \
+    "$(git -C "$SLICE" rev-parse HEAD)..HEAD"
+git -C "$ORIGIN" branch -f base "$FORK"
+
 echo "test: a resumed FIX worker gets a scoped re-review"
 mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 RUNDIR87="$CODEX_ROOT/r1/issue-87"
