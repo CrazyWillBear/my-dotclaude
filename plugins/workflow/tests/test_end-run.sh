@@ -77,6 +77,8 @@ for n in 11 12 13; do rl append r1 admitted "{\"n\":$n,\"tier\":\"x\"}"; done
 rl append r1 merged '{"n":11,"sha":"aaaaaaa1"}'; rl append r1 merged '{"n":12,"sha":"bbbbbbb2"}'
 rl append r1 escalated '{"n":12,"reason":"review-cap","attempt":0}'
 rl append r1 held '{"n":13,"why":"drained: failed"}'
+# #14 was held and then released (--retry), and never re-admitted: its old hold must not show
+rl append r1 held '{"n":14,"why":"stale branch"}'; rl append r1 released '{"n":14}'
 
 # run dirs: a worker's session id, a provisioned env file; box transcripts for it and another
 for n in 11 12; do mkdir -p "$CODEX_RUN_ROOT/r1/issue-$n"; done

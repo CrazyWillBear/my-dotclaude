@@ -60,6 +60,7 @@ for line in open(sys.argv[2]):
     n, e = r.get("n"), r.get("event")
     if e == "merged": merged[n] = str(r.get("sha") or "")[:7]
     elif e == "held": held[n] = r.get("why") or ""
+    elif e == "released": held.pop(n, None); admitted.discard(n)
     elif e == "escalated": esc.setdefault(n, []).append(r.get("reason") or "?")
     elif e == "admitted": admitted.add(n)
 print("| # | title | tier | outcome | escalations |")

@@ -32,7 +32,7 @@
 # `follow-up.sh`'s fallback hold) is an in-run judgment, not a fact on the issue. A
 # capped merge no longer holds anything. `released` is the human lifting a hold (`handle-report.sh
 # --retry`): it drops the issue from `held` AND from `admitted` — a retry is a fresh admission
-# — and forgets every `drain:` decision, so a hold is never a dead end for the run. `planned` / `consulted` / `escalated`
+# — and forgets that issue's own `drain:` decision (another issue's drain still stops the run), so a hold is never a dead end for the run. `planned` / `consulted` / `escalated`
 # (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
 # they are stored here anyway, per issue with the attempt and the reason, because the
 # deviation rate is the DATA that later decides whether a cheaper model can take the
@@ -165,7 +165,7 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
                 held.remove(n)
             if n in admitted:
                 admitted.remove(n)
-            decisions = [d for d in decisions if not d.startswith("drain:")]
+            decisions = [d for d in decisions if not d.startswith("drain: #%s " % n)]
         elif event == "respawned":
             n = rec.get("n")
             if n is not None:
