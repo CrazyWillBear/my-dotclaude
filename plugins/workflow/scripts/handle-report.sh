@@ -48,14 +48,36 @@ if [ "$MODE" = --wait ]; then run_lock; else run_lock strict; fi
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT
 
+# salvage <N> — keep a stopped worker's work before a hold or drain strands it: commit what it
+# left uncommitted and point prev/issue-N-<runid> at the branch. Prints the branch name, or
+# nothing when there was nothing to keep (no worker, still running, or a worktree that fails the
+# containment check — the same tripwire spawn.sh runs before the first host git in a worktree).
+salvage() {
+    local n="$1" d wt pid
+    d="$(issue_dir "$n")"; wt="$(worktree_of "$n")"
+    [ -f "$d/pid" ] && [ -d "$wt" ] || return 0
+    pid="$(head -1 "$d/pid" 2>/dev/null)"
+    { [ -e "$d/exit" ] || ! kill -0 "$pid" 2>/dev/null; } || return 0
+    bash "$INFRA/common-git-dir.sh" --roots "$wt" >/dev/null 2>&1 || return 0
+    local g=(git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null)
+    [ "$("${g[@]}" symbolic-ref --short HEAD 2>/dev/null)" = "issue-$n" ] || return 0
+    if [ -n "$("${g[@]}" status --porcelain 2>/dev/null)" ]; then
+        "${g[@]}" add -A >/dev/null 2>&1 \
+            && "${g[@]}" -c user.name=orchestrate -c user.email=orchestrate@localhost \
+                commit -q --no-verify -m "WIP: salvaged from #$n by run $RUNID" >/dev/null 2>&1
+    fi
+    "${g[@]}" branch -f "prev/issue-$n-$RUNID" "issue-$n" >/dev/null 2>&1 && echo "prev/issue-$n-$RUNID"
+}
+# kept_note <N> — " (work kept on <branch>)" when a salvage saved something, else nothing.
+kept_note() { local b; b="$(salvage "$1")"; [ -z "$b" ] || printf ' (work kept on %s)' "$b"; }
 hold() {
     runlog append "$RUNID" held "$(jq -cn --argjson n "$1" --arg why "$2" '{n: $n, why: $why}')" >/dev/null
-    echo "held #$1 $2"
+    echo "held #$1 $2$(kept_note "$1")"
 }
 drain() {
     runlog append "$RUNID" held "$(jq -cn --argjson n "$1" --arg why "drained: $2" '{n: $n, why: $why}')" >/dev/null
     runlog append "$RUNID" decision "$(jq -cn --arg w "drain: #$1 $2" '{what: $w}')" >/dev/null
-    echo "drain: #$1 $2"
+    echo "drain: #$1 $2$(kept_note "$1")"
 }
 pause() { printf '%s\n' "$2" >"$(issue_dir "$1")/paused"; }
 unpause() { rm -f "$(issue_dir "$1")/paused"; }
@@ -341,7 +363,20 @@ case "$MODE" in
         fi
         N="$(sed -n 's/^error: issue \([0-9]*\) .*/\1/p' "$TMP/wr.err" | head -1)"
         [ -n "$N" ] || { echo "error: worker-report.sh: $(tail -1 "$TMP/wr.err")"; exit 0; }
-        hold "$N" "no readable report: $(sed -n 's/^error: //p' "$TMP/wr.err" | head -1 | cut -c1-300)"
+        WHY="$(sed -n 's/^error: //p' "$TMP/wr.err" | head -1 | cut -c1-300)"
+        a="$(attempt_of "$N")"; k="$(rounds_of "$N")"; role="$(head -1 "$(issue_dir "$N")/role" 2>/dev/null)"
+        chain="$(bash "$INFRA/resolve-tier.sh" "$(tier_of "$N")" 0 2>/dev/null | sed -n 's/^implementer_chain=//p')"
+        # A worker that ended with no report at all is "failed": the next cell of its chain
+        # picks up its worktree, as for any other failure. At the top there is no next cell;
+        # that is a hold (not a drain — a report glitch must not stop the whole run).
+        case "$WHY" in
+            *"wrote no report"*|*"unreadable report"*)
+                if [ "$((a + 1))" -lt "${chain:-1}" ]; then
+                    escalate_to_next "$N" failed "no report: $WHY" "$a" "${role:-build}" "${k:-0}"
+                    next; exit 0
+                fi ;;
+        esac
+        hold "$N" "no readable report: $WHY"
     else
         handle "$LINE"
     fi

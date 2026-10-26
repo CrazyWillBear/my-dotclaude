@@ -37,7 +37,7 @@ echo "follow-up: #$2 → #900 (tier:$3) re-blocked none"
 STUB
 
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
-cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$INFRA/"
+cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$REAL_INFRA/common-git-dir.sh" "$INFRA/"
 cat >"$INFRA/worker-report.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.wr"
@@ -387,6 +387,38 @@ assert_contains "reports the change" "$OUT" "max 2 (was 1)"
 assert_contains "run.env carries it" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=2"
 run --max 1
 assert_contains "and back" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=1"
+
+echo "test: a worker that finished with no readable report is escalated, not held, while the chain has a next cell"
+reset; mkrun 21 0 build ''
+STUB_WR_ERR="error: issue 21 finished clean but wrote no report to last-message.txt" run --wait
+assert_contains "escalated to the next cell" "$OUT" "escalated #21 failed → attempt 1"
+assert_contains "respawned there" "$(cat "$STUB_LOG.spawn")" "r1 21 standard $REPO/.worktrees/r1/issue-21 orchestrate-r1 --role build --round 1 --attempt 1"
+reset; mkrun 21 1 build ''
+STUB_WR_ERR="error: issue 21 wrote an unreadable report (bad json): x" run --wait
+assert_contains "at the top of the chain it is held, as before" "$OUT" "held #21 no readable report"
+assert_not_contains "and never drains the run for a report glitch" "$OUT" "drain:"
+
+echo "test: a hold keeps a stopped worker's work on a prev/ branch, uncommitted files included"
+reset; mkrun 22 0 build ''
+printf 'wip\n' >"$REPO/.worktrees/r1/issue-22/dirty"
+STUB_WR_ERR="error: issue 22 reported built but no independent review was recorded" run --wait
+assert_contains "held" "$OUT" "held #22 no readable report"
+assert_contains "and says where the work is" "$OUT" "prev/issue-22-r1"
+assert_equals "the dirty file was committed onto the salvage branch" \
+    "$(git -C "$REPO" show prev/issue-22-r1:dirty 2>/dev/null)" "wip"
+assert_equals "the worker's own commit is on it too" \
+    "$(git -C "$REPO" show prev/issue-22-r1:f22 2>/dev/null)" "22"
+
+echo "test: a still-running worker is never touched by a salvage"
+reset; mkrun 17 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-17/exit"
+git -C "$REPO" branch -D prev/issue-17-r1 >/dev/null 2>&1   # left by an earlier hold of #17
+live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-17/pid"
+printf 'wip\n' >"$REPO/.worktrees/r1/issue-17/dirty"
+STUB_WR_ERR="error: issue 17 reported built but no independent review was recorded" run --wait
+kill -- -"$LEADER" 2>/dev/null
+assert_contains "still held" "$OUT" "held #17"
+if git -C "$REPO" rev-parse --verify -q prev/issue-17-r1 >/dev/null; then no "a live worker's work was salvaged"; else ok "no salvage branch for a live worker"; fi
+assert_equals "its dirty file is still uncommitted" "$(git -C "$REPO/.worktrees/r1/issue-17" status --porcelain | tr -d ' ')" "??dirty"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

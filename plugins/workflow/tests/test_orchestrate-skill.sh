@@ -84,6 +84,7 @@ assert_contains "credentials never land in issues or files" "$BODY" "Never put a
 assert_contains "the resource goes through the script" "$BODY" "--resource N --env NAME=VALUE"
 assert_contains "a conflict spawns the merger" "$BODY" "spawn \`workflow:merger\`"
 assert_contains "the merger gets the run id for its env-wrapped done-check" "$BODY" "with-env.sh"
+assert_contains "a hold names the branch its work was kept on" "$BODY" "work kept on"
 assert_contains "a cleanup is reported done only from an exit status" "$BODY" "only from a command's exit status"
 assert_contains "then --merged" "$BODY" "handle-report.sh <runid> --merged N"
 assert_contains "error stops the loop" "$BODY" "| \`error: …\` | stop the loop"
