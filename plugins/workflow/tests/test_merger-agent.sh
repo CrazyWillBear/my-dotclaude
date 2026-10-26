@@ -89,5 +89,14 @@ assert_contains "a stop carries its reason" "$content" "the reason (unresolvable
 assert_contains "an unverified resolution is never kept" "$content" "Never keep an unverified resolution"
 
 # ---------------------------------------------------------------------------
+# The workers ran their tests against provisioned resources (a test DB, a service URL) whose
+# env pairs live in the run dir. A done-check without them skips those tests, and a bad
+# conflict resolution lands green — so the merger runs the done-check through with-env.sh.
+echo "test: the merger runs the done-check with the issues' provisioned env"
+assert_contains "gets the run id" "$content" "run id"
+assert_contains "done-check goes through with-env.sh" "$content" 'scripts/with-env.sh" <runid> <N>,<N>,... -- <done-check'
+assert_contains "values are never read or echoed" "$content" "never print"
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
