@@ -75,6 +75,8 @@ for i in graph.get("issues") or []:
     print("| #%s | %s | %s | %s | %s |" % (n, title, i.get("tier") or "-", out, ", ".join(esc.get(n, [])) or "-"))
 PY
 MERGED="$(run_state merged)"
+# Findings a follow-up could not file anywhere: they need a human, so the PR says so.
+UNFILED="$(runlog state "$RUNID" 2>/dev/null | sed -n 's/^decision=\(follow-up: .*\)/\1/p')"
 DEFAULT="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null)"
 NOCLOSE=""
 if [ -n "${MERGED// /}" ] && [ -n "$DEFAULT" ] && [ "$DEFAULT" != "$BASE_BRANCH" ]; then
@@ -86,6 +88,7 @@ fi
     echo
     echo "- $INTEG"
     echo "- $PREVIEW"
+    [ -z "$UNFILED" ] || printf -- '- %s\n' "$UNFILED"
     echo "- \`.worktrees/\` and \`.claude/worktrees/\` were added to this repo's local \`.git/info/exclude\` and stay there."
     echo
     for n in $MERGED; do echo "Closes #$n"; done
@@ -130,6 +133,7 @@ cat "$TMP/table.md"
 echo
 echo "$INTEG"
 echo "$PREVIEW"
+[ -z "$UNFILED" ] || printf '%s\n' "$UNFILED"
 echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; $GONE worker transcript path(s) removed"
 [ -z "$NOCLOSE" ] || echo "$NOCLOSE"
 echo "$PR"

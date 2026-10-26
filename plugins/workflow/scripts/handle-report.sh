@@ -61,8 +61,13 @@ salvage() {
     bash "$INFRA/common-git-dir.sh" --roots "$wt" >/dev/null 2>&1 || return 0
     # A repo nested in the worktree brings its own config, and git runs that config's clean
     # filters when it looks inside: the worker wrote it, so nothing here may touch it.
-    [ -z "$(find "$wt" -mindepth 2 \( -name node_modules -prune \) -o -name .git -print -quit 2>/dev/null)" ] || return 0
+    # No pruning, and an unreadable directory counts as a hit: find failing is "cannot tell".
+    local nested
+    nested="$(find "$wt" -mindepth 2 -name .git -print -quit 2>/dev/null)" || return 0
+    [ -z "$nested" ] || return 0
     local g=(git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null)
+    # A committed gitlink is the path git itself walks into, readable by find or not.
+    ! "${g[@]}" ls-tree -r HEAD 2>/dev/null | grep -q '^160000 ' || return 0
     [ "$("${g[@]}" symbolic-ref --short HEAD 2>/dev/null)" = "issue-$n" ] || return 0
     head="$("${g[@]}" rev-parse HEAD 2>/dev/null)" || return 0
     # Snapshot through a throwaway index: issue-N and the worktree's own index never move, so

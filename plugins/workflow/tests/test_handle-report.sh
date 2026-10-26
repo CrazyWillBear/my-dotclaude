@@ -427,6 +427,23 @@ if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a 
 if [ -e "$WORK/canary" ]; then no "the nested repo's filter ran on the host"; else ok "the nested repo's filter never ran"; fi
 rm -rf "$NEST"
 
+echo "test: a nested repo under a deep node_modules is not salvaged either"
+reset; mkrun 21 1 build ''
+NEST="$REPO/.worktrees/r1/issue-21/sub/node_modules/x"
+mkdir -p "$NEST" && git -C "$NEST" init -q
+printf 'a\n' >"$NEST/a"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a deep node_modules repo was salvaged"; else ok "no salvage branch"; fi
+rm -rf "$REPO/.worktrees/r1/issue-21/sub"
+
+echo "test: a committed gitlink is not salvaged"
+reset; mkrun 21 1 build ''
+git -C "$REPO/.worktrees/r1/issue-21" update-index --add --cacheinfo 160000,"$(git -C "$REPO" rev-parse HEAD)",vendored
+git -C "$REPO/.worktrees/r1/issue-21" commit -q -m "gitlink"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a worktree with a gitlink was salvaged"; else ok "no salvage branch"; fi
+git -C "$REPO/.worktrees/r1/issue-21" reset -q --hard HEAD~1
+
 echo "test: a still-running worker is never touched by a salvage"
 reset; mkrun 17 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-17/exit"
 git -C "$REPO" branch -D prev/issue-17-r1 >/dev/null 2>&1   # left by an earlier hold of #17

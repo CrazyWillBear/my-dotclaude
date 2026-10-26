@@ -739,8 +739,8 @@ HOME="$WORK/cachehome" UV_CACHE_DIR=/mine/uv npm_config_store_dir=/mine/pnpm STU
     PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
     bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-assert_equals "a cache the machine already chose is kept" \
-    "$(cat "$WORK/cache-set" 2>/dev/null)" "/mine/uv|/mine/pnpm"
+assert_equals "a cache the host session set is not used — only the kit dir is writable" \
+    "$(cat "$WORK/cache-set" 2>/dev/null)" "$WORK/cachehome/.cache/orchestrate/uv|$WORK/cachehome/.cache/orchestrate/pnpm-store"
 
 out=$(dry r1 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "Claude dry run exits 0" "$?" "0"
