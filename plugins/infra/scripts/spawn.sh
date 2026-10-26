@@ -409,6 +409,8 @@ SCHEMA='{
 # session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
+# shellcheck source=worker-env.sh
+. "$INFRA/worker-env.sh"
 if [ "$BACKEND" = codex ]; then
 # Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
@@ -420,6 +422,7 @@ if [ "$BACKEND" = codex ]; then
 # worktree's own git dir, but NOT hooks/ or config, the two things git executes — or dies
 # loudly. See common-git-dir.sh for why the whole common dir is not granted.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
+WRITABLE_ROOTS="$(cache_root_into "$WRITABLE_ROOTS")"
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the
@@ -598,8 +601,6 @@ printf '%s\n' "$SCHEMA" >"$RUNDIR/status-schema.json" \
 # fix round its detail, not its correctness.
 # Only names cross argv into the wrapper; the values travel in its environment.
 # Remove them there as soon as the worker exits, before any host-side git, gh or reviewer.
-# shellcheck source=worker-env.sh
-. "$INFRA/worker-env.sh"
 ENV_NAMES=()
 if [ "${#ENVS[@]}" -gt 0 ]; then
     for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done

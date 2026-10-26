@@ -132,6 +132,9 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 # narrowed set: objects, refs, logs and this worktree's own git dir, never hooks/ or config.
 # Run for both backends: it is also the containment check before anything runs there.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
+# shellcheck source=worker-env.sh
+. "$INFRA/worker-env.sh"
+WRITABLE_ROOTS="$(cache_root_into "$WRITABLE_ROOTS")"
 
 PROMPT="Your escalation was answered. Here is the answer:
 
@@ -257,8 +260,6 @@ printf '%s\n' "$$" >"$RUNDIR/pid"
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
 (
-    # shellcheck source=worker-env.sh
-    . "$INFRA/worker-env.sh"
     [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
     cd "$WORKTREE" && "${CMD[@]}"
 ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null

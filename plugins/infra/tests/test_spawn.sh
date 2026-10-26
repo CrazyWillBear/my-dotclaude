@@ -201,7 +201,7 @@ git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
 git -C "$REPO" commit -q --allow-empty -m "slice work"
 GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
 OWNDIR="$(cd "$(git -C "$REPO" rev-parse --git-dir)" && pwd -P)"
-NARROWED="[\"$GITDIR/objects\",\"$GITDIR/refs\",\"$GITDIR/logs\",\"$OWNDIR\"]"
+NARROWED="[\"$GITDIR/objects\",\"$GITDIR/refs\",\"$GITDIR/logs\",\"$OWNDIR\",\"$HOME/.cache/orchestrate\"]"
 CODEX_ROOT="$WORK/codexruns"
 RUNDIR="$CODEX_ROOT/r9/issue-12"
 
@@ -732,8 +732,8 @@ HOME="$WORK/cachehome" STUB_CACHE_OUT="$WORK/cache-default" \
     PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
     bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-assert_equals "default: shared uv cache and pnpm store under ~/.cache" \
-    "$(cat "$WORK/cache-default" 2>/dev/null)" "$WORK/cachehome/.cache/uv|$WORK/cachehome/.cache/pnpm-store"
+assert_equals "default: shared uv cache and pnpm store in the kit-owned dir" \
+    "$(cat "$WORK/cache-default" 2>/dev/null)" "$WORK/cachehome/.cache/orchestrate/uv|$WORK/cachehome/.cache/orchestrate/pnpm-store"
 rm -rf "$CODEX_ROOT"
 HOME="$WORK/cachehome" UV_CACHE_DIR=/mine/uv npm_config_store_dir=/mine/pnpm STUB_CACHE_OUT="$WORK/cache-set" \
     PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \

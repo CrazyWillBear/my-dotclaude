@@ -34,11 +34,23 @@ while [ "${p:-0}" -gt 1 ]; do
     PROTECT="$PROTECT${p:-0} "
 done
 
+# Per-user daemons a worker's command can start on first use (an ssh ControlMaster, gpg-agent
+# for a signed commit, a credential helper) and that every other session on the machine then
+# shares: they carry the tag but are not the worker's, so they are never killed. A daemon not
+# listed here is still reaped.
+shared() {
+    case "$(cat "/proc/$1/comm" 2>/dev/null)" in
+        ssh|ssh-agent|gpg-agent|dirmngr|scdaemon|keyboxd|git-credential*|sccache|watchman) return 0 ;;
+    esac
+    return 1
+}
+
 matches() {
     local env pid
     for env in /proc/[0-9]*/environ; do
         pid="${env#/proc/}"; pid="${pid%/environ}"
         case "$PROTECT" in *" $pid "*) continue ;; esac
+        shared "$pid" && continue
         tr '\0' '\n' <"$env" 2>/dev/null | awk -v t="ORCH_WORKER=$TAG" '
             { if (substr(t, length(t)) == "/" ? index($0, t) == 1 : $0 == t) f = 1 }
             END { exit !f }' && echo "$pid"

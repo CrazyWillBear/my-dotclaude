@@ -67,6 +67,14 @@ echo "test: it never kills itself or its caller"
 ORCH_WORKER=r4/1 bash -c 'bash "$1" r4/1; echo "survived rc=$?"' _ "$REAP" >"$WORK/self" 2>&1
 assert_contains "the caller lived to see the exit code" "$(cat "$WORK/self")" "survived rc=0"
 
+echo "test: a per-user shared daemon the worker started is left alone"
+cp "$(command -v sleep)" "$WORK/sccache"
+ORCH_WORKER=r5/1 setsid "$WORK/sccache" 300 >/dev/null 2>&1 &
+PIDS+=("$!"); D="$!"
+sleep 0.3
+bash "$REAP" r5/1 >/dev/null 2>&1
+alive "$D" && ok "sccache survived the reap" || no "a shared daemon was killed"
+
 echo "test: nothing matching is not an error"
 OUT="$(bash "$REAP" nope/1 2>&1)"; RC=$?
 assert_equals "exit 0" "$RC" "0"

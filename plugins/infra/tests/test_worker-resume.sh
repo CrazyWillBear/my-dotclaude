@@ -167,7 +167,7 @@ assert_arg "the NETWORK, whose loss is silent and fatal" \
 EXPECT_GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
 EXPECT_OWN="$(cd "$(git -C "$REPO" rev-parse --git-dir)" && pwd -P)"
 assert_arg "the NARROWED roots, spelled exactly as the spawn spells them" "$OUT" \
-    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR/objects\",\"$EXPECT_GITDIR/refs\",\"$EXPECT_GITDIR/logs\",\"$EXPECT_OWN\"]"
+    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR/objects\",\"$EXPECT_GITDIR/refs\",\"$EXPECT_GITDIR/logs\",\"$EXPECT_OWN\",\"$HOME/.cache/orchestrate\"]"
 assert_not_contains "the whole common git dir is never granted on resume either" "$OUT" \
     "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR\"]"
 assert_arg "the schema, so the report stays machine-readable" \
@@ -268,8 +268,8 @@ mkrun 92 '{"issue":92,"status":"escalate","round":0,"head":"","review":"","note"
 STUB_CACHE_OUT="$WORK/cache-resume" UV_CACHE_DIR= HOME="$WORK/cachehome" \
     STUB_REPORT='{"issue":92,"status":"built","round":0,"head":"abc","review":"","note":""}' \
     run r1 92 standard "$REPO" --answer x
-assert_equals "uv cache defaults under ~/.cache" \
-    "$(cat "$WORK/cache-resume" 2>/dev/null)" "$WORK/cachehome/.cache/uv"
+assert_equals "uv cache defaults to the kit-owned dir" \
+    "$(cat "$WORK/cache-resume" 2>/dev/null)" "$WORK/cachehome/.cache/orchestrate/uv"
 
 echo "test: what a resumed worker leaves running is reaped before the turn is terminal"
 mkrun 94 '{"issue":94,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
