@@ -401,6 +401,7 @@ assert_not_contains "and never drains the run for a report glitch" "$OUT" "drain
 echo "test: a hold keeps a stopped worker's work on a prev/ branch, uncommitted files included"
 reset; mkrun 22 0 build ''
 printf 'wip\n' >"$REPO/.worktrees/r1/issue-22/dirty"
+HEAD22="$(git -C "$REPO" rev-parse issue-22)"
 STUB_WR_ERR="error: issue 22 reported built but no independent review was recorded" run --wait
 assert_contains "held" "$OUT" "held #22 no readable report"
 assert_contains "and says where the work is" "$OUT" "prev/issue-22-r1"
@@ -408,6 +409,23 @@ assert_equals "the dirty file was committed onto the salvage branch" \
     "$(git -C "$REPO" show prev/issue-22-r1:dirty 2>/dev/null)" "wip"
 assert_equals "the worker's own commit is on it too" \
     "$(git -C "$REPO" show prev/issue-22-r1:f22 2>/dev/null)" "22"
+assert_equals "issue-22 itself did not move — a retry never inherits a WIP commit" \
+    "$(git -C "$REPO" rev-parse issue-22)" "$HEAD22"
+assert_equals "and the worktree's own state is untouched" \
+    "$(git -C "$REPO/.worktrees/r1/issue-22" status --porcelain | tr -d ' ')" "??dirty"
+
+echo "test: a worktree holding a nested repo is not salvaged — its config would run on the host"
+reset; mkrun 21 1 build ''
+git -C "$REPO" branch -D prev/issue-21-r1 >/dev/null 2>&1
+NEST="$REPO/.worktrees/r1/issue-21/sub"
+mkdir -p "$NEST" && git -C "$NEST" init -q
+printf '[filter "x"]\n\tclean = touch %s/canary\n' "$WORK" >>"$NEST/.git/config"
+printf '* filter=x\n' >"$NEST/.gitattributes"; printf 'a\n' >"$NEST/a"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+assert_contains "held" "$OUT" "held #21"
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a worktree with a nested repo was salvaged"; else ok "no salvage branch"; fi
+if [ -e "$WORK/canary" ]; then no "the nested repo's filter ran on the host"; else ok "the nested repo's filter never ran"; fi
+rm -rf "$NEST"
 
 echo "test: a still-running worker is never touched by a salvage"
 reset; mkrun 17 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-17/exit"

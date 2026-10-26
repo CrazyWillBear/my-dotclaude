@@ -53,20 +53,32 @@ trap 'rm -rf "$TMP"' EXIT
 # nothing when there was nothing to keep (no worker, still running, or a worktree that fails the
 # containment check — the same tripwire spawn.sh runs before the first host git in a worktree).
 salvage() {
-    local n="$1" d wt pid
+    local n="$1" d wt pid idx head tree snap
     d="$(issue_dir "$n")"; wt="$(worktree_of "$n")"
     [ -f "$d/pid" ] && [ -d "$wt" ] || return 0
     pid="$(head -1 "$d/pid" 2>/dev/null)"
     { [ -e "$d/exit" ] || ! kill -0 "$pid" 2>/dev/null; } || return 0
     bash "$INFRA/common-git-dir.sh" --roots "$wt" >/dev/null 2>&1 || return 0
+    # A repo nested in the worktree brings its own config, and git runs that config's clean
+    # filters when it looks inside: the worker wrote it, so nothing here may touch it.
+    [ -z "$(find "$wt" -mindepth 2 \( -name node_modules -prune \) -o -name .git -print -quit 2>/dev/null)" ] || return 0
     local g=(git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null)
     [ "$("${g[@]}" symbolic-ref --short HEAD 2>/dev/null)" = "issue-$n" ] || return 0
-    if [ -n "$("${g[@]}" status --porcelain 2>/dev/null)" ]; then
-        "${g[@]}" add -A >/dev/null 2>&1 \
-            && "${g[@]}" -c user.name=orchestrate -c user.email=orchestrate@localhost \
-                commit -q --no-verify -m "WIP: salvaged from #$n by run $RUNID" >/dev/null 2>&1
+    head="$("${g[@]}" rev-parse HEAD 2>/dev/null)" || return 0
+    # Snapshot through a throwaway index: issue-N and the worktree's own index never move, so
+    # a --retry that reuses the branch does not inherit a WIP commit.
+    idx="$TMP/salvage-index-$n"; rm -f "$idx"
+    snap="$head"
+    if GIT_INDEX_FILE="$idx" "${g[@]}" read-tree HEAD >/dev/null 2>&1 \
+        && GIT_INDEX_FILE="$idx" "${g[@]}" add -A >/dev/null 2>&1; then
+        tree="$(GIT_INDEX_FILE="$idx" "${g[@]}" write-tree 2>/dev/null)"
+        if [ -n "$tree" ] && [ "$tree" != "$("${g[@]}" rev-parse "HEAD^{tree}" 2>/dev/null)" ]; then
+            snap="$("${g[@]}" -c user.name=orchestrate -c user.email=orchestrate@localhost \
+                commit-tree "$tree" -p "$head" -m "WIP: salvaged from #$n by run $RUNID" 2>/dev/null)" || snap="$head"
+        fi
     fi
-    "${g[@]}" branch -f "prev/issue-$n-$RUNID" "issue-$n" >/dev/null 2>&1 && echo "prev/issue-$n-$RUNID"
+    rm -f "$idx"
+    "${g[@]}" branch -f "prev/issue-$n-$RUNID" "$snap" >/dev/null 2>&1 && echo "prev/issue-$n-$RUNID"
 }
 # kept_note <N> — " (work kept on <branch>)" when a salvage saved something, else nothing.
 kept_note() { local b; b="$(salvage "$1")"; [ -z "$b" ] || printf ' (work kept on %s)' "$b"; }
