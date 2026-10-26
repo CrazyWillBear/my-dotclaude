@@ -247,6 +247,38 @@ assert_contains "waiting" "$OUT" "waiting:"
 STUB_WR_ERR="error: issue 13 reported built but no independent review was recorded" run --wait
 assert_contains "held with the reason" "$OUT" "held #13 no readable report"
 
+echo "test: --retry lifts a hold: the old worker state is kept aside, the env carried over"
+mkrun 13 0 build ''; printf 'K=V\0' >"$CODEX_RUN_ROOT/r1/issue-13/env"
+run --retry 11; assert_equals "a slice that is not held is refused" "$RC" "1"
+assert_contains "and says so" "$ERR" "not held"
+run --retry 13
+assert_contains "released" "$OUT" "released #13"
+heldnow="$(state | sed -n 's/^held=//p')"
+case ",$heldnow," in *,13,*) no "13 is still held ($heldnow)" ;; *) ok "no longer held" ;; esac
+assert_equals "the previous worker's state is kept, not deleted" \
+    "$(ls -d "$CODEX_RUN_ROOT"/r1/issue-13.held-* 2>/dev/null | wc -l | tr -d ' ')" "1"
+assert_equals "the provisioned env is carried to the fresh admission" "$(cat "$CODEX_RUN_ROOT/r1/issue-13/env" 2>/dev/null | tr '\0' '|')" "K=V|"
+assert_equals "and nothing else (no stale exit to be re-reported)" "$(ls "$CODEX_RUN_ROOT/r1/issue-13")" "env"
+run --retry; assert_equals "--retry needs an issue" "$RC" "1"
+
+echo "test: everything in flight paused still admits what is ready"
+git -C "$REPO" branch orchestrate-r2
+GRAPH2="$WORK/graph2.json"
+python3 - "$GRAPH2" <<'PY'
+import json, sys
+issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"], "tier": "standard",
+           "body": "", "comments": "", "blockedBy": []} for n in (41, 42)]
+json.dump({"issues": issues, "blockerStates": {}, "mockDebtOpen": []}, open(sys.argv[1], "w"))
+PY
+mkdir -p "$CODEX_RUN_ROOT/r2/issue-41"
+sed -e 's/^RUNID=.*/RUNID=r2/' -e 's/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r2/' -e "s|^GRAPH=.*|GRAPH=$GRAPH2|" -e 's/^MAX=.*/MAX=3/' \
+    "$CODEX_RUN_ROOT/r1/run.env" >"$CODEX_RUN_ROOT/r2/run.env"
+rl append r2 admitted '{"n":41,"tier":"standard"}' >/dev/null
+printf 'blocked\n' >"$CODEX_RUN_ROOT/r2/issue-41/paused"
+OUT="$(cd "$ORCH_WT" && bash "$WF/handle-report.sh" r2 --wait 2>/dev/null)"
+assert_contains "the ready slice is started" "$OUT" "planning #42"
+assert_contains "and the pause is still shown" "$OUT" "paused: #41 (blocked)"
+
 echo "test: on a timeout, a STALLED running worker is escalated from outside"
 reset; mkrun 15 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-15/exit"
 live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-15/pid"
@@ -341,6 +373,15 @@ assert_equals "nothing respawned" "$(cat "$STUB_LOG.spawn")" ""
 assert_contains "the drain is a recorded decision" "$(state)" "decision=drain: #16"
 assert_not_contains "admit.sh admits nothing after a drain, even with #30 unblocked" \
     "$(cd "$ORCH_WT" && bash "$WF/admit.sh" r1 --next)" "admitted"
+
+echo "test: --max rewrites the run's cap (it is read fresh by every admission)"
+run --max 0; assert_equals "0 is refused" "$RC" "1"
+run --max abc; assert_equals "junk is refused" "$RC" "1"
+run --max 2
+assert_contains "reports the change" "$OUT" "max 2 (was 1)"
+assert_contains "run.env carries it" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=2"
+run --max 1
+assert_contains "and back" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=1"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

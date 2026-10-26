@@ -172,5 +172,42 @@ run nope --next; assert_equals "an unlaunched run exits 1" "$RC" "1"
 assert_contains "and says so" "$ERR" "no launched run"
 run ../x --next; assert_equals "traversal runid exits 1" "$RC" "1"
 
+# A second repo for the slot-accounting cases: the first one's branches and worktrees are spent.
+REPO="$WORK/repo2"
+git init -q -b dev "$REPO"
+git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
+printf 'x\n' >"$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm init
+git -C "$REPO" branch orchestrate-r8; git -C "$REPO" branch orchestrate-r9
+
+echo "test: a pick that is HELD at admission does not use up a slot"
+mkenv r8 2; sed -i 's/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r8/' "$CODEX_RUN_ROOT/r8/run.env"
+git -C "$REPO" checkout -q --orphan oldbase; git -C "$REPO" commit -qm old --allow-empty
+git -C "$REPO" branch -f issue-10 oldbase; git -C "$REPO" checkout -q dev
+run r8 13
+run r8 --next
+assert_contains "the stale pick is held" "$OUT" "held #10 a stale issue-10 branch"
+assert_contains "and the next ready issue still gets the free slot in the SAME pass" "$OUT" "planning #11 tier=standard"
+
+echo "test: a plan that finishes after --max was lowered waits for a slot instead of exceeding it"
+mkenv r9 2; sed -i 's/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r9/' "$CODEX_RUN_ROOT/r9/run.env"
+git -C "$REPO" branch -D issue-10 >/dev/null 2>&1
+for n in 11 13; do   # r8's worktrees would block r9 from checking the same branches out
+    git -C "$REPO" worktree remove --force "$REPO/.worktrees/r8/issue-$n" >/dev/null 2>&1
+    git -C "$REPO" branch -D "issue-$n" >/dev/null 2>&1
+done
+: >"$STUB_LOG.spawn"
+run r9 --next
+assert_contains "10 admitted and 11 planning under MAX=2" "$OUT" "in-flight: 10 planning: 11"
+settle r9
+sed -i 's/^MAX=.*/MAX=1/' "$CODEX_RUN_ROOT/r9/run.env"
+: >"$STUB_LOG.spawn"
+run r9 --next
+assert_not_contains "11 is not admitted over the lowered cap" "$OUT" "admitted #11"
+assert_equals "nothing spawned" "$(cat "$STUB_LOG.spawn")" ""
+assert_contains "the finished plan is still counted, not re-planned" "$OUT" "planning: 11"
+(cd "$REPO" && bash "$RUNLOG" append r9 merged '{"n":10,"sha":"abc"}')
+run r9 --next
+assert_contains "once a slot frees the plan is spawned" "$OUT" "admitted #11 tier=standard attempt=0"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

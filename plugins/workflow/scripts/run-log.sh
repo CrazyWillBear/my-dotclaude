@@ -10,7 +10,7 @@
 #   bash run-log.sh path   <runid>        # where the log lives
 #
 # Events — THE WHOLE VOCABULARY, deliberately: scope · admitted · merged · held · respawned ·
-# decision · planned · consulted · escalated · follow-up · integration-review. An unknown event
+# decision · planned · consulted · escalated · follow-up · integration-review · released. An unknown event
 # is an error, so the vocabulary cannot drift by accident. `admitted` / `merged` are what the
 # orchestration scripts (admit.sh, handle-report.sh) keep the in-flight set with across Bash
 # calls: a model holding that set in its head is the arithmetic this design keeps out of
@@ -30,7 +30,9 @@
 # `respawned` is genuinely underivable: nothing in git or GitHub records that a
 # session was killed and restarted. `held` is stored because a user's hold (or a failed
 # `follow-up.sh`'s fallback hold) is an in-run judgment, not a fact on the issue. A
-# capped merge no longer holds anything. `planned` / `consulted` / `escalated`
+# capped merge no longer holds anything. `released` is the human lifting a hold (`handle-report.sh
+# --retry`): it drops the issue from `held` AND from `admitted` — a retry is a fresh admission
+# — and forgets every `drain:` decision, so a hold is never a dead end for the run. `planned` / `consulted` / `escalated`
 # (#104) ARE on the issue thread as **Plan** / **Consult** / **Handoff** comments, but
 # they are stored here anyway, per issue with the attempt and the reason, because the
 # deviation rate is the DATA that later decides whether a cheaper model can take the
@@ -87,9 +89,9 @@ case "$CMD" in
     append)
         EVENT="${3:-}"
         case "$EVENT" in
-            scope|admitted|merged|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review) ;;
-            "") die "append needs an event: scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
-            *)  die "unknown event '$EVENT' — the vocabulary is scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review" ;;
+            scope|admitted|merged|held|respawned|decision|planned|consulted|escalated|follow-up|integration-review|released) ;;
+            "") die "append needs an event: scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review | released" ;;
+            *)  die "unknown event '$EVENT' — the vocabulary is scope | admitted | merged | held | respawned | decision | planned | consulted | escalated | follow-up | integration-review | released" ;;
         esac
         mkdir -p "$DIR/runs" || die "cannot create $DIR/runs"
         RUNLOG_EVENT="$EVENT" RUNLOG_PAYLOAD="${4:-}" RUNLOG_FILE="$LOG" python3 <<"PY" || exit 1
@@ -157,6 +159,13 @@ with open(os.environ["RUNLOG_FILE"]) as fh:
             n = rec.get("n")
             if n is not None and n not in held:
                 held.append(n)
+        elif event == "released":
+            n = rec.get("n")
+            if n in held:
+                held.remove(n)
+            if n in admitted:
+                admitted.remove(n)
+            decisions = [d for d in decisions if not d.startswith("drain:")]
         elif event == "respawned":
             n = rec.get("n")
             if n is not None:

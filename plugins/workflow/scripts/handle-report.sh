@@ -7,6 +7,8 @@
 #   bash handle-report.sh <runid> --merged <N>              # the merger landed issue-<N>
 #   bash handle-report.sh <runid> --answer <N> <text>       # a human answered #N's question
 #   bash handle-report.sh <runid> --resource <N> --env K=V…  # a human provisioned #N's resource
+#   bash handle-report.sh <runid> --retry <N>               # lift #N's hold: it is admitted afresh
+#   bash handle-report.sh <runid> --max <N>                 # change the run's worker cap mid-run
 #
 # --wait blocks in worker-report.sh --any (≤ HANDLE_WAIT_TIMEOUT, default 240 s) on the
 # in-flight workers (run-log.sh) that are not PAUSED on a human or a merger. On a timeout it
@@ -38,7 +40,7 @@ set -uo pipefail
 # shellcheck source=run-env.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-env.sh"
 
-USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V..."
+USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V... | --retry N | --max N"
 [ $# -ge 2 ] || die "$USAGE"
 load_run "$1"; shift
 MODE="$1"; shift
@@ -289,7 +291,9 @@ case "$MODE" in
                 sleep 5
             done
             next
-        elif [ "${#PAUSED[@]}" -gt 0 ]; then echo "paused: ${PAUSED[*]}"
+        elif [ "${#PAUSED[@]}" -gt 0 ]; then
+            # Waiting on a human is no reason to leave a free slot idle.
+            next; echo "paused: ${PAUSED[*]}"
         else next; fi
         exit 0
     fi
@@ -368,5 +372,33 @@ case "$MODE" in
     NAMES="$(for p in "${PAIRS[@]}"; do printf '%s\n' "${p%%=*}"; done | jq -R . | jq -cs .)"
     runlog append "$RUNID" respawned "{\"n\":$N,\"reason\":\"infra\",\"env\":$NAMES}" >/dev/null
     echo "respawned #$N with $(printf '%s' "$NAMES" | jq -r 'join(",")')" ;;
+--retry)
+    # A hold is the run's judgment, not the issue's: once its cause is fixed (a stale branch
+    # deleted, a prerequisite landed) this lifts it. A retry is a FRESH admission, so the old
+    # worker's run dir (rounds, chain position) is kept aside, not reused; only the human's
+    # provisioned env pairs carry over. The worktree and branch are reused by admit.sh.
+    [ $# -eq 1 ] || die "$USAGE"
+    N="${1#\#}"; case "$N" in ''|*[!0-9]*) die "issue must be a number" ;; esac
+    case " $(run_state held) " in *" $N "*) ;; *) die "#$N is not held" ;; esac
+    kill_worker "$N" || die "could not stop #$N's worker"
+    d="$(issue_dir "$N")"
+    if [ -d "$d" ]; then
+        old="$d.held-$(date +%s)-$$"
+        mv "$d" "$old" || die "cannot set #$N's run dir aside"
+        mkdir -p "$d" || die "cannot recreate $d"
+        [ ! -f "$old/env" ] || cp -p "$old/env" "$d/env" || die "cannot carry #$N's env over"
+    fi
+    rm -f "$RUN_DIR/plans/$N".*
+    runlog append "$RUNID" released "{\"n\":$N}" >/dev/null
+    echo "released #$N"
+    next ;;
+--max)
+    [ $# -eq 1 ] || die "$USAGE"
+    case "$1" in ''|0|*[!0-9]*) die "--max must be a number of 1 or more, got '$1'" ;; esac
+    sed "s/^MAX=.*/MAX=$1/" "$RUN_DIR/run.env" >"$RUN_DIR/run.env.tmp" \
+        && mv -f "$RUN_DIR/run.env.tmp" "$RUN_DIR/run.env" || die "cannot rewrite $RUN_DIR/run.env"
+    echo "max $1 (was $MAX)"
+    # A lower cap stops new admissions and lets what runs finish; a higher one fills at once.
+    next ;;
 *) die "$USAGE" ;;
 esac
