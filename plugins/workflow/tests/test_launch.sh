@@ -112,6 +112,24 @@ run r1 --issues 12
 assert_equals "exit 1" "$RC" "1"
 assert_contains "says so" "$ERR" "already launched"
 
+echo "test: a run dir another launch has claimed (no run.env yet) blocks the same runid"
+mkdir -p "$CODEX_RUN_ROOT/r-claimed"
+graph 12:standard:open
+run r-claimed --issues 12
+assert_equals "exit 1" "$RC" "1"
+assert_contains "says so" "$ERR" "already launched"
+if [ -d "$CODEX_RUN_ROOT/r-claimed" ] && ! git -C "$REPO" show-ref --quiet refs/heads/orchestrate-r-claimed; then
+    ok "the other launch's dir is left alone and no branch was cut"
+else no "the claimed dir was removed or a branch was cut"; fi
+
+echo "test: two launches racing on one runid — exactly one wins"
+graph 12:standard:open
+( cd "$REPO" && bash "$WF/launch.sh" r-race --issues 12 >"$WORK/race1.out" 2>&1 ) &
+( cd "$REPO" && bash "$WF/launch.sh" r-race --issues 12 >"$WORK/race2.out" 2>&1 ) &
+wait
+wins="$(grep -l '^launch: run r-race' "$WORK/race1.out" "$WORK/race2.out" 2>/dev/null | wc -l)"
+assert_equals "one launch line between the two" "$wins" "1"
+
 echo "test: a missing tier exits 3 and writes nothing"
 graph 12:standard:open 14:null:open 15:null:open
 run r2 --issues 12,14,15
