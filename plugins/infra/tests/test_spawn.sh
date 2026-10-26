@@ -434,6 +434,8 @@ pwd >"${STUB_WORKER_CWD:-/dev/null}"
 printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" >"${STUB_WORKER_CFG:-/dev/null}"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 [ -n "${STUB_CACHE_OUT:-}" ] && printf '%s|%s\n' "${UV_CACHE_DIR:-}" "${npm_config_store_dir:-}" >"$STUB_CACHE_OUT"
+# a backgrounded build the worker never waits for, in a session of its own (out of reach of a group kill)
+[ -n "${STUB_ORPHAN_PID:-}" ] && { setsid sleep 300 >/dev/null 2>&1 & echo $! >"$STUB_ORPHAN_PID"; }
 { printf 'STDIN:['; cat; printf ']\n'; } >&2
 printf '{"type":"system","subtype":"init","session_id":"sess-123"}\n'
 printf '{"type":"assistant","session_id":"sess-123","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5}}}\n'
@@ -713,6 +715,16 @@ assert_empty "Codex run dir never contains the env value" "$leak"
 # Workers that build their own per-issue uv/pnpm caches under /tmp fill its inodes and then
 # the quota, taking every other worker down with them. The kit points them at one shared
 # on-disk cache unless the machine already chose one.
+echo "test: what a worker leaves running is reaped before the run is terminal"
+rm -rf "$CODEX_ROOT"; rm -f "$WORK/orphan-pid"
+STUB_ORPHAN_PID="$WORK/orphan-pid" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+ORPHAN="$(cat "$WORK/orphan-pid" 2>/dev/null)"
+if [ -n "$ORPHAN" ] && ! kill -0 "$ORPHAN" 2>/dev/null; then ok "the orphaned background process was killed"
+else no "the orphaned background process (pid '$ORPHAN') survived the run"; [ -z "$ORPHAN" ] || kill -9 "$ORPHAN" 2>/dev/null; fi
+
 echo "test: workers share one package cache instead of making per-issue ones"
 rm -rf "$CODEX_ROOT"
 HOME="$WORK/cachehome" STUB_CACHE_OUT="$WORK/cache-default" \

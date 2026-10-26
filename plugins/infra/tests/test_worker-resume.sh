@@ -223,6 +223,7 @@ while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
 [ -n "${STUB_CACHE_OUT:-}" ] && printf '%s\n' "${UV_CACHE_DIR:-}" >"$STUB_CACHE_OUT"
+[ -n "${STUB_ORPHAN_PID:-}" ] && { setsid sleep 300 >/dev/null 2>&1 & echo $! >"$STUB_ORPHAN_PID"; }
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
@@ -269,6 +270,16 @@ STUB_CACHE_OUT="$WORK/cache-resume" UV_CACHE_DIR= HOME="$WORK/cachehome" \
     run r1 92 standard "$REPO" --answer x
 assert_equals "uv cache defaults under ~/.cache" \
     "$(cat "$WORK/cache-resume" 2>/dev/null)" "$WORK/cachehome/.cache/uv"
+
+echo "test: what a resumed worker leaves running is reaped before the turn is terminal"
+mkrun 94 '{"issue":94,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+rm -f "$WORK/orphan-pid"
+STUB_ORPHAN_PID="$WORK/orphan-pid" \
+    STUB_REPORT='{"issue":94,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 94 standard "$REPO" --answer x
+ORPHAN="$(cat "$WORK/orphan-pid" 2>/dev/null)"
+if [ -n "$ORPHAN" ] && ! kill -0 "$ORPHAN" 2>/dev/null; then ok "the orphaned background process was killed"
+else no "the orphaned background process (pid '$ORPHAN') survived the turn"; [ -z "$ORPHAN" ] || kill -9 "$ORPHAN" 2>/dev/null; fi
 
 mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run

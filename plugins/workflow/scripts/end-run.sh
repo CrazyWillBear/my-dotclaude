@@ -112,6 +112,7 @@ fi
 GC_OUT="$(bash "$INFRA/session-gc.sh" --run "$RUNID" 2>&1)"; GC_RC=$?
 if [ "$GC_RC" -eq 0 ]; then GC="$(printf '%s\n' "$GC_OUT" | tail -1)"
 else GC="session-gc FAILED (exit $GC_RC): $(printf '%s\n' "$GC_OUT" | grep '^error:' | tr '\n' ';')"; fi
+REAPED="$(bash "$INFRA/reap.sh" "$RUNID/" 2>&1 | tail -1)"
 find "$RUN_DIR" -mindepth 2 -maxdepth 2 -path '*/issue-*/env' -type f -delete 2>/dev/null
 BOXES="${CLAUDE_BOX_ROOT:-${HOME:-/nonexistent}/.claude/kit/boxes}"
 GONE=0
@@ -128,6 +129,6 @@ cat "$TMP/table.md"
 echo
 echo "$INTEG"
 echo "$PREVIEW"
-echo "cleanup: ${GC:-session-gc gave no output}; env files removed; $GONE worker transcript path(s) removed"
+echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; $GONE worker transcript path(s) removed"
 [ -z "$NOCLOSE" ] || echo "$NOCLOSE"
 echo "$PR"

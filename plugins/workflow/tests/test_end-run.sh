@@ -33,6 +33,7 @@ echo "integration: 0 high, 0 medium, 1 low — nothing filed"
 STUB
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\nif [ -n "${STUB_GC_FAIL:-}" ]; then echo "removed a x"; echo "error: could not remove b y" >&2; exit 1; fi\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.reap"\necho "reaped 2 process(es)"\n' >"$INFRA/reap.sh"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -110,6 +111,8 @@ assert_contains "the exclude note" "$B" "info/exclude"
 assert_contains "follow-up.sh reviewed launch..HEAD" "$(cat "$STUB_LOG.followup")" "--integration r1 $BASE_SHA $(git -C "$ORCH_WT" rev-parse HEAD) $GRAPH"
 assert_equals "the branch was pushed" "$(git -C "$UPSTREAM" rev-parse orchestrate-r1)" "$(git -C "$ORCH_WT" rev-parse HEAD)"
 assert_contains "session-gc for this run" "$(cat "$STUB_LOG.gc")" "--run r1"
+assert_contains "leftover worker processes of the whole run are reaped" "$(cat "$STUB_LOG.reap")" "r1/"
+assert_contains "and the count is reported" "$OUT" "reaped 2 process(es)"
 if [ -e "$CODEX_RUN_ROOT/r1/issue-12/env" ]; then no "env file left behind"; else ok "env files removed"; fi
 if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa.jsonl" ] || [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa" ]; then
     no "this run's transcript survived"; else ok "this run's transcript removed"; fi

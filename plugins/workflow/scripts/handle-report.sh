@@ -65,8 +65,17 @@ capped() {
         >/dev/null 2>&1
 }
 
-# kill_worker <N> — group-kill the wrapper (it leads its own group), bounded wait.
+# kill_worker <N> — stop the worker, then reap what it left running (a backgrounded build
+# outlives the group kill; reap.sh finds it by the ORCH_WORKER tag in its environment).
 kill_worker() {
+    local rc
+    group_kill "$1"; rc=$?
+    bash "$INFRA/reap.sh" "$RUNID/$1" >/dev/null 2>&1
+    return "$rc"
+}
+
+# group_kill <N> — group-kill the wrapper (it leads its own group), bounded wait.
+group_kill() {
     local pid
     # A worker that wrote `exit` is gone; its pid may already belong to someone else.
     [ ! -e "$(issue_dir "$1")/exit" ] || return 0

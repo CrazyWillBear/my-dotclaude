@@ -257,8 +257,8 @@ printf '%s\n' "$$" >"$RUNDIR/pid"
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
 (
-    # shellcheck source=cache-env.sh
-    . "$INFRA/cache-env.sh"
+    # shellcheck source=worker-env.sh
+    . "$INFRA/worker-env.sh"
     [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
     cd "$WORKTREE" && "${CMD[@]}"
 ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null
@@ -344,6 +344,8 @@ if [ "$CODE" -eq 0 ] \
 fi
 
 rm -f "$RUNDIR/reviewing"
+# Whatever the resumed worker left running (a backgrounded build) dies with the turn.
+bash "$INFRA/reap.sh" "$RUNID/$ISSUE" >/dev/null 2>&1
 printf '%s\n' "$CODE" >"$RUNDIR/exit"
 
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the

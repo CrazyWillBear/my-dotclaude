@@ -598,8 +598,8 @@ printf '%s\n' "$SCHEMA" >"$RUNDIR/status-schema.json" \
 # fix round its detail, not its correctness.
 # Only names cross argv into the wrapper; the values travel in its environment.
 # Remove them there as soon as the worker exits, before any host-side git, gh or reviewer.
-# shellcheck source=cache-env.sh
-. "$INFRA/cache-env.sh"
+# shellcheck source=worker-env.sh
+. "$INFRA/worker-env.sh"
 ENV_NAMES=()
 if [ "${#ENVS[@]}" -gt 0 ]; then
     for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done
@@ -607,7 +607,7 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
 fi
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; guard=$7; base=$8; shift 8
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; guard=$7; base=$8; reap=$9; shift 9
     env_names=()
     while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
     shift
@@ -701,10 +701,12 @@ bash -c '
         fi
     fi
     rm -f "$rundir/reviewing"
+    # Whatever the worker left running (a backgrounded build) dies with the run, not after it.
+    bash "$reap" "$ORCH_WORKER" >/dev/null 2>&1
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" "$INFRA/claude-report.sh" \
-       "$INFRA/review-guard.sh" "$BASE_SHA" \
+       "$INFRA/review-guard.sh" "$BASE_SHA" "$INFRA/reap.sh" \
     ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m

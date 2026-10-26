@@ -58,6 +58,10 @@ printf '%s\n' "$*" >>"$STUB_LOG.consult"
 [ -z "${STUB_CONSULT_SLEEP:-}" ] || sleep "$STUB_CONSULT_SLEEP"
 [ -z "${STUB_CONSULT_FAIL:-}" ] || { echo "error: past the cap" >&2; exit 1; }
 STUB
+cat >"$INFRA/reap.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.reap"
+STUB
 cat >"$INFRA/spawn.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.spawn"
@@ -287,6 +291,7 @@ assert_contains "escalated" "$OUT" "escalated #15 stall → attempt 1"
 assert_contains "escalate.sh looked at the running worker" "$(cat "$STUB_LOG.esc")" "r1 15 standard"
 if kill -0 "$LEADER" 2>/dev/null; then no "the stalled worker survived"; kill -- -"$LEADER" 2>/dev/null; else ok "the stalled worker was group-killed"; fi
 assert_contains "and respawned in its role" "$(cat "$STUB_LOG.spawn")" "--role build --round 1 --attempt 1"
+assert_contains "and what it left running was reaped by tag" "$(cat "$STUB_LOG.reap" 2>/dev/null)" "r1/15"
 
 echo "test: a transient escalate.sh failure is retried, then reported — never a hold"
 reset; mkrun 15 0 build '1 0 high, 0 medium, 0 low\n'
