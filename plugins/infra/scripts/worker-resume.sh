@@ -302,7 +302,7 @@ if [ "$CODE" -eq 0 ] \
             && git clone --quiet --shared -- "$WORKTREE" "$RUNDIR/review-checkout" \
                 >/dev/null 2>>"$RUNDIR/review-stderr.log"
         if [ -d "$RUNDIR/review-checkout" ] && ( cd "$RUNDIR/review-checkout" \
-                && TMPDIR="$RUNDIR/review-scratch" "${REVIEW_CMD[@]}" ) \
+                && TMPDIR="$RUNDIR/review-scratch" bash "$INFRA/review-guard.sh" "$BASE_SHA" "${REVIEW_CMD[@]}" ) \
                 >"$RUNDIR/review.txt" 2>>"$RUNDIR/review-stderr.log" </dev/null; then
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the

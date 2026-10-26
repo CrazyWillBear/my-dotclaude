@@ -172,6 +172,22 @@ assert_contains "says already filed" "$ERR" "already filed"
 assert_equals "still one create" "$(creates)" "1"
 
 # ---------------------------------------------------------------------------
+# A follow-up capped with findings of its own would file a follow-up of itself, and so on —
+# one empty slice produced #26 -> #27. The chain stops at one level; a human decides next.
+echo "test: a follow-up that itself caps files no further follow-up"
+reset; ledger r1b
+python3 -c "
+import json,sys
+g=json.load(open(sys.argv[1])); g['issues'][0]['title']='Follow-up: #70 — open review findings'
+json.dump(g,open(sys.argv[1],'w'))" "$G"
+cp "$G" "$WORK/before.json"
+run r1b 84 complex "$G"
+assert_equals "exits 0" "$RC" "0"
+assert_contains "says why nothing was filed" "$ERR" "is itself a follow-up"
+assert_equals "no create" "$(creates)" "0"
+cmp -s "$G" "$WORK/before.json" && ok "graph byte-identical" || no "graph byte-identical"
+
+# ---------------------------------------------------------------------------
 echo "test: only low findings open files nothing and says so"
 reset; ledger r2 '1 1 high, 0 medium, 0 low\nfinding\t1\thigh\tfixed later\tsrc/a.py:1\n2 0 high, 0 medium, 1 low\nfinding\t2\tlow\tnit\tsrc/c.py:1\n'
 cp "$G" "$WORK/before.json"

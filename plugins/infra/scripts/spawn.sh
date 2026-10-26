@@ -607,7 +607,7 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
 fi
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; shift 6
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; guard=$7; base=$8; shift 8
     env_names=()
     while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
     shift
@@ -656,7 +656,7 @@ bash -c '
                 && git clone --quiet --shared -- "$worktree" "$rundir/review-checkout" \
                     >/dev/null 2>>"$rundir/review-stderr.log"
             if [ -d "$rundir/review-checkout" ] && (cd "$rundir/review-checkout" \
-                    && TMPDIR="$rundir/review-scratch" "${review[@]}") \
+                    && TMPDIR="$rundir/review-scratch" bash "$guard" "$base" "${review[@]}") \
                     >"$rundir/review.txt" 2>>"$rundir/review-stderr.log" </dev/null; then
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
@@ -704,6 +704,7 @@ bash -c '
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" "$INFRA/claude-report.sh" \
+       "$INFRA/review-guard.sh" "$BASE_SHA" \
     ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m

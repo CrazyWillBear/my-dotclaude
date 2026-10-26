@@ -109,6 +109,8 @@ git -C "$ORIGIN" commit -qm init
 git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
+# The slice has a commit past its base: a branch with none is not reviewed (review-guard.sh).
+git -C "$REPO" commit -q --allow-empty -m "slice work"
 
 pass=0
 fail=0
@@ -528,6 +530,17 @@ assert_not_contains "never the slice's own head" "$(cat "$WORK/review-argv" 2>/d
 git -C "$ORIGIN" branch -f base "$FORK"
 run r1 92 standard "$SLICE" --answer "x" --base --octopus
 assert_equals "an option-shaped base is refused (merge-base --octopus prints HEAD)" "$RC" "1"
+
+echo "test: a resumed slice with no commits past its base reads as clean without a reviewer"
+EMPTY="$WORK/emptyslice"
+git -C "$ORIGIN" worktree add -q -b emptyslice "$EMPTY" base >/dev/null 2>&1
+rm -f "$WORK/review-argv"
+mkrun 93 '{"issue":93,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":93,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    run r1 93 standard "$EMPTY" --answer "x"
+assert_equals "exit 0" "$RC" "0"
+assert_equals "the verdict is the clean literal" "$(cat "$CODEX_ROOT/r1/issue-93/review.txt" 2>/dev/null)" "No findings."
+assert_equals "and no reviewer ran" "$(cat "$WORK/review-argv" 2>/dev/null)" ""
 
 echo "test: a resumed FIX worker gets a scoped re-review"
 mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'

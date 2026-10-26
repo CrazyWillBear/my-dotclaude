@@ -214,6 +214,12 @@ if dup:
 print(parent[0].get("title") or "")
 PY
 )" || exit 1
+# A follow-up that caps with findings of its own stops the chain here (#26 -> #27 on an empty slice).
+case "$PARENT_TITLE" in
+    "Follow-up:"*)
+        echo "follow-up: #$ISSUE is itself a follow-up — nothing filed; its open findings need a human" >&2
+        exit 0 ;;
+esac
 
 # --- the open findings -----------------------------------------------------------
 LEDGER_LAST="$(grep '^[0-9]' "$RUNDIR/rounds" 2>/dev/null | tail -1)"
