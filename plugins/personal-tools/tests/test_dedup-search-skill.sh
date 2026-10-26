@@ -55,7 +55,9 @@ assert_contains "description field present" "$content" "description:"
 
 # ---------------------------------------------------------------------------
 echo "test: skill names the real helper path"
-assert_contains "helper path mentioned" "$content" "plugins/personal-tools/scripts/dedup-search.sh"
+assert_contains "plugin-root path mentioned" "$content" '${CLAUDE_PLUGIN_ROOT}/scripts/dedup-search.sh'
+assert_contains "stable kit-link path mentioned (for workers)" "$content" "~/.claude/kit/personal-tools/scripts/dedup-search.sh"
+assert_not_contains "no repo-relative helper path (absent outside the kit's own repo)" "$content" "<repo-root>/plugins/personal-tools"
 
 # ---------------------------------------------------------------------------
 echo "test: skill documents term-extraction guidance"

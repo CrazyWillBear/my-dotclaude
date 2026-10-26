@@ -47,7 +47,7 @@ children. Neither → list open PRDs (`gh issue list --label prd --state open --
 exactly one → use it and say so; several → AskUserQuestion with the titles; none → ask for
 `--issues`. The run never queries the repo for work (#77 defect A).
 
-From the checkout whose branch the run builds on, with a fresh run id `$(date +%Y%m%d-%H%M%S)`:
+From the checkout whose branch the run builds on, with a fresh run id `$(date +%Y%m%d-%H%M%S)-<repo dir name>` (the run root is shared by every repo, so the suffix keeps two peers launching in the same second apart; `launch.sh` refuses an id already claimed — pick another):
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh" <runid> --prd <N> [--max 8] [--allow-behind] [--skip-unknown]
