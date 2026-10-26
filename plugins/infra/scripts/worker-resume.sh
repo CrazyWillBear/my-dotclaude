@@ -257,6 +257,8 @@ printf '%s\n' "$$" >"$RUNDIR/pid"
 # and blocking here keeps the whole wrapper/pid/process-group apparatus out of this
 # script. </dev/null because codex blocks forever on an open stdin.
 (
+    # shellcheck source=cache-env.sh
+    . "$INFRA/cache-env.sh"
     [ "${#ENVS[@]}" -eq 0 ] || export "${ENVS[@]}"
     cd "$WORKTREE" && "${CMD[@]}"
 ) >>"$RUNDIR/events.jsonl" 2>>"$RUNDIR/stderr.log" </dev/null

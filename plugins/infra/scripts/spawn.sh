@@ -598,6 +598,8 @@ printf '%s\n' "$SCHEMA" >"$RUNDIR/status-schema.json" \
 # fix round its detail, not its correctness.
 # Only names cross argv into the wrapper; the values travel in its environment.
 # Remove them there as soon as the worker exits, before any host-side git, gh or reviewer.
+# shellcheck source=cache-env.sh
+. "$INFRA/cache-env.sh"
 ENV_NAMES=()
 if [ "${#ENVS[@]}" -gt 0 ]; then
     for _pair in "${ENVS[@]}"; do ENV_NAMES+=("${_pair%%=*}"); done

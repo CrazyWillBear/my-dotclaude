@@ -220,6 +220,7 @@ out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
+[ -n "${STUB_CACHE_OUT:-}" ] && printf '%s\n' "${UV_CACHE_DIR:-}" >"$STUB_CACHE_OUT"
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
@@ -258,6 +259,14 @@ assert_equals "resume host reviewer receives neither worker value" \
     "$(cat "$WORK/host-env-resume" 2>/dev/null)" '|'
 leak=$(grep -rF 'postgres://x' "$CODEX_ROOT/r1/issue-90" 2>/dev/null || true)
 assert_empty "resume run dir never contains the env value" "$leak"
+
+echo "test: a resumed worker shares the on-disk package cache too"
+mkrun 92 '{"issue":92,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_CACHE_OUT="$WORK/cache-resume" UV_CACHE_DIR= HOME="$WORK/cachehome" \
+    STUB_REPORT='{"issue":92,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 92 standard "$REPO" --answer x
+assert_equals "uv cache defaults under ~/.cache" \
+    "$(cat "$WORK/cache-resume" 2>/dev/null)" "$WORK/cachehome/.cache/uv"
 
 mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run

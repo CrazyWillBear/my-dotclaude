@@ -431,6 +431,7 @@ printf '%s\n' "$@" >"${STUB_WORKER_ARGV:-/dev/null}"
 pwd >"${STUB_WORKER_CWD:-/dev/null}"
 printf '%s\n' "${CLAUDE_CONFIG_DIR:-}" >"${STUB_WORKER_CFG:-/dev/null}"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
+[ -n "${STUB_CACHE_OUT:-}" ] && printf '%s|%s\n' "${UV_CACHE_DIR:-}" "${npm_config_store_dir:-}" >"$STUB_CACHE_OUT"
 { printf 'STDIN:['; cat; printf ']\n'; } >&2
 printf '{"type":"system","subtype":"init","session_id":"sess-123"}\n'
 printf '{"type":"assistant","session_id":"sess-123","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":5}}}\n'
@@ -694,6 +695,25 @@ assert_equals "host reviewer receives neither worker value" \
     "$(cat "$WORK/host-env-codex" 2>/dev/null)" '|'
 leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
 assert_empty "Codex run dir never contains the env value" "$leak"
+
+# Workers that build their own per-issue uv/pnpm caches under /tmp fill its inodes and then
+# the quota, taking every other worker down with them. The kit points them at one shared
+# on-disk cache unless the machine already chose one.
+echo "test: workers share one package cache instead of making per-issue ones"
+rm -rf "$CODEX_ROOT"
+HOME="$WORK/cachehome" STUB_CACHE_OUT="$WORK/cache-default" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "default: shared uv cache and pnpm store under ~/.cache" \
+    "$(cat "$WORK/cache-default" 2>/dev/null)" "$WORK/cachehome/.cache/uv|$WORK/cachehome/.cache/pnpm-store"
+rm -rf "$CODEX_ROOT"
+HOME="$WORK/cachehome" UV_CACHE_DIR=/mine/uv npm_config_store_dir=/mine/pnpm STUB_CACHE_OUT="$WORK/cache-set" \
+    PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
+    bash "$SPAWN" r9 12 standard "$REPO" base >/dev/null 2>"$WORK/err"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
+assert_equals "a cache the machine already chose is kept" \
+    "$(cat "$WORK/cache-set" 2>/dev/null)" "/mine/uv|/mine/pnpm"
 
 out=$(dry r1 12 standard "$REPO" base --env DATABASE_URL=postgres://x)
 assert_equals "Claude dry run exits 0" "$?" "0"
