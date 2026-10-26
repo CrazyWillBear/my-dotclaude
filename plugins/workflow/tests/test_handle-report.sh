@@ -438,7 +438,11 @@ rm -rf "$REPO/.worktrees/r1/issue-21/sub"
 
 echo "test: a committed gitlink is not salvaged"
 reset; mkrun 21 1 build ''
-git -C "$REPO/.worktrees/r1/issue-21" update-index --add --cacheinfo 160000,"$(git -C "$REPO" rev-parse HEAD)",vendored
+git -C "$REPO/.worktrees/r1/issue-21" update-index --add --cacheinfo 160000,"$(git -C "$REPO" rev-parse HEAD)",0vendored
+# A listing past the pipe buffer, all after the gitlink: a `ls-tree | grep -q` would SIGPIPE.
+mkdir "$REPO/.worktrees/r1/issue-21/many"
+for i in $(seq 1 2500); do : >"$REPO/.worktrees/r1/issue-21/many/a-long-file-name-to-fill-the-pipe-buffer-$i"; done
+git -C "$REPO/.worktrees/r1/issue-21" add many
 git -C "$REPO/.worktrees/r1/issue-21" commit -q -m "gitlink"
 STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
 if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a worktree with a gitlink was salvaged"; else ok "no salvage branch"; fi

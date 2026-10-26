@@ -88,7 +88,7 @@ fi
     echo
     echo "- $INTEG"
     echo "- $PREVIEW"
-    [ -z "$UNFILED" ] || printf -- '- %s\n' "$UNFILED"
+    [ -z "$UNFILED" ] || printf '%s\n' "$UNFILED" | sed 's/^/- /'
     echo "- \`.worktrees/\` and \`.claude/worktrees/\` were added to this repo's local \`.git/info/exclude\` and stay there."
     echo
     for n in $MERGED; do echo "Closes #$n"; done

@@ -713,9 +713,6 @@ assert_equals "host reviewer receives neither worker value" \
 leak=$(grep -rF 'postgres://x' "$RUNDIR" 2>/dev/null || true)
 assert_empty "Codex run dir never contains the env value" "$leak"
 
-# Workers that build their own per-issue uv/pnpm caches under /tmp fill its inodes and then
-# the quota, taking every other worker down with them. The kit points them at one shared
-# on-disk cache unless the machine already chose one.
 echo "test: what a worker leaves running is reaped before the run is terminal"
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/orphan-pid"
 STUB_ORPHAN_PID="$WORK/orphan-pid" \
@@ -726,6 +723,9 @@ ORPHAN="$(cat "$WORK/orphan-pid" 2>/dev/null)"
 if [ -n "$ORPHAN" ] && ! kill -0 "$ORPHAN" 2>/dev/null; then ok "the orphaned background process was killed"
 else no "the orphaned background process (pid '$ORPHAN') survived the run"; [ -z "$ORPHAN" ] || kill -9 "$ORPHAN" 2>/dev/null; fi
 
+# Workers that build their own per-issue uv/pnpm caches under /tmp fill its inodes and then
+# the quota, taking every other worker down with them. The kit points them at one shared
+# on-disk cache, always — overriding one the host session set.
 echo "test: workers share one package cache instead of making per-issue ones"
 rm -rf "$CODEX_ROOT"
 HOME="$WORK/cachehome" STUB_CACHE_OUT="$WORK/cache-default" \

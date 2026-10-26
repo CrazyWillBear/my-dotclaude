@@ -67,7 +67,10 @@ salvage() {
     [ -z "$nested" ] || return 0
     local g=(git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null)
     # A committed gitlink is the path git itself walks into, readable by find or not.
-    ! "${g[@]}" ls-tree -r HEAD 2>/dev/null | grep -q '^160000 ' || return 0
+    # Captured, never `| grep -q`: under pipefail grep's early exit SIGPIPEs ls-tree on a big tree.
+    local tree_list
+    tree_list="$("${g[@]}" ls-tree -r HEAD 2>/dev/null)" || return 0
+    ! grep -q '^160000 ' <<<"$tree_list" || return 0
     [ "$("${g[@]}" symbolic-ref --short HEAD 2>/dev/null)" = "issue-$n" ] || return 0
     head="$("${g[@]}" rev-parse HEAD 2>/dev/null)" || return 0
     # Snapshot through a throwaway index: issue-N and the worktree's own index never move, so

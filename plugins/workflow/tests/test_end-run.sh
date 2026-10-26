@@ -80,6 +80,7 @@ rl append r1 held '{"n":13,"why":"drained: failed"}'
 # #14 was held and then released (--retry), and never re-admitted: its old hold must not show
 rl append r1 held '{"n":14,"why":"stale branch"}'; rl append r1 released '{"n":14}'
 rl append r1 decision '{"what":"follow-up: #12 is itself a follow-up; its open findings need a human"}'
+rl append r1 decision '{"what":"follow-up: #11 is itself a follow-up; its open findings need a human"}'
 
 # run dirs: a worker's session id, a provisioned env file; box transcripts for it and another
 for n in 11 12; do mkdir -p "$CODEX_RUN_ROOT/r1/issue-$n"; done
@@ -111,6 +112,7 @@ assert_contains "an issue never admitted is not built" "$B" "| #14 | four | stan
 assert_contains "the integration review" "$B" "integration review: integration: 0 high"
 assert_contains "the preview against the upstream" "$B" "preview vs origin/dev: clean"
 assert_contains "findings nobody filed are in the PR body" "$B" "- follow-up: #12 is itself a follow-up; its open findings need a human"
+assert_contains "every unfiled line gets its own bullet" "$B" "- follow-up: #11 is itself a follow-up"
 assert_contains "and in the output" "$OUT" "follow-up: #12 is itself a follow-up"
 assert_contains "the exclude note" "$B" "info/exclude"
 assert_contains "follow-up.sh reviewed launch..HEAD" "$(cat "$STUB_LOG.followup")" "--integration r1 $BASE_SHA $(git -C "$ORCH_WT" rev-parse HEAD) $GRAPH"
