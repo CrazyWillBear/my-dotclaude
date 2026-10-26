@@ -95,6 +95,7 @@ assert_contains "an unverified resolution is never kept" "$content" "Never keep 
 echo "test: the merger runs the done-check with the issues' provisioned env"
 assert_contains "gets the run id" "$content" "run id"
 assert_contains "done-check goes through with-env.sh" "$content" 'scripts/with-env.sh" <runid> <N>,<N>,... -- <done-check'
+assert_contains "a compound done-check is wrapped in bash -c" "$content" "-- bash -c '<done-check>'"
 assert_contains "values are never read or echoed" "$content" "never print"
 
 # ---------------------------------------------------------------------------

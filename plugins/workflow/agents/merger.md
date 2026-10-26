@@ -28,6 +28,10 @@ Every done-check run below goes through the env wrapper, never bare:
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/with-env.sh" <runid> <N>,<N>,... -- <done-check command>
 ```
+A done-check that is several commands (`a && b`, a pipe) goes in as one argument:
+`-- bash -c '<done-check>'`; unquoted, the `&&` would end the wrapper's command and run the
+rest bare.
+
 `<N>,<N>,...` is every issue in your list. The workers' tests ran against resources a human
 provisioned (a test database, a service URL); the wrapper exports those same variables to the
 command. A bare run skips those tests and would pass a wrong resolution. The values are secrets:

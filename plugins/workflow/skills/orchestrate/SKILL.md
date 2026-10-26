@@ -88,6 +88,7 @@ returns `waiting: …` before Bash's cap, so you call it again; never poll, neve
 | `paused: …` | everything in flight waits on you — handle the lines above |
 | `held #N <why>` | keep looping; tell the user at the end, naming the `prev/issue-N-<runid>` branch if it printed `work kept on` (a held or drained worker's work is saved there). A hold is never final: once its cause is fixed (a stale branch deleted, a prerequisite landed) and they say so, `handle-report.sh <runid> --retry N` admits it afresh |
 | `error: …` | stop the loop and report it verbatim |
+| `follow-up: #N … nothing filed` | the slice merged but its open findings were NOT filed anywhere (a follow-up that capped with findings of its own, or only low ones) — keep looping, and tell the user at the end that #N's findings need a human |
 | anything else (`merged`, `fix`, `escalated`, `capped`, `drain:`, `deferred`, `in-flight:`, `waiting:`) | nothing — the scripts acted. Keep looping |
 
 To change the worker cap mid-run: `handle-report.sh <runid> --max N`. Lowering it stops new

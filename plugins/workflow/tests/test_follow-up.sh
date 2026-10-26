@@ -186,6 +186,7 @@ assert_equals "exits 0" "$RC" "0"
 assert_contains "says why nothing was filed" "$ERR" "is itself a follow-up"
 assert_equals "no create" "$(creates)" "0"
 cmp -s "$G" "$WORK/before.json" && ok "graph byte-identical" || no "graph byte-identical"
+assert_contains "the run log records it for the end-of-run summary" "$(bash "$RUNLOG" state r1b)" "decision=follow-up: #84 is itself a follow-up"
 
 # ---------------------------------------------------------------------------
 echo "test: only low findings open files nothing and says so"

@@ -22,6 +22,7 @@ assert_contains() { case "$2" in *"$3"*) ok "$1" ;; *) no "$1 (missing '$3' in '
 assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok "$1" ;; esac; }
 
 export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs"
+export ORCH_INFRA="$(cd "$SCRIPT_DIR/../../infra/scripts" && pwd)"
 mkdir -p "$CODEX_RUN_ROOT/r1/issue-5" "$CODEX_RUN_ROOT/r1/issue-6" "$CODEX_RUN_ROOT/r1/issue-7"
 printf 'RUNID=r1\n' >"$CODEX_RUN_ROOT/r1/run.env"
 printf 'DATABASE_URL=postgres://five\0SHARED=from5\0' >"$CODEX_RUN_ROOT/r1/issue-5/env"
@@ -51,6 +52,16 @@ run r1 5 -- bash -c 'exit 3'
 assert_equals "exit 3" "$RC" "3"
 run r1 5 -- printf '%s,' a 'b c'
 assert_equals "argv intact" "$OUT" "a,b c,"
+
+echo "test: a tampered env file is refused with the launcher's name rules, and nothing runs"
+printf 'PATH=/evil\0' >"$CODEX_RUN_ROOT/r1/issue-6/env"
+run r1 6 -- bash -c 'echo ran'
+assert_equals "exit 1" "$RC" "1"
+assert_not_contains "the command never ran" "$OUT" "ran"
+printf 'ORCH_WORKER=r9/1\0' >"$CODEX_RUN_ROOT/r1/issue-6/env"
+run r1 6 -- bash -c 'echo ran'
+assert_equals "the reap tag is reserved too" "$RC" "1"
+assert_not_contains "and the value stays out of the error" "$ERR" "r9/1"
 
 echo "test: bad usage fails loud"
 run r1 5 bash -c true;     assert_equals "no --" "$RC" "1"

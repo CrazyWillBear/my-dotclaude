@@ -25,6 +25,12 @@ ISSUES="$2"; shift 3
 for n in ${ISSUES//,/ }; do
     case "${n#\#}" in ''|*[!0-9]*) die "issues must be numbers, got '$n'" ;; esac
     [ -f "$(issue_dir "${n#\#}")/env" ] || continue
-    while IFS= read -r -d '' pair; do export "$pair"; done <"$(issue_dir "${n#\#}")/env"
+    PAIRS=()
+    while IFS= read -r -d '' pair; do PAIRS+=("$pair"); done <"$(issue_dir "${n#\#}")/env"
+    [ "${#PAIRS[@]}" -gt 0 ] || continue
+    # The file is a run-dir artifact, not a trust boundary: re-apply the launcher's name rules
+    # (names only — a value never goes in argv) before anything is exported to the command.
+    bash "$INFRA/env-pairs.sh" "${PAIRS[@]/=*/=}" || die "issue #${n#\#} has an env pair the launcher would refuse"
+    export "${PAIRS[@]}"
 done
 exec "$@"

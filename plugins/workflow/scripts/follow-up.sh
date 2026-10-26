@@ -218,6 +218,7 @@ PY
 case "$PARENT_TITLE" in
     "Follow-up:"*)
         echo "follow-up: #$ISSUE is itself a follow-up — nothing filed; its open findings need a human" >&2
+        bash "$RUNLOG" append "$RUNID" decision "$(jq -cn --arg w "follow-up: #$ISSUE is itself a follow-up; its open findings need a human" '{what: $w}')" >/dev/null || true
         exit 0 ;;
 esac
 
