@@ -2,7 +2,9 @@
 #
 # Tests for scripts/review-guard.sh — runs the reviewer, unless the branch has no commits
 # past its base: there is nothing to review, and a reviewer asked anyway reports "no commits
-# to review" as a finding, which files a follow-up issue for an empty slice (#26 -> #27).
+# to review" as a finding, which files a follow-up issue for an empty slice (#26 -> #27). It
+# is NOT a clean verdict either (a worker that committed nothing would fold as merged): the
+# guard refuses with exit 3 and no verdict, so the slice is held for a human.
 #
 # Run: bash plugins/infra/tests/test_review-guard.sh   (non-zero if any fail)
 
@@ -26,12 +28,13 @@ git -C "$REPO" commit -q --allow-empty -m base
 BASE="$(git -C "$REPO" rev-parse HEAD)"
 # a stand-in reviewer: records that it ran and echoes its arguments
 printf '#!/usr/bin/env bash\ntouch "%s/ran"\nprintf "reviewed:%%s\\n" "$*"\n' "$WORK" >"$WORK/reviewer"
-run() { OUT="$(cd "$REPO" && bash "$GUARD" "$@" 2>/dev/null)"; RC=$?; }
+run() { OUT="$(cd "$REPO" && bash "$GUARD" "$@" 2>"$WORK/err")"; RC=$?; ERR="$(cat "$WORK/err")"; }
 
-echo "test: no commits past the base — a clean verdict, and the reviewer never runs"
+echo "test: no commits past the base — no verdict at all, and the reviewer never runs"
 run "$BASE" bash "$WORK/reviewer" a
-assert_equals "exit 0" "$RC" "0"
-assert_equals "the literal review-counts.sh reads as clean" "$OUT" "No findings."
+assert_equals "exit 3" "$RC" "3"
+assert_equals "nothing on stdout a counter could read as clean" "$OUT" ""
+case "$ERR" in *"no commits past its base"*) ok "says why on stderr" ;; *) no "stderr: $ERR" ;; esac
 [ ! -e "$WORK/ran" ] && ok "reviewer not run" || no "reviewer ran on an empty branch"
 
 echo "test: commits past the base — the reviewer runs, argv intact"

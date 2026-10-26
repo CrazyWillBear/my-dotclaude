@@ -633,7 +633,7 @@ assert_equals "the exit code is the one claude returned" "$(cat "$RUNDIR/exit" 2
 if [ -e "$RUNDIR/last-message.txt" ]; then no "a report was invented for a crashed worker"; else ok "no report is invented"; fi
 assert_empty "and nothing was reviewed" "$(cat "$WORK/review-argv" 2>/dev/null)"
 
-echo "test: a slice with no commits past its base reads as clean without starting a reviewer"
+echo "test: a slice with no commits past its base gets no verdict — it is held, never read as clean"
 EMPTY="$WORK/emptyslice"
 git -C "$ORIGIN" worktree add -q -b emptyslice "$EMPTY" base >/dev/null 2>&1
 rm -rf "$CODEX_ROOT"; rm -f "$WORK/review-argv"
@@ -641,8 +641,9 @@ STUB_REVIEW_ARGV="$WORK/review-argv" \
     PATH="$CLAUDE_BIN:$CODEX_BIN:$PATH" CODEX_RUN_ROOT="$CODEX_ROOT" \
     bash "$SPAWN" r9 12 standard "$EMPTY" base >/dev/null 2>"$WORK/err"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$RUNDIR/exit" ] && break; sleep 0.2; done
-assert_equals "the verdict is the clean literal" "$(cat "$RUNDIR/review.txt" 2>/dev/null)" "No findings."
-assert_equals "recorded as a clean round" "$(cat "$RUNDIR/rounds" 2>/dev/null)" "1 0 high, 0 medium, 0 low"
+if [ -e "$RUNDIR/review.txt" ]; then no "a verdict exists for an empty branch"; else ok "no verdict was recorded"; fi
+assert_empty "no round was recorded" "$(cat "$RUNDIR/rounds" 2>/dev/null)"
+assert_contains "the reason is in the review log" "$(cat "$RUNDIR/review-stderr.log" 2>/dev/null)" "no commits past its base"
 assert_empty "and no reviewer ran" "$(cat "$WORK/review-argv" 2>/dev/null)"
 
 echo "test: a real claude spawn with no implementer box fails loud"
