@@ -32,7 +32,7 @@ printf '%s\n' "$*" >>"$STUB_LOG.followup"
 echo "integration: 0 high, 0 medium, 1 low — nothing filed"
 STUB
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\nif [ -n "${STUB_GC_FAIL:-}" ]; then echo "removed a x"; echo "error: could not remove b y" >&2; exit 1; fi\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -117,6 +117,13 @@ if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-other.jsonl" ]; then ok "an
 assert_contains "and says what it cleaned" "$OUT" "2 worker transcript path(s) removed"
 
 assert_not_contains "on the default branch, no close warning" "$OUT" "will NOT close"
+assert_not_contains "a clean cleanup does not claim a failure" "$OUT" "FAILED"
+
+echo "test: a failed session cleanup is reported as failed, with its error lines"
+git -C "$UPSTREAM" update-ref -d refs/heads/orchestrate-r1
+OUT="$(STUB_GC_FAIL=1 bash "$WF/end-run.sh" r1 2>/dev/null)"
+assert_contains "the cleanup line says FAILED" "$OUT" "cleanup: session-gc FAILED (exit 1)"
+assert_contains "and quotes the error" "$OUT" "error: could not remove b y"
 
 echo "test: a PR into a non-default branch says loudly that GitHub will not close the slices"
 git -C "$UPSTREAM" update-ref -d refs/heads/orchestrate-r1

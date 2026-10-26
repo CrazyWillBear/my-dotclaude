@@ -110,6 +110,8 @@ PR** into the launch branch with `Closes #N` per merged slice, and cleans up. Th
 `ExitWorktree(keep)` and paste its table and its `pr:` line. For a PRD run, also rewrite the PRD
 body's `## Mock-debt ledger` section from `gh issue list --label mock-debt` (that section only).
 The run never closes an issue and never merges the PR: the slices close when the user merges it.
+Report a cleanup as done only from a command's exit status: a refused, denied or failed command
+(`cleanup: … FAILED`, a database or container removal) is not done — say what is left.
 
 ---
 

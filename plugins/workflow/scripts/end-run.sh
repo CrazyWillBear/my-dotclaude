@@ -108,7 +108,10 @@ if [ -n "${MERGED// /}" ]; then
 fi
 
 # --- 4. cleanup ----------------------------------------------------------------------
-GC="$(bash "$INFRA/session-gc.sh" --run "$RUNID" 2>&1 | tail -1)"
+# Reported from the command's exit status: a removal that failed is not "done".
+GC_OUT="$(bash "$INFRA/session-gc.sh" --run "$RUNID" 2>&1)"; GC_RC=$?
+if [ "$GC_RC" -eq 0 ]; then GC="$(printf '%s\n' "$GC_OUT" | tail -1)"
+else GC="session-gc FAILED (exit $GC_RC): $(printf '%s\n' "$GC_OUT" | grep '^error:' | tr '\n' ';')"; fi
 find "$RUN_DIR" -mindepth 2 -maxdepth 2 -path '*/issue-*/env' -type f -delete 2>/dev/null
 BOXES="${CLAUDE_BOX_ROOT:-${HOME:-/nonexistent}/.claude/kit/boxes}"
 GONE=0
