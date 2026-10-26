@@ -55,7 +55,13 @@ done
 case "$PRD" in *[!0-9]*) die "--prd must be an issue number, got '$PRD'" ;; esac
 case "$MAX" in ''|0|*[!0-9]*) die "--max must be a number of 1 or more, got '$MAX'" ;; esac
 RUN_DIR="$RUNROOT/$RUNID"
-[ ! -e "$RUN_DIR/run.env" ] || die "run $RUNID was already launched ($RUN_DIR/run.env)"
+# CLAIMED atomically, before any slow step: the run root is shared by every repo on the
+# machine, so a check-then-mkdir let two launches on one per-second id share one run dir.
+# A launch that dies before run.env is written gives the claim back (cleanup below).
+mkdir -p "$RUNROOT" && mkdir "$RUN_DIR" 2>/dev/null \
+    || die "run $RUNID was already launched or is launching ($RUN_DIR) — pick another run id"
+cleanup() { [ -z "${TMP:-}" ] || rm -rf "$TMP"; [ -f "$RUN_DIR/run.env" ] || rm -rf "$RUN_DIR"; }
+trap cleanup EXIT
 
 # --- 1. dependencies -----------------------------------------------------------------
 KIT="${HOME:-/nonexistent}/.claude/kit"
@@ -114,7 +120,6 @@ fi
 
 # --- 3. the graph and the tiers ------------------------------------------------------
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
-trap 'rm -rf "$TMP"' EXIT
 # shellcheck disable=SC2086
 bash "$WF/scope-graph.sh" $SCOPE >"$TMP/graph.json"
 jq -e '.issues | length > 0' "$TMP/graph.json" >/dev/null 2>&1 || die "scope-graph.sh returned no graph (gh failed?) — not degrading into a repo-wide query"
@@ -161,7 +166,6 @@ for line in .worktrees/ .claude/worktrees/; do
 done
 
 # --- 6. run state --------------------------------------------------------------------
-mkdir -p "$RUN_DIR" || die "cannot create $RUN_DIR"
 GRAPH="$RUN_DIR/graph.json"
 cp "$TMP/graph.json" "$GRAPH"
 {

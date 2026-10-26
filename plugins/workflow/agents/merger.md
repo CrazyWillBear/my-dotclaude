@@ -18,10 +18,24 @@ orchestrator's job.
 The orchestrator gives you: the **absolute base-repo path** and its **base branch**; the **ordered
 list of completed issues** (each: issue number `N`, branch `issue-<N>`, and its **absolute worktree
 path**); and the project's **done-check command** (its tests, linter, type-checker — from the
-project's `CLAUDE.md` / `STYLEGUIDE.md` / config). You merge in ascending issue number — a
-deterministic order. **Conflicts are expected and are yours to resolve**: file-level overlap is
+project's `CLAUDE.md` / `STYLEGUIDE.md` / config); and the **run id**. You merge in ascending
+issue number — a deterministic order. **Conflicts are expected and are yours to resolve**: file-level overlap is
 normal even when the issues' blockers were independent (two slices that touch the same scaffold,
 registry, or test file will collide). Resolving the conflict is the job, not an anomaly.
+
+## Running the done-check
+Every done-check run below goes through the env wrapper, never bare:
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/with-env.sh" <runid> <N>,<N>,... -- <done-check command>
+```
+A done-check that is several commands (`a && b`, a pipe) goes in as one argument:
+`-- bash -c '<done-check>'`; unquoted, the `&&` would end the wrapper's command and run the
+rest bare.
+
+`<N>,<N>,...` is every issue in your list. The workers' tests ran against resources a human
+provisioned (a test database, a service URL); the wrapper exports those same variables to the
+command. A bare run skips those tests and would pass a wrong resolution. The values are secrets:
+never print, read or echo them — the wrapper puts them in the environment and nowhere else.
 
 ## How to merge
 

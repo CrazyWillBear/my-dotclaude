@@ -32,7 +32,8 @@ printf '%s\n' "$*" >>"$STUB_LOG.followup"
 echo "integration: 0 high, 0 medium, 1 low — nothing filed"
 STUB
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\nif [ -n "${STUB_GC_FAIL:-}" ]; then echo "removed a x"; echo "error: could not remove b y" >&2; exit 1; fi\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.reap"\necho "reaped 2 process(es)"\n' >"$INFRA/reap.sh"
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -76,6 +77,10 @@ for n in 11 12 13; do rl append r1 admitted "{\"n\":$n,\"tier\":\"x\"}"; done
 rl append r1 merged '{"n":11,"sha":"aaaaaaa1"}'; rl append r1 merged '{"n":12,"sha":"bbbbbbb2"}'
 rl append r1 escalated '{"n":12,"reason":"review-cap","attempt":0}'
 rl append r1 held '{"n":13,"why":"drained: failed"}'
+# #14 was held and then released (--retry), and never re-admitted: its old hold must not show
+rl append r1 held '{"n":14,"why":"stale branch"}'; rl append r1 released '{"n":14}'
+rl append r1 decision '{"what":"follow-up: #12 is itself a follow-up; its open findings need a human"}'
+rl append r1 decision '{"what":"follow-up: #11 is itself a follow-up; its open findings need a human"}'
 
 # run dirs: a worker's session id, a provisioned env file; box transcripts for it and another
 for n in 11 12; do mkdir -p "$CODEX_RUN_ROOT/r1/issue-$n"; done
@@ -106,10 +111,15 @@ assert_contains "and escalations" "$B" "| #12 | two | trivial | merged bbbbbbb |
 assert_contains "an issue never admitted is not built" "$B" "| #14 | four | standard | not built | - |"
 assert_contains "the integration review" "$B" "integration review: integration: 0 high"
 assert_contains "the preview against the upstream" "$B" "preview vs origin/dev: clean"
+assert_contains "findings nobody filed are in the PR body" "$B" "- follow-up: #12 is itself a follow-up; its open findings need a human"
+assert_contains "every unfiled line gets its own bullet" "$B" "- follow-up: #11 is itself a follow-up"
+assert_contains "and in the output" "$OUT" "follow-up: #12 is itself a follow-up"
 assert_contains "the exclude note" "$B" "info/exclude"
 assert_contains "follow-up.sh reviewed launch..HEAD" "$(cat "$STUB_LOG.followup")" "--integration r1 $BASE_SHA $(git -C "$ORCH_WT" rev-parse HEAD) $GRAPH"
 assert_equals "the branch was pushed" "$(git -C "$UPSTREAM" rev-parse orchestrate-r1)" "$(git -C "$ORCH_WT" rev-parse HEAD)"
 assert_contains "session-gc for this run" "$(cat "$STUB_LOG.gc")" "--run r1"
+assert_contains "leftover worker processes of the whole run are reaped" "$(cat "$STUB_LOG.reap")" "r1/"
+assert_contains "and the count is reported" "$OUT" "reaped 2 process(es)"
 if [ -e "$CODEX_RUN_ROOT/r1/issue-12/env" ]; then no "env file left behind"; else ok "env files removed"; fi
 if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa.jsonl" ] || [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa" ]; then
     no "this run's transcript survived"; else ok "this run's transcript removed"; fi
@@ -117,6 +127,13 @@ if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-other.jsonl" ]; then ok "an
 assert_contains "and says what it cleaned" "$OUT" "2 worker transcript path(s) removed"
 
 assert_not_contains "on the default branch, no close warning" "$OUT" "will NOT close"
+assert_not_contains "a clean cleanup does not claim a failure" "$OUT" "FAILED"
+
+echo "test: a failed session cleanup is reported as failed, with its error lines"
+git -C "$UPSTREAM" update-ref -d refs/heads/orchestrate-r1
+OUT="$(STUB_GC_FAIL=1 bash "$WF/end-run.sh" r1 2>/dev/null)"
+assert_contains "the cleanup line says FAILED" "$OUT" "cleanup: session-gc FAILED (exit 1)"
+assert_contains "and quotes the error" "$OUT" "error: could not remove b y"
 
 echo "test: a PR into a non-default branch says loudly that GitHub will not close the slices"
 git -C "$UPSTREAM" update-ref -d refs/heads/orchestrate-r1

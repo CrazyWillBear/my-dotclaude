@@ -409,6 +409,8 @@ SCHEMA='{
 # session-status.sh:238-247), so the phantom a dry run left behind is waited on forever.
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
+# shellcheck source=worker-env.sh
+. "$INFRA/worker-env.sh"
 if [ "$BACKEND" = codex ]; then
 # Workspace-write keeps `.git` READ-ONLY. For a linked worktree the objects and refs
 # live in the MAIN repo's common git dir, so without it listed the worker does the whole
@@ -420,6 +422,7 @@ if [ "$BACKEND" = codex ]; then
 # worktree's own git dir, but NOT hooks/ or config, the two things git executes — or dies
 # loudly. See common-git-dir.sh for why the whole common dir is not granted.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
+WRITABLE_ROOTS="$(cache_root_into "$WRITABLE_ROOTS")"
 
 # `-m` is not optional: without it a resumed thread silently falls back to the config's
 # default model, which is not the tier's. Scalar `-c` values are bare (that is what the
@@ -605,7 +608,7 @@ if [ "${#ENVS[@]}" -gt 0 ]; then
 fi
 set -m
 bash -c '
-    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; shift 6
+    rundir=$1; worktree=$2; issue=$3; roots=$4; counter=$5; report=$6; guard=$7; base=$8; reap=$9; shift 9
     env_names=()
     while [ "$1" != "--WORKER--" ]; do env_names+=("$1"); shift; done
     shift
@@ -654,7 +657,7 @@ bash -c '
                 && git clone --quiet --shared -- "$worktree" "$rundir/review-checkout" \
                     >/dev/null 2>>"$rundir/review-stderr.log"
             if [ -d "$rundir/review-checkout" ] && (cd "$rundir/review-checkout" \
-                    && TMPDIR="$rundir/review-scratch" "${review[@]}") \
+                    && TMPDIR="$rundir/review-scratch" bash "$guard" "$base" "${review[@]}") \
                     >"$rundir/review.txt" 2>>"$rundir/review-stderr.log" </dev/null; then
                 # The heading is counted by review-counts.sh — the SAME script
                 # worker-report.sh reads the verdict with, so the comment on the issue and
@@ -699,9 +702,12 @@ bash -c '
         fi
     fi
     rm -f "$rundir/reviewing"
+    # Whatever the worker left running (a backgrounded build) dies with the run, not after it.
+    bash "$reap" "$ORCH_WORKER" >/dev/null 2>&1
     printf "%s\n" "$rc" >"$rundir/exit"' \
     _ "$RUNDIR" "$WORKTREE" "$ISSUE" "$INFRA/common-git-dir.sh" \
        "$INFRA/review-counts.sh" "$INFRA/claude-report.sh" \
+       "$INFRA/review-guard.sh" "$BASE_SHA" "$INFRA/reap.sh" \
     ${ENV_NAMES[@]+"${ENV_NAMES[@]}"} --WORKER-- "${CMD[@]}" --REVIEW-- "${REVIEW_CMD[@]}" \
     >/dev/null 2>&1 &
 set +m

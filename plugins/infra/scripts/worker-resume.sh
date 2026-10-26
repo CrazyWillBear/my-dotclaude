@@ -132,6 +132,9 @@ BACKEND="$(printf '%s\n' "$ROSTER" | sed -n 's/^implementer_backend=//p' | head 
 # narrowed set: objects, refs, logs and this worktree's own git dir, never hooks/ or config.
 # Run for both backends: it is also the containment check before anything runs there.
 WRITABLE_ROOTS="$(bash "$INFRA/common-git-dir.sh" --roots "$WORKTREE")" || exit 1
+# shellcheck source=worker-env.sh
+. "$INFRA/worker-env.sh"
+WRITABLE_ROOTS="$(cache_root_into "$WRITABLE_ROOTS")"
 
 PROMPT="Your escalation was answered. Here is the answer:
 
@@ -300,7 +303,7 @@ if [ "$CODE" -eq 0 ] \
             && git clone --quiet --shared -- "$WORKTREE" "$RUNDIR/review-checkout" \
                 >/dev/null 2>>"$RUNDIR/review-stderr.log"
         if [ -d "$RUNDIR/review-checkout" ] && ( cd "$RUNDIR/review-checkout" \
-                && TMPDIR="$RUNDIR/review-scratch" "${REVIEW_CMD[@]}" ) \
+                && TMPDIR="$RUNDIR/review-scratch" bash "$INFRA/review-guard.sh" "$BASE_SHA" "${REVIEW_CMD[@]}" ) \
                 >"$RUNDIR/review.txt" 2>>"$RUNDIR/review-stderr.log" </dev/null; then
             # The heading is counted by review-counts.sh — the SAME script
             # worker-report.sh reads the verdict with, so the comment on the issue and the
@@ -342,6 +345,8 @@ if [ "$CODE" -eq 0 ] \
 fi
 
 rm -f "$RUNDIR/reviewing"
+# Whatever the resumed worker left running (a backgrounded build) dies with the turn.
+bash "$INFRA/reap.sh" "$RUNID/$ISSUE" >/dev/null 2>&1
 printf '%s\n' "$CODE" >"$RUNDIR/exit"
 
 # Rendering lives in ONE place. worker-report.sh already turns last-message.txt into the

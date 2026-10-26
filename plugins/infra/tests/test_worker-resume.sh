@@ -109,6 +109,8 @@ git -C "$ORIGIN" commit -qm init
 git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt "$REPO" >/dev/null 2>&1
+# The slice has a commit past its base: a branch with none is not reviewed (review-guard.sh).
+git -C "$REPO" commit -q --allow-empty -m "slice work"
 
 pass=0
 fail=0
@@ -165,7 +167,7 @@ assert_arg "the NETWORK, whose loss is silent and fatal" \
 EXPECT_GITDIR="$(cd "$ORIGIN/.git" && pwd -P)"
 EXPECT_OWN="$(cd "$(git -C "$REPO" rev-parse --git-dir)" && pwd -P)"
 assert_arg "the NARROWED roots, spelled exactly as the spawn spells them" "$OUT" \
-    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR/objects\",\"$EXPECT_GITDIR/refs\",\"$EXPECT_GITDIR/logs\",\"$EXPECT_OWN\"]"
+    "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR/objects\",\"$EXPECT_GITDIR/refs\",\"$EXPECT_GITDIR/logs\",\"$EXPECT_OWN\",\"$HOME/.cache/orchestrate\"]"
 assert_not_contains "the whole common git dir is never granted on resume either" "$OUT" \
     "sandbox_workspace_write.writable_roots=[\"$EXPECT_GITDIR\"]"
 assert_arg "the schema, so the report stays machine-readable" \
@@ -220,6 +222,8 @@ out=""
 while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; break; }; shift; done
 [ -z "$out" ] || printf '%s' "$STUB_REPORT" >"$out"
 [ -n "${STUB_ENV_OUT:-}" ] && printf '%s|%s\n' "${DATABASE_URL:-}" "${FOO:-}" >"$STUB_ENV_OUT"
+[ -n "${STUB_CACHE_OUT:-}" ] && printf '%s\n' "${UV_CACHE_DIR:-}" >"$STUB_CACHE_OUT"
+[ -n "${STUB_ORPHAN_PID:-}" ] && { setsid sleep 300 >/dev/null 2>&1 & echo $! >"$STUB_ORPHAN_PID"; }
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "$BIN/codex"
@@ -258,6 +262,24 @@ assert_equals "resume host reviewer receives neither worker value" \
     "$(cat "$WORK/host-env-resume" 2>/dev/null)" '|'
 leak=$(grep -rF 'postgres://x' "$CODEX_ROOT/r1/issue-90" 2>/dev/null || true)
 assert_empty "resume run dir never contains the env value" "$leak"
+
+echo "test: a resumed worker shares the on-disk package cache too"
+mkrun 92 '{"issue":92,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_CACHE_OUT="$WORK/cache-resume" UV_CACHE_DIR= HOME="$WORK/cachehome" \
+    STUB_REPORT='{"issue":92,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 92 standard "$REPO" --answer x
+assert_equals "uv cache defaults to the kit-owned dir" \
+    "$(cat "$WORK/cache-resume" 2>/dev/null)" "$WORK/cachehome/.cache/orchestrate/uv"
+
+echo "test: what a resumed worker leaves running is reaped before the turn is terminal"
+mkrun 94 '{"issue":94,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+rm -f "$WORK/orphan-pid"
+STUB_ORPHAN_PID="$WORK/orphan-pid" \
+    STUB_REPORT='{"issue":94,"status":"built","round":0,"head":"abc","review":"","note":""}' \
+    run r1 94 standard "$REPO" --answer x
+ORPHAN="$(cat "$WORK/orphan-pid" 2>/dev/null)"
+if [ -n "$ORPHAN" ] && ! kill -0 "$ORPHAN" 2>/dev/null; then ok "the orphaned background process was killed"
+else no "the orphaned background process (pid '$ORPHAN') survived the turn"; [ -z "$ORPHAN" ] || kill -9 "$ORPHAN" 2>/dev/null; fi
 
 mkrun 91 '{"issue":91,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
 run r1 91 standard "$REPO" --answer x --env DATABASE_URL=postgres://x --dry-run
@@ -519,6 +541,18 @@ assert_not_contains "never the slice's own head" "$(cat "$WORK/review-argv" 2>/d
 git -C "$ORIGIN" branch -f base "$FORK"
 run r1 92 standard "$SLICE" --answer "x" --base --octopus
 assert_equals "an option-shaped base is refused (merge-base --octopus prints HEAD)" "$RC" "1"
+
+echo "test: a resumed slice with no commits past its base gets no verdict, and no reviewer"
+EMPTY="$WORK/emptyslice"
+git -C "$ORIGIN" worktree add -q -b emptyslice "$EMPTY" base >/dev/null 2>&1
+rm -f "$WORK/review-argv"
+mkrun 93 '{"issue":93,"status":"escalate","round":0,"head":"","review":"","note":"q"}'
+STUB_REPORT='{"issue":93,"status":"built","round":0,"head":"abc1234","review":"","note":""}' \
+    run r1 93 standard "$EMPTY" --answer "x"
+assert_equals "the report is refused, not rendered as built" "$RC" "1"
+if [ -e "$CODEX_ROOT/r1/issue-93/review.txt" ]; then no "a verdict exists for an empty branch"; else ok "no verdict was recorded"; fi
+assert_contains "the reason is in the review log" "$(cat "$CODEX_ROOT/r1/issue-93/review-stderr.log" 2>/dev/null)" "no commits past its base"
+assert_equals "and no reviewer ran" "$(cat "$WORK/review-argv" 2>/dev/null)" ""
 
 echo "test: a resumed FIX worker gets a scoped re-review"
 mkrun 87 '{"issue":87,"status":"escalate","round":0,"head":"","review":"","note":"q"}'

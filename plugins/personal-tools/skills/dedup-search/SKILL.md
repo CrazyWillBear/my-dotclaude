@@ -28,11 +28,14 @@ is sparse, infer terms from the natural vocabulary of the task domain.
 
 ## Step 2 — Run the helper
 
-The helper is at `plugins/personal-tools/scripts/dedup-search.sh` relative to the
-repo root. Locate the repo root with `git rev-parse --show-toplevel`, then run:
+The helper ships with this plugin, not with the repo you are searching, so never look
+for it under the repo. Use `${CLAUDE_PLUGIN_ROOT}/scripts/dedup-search.sh`; when you read
+this file directly (a worker does) `${CLAUDE_PLUGIN_ROOT}` is unset, so use the stable
+link `~/.claude/kit/personal-tools/scripts/dedup-search.sh`. Locate the repo root with
+`git rev-parse --show-toplevel`, then run:
 
 ```
-bash <repo-root>/plugins/personal-tools/scripts/dedup-search.sh <repo-root> <term1> [term2 ...]
+bash <helper> <repo-root> <term1> [term2 ...]
 ```
 
 Pass all extracted terms as separate positional arguments. The helper emits a

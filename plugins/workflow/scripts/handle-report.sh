@@ -7,6 +7,8 @@
 #   bash handle-report.sh <runid> --merged <N>              # the merger landed issue-<N>
 #   bash handle-report.sh <runid> --answer <N> <text>       # a human answered #N's question
 #   bash handle-report.sh <runid> --resource <N> --env K=V…  # a human provisioned #N's resource
+#   bash handle-report.sh <runid> --retry <N>               # lift #N's hold: it is admitted afresh
+#   bash handle-report.sh <runid> --max <N>                 # change the run's worker cap mid-run
 #
 # --wait blocks in worker-report.sh --any (≤ HANDLE_WAIT_TIMEOUT, default 240 s) on the
 # in-flight workers (run-log.sh) that are not PAUSED on a human or a merger. On a timeout it
@@ -38,7 +40,7 @@ set -uo pipefail
 # shellcheck source=run-env.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-env.sh"
 
-USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V..."
+USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V... | --retry N | --max N"
 [ $# -ge 2 ] || die "$USAGE"
 load_run "$1"; shift
 MODE="$1"; shift
@@ -46,14 +48,56 @@ if [ "$MODE" = --wait ]; then run_lock; else run_lock strict; fi
 TMP="$(mktemp -d)" || die "cannot create a temp dir"
 trap 'rm -rf "$TMP"' EXIT
 
+# salvage <N> — keep a stopped worker's work before a hold or drain strands it: commit what it
+# left uncommitted and point prev/issue-N-<runid> at the branch. Prints the branch name, or
+# nothing when there was nothing to keep (no worker, still running, or a worktree that fails the
+# containment check — the same tripwire spawn.sh runs before the first host git in a worktree).
+salvage() {
+    local n="$1" d wt pid idx head tree snap
+    d="$(issue_dir "$n")"; wt="$(worktree_of "$n")"
+    [ -f "$d/pid" ] && [ -d "$wt" ] || return 0
+    pid="$(head -1 "$d/pid" 2>/dev/null)"
+    { [ -e "$d/exit" ] || ! kill -0 "$pid" 2>/dev/null; } || return 0
+    bash "$INFRA/common-git-dir.sh" --roots "$wt" >/dev/null 2>&1 || return 0
+    # A repo nested in the worktree brings its own config, and git runs that config's clean
+    # filters when it looks inside: the worker wrote it, so nothing here may touch it.
+    # No pruning, and an unreadable directory counts as a hit: find failing is "cannot tell".
+    local nested
+    nested="$(find "$wt" -mindepth 2 -name .git -print -quit 2>/dev/null)" || return 0
+    [ -z "$nested" ] || return 0
+    local g=(git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null)
+    # A committed gitlink is the path git itself walks into, readable by find or not.
+    # Captured, never `| grep -q`: under pipefail grep's early exit SIGPIPEs ls-tree on a big tree.
+    local tree_list
+    tree_list="$("${g[@]}" ls-tree -r HEAD 2>/dev/null)" || return 0
+    ! grep -q '^160000 ' <<<"$tree_list" || return 0
+    [ "$("${g[@]}" symbolic-ref --short HEAD 2>/dev/null)" = "issue-$n" ] || return 0
+    head="$("${g[@]}" rev-parse HEAD 2>/dev/null)" || return 0
+    # Snapshot through a throwaway index: issue-N and the worktree's own index never move, so
+    # a --retry that reuses the branch does not inherit a WIP commit.
+    idx="$TMP/salvage-index-$n"; rm -f "$idx"
+    snap="$head"
+    if GIT_INDEX_FILE="$idx" "${g[@]}" read-tree HEAD >/dev/null 2>&1 \
+        && GIT_INDEX_FILE="$idx" "${g[@]}" add -A >/dev/null 2>&1; then
+        tree="$(GIT_INDEX_FILE="$idx" "${g[@]}" write-tree 2>/dev/null)"
+        if [ -n "$tree" ] && [ "$tree" != "$("${g[@]}" rev-parse "HEAD^{tree}" 2>/dev/null)" ]; then
+            snap="$("${g[@]}" -c user.name=orchestrate -c user.email=orchestrate@localhost \
+                commit-tree "$tree" -p "$head" -m "WIP: salvaged from #$n by run $RUNID" 2>/dev/null)" || snap="$head"
+        fi
+    fi
+    rm -f "$idx"
+    "${g[@]}" branch -f "prev/issue-$n-$RUNID" "$snap" >/dev/null 2>&1 && echo "prev/issue-$n-$RUNID"
+}
+# kept_note <N> — " (work kept on <branch>)" when a salvage saved something, else nothing.
+kept_note() { local b; b="$(salvage "$1")"; [ -z "$b" ] || printf ' (work kept on %s)' "$b"; }
 hold() {
     runlog append "$RUNID" held "$(jq -cn --argjson n "$1" --arg why "$2" '{n: $n, why: $why}')" >/dev/null
-    echo "held #$1 $2"
+    echo "held #$1 $2$(kept_note "$1")"
 }
 drain() {
     runlog append "$RUNID" held "$(jq -cn --argjson n "$1" --arg why "drained: $2" '{n: $n, why: $why}')" >/dev/null
     runlog append "$RUNID" decision "$(jq -cn --arg w "drain: #$1 $2" '{what: $w}')" >/dev/null
-    echo "drain: #$1 $2"
+    echo "drain: #$1 $2$(kept_note "$1")"
 }
 pause() { printf '%s\n' "$2" >"$(issue_dir "$1")/paused"; }
 unpause() { rm -f "$(issue_dir "$1")/paused"; }
@@ -63,8 +107,17 @@ capped() {
         >/dev/null 2>&1
 }
 
-# kill_worker <N> — group-kill the wrapper (it leads its own group), bounded wait.
+# kill_worker <N> — stop the worker, then reap what it left running (a backgrounded build
+# outlives the group kill; reap.sh finds it by the ORCH_WORKER tag in its environment).
 kill_worker() {
+    local rc
+    group_kill "$1"; rc=$?
+    bash "$INFRA/reap.sh" "$RUNID/$1" >/dev/null 2>&1
+    return "$rc"
+}
+
+# group_kill <N> — group-kill the wrapper (it leads its own group), bounded wait.
+group_kill() {
     local pid
     # A worker that wrote `exit` is gone; its pid may already belong to someone else.
     [ ! -e "$(issue_dir "$1")/exit" ] || return 0
@@ -289,7 +342,9 @@ case "$MODE" in
                 sleep 5
             done
             next
-        elif [ "${#PAUSED[@]}" -gt 0 ]; then echo "paused: ${PAUSED[*]}"
+        elif [ "${#PAUSED[@]}" -gt 0 ]; then
+            # Waiting on a human is no reason to leave a free slot idle.
+            next; echo "paused: ${PAUSED[*]}"
         else next; fi
         exit 0
     fi
@@ -328,7 +383,20 @@ case "$MODE" in
         fi
         N="$(sed -n 's/^error: issue \([0-9]*\) .*/\1/p' "$TMP/wr.err" | head -1)"
         [ -n "$N" ] || { echo "error: worker-report.sh: $(tail -1 "$TMP/wr.err")"; exit 0; }
-        hold "$N" "no readable report: $(sed -n 's/^error: //p' "$TMP/wr.err" | head -1 | cut -c1-300)"
+        WHY="$(sed -n 's/^error: //p' "$TMP/wr.err" | head -1 | cut -c1-300)"
+        a="$(attempt_of "$N")"; k="$(rounds_of "$N")"; role="$(head -1 "$(issue_dir "$N")/role" 2>/dev/null)"
+        chain="$(bash "$INFRA/resolve-tier.sh" "$(tier_of "$N")" 0 2>/dev/null | sed -n 's/^implementer_chain=//p')"
+        # A worker that ended with no report at all is "failed": the next cell of its chain
+        # picks up its worktree, as for any other failure. At the top there is no next cell;
+        # that is a hold (not a drain — a report glitch must not stop the whole run).
+        case "$WHY" in
+            *"wrote no report"*|*"unreadable report"*)
+                if [ "$((a + 1))" -lt "${chain:-1}" ]; then
+                    escalate_to_next "$N" failed "no report: $WHY" "$a" "${role:-build}" "${k:-0}"
+                    next; exit 0
+                fi ;;
+        esac
+        hold "$N" "no readable report: $WHY"
     else
         handle "$LINE"
     fi
@@ -368,5 +436,33 @@ case "$MODE" in
     NAMES="$(for p in "${PAIRS[@]}"; do printf '%s\n' "${p%%=*}"; done | jq -R . | jq -cs .)"
     runlog append "$RUNID" respawned "{\"n\":$N,\"reason\":\"infra\",\"env\":$NAMES}" >/dev/null
     echo "respawned #$N with $(printf '%s' "$NAMES" | jq -r 'join(",")')" ;;
+--retry)
+    # A hold is the run's judgment, not the issue's: once its cause is fixed (a stale branch
+    # deleted, a prerequisite landed) this lifts it. A retry is a FRESH admission, so the old
+    # worker's run dir (rounds, chain position) is kept aside, not reused; only the human's
+    # provisioned env pairs carry over. The worktree and branch are reused by admit.sh.
+    [ $# -eq 1 ] || die "$USAGE"
+    N="${1#\#}"; case "$N" in ''|*[!0-9]*) die "issue must be a number" ;; esac
+    case " $(run_state held) " in *" $N "*) ;; *) die "#$N is not held" ;; esac
+    kill_worker "$N" || die "could not stop #$N's worker"
+    d="$(issue_dir "$N")"
+    if [ -d "$d" ]; then
+        old="$d.held-$(date +%s)-$$"
+        mv "$d" "$old" || die "cannot set #$N's run dir aside"
+        mkdir -p "$d" || die "cannot recreate $d"
+        [ ! -f "$old/env" ] || cp -p "$old/env" "$d/env" || die "cannot carry #$N's env over"
+    fi
+    rm -f "$RUN_DIR/plans/$N".*
+    runlog append "$RUNID" released "{\"n\":$N}" >/dev/null
+    echo "released #$N"
+    next ;;
+--max)
+    [ $# -eq 1 ] || die "$USAGE"
+    case "$1" in ''|0|*[!0-9]*) die "--max must be a number of 1 or more, got '$1'" ;; esac
+    sed "s/^MAX=.*/MAX=$1/" "$RUN_DIR/run.env" >"$RUN_DIR/run.env.tmp" \
+        && mv -f "$RUN_DIR/run.env.tmp" "$RUN_DIR/run.env" || die "cannot rewrite $RUN_DIR/run.env"
+    echo "max $1 (was $MAX)"
+    # A lower cap stops new admissions and lets what runs finish; a higher one fills at once.
+    next ;;
 *) die "$USAGE" ;;
 esac

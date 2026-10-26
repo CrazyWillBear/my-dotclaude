@@ -63,14 +63,15 @@ prepare() {
     fi || { hold "$n" "worktree: $(tail -1 "$TMP/wt-$n.err")"; return 1; }
 }
 
-spawn_now() {   # spawn_now <N> — attempt 0, logged
+spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead
     spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
-        || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return; }
+        || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
     runlog append "$RUNID" admitted "{\"n\":$1,\"tier\":\"$(tier_of "$1")\"}" >/dev/null
     echo "admitted #$1 tier=$(tier_of "$1") attempt=0"
 }
 
-# start <N> — prepare, then spawn (trivial) or start the detached plan.
+# start <N> — prepare, then spawn (trivial) or start the detached plan. Fails when the issue
+# was held instead: a held pick must not use up a slot.
 start() {
     local n="$1" tier
     prepare "$n" || return
@@ -86,17 +87,22 @@ start() {
     echo "planning #$n tier=$tier"
 }
 
-# collect — every finished plan becomes a spawn or a hold.
+# collect — every finished plan becomes a spawn or a hold. A good plan needs a free worker
+# slot: when --max was lowered under it, it waits (`.rc.deferred`, still counted as planning)
+# and is looked at again on the next pass.
 collect() {
-    local f n rc
+    local f n rc live
+    live="$(run_state in_flight | wc -w)"
+    for f in "$PLANS"/*.rc.deferred; do [ -e "$f" ] && mv -f "$f" "${f%.deferred}"; done
     for f in "$PLANS"/*.rc; do
         [ -e "$f" ] || continue
         n="$(basename "$f" .rc)"; rc="$(head -1 "$f")"
         if [ -n "$DRAIN" ]; then
             hold "$n" "plan finished after the drain — not spawned"
         elif [ "$rc" = 0 ]; then
+            if [ "$live" -ge "$MAX" ]; then mv -f "$f" "$f.deferred"; continue; fi
             runlog append "$RUNID" planned "{\"n\":$n}" >/dev/null
-            spawn_now "$n"
+            ! spawn_now "$n" || live=$((live + 1))
         elif [ "$rc" = 124 ]; then
             hold "$n" "plan timed out after ${PLAN_TIMEOUT:-1800}s"
         else
@@ -157,8 +163,7 @@ BUSY=0
 for n in $(run_state in_flight) $(planning); do BUSY=$((BUSY + 1)); done
 for n in $READY; do
     [ "$BUSY" -lt "$MAX" ] || break
-    start "$n"
-    BUSY=$((BUSY + 1))
+    ! start "$n" || BUSY=$((BUSY + 1))
 done
 # Every pick held and nothing running: the next pass sees them held and may find others.
 # It terminates — each pass holds at least one more issue or starts one.

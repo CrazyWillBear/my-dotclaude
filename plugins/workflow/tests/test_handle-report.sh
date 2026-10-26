@@ -37,7 +37,7 @@ echo "follow-up: #$2 → #900 (tier:$3) re-blocked none"
 STUB
 
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
-cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$INFRA/"
+cp "$REAL_INFRA/resolve-tier.sh" "$REAL_INFRA/env-pairs.sh" "$REAL_INFRA/common-git-dir.sh" "$INFRA/"
 cat >"$INFRA/worker-report.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.wr"
@@ -57,6 +57,10 @@ cat >"$INFRA/consult.sh" <<'STUB'
 printf '%s\n' "$*" >>"$STUB_LOG.consult"
 [ -z "${STUB_CONSULT_SLEEP:-}" ] || sleep "$STUB_CONSULT_SLEEP"
 [ -z "${STUB_CONSULT_FAIL:-}" ] || { echo "error: past the cap" >&2; exit 1; }
+STUB
+cat >"$INFRA/reap.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_LOG.reap"
 STUB
 cat >"$INFRA/spawn.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -247,6 +251,38 @@ assert_contains "waiting" "$OUT" "waiting:"
 STUB_WR_ERR="error: issue 13 reported built but no independent review was recorded" run --wait
 assert_contains "held with the reason" "$OUT" "held #13 no readable report"
 
+echo "test: --retry lifts a hold: the old worker state is kept aside, the env carried over"
+mkrun 13 0 build ''; printf 'K=V\0' >"$CODEX_RUN_ROOT/r1/issue-13/env"
+run --retry 11; assert_equals "a slice that is not held is refused" "$RC" "1"
+assert_contains "and says so" "$ERR" "not held"
+run --retry 13
+assert_contains "released" "$OUT" "released #13"
+heldnow="$(state | sed -n 's/^held=//p')"
+case ",$heldnow," in *,13,*) no "13 is still held ($heldnow)" ;; *) ok "no longer held" ;; esac
+assert_equals "the previous worker's state is kept, not deleted" \
+    "$(ls -d "$CODEX_RUN_ROOT"/r1/issue-13.held-* 2>/dev/null | wc -l | tr -d ' ')" "1"
+assert_equals "the provisioned env is carried to the fresh admission" "$(cat "$CODEX_RUN_ROOT/r1/issue-13/env" 2>/dev/null | tr '\0' '|')" "K=V|"
+assert_equals "and nothing else (no stale exit to be re-reported)" "$(ls "$CODEX_RUN_ROOT/r1/issue-13")" "env"
+run --retry; assert_equals "--retry needs an issue" "$RC" "1"
+
+echo "test: everything in flight paused still admits what is ready"
+git -C "$REPO" branch orchestrate-r2
+GRAPH2="$WORK/graph2.json"
+python3 - "$GRAPH2" <<'PY'
+import json, sys
+issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"], "tier": "standard",
+           "body": "", "comments": "", "blockedBy": []} for n in (41, 42)]
+json.dump({"issues": issues, "blockerStates": {}, "mockDebtOpen": []}, open(sys.argv[1], "w"))
+PY
+mkdir -p "$CODEX_RUN_ROOT/r2/issue-41"
+sed -e 's/^RUNID=.*/RUNID=r2/' -e 's/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r2/' -e "s|^GRAPH=.*|GRAPH=$GRAPH2|" -e 's/^MAX=.*/MAX=3/' \
+    "$CODEX_RUN_ROOT/r1/run.env" >"$CODEX_RUN_ROOT/r2/run.env"
+rl append r2 admitted '{"n":41,"tier":"standard"}' >/dev/null
+printf 'blocked\n' >"$CODEX_RUN_ROOT/r2/issue-41/paused"
+OUT="$(cd "$ORCH_WT" && bash "$WF/handle-report.sh" r2 --wait 2>/dev/null)"
+assert_contains "the ready slice is started" "$OUT" "planning #42"
+assert_contains "and the pause is still shown" "$OUT" "paused: #41 (blocked)"
+
 echo "test: on a timeout, a STALLED running worker is escalated from outside"
 reset; mkrun 15 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-15/exit"
 live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-15/pid"
@@ -255,6 +291,7 @@ assert_contains "escalated" "$OUT" "escalated #15 stall → attempt 1"
 assert_contains "escalate.sh looked at the running worker" "$(cat "$STUB_LOG.esc")" "r1 15 standard"
 if kill -0 "$LEADER" 2>/dev/null; then no "the stalled worker survived"; kill -- -"$LEADER" 2>/dev/null; else ok "the stalled worker was group-killed"; fi
 assert_contains "and respawned in its role" "$(cat "$STUB_LOG.spawn")" "--role build --round 1 --attempt 1"
+assert_contains "and what it left running was reaped by tag" "$(cat "$STUB_LOG.reap" 2>/dev/null)" "r1/15"
 
 echo "test: a transient escalate.sh failure is retried, then reported — never a hold"
 reset; mkrun 15 0 build '1 0 high, 0 medium, 0 low\n'
@@ -341,6 +378,86 @@ assert_equals "nothing respawned" "$(cat "$STUB_LOG.spawn")" ""
 assert_contains "the drain is a recorded decision" "$(state)" "decision=drain: #16"
 assert_not_contains "admit.sh admits nothing after a drain, even with #30 unblocked" \
     "$(cd "$ORCH_WT" && bash "$WF/admit.sh" r1 --next)" "admitted"
+
+echo "test: --max rewrites the run's cap (it is read fresh by every admission)"
+run --max 0; assert_equals "0 is refused" "$RC" "1"
+run --max abc; assert_equals "junk is refused" "$RC" "1"
+run --max 2
+assert_contains "reports the change" "$OUT" "max 2 (was 1)"
+assert_contains "run.env carries it" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=2"
+run --max 1
+assert_contains "and back" "$(cat "$CODEX_RUN_ROOT/r1/run.env")" "MAX=1"
+
+echo "test: a worker that finished with no readable report is escalated, not held, while the chain has a next cell"
+reset; mkrun 21 0 build ''
+STUB_WR_ERR="error: issue 21 finished clean but wrote no report to last-message.txt" run --wait
+assert_contains "escalated to the next cell" "$OUT" "escalated #21 failed → attempt 1"
+assert_contains "respawned there" "$(cat "$STUB_LOG.spawn")" "r1 21 standard $REPO/.worktrees/r1/issue-21 orchestrate-r1 --role build --round 1 --attempt 1"
+reset; mkrun 21 1 build ''
+STUB_WR_ERR="error: issue 21 wrote an unreadable report (bad json): x" run --wait
+assert_contains "at the top of the chain it is held, as before" "$OUT" "held #21 no readable report"
+assert_not_contains "and never drains the run for a report glitch" "$OUT" "drain:"
+
+echo "test: a hold keeps a stopped worker's work on a prev/ branch, uncommitted files included"
+reset; mkrun 22 0 build ''
+printf 'wip\n' >"$REPO/.worktrees/r1/issue-22/dirty"
+HEAD22="$(git -C "$REPO" rev-parse issue-22)"
+STUB_WR_ERR="error: issue 22 reported built but no independent review was recorded" run --wait
+assert_contains "held" "$OUT" "held #22 no readable report"
+assert_contains "and says where the work is" "$OUT" "prev/issue-22-r1"
+assert_equals "the dirty file was committed onto the salvage branch" \
+    "$(git -C "$REPO" show prev/issue-22-r1:dirty 2>/dev/null)" "wip"
+assert_equals "the worker's own commit is on it too" \
+    "$(git -C "$REPO" show prev/issue-22-r1:f22 2>/dev/null)" "22"
+assert_equals "issue-22 itself did not move — a retry never inherits a WIP commit" \
+    "$(git -C "$REPO" rev-parse issue-22)" "$HEAD22"
+assert_equals "and the worktree's own state is untouched" \
+    "$(git -C "$REPO/.worktrees/r1/issue-22" status --porcelain | tr -d ' ')" "??dirty"
+
+echo "test: a worktree holding a nested repo is not salvaged — its config would run on the host"
+reset; mkrun 21 1 build ''
+git -C "$REPO" branch -D prev/issue-21-r1 >/dev/null 2>&1
+NEST="$REPO/.worktrees/r1/issue-21/sub"
+mkdir -p "$NEST" && git -C "$NEST" init -q
+printf '[filter "x"]\n\tclean = touch %s/canary\n' "$WORK" >>"$NEST/.git/config"
+printf '* filter=x\n' >"$NEST/.gitattributes"; printf 'a\n' >"$NEST/a"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+assert_contains "held" "$OUT" "held #21"
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a worktree with a nested repo was salvaged"; else ok "no salvage branch"; fi
+if [ -e "$WORK/canary" ]; then no "the nested repo's filter ran on the host"; else ok "the nested repo's filter never ran"; fi
+rm -rf "$NEST"
+
+echo "test: a nested repo under a deep node_modules is not salvaged either"
+reset; mkrun 21 1 build ''
+NEST="$REPO/.worktrees/r1/issue-21/sub/node_modules/x"
+mkdir -p "$NEST" && git -C "$NEST" init -q
+printf 'a\n' >"$NEST/a"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a deep node_modules repo was salvaged"; else ok "no salvage branch"; fi
+rm -rf "$REPO/.worktrees/r1/issue-21/sub"
+
+echo "test: a committed gitlink is not salvaged"
+reset; mkrun 21 1 build ''
+git -C "$REPO/.worktrees/r1/issue-21" update-index --add --cacheinfo 160000,"$(git -C "$REPO" rev-parse HEAD)",0vendored
+# A listing past the pipe buffer, all after the gitlink: a `ls-tree | grep -q` would SIGPIPE.
+mkdir "$REPO/.worktrees/r1/issue-21/many"
+for i in $(seq 1 2500); do : >"$REPO/.worktrees/r1/issue-21/many/a-long-file-name-to-fill-the-pipe-buffer-$i"; done
+git -C "$REPO/.worktrees/r1/issue-21" add many
+git -C "$REPO/.worktrees/r1/issue-21" commit -q -m "gitlink"
+STUB_WR_ERR="error: issue 21 reported built but no independent review was recorded" run --wait
+if git -C "$REPO" rev-parse --verify -q prev/issue-21-r1 >/dev/null; then no "a worktree with a gitlink was salvaged"; else ok "no salvage branch"; fi
+git -C "$REPO/.worktrees/r1/issue-21" reset -q --hard HEAD~1
+
+echo "test: a still-running worker is never touched by a salvage"
+reset; mkrun 17 0 build ''; rm -f "$CODEX_RUN_ROOT/r1/issue-17/exit"
+git -C "$REPO" branch -D prev/issue-17-r1 >/dev/null 2>&1   # left by an earlier hold of #17
+live_leader; printf '%s\n' "$LEADER" >"$CODEX_RUN_ROOT/r1/issue-17/pid"
+printf 'wip\n' >"$REPO/.worktrees/r1/issue-17/dirty"
+STUB_WR_ERR="error: issue 17 reported built but no independent review was recorded" run --wait
+kill -- -"$LEADER" 2>/dev/null
+assert_contains "still held" "$OUT" "held #17"
+if git -C "$REPO" rev-parse --verify -q prev/issue-17-r1 >/dev/null; then no "a live worker's work was salvaged"; else ok "no salvage branch for a live worker"; fi
+assert_equals "its dirty file is still uncommitted" "$(git -C "$REPO/.worktrees/r1/issue-17" status --porcelain | tr -d ' ')" "??dirty"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

@@ -1,6 +1,6 @@
 {
   "name": "workflow",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "An autonomous dev loop. /orchestrate is a standing dispatcher: it routes by shape — one explicit unit of work runs as a subagent chain, an issue graph or PRD runs one boxed one-shot worker per issue (codex or claude -p, tier-routed, its own git worktree, reporting through its run dir), and anything ambiguous is discussed rather than built. Scope is always an explicit issue allowlist, readiness is computed by ready.sh over a launch-frozen graph, the issue thread carries findings and decisions so they never pass through the orchestrator, merging is a deterministic fold with only the conflicted remainder reaching an agent, and the run ends in one PR that closes its slices on merge. The plugin also ships /classify-task and the manager's front half, /to-prd and /to-issues.",
   "author": {
     "name": "William Chastain",

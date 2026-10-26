@@ -152,6 +152,37 @@ assert_contains "in_flight is what is neither merged nor held" "$out" "in_flight
 r append run8 admitted '{"n":13,"tier":"trivial"}'
 assert_contains "a repeated admission is not double-counted" "$(r state run8)" "in_flight=13"
 
+echo "test: released lifts a hold, forgets the admission, and lifts a drain"
+r append run9 admitted '{"n":20,"tier":"standard"}'
+r append run9 held '{"n":20,"why":"drained: quota"}'
+r append run9 decision '{"what":"drain: #20 quota at the top of its chain"}'
+r append run9 decision '{"what":"kept: unrelated"}'
+r append run9 held '{"n":21,"why":"stale branch"}'
+r append run9 released '{"n":20}'
+out=$(r state run9)
+assert_contains "only the other hold stays" "$out" "held=21"
+assert_not_contains "20 is no longer in flight (it must be admitted afresh)" "$out" "in_flight=20"
+assert_not_contains "the drain decision is gone" "$out" "decision=drain:"
+assert_contains "other decisions stay" "$out" "decision=kept: unrelated"
+r append run9 admitted '{"n":20,"tier":"standard"}'
+assert_contains "a fresh admission after the release counts" "$(r state run9)" "in_flight=20"
+
+echo "test: releasing one issue does not lift another issue's drain"
+r append run10 admitted '{"n":20,"tier":"standard"}'
+r append run10 held '{"n":20,"why":"drained: quota"}'
+r append run10 decision '{"what":"drain: #20 quota at the top of its chain"}'
+r append run10 held '{"n":21,"why":"stale branch"}'
+r append run10 released '{"n":21}'
+out=$(r state run10)
+assert_contains "#20's drain still stops the run" "$out" "decision=drain: #20"
+r append run10 released '{"n":20}'
+assert_not_contains "releasing #20 itself lifts it" "$(r state run10)" "decision=drain:"
+echo "test: #2 does not match #20 (the drain is matched by whole issue number)"
+r append run11 held '{"n":20,"why":"drained: quota"}'
+r append run11 decision '{"what":"drain: #20 quota"}'
+r append run11 released '{"n":2}'
+assert_contains "#20's drain survives releasing #2" "$(r state run11)" "decision=drain: #20"
+
 echo "test: an empty log folds to empty fields, not a crash"
 r append run3 decision '{"what":"nothing yet"}'
 out=$(r state run3)
