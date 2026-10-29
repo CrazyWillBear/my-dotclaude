@@ -19,7 +19,7 @@
 # existing issue-<N> BRANCH is reused only when it grew from this run's base — a stale one
 # from an earlier run is held, never built on.
 #
-# --next reads merged / held / in-flight from run-log.sh and asks ready.sh what is
+# --next first refreshes blocker states (refresh-blockers.sh), then reads merged / held / in-flight from run-log.sh and asks ready.sh what is
 # admissible; readiness is never computed here. A recorded drain (`decision` "drain: …")
 # stops all admission (finished plans are still collected, never spawned).
 #
@@ -146,6 +146,7 @@ if [ -n "$DRAIN" ]; then
     exit 0
 fi
 
+bash "$WF/refresh-blockers.sh" "$GRAPH" "$BASE_REPO" 2>/dev/null   # blockers can close mid-run
 ARGS=()
 for n in $(run_state merged);                   do ARGS+=(--merged "$n"); done
 for n in $(run_state held);                     do ARGS+=(--held "$n"); done

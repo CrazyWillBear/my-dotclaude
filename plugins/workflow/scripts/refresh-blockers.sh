@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# refresh-blockers.sh — re-read every not-yet-closed blocker's state into graph.json.
+#
+# The graph is frozen at launch, but a blocker outside the run (another run's slice, an
+# issue closed by hand) can close hours later; ready.sh trusts blockerStates, so without
+# this its dependents stay stranded for the whole run. admit.sh calls this before asking
+# ready.sh what is admissible. Only open/unknown refs are re-read — a closed one stays
+# closed. A failed lookup leaves the old state (fail closed: never unblocks on a blip).
+#
+# Usage: bash refresh-blockers.sh <graph.json> [repo-dir]   (gh runs in repo-dir, default .)
+
+set -uo pipefail
+GRAPH="${1:?usage: refresh-blockers.sh <graph.json> [repo-dir]}"
+cd "${2:-.}" || exit 1
+command -v gh >/dev/null 2>&1 || exit 0
+
+UPD="{}"
+for n in $(jq -r '.blockerStates // {} | to_entries[] | select(.value != "closed") | .key' "$GRAPH"); do
+    s="$(gh issue view "$n" --json state -q .state 2>/dev/null | tr 'A-Z' 'a-z')"
+    case "$s" in open|closed) UPD="$(jq -c --arg n "$n" --arg s "$s" '. + {($n): $s}' <<<"$UPD")" ;; esac
+done
+[ "$UPD" != "{}" ] || exit 0
+jq --argjson u "$UPD" '.blockerStates += $u' "$GRAPH" >"$GRAPH.tmp" && mv -f "$GRAPH.tmp" "$GRAPH"

@@ -209,5 +209,19 @@ assert_contains "the finished plan is still counted, not re-planned" "$OUT" "pla
 run r9 --next
 assert_contains "once a slot frees the plan is spawned" "$OUT" "admitted #11 tier=standard attempt=0"
 
+echo "test: a blocker that closed mid-run unblocks its dependent (refresh before ready.sh)"
+mkdir -p "$WORK/bin"
+printf '#!/usr/bin/env bash\necho CLOSED\n' >"$WORK/bin/gh"; chmod +x "$WORK/bin/gh"
+GRAPH="$WORK/graph-live.json"
+cat >"$GRAPH" <<'JSON'
+{"issues":[
+ {"n":20,"title":"f","state":"open","labels":["ready-for-agent"],"tier":"trivial","body":"","comments":"","blockedBy":[99]}
+],"blockerStates":{"99":"open"},"mockDebtOpen":[]}
+JSON
+mkenv r11 3; git -C "$REPO" branch orchestrate-r11; sed -i "s/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r11/" "$CODEX_RUN_ROOT/r11/run.env"
+PATH="$WORK/bin:$PATH" run r11 --next
+assert_contains "#20 admitted though #99 was open at launch" "$OUT" "admitted #20 tier=trivial attempt=0"
+assert_equals "graph now records #99 closed" "$(jq -r '.blockerStates["99"]' "$GRAPH")" "closed"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
