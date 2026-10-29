@@ -15,7 +15,7 @@
 #          "blockerStates": { "<ref>": "open"|"closed"|"unknown" },   # every ref, in-scope or not
 #          "mockDebtOpen": [ <numbers> ] }                            # the mock-debt ledger
 #     -> silence + exit 0 when the args are missing/junk or a dependency is absent
-#        (fail-open, matching prd-children.sh / prd-reap.sh).  Empty output makes
+#        (fail-open, matching prd-children.sh).  Empty output makes
 #        the workflow's empty-graph throw fire, loudly — never a silent degrade.
 #
 # Parsing rules under test:

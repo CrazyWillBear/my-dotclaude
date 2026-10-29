@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# escalate.sh — should this CODEX worker be replaced by the next model in its tier's
+# escalate.sh — should this worker (codex or boxed claude) be replaced by the next model in its tier's
 # chain, and why? Decided from artifacts that already exist. It NEVER asks the worker:
 # a cheap model must not grade its own competence, and a wedged one cannot (#104).
 #
@@ -9,10 +9,12 @@
 #
 # Output: ONE line on stdout — `<reason>: <detail>` — when a signal fires, NOTHING when
 # none does. Exit 0 either way. Exit 1 only when it cannot read what it needs (bad usage,
-# an unreadable worktree, a thread it could not fetch). A claude-backed worker (resolve-tier.sh
-# says so for THIS --attempt) tops its chain and is never escalated, so that prints nothing,
-# exit 0 — checked by ASKING resolve-tier.sh, never by a codex run dir's existence, which can
-# survive from an earlier, codex, attempt of the same run (#104 review round 11).
+# an unreadable worktree, a thread it could not fetch). Both backends are judged the same way;
+# the run dir's `backend` file only picks the parser for occupancy and the handoff tail. An
+# attempt AT THE TOP of its chain (attempt+1 >= implementer_chain, asked of resolve-tier.sh)
+# is never escalated for review-cap — there is nowhere stronger to go, so its fix rounds run
+# on until the backstop or no-progress ends the loop. Every other signal still fires there,
+# and the orchestrator drains (spawn.sh refuses the respawn).
 #
 # On a hit it also POSTS the mechanical `**Handoff**` comment — the reason, the commits on
 # the branch since base, and the worker's last activity from its event log — unless one for
@@ -22,9 +24,9 @@
 # the chain it drains, as `failed` does today.
 #
 # Signals, any one sufficient, checked in this order:
-#   backstop      terminal safety net for this issue's loop: every round line in the run-dir
-#                  ledger, across attempts. Prints `backstop: …` and exits before all other
-#                  signals. It should never trigger in normal use; no handoff, mark or respawn.
+#   backstop      the bound on this issue's loop: every round line in the run-dir ledger,
+#                  across attempts and backends (default 6). Prints `backstop: …` and exits
+#                  before all other signals; no handoff, mark or respawn.
 #   failed         the worker reported `failed`, exited non-zero, or died with no exit code
 #   quota          a failed exit carries a usage-limit error in events.jsonl; every codex
 #                  model shares that quota, so the orchestrator skips remaining codex positions
@@ -51,12 +53,10 @@
 #                  round: later wakes on the same newest round stay quiet (no review-cap
 #                  Handoff, no second area's decide) until the fix round's review lands a
 #                  new one. Skipped once this attempt's consults reach the cap — a decide is
-#                  a consult — so review-cap takes over. A claude-backed attempt stays exempt: the ledger is written
-#                  only by the codex review wrapper, so a claude attempt has no rounds of its
-#                  own, and any in the file belong to earlier codex attempts behind rounds_mark.
-#   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 1:
-#                  the very first) still has high or medium findings — the fix session is
-#                  spawned at the next chain position. With the shipped luna → opus/sonnet
+#                  a consult — so review-cap takes over.
+#   review-cap     the ESCALATE_REVIEW_CAP-th review round within this attempt (default 2:
+#                  the first fix round's review) still has high or medium findings — the fix session is
+#                  spawned at the next chain position. Never at the top of the chain. With the shipped luna → opus/sonnet
 #                  chains a codex build with findings is fixed on claude from fix round 1;
 #                  luna builds fine but its fix rounds did not converge (PRD #70 ran 5–6
 #                  rounds per issue). Set 2 to give the codex cell one fix round first.
@@ -74,7 +74,9 @@
 # each attempt is judged on evidence it produced. THE ANCHOR LIVES IN THE RUN DIR, not on
 # the thread: when this script posts a handoff it records `{attempt, mark}` (the comment
 # count at that moment) in `$RUNDIR/handoff.json`, and later wakes scan `comments[mark:]`.
-# A worker may post comments (`gh issue comment` is allowed) but cannot reach the run dir,
+# (Holds for a CODEX worker, whose sandbox cannot reach the run dir. A claude worker runs
+# with bypassPermissions and could write it — the accepted not-a-sandbox gap, docs/swarm-
+# design.md § Roster.) A codex worker may post comments (`gh issue comment` is allowed) but cannot reach the run dir,
 # so it cannot post a fake `**Handoff**` to reset its own count — which is what anchoring
 # on the thread would have allowed (review round 2). The same record is what stops a
 # handoff being posted twice for one attempt. (`failed` needs no scoping — spawn.sh clears
@@ -89,8 +91,13 @@
 #                  while `$RUNDIR/reviewing` exists: the wrapper writes it once the worker
 #                  process has exited and the sibling reviewer is running — the log is
 #                  frozen then by design, and `exit` lands only after the review.
+#                  NOR while the worker's process tree is busy: a long test run is one tool
+#                  call and writes no events. "Busy" = it used >= ESCALATE_ACTIVE_TICKS
+#                  (100 = 1 CPU-second) since an earlier sample (`cpu-ticks`, taken by dry runs too).
 #
-# WHERE OCCUPANCY COMES FROM. `events.jsonl`'s `turn.completed` usage block is the TURN'S
+# WHERE OCCUPANCY COMES FROM. A CLAUDE worker's stream carries `message.usage` on every
+# `assistant` event; the last one's input + cache_read + cache_creation is the live context.
+# For CODEX: `events.jsonl`'s `turn.completed` usage block is the TURN'S
 # CUMULATIVE input (a real run: 2.9M over one turn), not the context size, and it lands
 # only when the turn ends. Codex writes the live per-request figure to the worker's own
 # rollout under ~/.codex/sessions as `token_count` events carrying `last_token_usage`
@@ -100,9 +107,9 @@
 #
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
-#   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
-#   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=20 (safety net; should never trigger)
-#   ESCALATE_REVIEW_CAP=1 (which review of an attempt, still carrying high/medium, escalates)
+#   ESCALATE_ACTIVE_TICKS=100  ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
+#   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=6 (review rounds per issue, every attempt)
+#   ESCALATE_REVIEW_CAP=2 (which review of an attempt, still carrying high/medium, escalates)
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
 #   ALSO documented in plugins/infra/README.md and SKILL.md's threshold lists — keep in sync)
 # Seams: CODEX_RUN_ROOT (the run dirs), CODEX_SESSIONS_ROOT (the rollouts), and — since the
@@ -144,9 +151,9 @@ done
 [ -n "$BASE" ] || die "--base BRANCH is required — the handoff lists the commits since it"
 case "$ISSUE" in ''|*[!0-9]*) die "issue must be a number, got '$ISSUE'" ;; esac
 case "$ATTEMPT" in ''|*[!0-9]*) die "attempt must be a number, got '$ATTEMPT'" ;; esac
-ESC_BACKSTOP="${ESCALATE_ROUND_BACKSTOP:-20}"
+ESC_BACKSTOP="${ESCALATE_ROUND_BACKSTOP:-6}"
 case "$ESC_BACKSTOP" in ''|*[!0-9]*) die "ESCALATE_ROUND_BACKSTOP must be a number, got '$ESC_BACKSTOP'" ;; esac
-ESC_REVIEW_CAP="${ESCALATE_REVIEW_CAP:-1}"
+ESC_REVIEW_CAP="${ESCALATE_REVIEW_CAP:-2}"
 case "$ESC_REVIEW_CAP" in ''|0|*[!0-9]*) die "ESCALATE_REVIEW_CAP must be a number of 1 or more, got '$ESC_REVIEW_CAP'" ;; esac
 # An UNKNOWN tier must not reach resolve-tier.sh: it answers one with the claude-only
 # FALLBACK roster (exit 0, its WARN discarded below), which reads here as "claude-backed,
@@ -160,23 +167,18 @@ command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
 RUNDIR="${CODEX_RUN_ROOT:-${HOME:-/nonexistent}/.claude/codex-runs}/$RUNID/issue-$ISSUE"
 
-# The IMPLEMENTER's backend at THIS attempt (round-11 fix): "no codex run dir" is not a valid
-# proxy for "claude-backed" — a run dir left over from an earlier, codex, attempt of the SAME
-# run survives (nothing deletes it), so testing the filesystem would read a healthy
-# claude-backed attempt as codex-backed and subject it to signals no claude worker can ever
-# clear (it never respawns, never writes a rollout, never updates the run dir again). Ask
-# resolve-tier.sh, the one source of truth for what backend an attempt runs on, instead.
+# AT THE TOP of the tier's implementer chain there is no stronger model to hand a review-cap
+# to, so that one signal is suppressed there. Asked of resolve-tier.sh — the one source of
+# truth for the chain — never inferred from the run dir.
 INFRA="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$INFRA/resolve-tier.sh" ] || die "missing infra sibling: $INFRA/resolve-tier.sh"
-IMPL_BACKEND="$(bash "$INFRA/resolve-tier.sh" "$TIER" "$ATTEMPT" 2>/dev/null | sed -n 's/^implementer_backend=//p' | head -1)"
-if [ "$IMPL_BACKEND" = claude ]; then
-    echo "note: attempt $ATTEMPT of issue $ISSUE is claude-backed — a claude worker tops its chain and is never escalated" >&2
-    exit 0
-fi
-# A codex attempt's run dir is spawn.sh's, and every read below — plus the stderr log the
-# python block redirects into — assumes it exists. Say which dir is missing rather than
-# failing later as a bare redirect error and a `cat` of a log that was never created.
-[ -d "$RUNDIR" ] || die "no codex run dir for issue $ISSUE: $RUNDIR"
+CHAIN="$(bash "$INFRA/resolve-tier.sh" "$TIER" 0 2>/dev/null | sed -n 's/^implementer_chain=//p' | head -1)"
+case "$CHAIN" in ''|*[!0-9]*) CHAIN=1 ;; esac
+AT_TOP=""; [ $((ATTEMPT + 1)) -lt "$CHAIN" ] || AT_TOP=1
+# The run dir is spawn.sh's, and every read below — plus the stderr log the python block
+# redirects into — assumes it exists. Say which dir is missing rather than failing later as
+# a bare redirect error and a `cat` of a log that was never created.
+[ -d "$RUNDIR" ] || die "no run dir for issue $ISSUE: $RUNDIR"
 
 # TRIPWIRE (same as spawn.sh's wrapper, worker-resume.sh and consult.sh): git and gh run
 # in the worker's worktree below, on every wake, while the worker may still be writing it.
@@ -193,10 +195,11 @@ THREAD="$(cd "$WORKTREE" && gh issue view "$ISSUE" --json comments 2>/dev/null <
 COMMITS="$(git -C "$WORKTREE" log --oneline "$BASE..HEAD" 2>/dev/null)" || COMMITS=""
 
 export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMMITS="$COMMITS" ESC_DRY="$DRY" \
-       ESC_INFRA="$INFRA" \
+       ESC_INFRA="$INFRA" ESC_AT_TOP="$AT_TOP" \
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
        ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
+       ESC_ACTIVE_TICKS="${ESCALATE_ACTIVE_TICKS:-100}" ESC_SAMPLE_S="${ESCALATE_SAMPLE_SECONDS:-60}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
@@ -204,8 +207,8 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_REVIEW_CAP="$ESC_REVIEW_CAP" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
-# A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
-# python block skips the comment file and the mark.
+# A dry run writes only `cpu-ticks` (its samples are what arm the CPU guard) — its stderr goes to the
+# caller's, and the python block skips the comment file and the mark.
 ESC_ERR="$RUNDIR/escalate-stderr.log"; [ -z "$DRY" ] || ESC_ERR=/dev/stderr
 REASON="$(python3 2>"$ESC_ERR" <<'PY'
 import datetime, glob, json, os, re, subprocess, sys, time
@@ -214,12 +217,15 @@ rundir  = os.environ["ESC_RUNDIR"]
 attempt = int(os.environ["ESC_ATTEMPT"])
 stall_s = float(os.environ["ESC_STALL"]) * 60
 review_s = float(os.environ["ESC_REVIEW"]) * 60
+active_ticks = int(os.environ["ESC_ACTIVE_TICKS"])
+sample_s = float(os.environ["ESC_SAMPLE_S"])
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
 window  = int(os.environ["ESC_WINDOW"])
 backstop = int(os.environ["ESC_BACKSTOP"])
 review_cap = int(os.environ["ESC_REVIEW_CAP"])
 dry     = bool(os.environ.get("ESC_DRY"))
+at_top  = bool(os.environ.get("ESC_AT_TOP"))
 
 def comment_time(c):
     # ISO-8601 UTC, as `gh issue view --json comments` prints createdAt. A comment with no
@@ -250,7 +256,7 @@ except Exception:
     sys.exit(2)
 ledger = [l for l in (read("rounds") or "").splitlines() if re.match(r"\d", l)]
 if backstop > 0 and len(ledger) >= backstop:
-    print("backstop: %d review rounds on this issue, backstop %d — a safety net that should never trigger" % (len(ledger), backstop)); sys.exit(0)
+    print("backstop: %d review rounds on this issue, backstop %d — the issue loop ends here" % (len(ledger), backstop)); sys.exit(0)
 
 # --- the worker's final status ---------------------------------------------------------
 status, note = "", ""
@@ -368,7 +374,7 @@ if reason is None and window > 0 and consults < cap and not spent:
                         fh.write("%d\t%d\t%s\n" % (attempt, newest[-1], area))
             print("recurrence: %s" % recurring[0])
             sys.exit(0)
-if reason is None and not spent:
+if reason is None and not spent and not at_top:
     rounds = []
     for l in ledger[rounds_mark:]:
         m = re.match(r"(\d+) (\d+) high, (\d+) medium", l)
@@ -394,7 +400,25 @@ try:
 except OSError:
     reviewing = False
 running = code == "" and alive and not reviewing
-if reason is None and (running or status == "escalate"):
+backend = (read("backend") or "codex").strip()
+def events():
+    for line in (read("events.jsonl") or "").splitlines():
+        try:
+            e = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(e, dict):
+            yield e
+if reason is None and (running or status == "escalate") and backend == "claude":
+    last = None
+    for e in events():
+        u = (e.get("message") or {}).get("usage") if e.get("type") == "assistant" else None
+        if isinstance(u, dict):
+            last = sum(int(u.get(k, 0) or 0) for k in
+                       ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+    if last is not None and last >= occ_max:
+        reason = ("occupancy", "context at %d tokens, threshold %d" % (last, occ_max))
+elif reason is None and (running or status == "escalate"):
     ev = read("events.jsonl") or ""
     m = re.search(r'"thread_id"\s*:\s*"([^"]+)"', ev)
     if m:
@@ -418,7 +442,57 @@ if reason is None and (running or status == "escalate"):
             reason = ("occupancy", "context at %d tokens, threshold %d" % (last, occ_max))
 
 # --- stall: alive, not finished, event log untouched ------------------------------------
-if reason is None and running:
+def tree_ticks(root):
+    """CPU ticks (user+system, reaped children included) of `root` and everything under it."""
+    ppid, ticks = {}, {}
+    for d in glob.glob("/proc/[0-9]*"):
+        try:
+            with open(d + "/stat") as fh:
+                f = fh.read()
+            rest = f[f.rindex(")") + 2:].split()
+            n = int(d.rsplit("/", 1)[1])
+            ppid[n], ticks[n] = int(rest[1]), sum(int(x) for x in rest[11:15])
+        except (OSError, ValueError):
+            continue
+    seen, todo = set(), [root]
+    while todo:
+        n = todo.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        todo += [c for c, p in ppid.items() if p == n]
+    return sum(ticks.get(n, 0) for n in seen)
+
+# A long test or recording run writes nothing to the event log for minutes (one tool call).
+# That is work, not a stall: the worker's process tree is still burning CPU.
+#
+# `cpu-ticks` holds two samples, "ticks epoch" per line: the previous one and the newest. A call
+# compares against the newest sample that is at least ESC_SAMPLE_S old (else the one before it),
+# and takes a new sample only when the newest is that old. handle-report.sh scans with a DRY run
+# and then repeats the call for real seconds later; both must judge against the same earlier
+# sample, so a dry run records samples too (an observation, not a decision mark). A wedged
+# process (no CPU) still stalls.
+busy = False
+if reason is None and running and pid.isdigit():
+    now_t, now_ticks = time.time(), tree_ticks(int(pid))
+    samples = []
+    for line in (read("cpu-ticks") or "").splitlines():
+        try:
+            tk, ts = line.split()
+            samples.append((int(tk), float(ts)))
+        except ValueError:
+            pass
+    samples = samples[-2:]
+    if samples:
+        newest_old = now_t - samples[-1][1] >= sample_s
+        ref = samples[-1] if newest_old or len(samples) < 2 else samples[-2]
+        busy = now_ticks - ref[0] >= active_ticks
+    if not samples or now_t - samples[-1][1] >= sample_s:
+        samples = (samples[-1:] if samples else []) + [(now_ticks, now_t)]
+        with open(os.path.join(rundir, "cpu-ticks"), "w") as fh:
+            fh.write("".join("%d %.0f\n" % x for x in samples))
+
+if reason is None and running and not busy:
     try:
         age = time.time() - os.stat(os.path.join(rundir, "events.jsonl")).st_mtime
     except OSError:
@@ -432,17 +506,21 @@ if reason is None:
 # --- the mechanical handoff -------------------------------------------------------------
 already = marked_attempt == attempt
 tail = []
-for line in (read("events.jsonl") or "").splitlines()[-40:]:
-    try:
-        e = json.loads(line)
-    except Exception:
-        continue
-    if e.get("type") != "item.completed":
-        continue
-    it = e.get("item") or {}
-    what = it.get("command") or it.get("text") or it.get("path") or ""
-    what = " ".join(str(what).split())[:120]
-    tail.append("- %s: %s" % (it.get("type", "?"), what))
+for e in list(events())[-40:]:
+    if e.get("type") == "item.completed":                          # codex
+        it = e.get("item") or {}
+        what = it.get("command") or it.get("text") or it.get("path") or ""
+        tail.append("- %s: %s" % (it.get("type", "?"), " ".join(str(what).split())[:120]))
+    elif e.get("type") == "assistant":                             # claude
+        for c in (e.get("message") or {}).get("content") or []:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "tool_use":
+                inp = c.get("input") or {}
+                what = inp.get("command") or inp.get("file_path") or inp.get("pattern") or ""
+                tail.append("- %s: %s" % (c.get("name", "tool"), " ".join(str(what).split())[:120]))
+            elif c.get("type") == "text":
+                tail.append("- text: %s" % " ".join(str(c.get("text", "")).split())[:120])
 tail = tail[-3:]
 commits = os.environ["ESC_COMMITS"].strip()
 body = "**Handoff** — attempt %d replaced: %s: %s\n\n" % (attempt, reason[0], reason[1])

@@ -5,7 +5,6 @@
 # prd-children.sh is the single source of truth for "which issues belong to
 # PRD #N".  Two callers share it:
 #
-#   * prd-reap.sh    — to decide whether every child is closed (PRD ready).
 #   * /orchestrate   — to resolve the run's issue allowlist to the PRD being
 #                      built, instead of a repo-wide `--label ready-for-agent`
 #                      sweep that can pick up work the user never asked for (#77
@@ -16,9 +15,9 @@
 #     -> one line per genuine child:  "<number> <state> <labels-csv>"
 #        (labels-csv is "-" when the child carries no labels)
 #     -> silence + exit 0 when there are no children, the arg is missing, or a
-#        dependency/gh call fails (fail-open, matching prd-reap.sh).
+#        dependency/gh call fails (fail-open).
 #
-# The "genuine child" rule is the strict one prd-reap.sh established: the
+# The "genuine child" rule is the strict one: the
 # reference must be a real `Part of #N` trailer on its own line.  GitHub's
 # --search is tokenized full-text, so it returns prefix collisions (#10, #100)
 # and issues that merely *quote* the convention in prose.  Both must be dropped.
@@ -45,7 +44,7 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected: $3)" ;; *) ok "
 assert_empty()        { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected silence, got: $2)"; fi; }
 
 # ---------------------------------------------------------------------------
-# gh shim — same shape as test_prd-reap.sh.
+# gh shim.
 #   $WORK/issue_body/<N>        — JSON for `gh issue view <N> --json body`
 #   $WORK/issue_body_error/<N>  — sentinel: make that fetch exit non-zero
 #   $WORK/issue_list/<prd>      — JSON array for `gh issue list --search "Part of #<prd>"`
@@ -142,9 +141,9 @@ assert_empty  "no output for a PRD with no children" "$out"
 assert_equals "exit 0 when there are no children"    "$rc" "0"
 
 # ---------------------------------------------------------------------------
-echo "test: a failed body fetch keeps the candidate (fail-open, as prd-reap does)"
+echo "test: a failed body fetch keeps the candidate (fail-open)"
 # Dropping it would silently hide a genuine open child — which, for /orchestrate,
-# would silently narrow the scope, and for prd-reap would wrongly report 'ready'.
+# would silently narrow the scope.
 set_list 4 '[{"number":9,"state":"open","labels":[{"name":"ready-for-agent"}]}]'
 : >"$WORK/issue_body_error/9"
 out="$(run_children 4)"

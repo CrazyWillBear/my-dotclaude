@@ -33,10 +33,9 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok 
 assert_empty() { if [ -z "$2" ]; then ok "$1"; else no "$1 (expected empty, got '$2')"; fi; }
 
 # resolve-tier.sh fixture (round 11): escalate.sh now asks IT for the implementer's
-# backend at --attempt, never a codex run dir's existence. Standard's chain mirrors the
-# SHIPPED table's shape — codex, codex, then claude tops it at position 2 — so every
-# existing --attempt 0 / --attempt 1 case below still exercises a codex-backed signal, and
-# a dedicated position-2 case below exercises the claude-backed "never escalated" path.
+# chain, never from the run dir. Standard's chain is codex, codex, then claude at position 2
+# — the TOP — so --attempt 0 / --attempt 1 cases exercise mid-chain signals and position-2
+# cases exercise the at-top rule (review-cap suppressed, everything else still fires).
 CFG="$WORK/cfg"; mkdir -p "$CFG"
 cat >"$CFG/model-tiers.json" <<'JSON'
 {
@@ -54,6 +53,9 @@ cat >"$CFG/model-tiers.json" <<'JSON'
 }
 JSON
 export RESOLVE_TIER_ROOT="$CFG"
+# Most review-cap cases below were written at a cap of 1 (escalate on the first round with
+# findings); pin it so they keep meaning that. The shipped default (2) has its own case.
+export ESCALATE_REVIEW_CAP=1
 
 BIN="$WORK/bin"; mkdir -p "$BIN"
 cat >"$BIN/gh" <<'STUB'
@@ -258,6 +260,16 @@ run r1 12 standard "$REPO" --base base --attempt 1
 assert_empty "a review-cap already handed off does not re-fire on the next attempt" "$OUT"
 mkrun '{"issue":12,"status":"escalate","round":0,"head":"","review":"","note":"step 4: g missing"}' 0
 
+echo "test: the shipped review-cap default is 2 — one fix round on the same model first"
+mkrun '{"issue":12,"status":"built","round":0,"head":"abc1234","review":"","note":""}' 0
+printf '1 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+rm -f "$RUNDIR/handoff.json"
+OUT="$(env -u ESCALATE_REVIEW_CAP bash "$SCRIPT" r1 12 standard "$REPO" --base base --attempt 0 2>/dev/null)"
+assert_empty "the first round with findings is a fix round at the default" "$OUT"
+printf '1 0 high, 1 medium, 0 low\n2 0 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
+OUT="$(env -u ESCALATE_REVIEW_CAP bash "$SCRIPT" r1 12 standard "$REPO" --base base --attempt 0 --dry-run 2>/dev/null)"
+assert_contains "the second still carrying findings escalates" "$OUT" "review-cap: review 2"
+
 echo "test: review-cap — the FIRST round with high or medium findings, from the RUN-DIR ledger"
 # The shipped standard chain is luna → opus: luna builds, and any review with findings hands the fix
 # rounds to opus (PRD #70: luna's own fix rounds ran 5–6 deep without converging).
@@ -405,12 +417,11 @@ printf "$RECUR" >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 0 --dry-run
 assert_contains "dry run reports" "$OUT" "recurrence: src/a.py"
 if [ -e "$RUNDIR/recurrence" ]; then no "dry run wrote recurrence"; else ok "dry run wrote no recurrence marker"; fi
-# the claude-backed exemption holds: no ledger of its own, never evaluated
+# the top of the chain still gets its decide: recurrence is a planner call, not an escalation
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
 printf "$RECUR" >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 2
-assert_empty "a claude-backed attempt is exempt — the ledger is the codex wrapper's" "$OUT"
-assert_contains "and says why" "$ERR" "never escalated"
+assert_contains "an attempt at the top of its chain still recurs" "$OUT" "recurrence: src/a.py"
 
 echo "test: no-progress — a round after a planner decision that reduces nothing ends the loop (#118)"
 mkrun '{"issue":12,"status":"fixed","round":3,"head":"abc1234","review":"","note":""}' 0
@@ -462,11 +473,15 @@ assert_equals "backstop precedes blocked" "${OUT%%:*}" "backstop"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"failed"}' 1
 printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
 ESCALATE_ROUND_BACKSTOP=3 run r1 12 standard "$REPO" --base base --attempt 2
-assert_empty "a claude-backed attempt remains exempt from backstop" "$OUT"
+assert_equals "the backstop binds the top of the chain too" "${OUT%%:*}" "backstop"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"failed"}' 1
 printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 0
-assert_not_contains "the default 20-round backstop does not fire at 3" "$OUT" "backstop"
+assert_not_contains "the default 6-round backstop does not fire at 3" "$OUT" "backstop"
+mkrun '{"issue":12,"status":"fixed","round":6,"head":"abc1234","review":"","note":""}' 0
+printf '1 1 high, 0 medium, 0 low\n2 1 high, 0 medium, 0 low\n3 1 high, 0 medium, 0 low\n4 1 high, 0 medium, 0 low\n5 1 high, 0 medium, 0 low\n6 1 high, 0 medium, 0 low\n' >"$RUNDIR/rounds"
+run r1 12 standard "$REPO" --base base --attempt 2
+assert_equals "the default backstop fires at 6 rounds" "${OUT%%:*}" "backstop"
 ESCALATE_ROUND_BACKSTOP=x run r1 12 standard "$REPO" --base base --attempt 0
 assert_equals "a non-numeric backstop fails with exit 1" "$RC" "1"
 unset ESCALATE_ROUND_BACKSTOP
@@ -493,6 +508,20 @@ mkrun "" ""
 rm -rf "$SESSIONS"
 run r1 12 standard "$REPO" --base base
 assert_empty "no rollout found: no occupancy signal, no crash" "$OUT"
+
+echo "test: a worker whose process tree is burning CPU is not stalled (a long test run)"
+bash -c 'while :; do :; done' & BUSY=$!
+mkrun "" "" "$BUSY"
+age_file "$RUNDIR/events.jsonl" 30
+export ESCALATE_SAMPLE_SECONDS=1
+run r1 12 standard "$REPO" --base base --dry-run   # handle-report.sh scans dry first: first sample, nothing to compare
+sleep 2
+run r1 12 standard "$REPO" --base base --dry-run
+assert_empty "dry scan: stale log but CPU advanced since the earlier sample" "$OUT"
+run r1 12 standard "$REPO" --base base             # ...then repeats the call for real, seconds later
+assert_empty "and the real call judges against the same earlier sample: not a stall" "$OUT"
+unset ESCALATE_SAMPLE_SECONDS
+kill "$BUSY" 2>/dev/null; wait "$BUSY" 2>/dev/null
 
 echo "test: stall — alive, unfinished, event log untouched for the window"
 sleep 120 & SLEEPER=$!
@@ -581,21 +610,36 @@ for f in handoff-comment.md handoff.json escalate-stderr.log recurrence; do
     if [ -e "$RUNDIR/$f" ]; then no "dry run wrote $f"; else ok "dry run did not write $f"; fi
 done
 
-echo "test: a claude-backed attempt (chain position 2) is never escalated (review round 11)"
-# The exact round-11 bug: a run dir left over from an earlier CODEX attempt of the SAME run
-# survives (nothing deletes it) and must not make attempt 2 (this fixture's claude cell)
-# read as codex-backed — the backend comes from resolve-tier.sh, never the filesystem.
-mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"stale, from attempt 1"}' 3
+echo "test: at the top of the chain review-cap is suppressed, other signals still fire"
+mkrun '{"issue":12,"status":"fixed","round":1,"head":"abc1234","review":"","note":""}' 0
+printf '1 2 high, 1 medium, 0 low\n' >"$RUNDIR/rounds"
 run r1 12 standard "$REPO" --base base --attempt 2
 assert_equals "exit 0" "$RC" "0"
-assert_empty "nothing on stdout — a stale failed-looking run dir is not read at all" "$OUT"
-assert_contains "and says why on stderr" "$ERR" "never escalated"
+assert_empty "no review-cap at the top — there is nowhere stronger to go" "$OUT"
 assert_equals "and nothing posted" "$(posted)" "no"
-rm -rf "$RUNDIR"
+run r1 12 standard "$REPO" --base base --attempt 1
+assert_contains "one position lower the same ledger is a review-cap" "$OUT" "review-cap"
+mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"stuck"}' 3
 run r1 12 standard "$REPO" --base base --attempt 2
-assert_equals "exit 0 with truly no run dir either" "$RC" "0"
-assert_empty "nothing on stdout" "$OUT"
-assert_contains "and says why on stderr" "$ERR" "never escalated"
+assert_contains "a failure at the top still fires, so the orchestrator drains" "$OUT" "failed"
+
+echo "test: a claude worker's occupancy comes from its stream's last assistant usage"
+mkrun "" ""
+printf 'claude\n' >"$RUNDIR/backend"
+{
+    printf '{"type":"system","subtype":"init","session_id":"s1"}\n'
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":5,"cache_read_input_tokens":10,"cache_creation_input_tokens":0},"content":[{"type":"tool_use","name":"Bash","input":{"command":"pytest -q"}}]}}\n'
+    printf '{"type":"assistant","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":250000,"cache_creation_input_tokens":6000},"content":[{"type":"text","text":"still going"}]}}\n'
+} >"$RUNDIR/events.jsonl"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_contains "the last usage block crosses the threshold" "$OUT" "occupancy: context at 256100 tokens"
+assert_contains "the handoff tail reads claude tool calls" "$(cat "$WORK/body" 2>/dev/null)" "- Bash: pytest -q"
+assert_contains "and claude text" "$(cat "$WORK/body" 2>/dev/null)" "- text: still going"
+mkrun "" ""
+printf 'claude\n' >"$RUNDIR/backend"
+printf '{"type":"assistant","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}\n' >"$RUNDIR/events.jsonl"
+run r1 12 standard "$REPO" --base base --attempt 0
+assert_empty "a small claude context is no signal" "$OUT"
 
 echo "test: the containment tripwire — a worktree --roots refuses is not read (review fix 3)"
 mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}' 0
@@ -615,7 +659,6 @@ mkrun '{"issue":12,"status":"failed","round":0,"head":"","review":"","note":"x"}
 run r1 12 tier:standard "$REPO" --base base --attempt 0
 assert_equals "the label form exits 1" "$RC" "1"
 assert_contains "and names the tier" "$ERR" "unknown tier 'tier:standard'"
-assert_not_contains "never reports it as claude-backed" "$ERR" "never escalated"
 assert_equals "nothing posted" "$(posted)" "no"
 
 echo "test: a codex attempt with a missing run dir says so (review round 12)"
@@ -625,7 +668,7 @@ echo "test: a codex attempt with a missing run dir says so (review round 12)"
 rm -rf "$RUNDIR"
 run r1 12 standard "$REPO" --base base --attempt 0
 assert_equals "exit 1" "$RC" "1"
-assert_contains "names the missing run dir" "$ERR" "no codex run dir for issue 12"
+assert_contains "names the missing run dir" "$ERR" "no run dir for issue 12"
 assert_not_contains "no bare cat failure" "$ERR" "No such file or directory"
 
 echo "test: usage errors fail loud"

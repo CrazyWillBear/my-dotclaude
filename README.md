@@ -39,13 +39,14 @@ Open Claude Code and paste one of these:
 ### Option B — run a script
 
 ```bash
-# developer (macOS / Linux / WSL)
+# developer (Linux / WSL)
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 # non-developer
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 ```
 
-macOS / Linux / WSL only. On Windows, run the scripts under WSL.
+Linux / WSL only. On Windows, run the scripts under WSL. macOS is not supported: Claude Code keeps
+its credentials in the Keychain there, and `/orchestrate`'s worker boxes link the credentials file.
 
 Then **restart Claude Code** so it loads the plugins.
 
@@ -115,15 +116,15 @@ What you actually type day to day. One human-in-the-loop front-end and one AFK l
    **tier** (`tier:trivial|standard|complex`), which is what routes the agent models later.
 4. **`/orchestrate [--max N]`** then runs AFK until the scope drains: it keeps N issues in
    flight (readiness computed by a script over a launch-frozen issue graph, never guessed),
-   spawns **one background Claude Code session per issue** into its own worktree, and each
-   session reviews its own slice with `my-review` and posts the findings **onto the issue** —
-   so the findings never pass through the orchestrator's context. Conflict-free branches are
-   merged by a deterministic fold; only the conflicted remainder reaches an agent.
+   runs **one boxed, one-shot worker per issue** (codex, or `claude -p` in a lean per-role
+   config) in its own worktree, and an independent reviewer posts each slice's findings **onto
+   the issue** — so they never pass through the orchestrator's context. Conflict-free branches
+   are merged by a deterministic fold; only the conflicted remainder reaches an agent. It ends by
+   opening **one PR** whose `Closes #N` lines close the slices when you merge it.
 
-For a **single task** not worth slicing into an issue graph, `/orchestrate` runs the same
-discipline in one pass without spawning anything: it announces the ad-hoc lane and chains
-plan (complex only) → build → `my-review` → capped fix rounds → an **offered** merge. There is
-no separate command — two front doors to the same room rot apart.
+For a **single task** not worth slicing into an issue graph, `/orchestrate` routes to **`/adhoc`**:
+the same discipline in one pass as a subagent chain — plan (complex only) → build → `my-review`
+→ fix rounds → an **offered** merge.
 
 The machinery behind each step — worktrees, the merger, the per-issue `my-review` stage, label
 conventions — is in [`plugins/workflow/README.md`](plugins/workflow/README.md); the per-command

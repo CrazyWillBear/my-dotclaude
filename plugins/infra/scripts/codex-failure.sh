@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
-# codex-failure.sh — read a codex crash reason from its event log, then stderr.
+# codex-failure.sh — read a worker's crash reason from its event log, then stderr.
+#
+# Both backends: codex `error` / `turn.failed` events; a claude worker's `result` event with
+# `is_error`, or a `rate_limit_event` that was not allowed.
 #
 # Usage: bash codex-failure.sh <rundir>
 # Output: at most one flattened reason line; always exits 0.
@@ -8,8 +11,9 @@
 # WHY THE EVENT LOG COMES FIRST. stderr.log starts with Codex's harmless
 # "Reading additional input from stdin..." banner, which caused #82 to be
 # misreported as a stdin failure. The event stream carries the actual error.
-# A usage-limit message is prefixed `quota:` because every codex model in the
-# chain shares the quota, so trying the next codex position cannot help.
+# A codex usage-limit message is prefixed `quota:` because every codex model in the
+# chain shares the quota, so trying the next codex position cannot help. A claude rate
+# limit is reported plainly: escalate.sh's quota skip is about the codex positions.
 
 CODEX_FAILURE_RUNDIR="${1:-}" python3 <<'PY'
 import json, os, re
@@ -20,6 +24,7 @@ def flat(value):
     return " ".join(str(value).split()) or "(no reason given)"
 
 message = None
+claude = False
 try:
     with open(os.path.join(rundir, "events.jsonl"), encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -35,12 +40,20 @@ try:
                 error = event.get("error")
                 if isinstance(error, dict) and "message" in error:
                     message = error["message"]
+            elif event.get("type") == "result" and event.get("is_error"):
+                claude = True
+                message = event.get("result") or event.get("subtype") or "the claude turn ended in error"
+            elif event.get("type") == "rate_limit_event":
+                info = event.get("rate_limit_info") or {}
+                if isinstance(info, dict) and info.get("status") not in (None, "allowed", "allowed_warning"):
+                    claude = True
+                    message = "rate limited: %s" % info.get("status")
 except OSError:
     pass
 
 if message is not None:
     why = flat(message)[:500]
-    if re.search(r"usage[ _]limit", why, re.I):
+    if not claude and re.search(r"usage[ _]limit", why, re.I):
         print("quota: " + why)
     else:
         print(why)
