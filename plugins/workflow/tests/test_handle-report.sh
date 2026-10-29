@@ -265,6 +265,19 @@ assert_equals "the provisioned env is carried to the fresh admission" "$(cat "$C
 assert_equals "and nothing else (no stale exit to be re-reported)" "$(ls "$CODEX_RUN_ROOT/r1/issue-13")" "env"
 run --retry; assert_equals "--retry needs an issue" "$RC" "1"
 
+echo "test: --hold drops one paused in-flight issue and the run goes on"
+run --hold 13; assert_equals "a slice that is not in flight is refused" "$RC" "1"
+assert_contains "and says so" "$ERR" "not in flight"
+rl append r1 admitted '{"n":13,"tier":"standard"}' >/dev/null
+mkrun 13 0 build ''; printf 'blocked\n' >"$CODEX_RUN_ROOT/r1/issue-13/paused"
+run --hold 13 infra: no redis
+assert_contains "held with the operator's reason" "$OUT" "held #13 infra: no redis"
+case " $(state | sed -n 's/^held=//p' | tr ',' ' ') " in *" 13 "*) ok "13 is held in the log" ;; *) no "13 is not held" ;; esac
+assert_equals "its pause is cleared" "$(ls "$CODEX_RUN_ROOT/r1/issue-13" | grep -c '^paused$')" "0"
+case " $(state | sed -n 's/^in_flight=//p' | tr ',' ' ') " in *" 13 "*) no "13 still takes a slot" ;; *) ok "its slot is free" ;; esac
+run --retry 13; assert_contains "and --retry re-admits it later" "$OUT" "released #13"
+run --hold; assert_equals "--hold needs an issue" "$RC" "1"
+
 echo "test: everything in flight paused still admits what is ready"
 git -C "$REPO" branch orchestrate-r2
 GRAPH2="$WORK/graph2.json"

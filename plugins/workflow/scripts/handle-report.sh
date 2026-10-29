@@ -7,6 +7,7 @@
 #   bash handle-report.sh <runid> --merged <N>              # the merger landed issue-<N>
 #   bash handle-report.sh <runid> --answer <N> <text>       # a human answered #N's question
 #   bash handle-report.sh <runid> --resource <N> --env K=V…  # a human provisioned #N's resource
+#   bash handle-report.sh <runid> --hold <N> [why]          # stop #N's worker and hold it; the run goes on
 #   bash handle-report.sh <runid> --retry <N>               # lift #N's hold: it is admitted afresh
 #   bash handle-report.sh <runid> --max <N>                 # change the run's worker cap mid-run
 #
@@ -40,7 +41,7 @@ set -uo pipefail
 # shellcheck source=run-env.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-env.sh"
 
-USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V... | --retry N | --max N"
+USAGE="usage: handle-report.sh <runid> --wait | --merged N | --answer N <text> | --resource N --env K=V... | --hold N [why] | --retry N | --max N"
 [ $# -ge 2 ] || die "$USAGE"
 load_run "$1"; shift
 MODE="$1"; shift
@@ -436,6 +437,17 @@ case "$MODE" in
     NAMES="$(for p in "${PAIRS[@]}"; do printf '%s\n' "${p%%=*}"; done | jq -R . | jq -cs .)"
     runlog append "$RUNID" respawned "{\"n\":$N,\"reason\":\"infra\",\"env\":$NAMES}" >/dev/null
     echo "respawned #$N with $(printf '%s' "$NAMES" | jq -r 'join(",")')" ;;
+--hold)
+    # Drop one in-flight issue without ending the run: a worker paused on `blocked infra` (or
+    # anything else the human will not fix now) otherwise pins its slot and its dependents.
+    # Its work is salvaged to prev/issue-N-<runid>; --retry N admits it afresh later.
+    [ $# -ge 1 ] || die "$USAGE"
+    N="${1#\#}"; shift; case "$N" in ''|*[!0-9]*) die "issue must be a number" ;; esac
+    case " $(run_state in_flight) " in *" $N "*) ;; *) die "#$N is not in flight" ;; esac
+    kill_worker "$N" || die "could not stop #$N's worker"
+    unpause "$N"
+    hold "$N" "${*:-held by the operator}"
+    next ;;
 --retry)
     # A hold is the run's judgment, not the issue's: once its cause is fixed (a stale branch
     # deleted, a prerequisite landed) this lifts it. A retry is a FRESH admission, so the old
