@@ -89,6 +89,11 @@ For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
        cannot reconcile — *not* the mere presence of conflict markers) → `git -C <base> merge
        --abort`, leave that issue's worktree intact, and record it as a **conflict-stop** for the
        orchestrator. **Never keep an unverified resolution.**
+   - **Post-fold failure:** if the orchestrator says `issue-N` is *already merged* and the repo's
+     post-fold check failed (e.g. two migrations share a number and the tree has two heads), there is
+     no merge to resolve: fix the cause with a **new commit** on the base branch (renumber and
+     re-parent the later file onto the current head), re-run the check and the done-check, and report
+     it as **resolved**. Stuck → `git revert -m 1 <that merge commit>` and report a **conflict-stop**.
 3. **After all merges** → run the done-check once more on the base branch (final state) and report
    its result.
 

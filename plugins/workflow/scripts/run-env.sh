@@ -61,8 +61,9 @@ spawn_issue() {
 
 # repo_hook <name> <dest> — copy the repo's .orchestrate/<name>.sh, as of the LAUNCH commit, to
 # <dest>; fails when it has none. Never read from a worktree: workers write those, and the hook
-# runs on the host. Hooks: `provision.sh` (admit.sh, before a worker's first spawn) and
-# `teardown.sh` (end-run.sh), both called with <runid> <issue> <worktree>.
+# runs on the host. Hooks: `provision.sh` (admit.sh, before a worker's first spawn),
+# `teardown.sh` (end-run.sh) and `post-fold.sh` (handle-report.sh, after each clean fold; non-zero
+# hands the issue to the merger), all called with <runid> <issue> <worktree>.
 repo_hook() { git -C "$BASE_REPO" show "$BASE_SHA:.orchestrate/$1.sh" >"$2" 2>/dev/null; }
 
 # env_args <N> — ENV_ARGS=(--env K=V ...) from the issue's provisioned pairs. Values never

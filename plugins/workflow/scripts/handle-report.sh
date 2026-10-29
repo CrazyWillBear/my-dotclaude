@@ -185,6 +185,15 @@ drain_folds() {
     done
 }
 
+# post_fold <N> — the repo's .orchestrate/post-fold.sh (launch commit), run in the orchestration
+# worktree after a clean fold. No hook: fine. Prints the failure's last line when it fails.
+post_fold() {
+    local hook="$TMP/post-fold.sh" o
+    repo_hook post-fold "$hook" || return 0
+    o="$(cd "$ORCH_WT" && timeout "${POSTFOLD_TIMEOUT:-600}" bash "$hook" "$RUNID" "$1" "$ORCH_WT" 2>&1 </dev/null)" && return 0
+    printf '%s' "$(printf '%s\n' "$o" | tail -1)"; return 1
+}
+
 # fold <N> — land issue-<N> on the orchestration branch with plain git, or hand it to the merger.
 fold() {
     local n="$1" out m
@@ -196,7 +205,15 @@ fold() {
     out="$(cd "$ORCH_WT" && bash "$WF/merge-fold.sh" --allow-behind "$ORCH_BRANCH" "issue-$n" 2>&1)"
     case "$(printf '%s\n' "$out" | awk -v b="issue-$n" '$2 == b {print $1; exit}')" in
         merged)
-            local sha; sha="$(printf '%s\n' "$out" | awk -v b="issue-$n" '$1 == "merged" && $2 == b {print $3}')"
+            local sha chk; sha="$(printf '%s\n' "$out" | awk -v b="issue-$n" '$1 == "merged" && $2 == b {print $3}')"
+            # A clean git merge can still break what two branches share (two migrations that both
+            # claim the next number: different files, no conflict, two heads). The repo's own
+            # post-fold.sh decides; a failure goes to the merger, with the merge already committed.
+            if ! chk="$(post_fold "$n")"; then
+                pause "$n" conflict
+                echo "conflict #$n post-fold — issue-$n is merged into $ORCH_BRANCH but the repo's post-fold check failed ($chk): spawn workflow:merger to FIX it with a new commit in $ORCH_WT (no reset), then: handle-report.sh $RUNID --merged $n"
+                return
+            fi
             unpause "$n"
             runlog append "$RUNID" merged "$(jq -cn --argjson n "$n" --arg s "$sha" '{n: $n, sha: $s}')" >/dev/null
             echo "merged #$n ${sha:0:7}"

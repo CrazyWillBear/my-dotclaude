@@ -95,7 +95,9 @@ export RESOLVE_TIER_ROOT="$CFG"
 REPO="$WORK/repo"
 git init -q -b dev "$REPO"
 git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
-printf 'x\n' >"$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm init
+printf 'x\n' >"$REPO/f"; mkdir "$REPO/.orchestrate"
+printf '#!/usr/bin/env bash\n[ -z "${STUB_POSTFOLD_FAIL:-}" ] || { echo "two alembic heads" >&2; exit 1; }\n' >"$REPO/.orchestrate/post-fold.sh"
+git -C "$REPO" add f .orchestrate; git -C "$REPO" commit -qm init
 ORCH_WT="$WORK/orchwt"
 git -C "$REPO" worktree add -q -b orchestrate-r1 "$ORCH_WT" dev
 # issue-N branches: each adds its own file (merges clean); 19 and 20 both edit f (20 conflicts).
@@ -230,6 +232,15 @@ reset; mkrun 22 0 build '1 1 high, 0 medium, 0 low\n'
 STUB_REPORT="issue 22 built head=abc1234 review=1 high, 0 medium, 0 low" run --wait
 assert_contains "every later spawn re-passes it" "$(cat "$STUB_LOG.spawn")" "--env DATABASE_URL=postgres://secret"
 
+echo "test: a clean fold whose post-fold check fails goes to the merger, merged but not recorded"
+reset; mkrun 16 0 build ''
+STUB_POSTFOLD_FAIL=1 STUB_REPORT="issue 16 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "handed to the merger with the check's message" "$OUT" "conflict #16 post-fold"
+assert_contains "naming the failure" "$OUT" "two alembic heads"
+assert_not_contains "and not logged merged" "$(state | grep '^merged=')" "16"
+run --merged 16
+assert_contains "--merged records it once the merger's fix is in" "$OUT" "merged #16"
+
 echo "test: a conflict pauses for the merger; --merged lands it"
 reset; mkrun 19 0 build ''
 STUB_REPORT="issue 19 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
@@ -248,7 +259,7 @@ assert_equals "--merged refuses an unmerged branch" "$RC" "1"
 run --merged 20
 assert_contains "--merged logs it" "$OUT" "merged #20"
 assert_contains "and lands the queued fold" "$OUT" "merged #21"
-assert_contains "and the log agrees" "$(state)" "merged=11,12,14,19,20,21"
+assert_contains "and the log agrees" "$(state)" "merged=11,12,14,16,19,20,21"
 
 echo "test: a timeout says waiting; an unreadable report holds the issue"
 reset
