@@ -252,6 +252,21 @@ assert_contains "a failing hook holds the issue with its message" "$OUT" "held #
 assert_not_contains "and nothing is spawned for it" "$(cat "$STUB_LOG.spawn")" " 31 "
 assert_not_contains "values never reach the output" "$OUT" "postgres://secret"
 assert_equals "the pairs file is 0600" "$(stat -c %a "$CODEX_RUN_ROOT/r12/issue-30/env")" "600"
+
+echo "test: a worktree cut before the run branch moved is fast-forwarded before the worker starts"
+python3 - "$GRAPH" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1]))
+g["issues"].append({"n": 32, "title": "r", "state": "open", "labels": ["ready-for-agent"], "tier": "standard", "body": "", "comments": "", "blockedBy": []})
+json.dump(g, open(sys.argv[1], "w"))
+PY
+run r12 --next
+assert_contains "#32 is planning" "$OUT" "planning #32"
+NEW="$(git -C "$REPO" commit-tree -p orchestrate-r1 -m moved "orchestrate-r1^{tree}")"
+git -C "$REPO" update-ref refs/heads/orchestrate-r1 "$NEW"
+settle r12; run r12 --next
+assert_contains "#32 admitted" "$OUT" "admitted #32"
+assert_equals "its worktree caught up with the run branch" "$(git -C "$REPO/.worktrees/r12/issue-32" rev-parse HEAD)" "$NEW"
 REPO="$REPO_MAIN"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

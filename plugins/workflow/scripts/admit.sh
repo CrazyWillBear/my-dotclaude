@@ -83,6 +83,9 @@ provision() {
 }
 
 spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead
+    # A plan can take a while and the run branch moves meanwhile: a clean worktree catches up here
+    # so the worker never needs `git merge` (its permission layer denies it). Diverged/dirty: left alone.
+    git -C "$(worktree_of "$1")" merge -q --ff-only "$ORCH_BRANCH" >/dev/null 2>&1 || :
     provision "$1" 2>"$TMP/prov-$1.msg" || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
     spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
         || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
