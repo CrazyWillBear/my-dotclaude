@@ -509,6 +509,16 @@ rm -rf "$SESSIONS"
 run r1 12 standard "$REPO" --base base
 assert_empty "no rollout found: no occupancy signal, no crash" "$OUT"
 
+echo "test: a worker whose process tree is burning CPU is not stalled (a long test run)"
+bash -c 'while :; do :; done' & BUSY=$!
+mkrun "" "" "$BUSY"
+age_file "$RUNDIR/events.jsonl" 30
+run r1 12 standard "$REPO" --base base      # first sample: nothing to compare with yet
+sleep 2
+run r1 12 standard "$REPO" --base base
+assert_empty "stale log but CPU advanced since the last call: not a stall" "$OUT"
+kill "$BUSY" 2>/dev/null; wait "$BUSY" 2>/dev/null
+
 echo "test: stall — alive, unfinished, event log untouched for the window"
 sleep 120 & SLEEPER=$!
 mkrun "" "" "$SLEEPER"

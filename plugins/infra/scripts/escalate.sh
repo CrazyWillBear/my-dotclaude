@@ -91,6 +91,9 @@
 #                  while `$RUNDIR/reviewing` exists: the wrapper writes it once the worker
 #                  process has exited and the sibling reviewer is running — the log is
 #                  frozen then by design, and `exit` lands only after the review.
+#                  NOR while the worker's process tree is busy: a long test run is one tool
+#                  call and writes no events. "Busy" = it used >= ESCALATE_ACTIVE_TICKS
+#                  (100 = 1 CPU-second) since the previous call's sample (`cpu-ticks`).
 #
 # WHERE OCCUPANCY COMES FROM. A CLAUDE worker's stream carries `message.usage` on every
 # `assistant` event; the last one's input + cache_read + cache_creation is the live context.
@@ -104,7 +107,7 @@
 #
 # Thresholds are starting values (PRD #104 § Further notes) — revisit once the run log has
 # real counts:
-#   ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
+#   ESCALATE_ACTIVE_TICKS=100  ESCALATE_STALL_MINUTES=20  ESCALATE_OCCUPANCY_TOKENS=256000  ESCALATE_CONSULT_CAP=2
 #   ESCALATE_RECURRENCE_WINDOW=2  ESCALATE_ROUND_BACKSTOP=6 (review rounds per issue, every attempt)
 #   ESCALATE_REVIEW_CAP=2 (which review of an attempt, still carrying high/medium, escalates)
 #   ESCALATE_REVIEW_MINUTES=45 (the post-build review's own budget — see `reviewing` below;
@@ -196,6 +199,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
        ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
+       ESC_ACTIVE_TICKS="${ESCALATE_ACTIVE_TICKS:-100}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
@@ -213,6 +217,7 @@ rundir  = os.environ["ESC_RUNDIR"]
 attempt = int(os.environ["ESC_ATTEMPT"])
 stall_s = float(os.environ["ESC_STALL"]) * 60
 review_s = float(os.environ["ESC_REVIEW"]) * 60
+active_ticks = int(os.environ["ESC_ACTIVE_TICKS"])
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
 window  = int(os.environ["ESC_WINDOW"])
@@ -436,7 +441,42 @@ elif reason is None and (running or status == "escalate"):
             reason = ("occupancy", "context at %d tokens, threshold %d" % (last, occ_max))
 
 # --- stall: alive, not finished, event log untouched ------------------------------------
-if reason is None and running:
+def tree_ticks(root):
+    """CPU ticks (user+system, reaped children included) of `root` and everything under it."""
+    ppid, ticks = {}, {}
+    for d in glob.glob("/proc/[0-9]*"):
+        try:
+            with open(d + "/stat") as fh:
+                f = fh.read()
+            rest = f[f.rindex(")") + 2:].split()
+            n = int(d.rsplit("/", 1)[1])
+            ppid[n], ticks[n] = int(rest[1]), sum(int(x) for x in rest[11:15])
+        except (OSError, ValueError):
+            continue
+    seen, todo = set(), [root]
+    while todo:
+        n = todo.pop()
+        if n in seen:
+            continue
+        seen.add(n)
+        todo += [c for c, p in ppid.items() if p == n]
+    return sum(ticks.get(n, 0) for n in seen)
+
+# A long test or recording run writes nothing to the event log for minutes (one tool call).
+# That is work, not a stall: the worker's process tree is still burning CPU. Compared with
+# the sample the previous call left behind, so a wedged process (no CPU) still stalls.
+busy = False
+if reason is None and running and pid.isdigit():
+    now_ticks = tree_ticks(int(pid))
+    try:
+        busy = now_ticks - int((read("cpu-ticks") or "").split()[0]) >= active_ticks
+    except (IndexError, ValueError):
+        pass
+    if not dry:
+        with open(os.path.join(rundir, "cpu-ticks"), "w") as fh:
+            fh.write("%d\n" % now_ticks)
+
+if reason is None and running and not busy:
     try:
         age = time.time() - os.stat(os.path.join(rundir, "events.jsonl")).st_mtime
     except OSError:
