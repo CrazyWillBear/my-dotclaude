@@ -1,6 +1,6 @@
 {
   "name": "infra",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Scripts-only shared layer: one-shot worker spawning (codex, or claude -p in a per-role config box), worker state, escalation and tier resolution. A SessionStart hook links ~/.claude/kit/infra to this plugin and builds the worker boxes, so other plugins call its scripts by one fixed path.",
   "author": {
     "name": "William Chastain",
