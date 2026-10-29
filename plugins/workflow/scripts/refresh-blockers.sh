@@ -17,7 +17,7 @@ command -v gh >/dev/null 2>&1 || exit 0
 
 UPD="{}"
 for n in $(jq -r '.blockerStates // {} | to_entries[] | select(.value != "closed") | .key' "$GRAPH"); do
-    s="$(gh issue view "$n" --json state -q .state 2>/dev/null | tr 'A-Z' 'a-z')"
+    s="$(gh issue view "$n" --json state -q .state 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     case "$s" in open|closed) UPD="$(jq -c --arg n "$n" --arg s "$s" '. + {($n): $s}' <<<"$UPD")" ;; esac
 done
 [ "$UPD" != "{}" ] || exit 0
