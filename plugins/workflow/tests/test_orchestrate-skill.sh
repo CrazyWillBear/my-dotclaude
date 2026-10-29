@@ -36,7 +36,7 @@ echo "test: frontmatter — a cheap dispatcher with no messaging tools"
 assert_contains "name" "$FM" "name: orchestrate"
 assert_contains "runs on sonnet" "$FM" "model: sonnet"
 assert_contains "at medium effort" "$FM" "effort: medium"
-assert_contains "argument-hint carries --max N=8" "$FM" "--max N=8"
+assert_contains "argument-hint carries --max N=6" "$FM" "--max N=6"
 assert_contains "allowed-tools" "$FM" "allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion"
 for t in SendMessage ListAgents Workflow; do assert_not_contains "no $t tool" "$FM" "$t"; done
 
