@@ -212,11 +212,13 @@ assert_equals "never read the thread" "$(grep -c "^view$" "$WORK/gh-argv")" "0"
 echo "test: the latest review's own text rides along — a reused title must not hide the real finding"
 reset; ledger r3r
 printf '%s\n' '- [P2] silent drop of rows — src/a.py:10' '  Round 3 cause: the 30-day window, not the one-day trigger.' \
+    '- [fixed] old P1 finding' '  already resolved text' \
     '- [P3] nit' '  not wanted' >"$CODEX_RUN_ROOT/r3r/issue-84/review.txt"
 run r3r 84 complex "$G"
 BODY="$(cat "$WORK/body")"
 assert_contains "the reviewer's explanation" "$BODY" "Round 3 cause: the 30-day window"
 assert_not_contains "but not a P3 block" "$BODY" "not wanted"
+assert_not_contains "nor a [fixed] item" "$BODY" "already resolved text"
 
 echo "test: --attempt is accepted and ignored — every attempt reads the same ledger"
 reset; ledger r3h

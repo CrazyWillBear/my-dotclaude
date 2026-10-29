@@ -60,7 +60,8 @@ and acts on three kinds of line. Every decision is a script's, with a real test.
    (all from `run-log.sh`); the lowest ready issues fill `--max` (default 6) slots: a worktree off
    the orchestration branch, a `**Plan**` from `consult.sh` for standard and complex, then
    `spawn.sh` at attempt 0. Blocker states are re-read live first, so a blocker that closes
-   mid-run unblocks its dependents. A repo may ship `.orchestrate/provision.sh` (run by `admit.sh`
+   mid-run unblocks its dependents (the pass that notices it admits nothing, so the orchestrator can merge the base
+   branch into the run branch first). A repo may ship `.orchestrate/provision.sh` (run by `admit.sh`
    before the first spawn: `<runid> <issue> <worktree>` in, `NAME=VALUE` lines out, stored as that
    issue's env) and `.orchestrate/teardown.sh` (same args, run per issue by `end-run.sh` with that issue's env
    exported); both are read from the launch commit, never a worktree. A third,

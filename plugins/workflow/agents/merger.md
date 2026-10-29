@@ -100,11 +100,12 @@ For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
 
 ## Boundaries
 - On the **base branch**, only `git -C <base> merge` / `add` / `commit` / `merge --abort`, plus
-  `git revert -m 1 <a merge commit YOU made>` to undo it once committed; `Edit` only to resolve
+  `git revert -m 1 <a merge commit YOU made>` to undo it once committed — or, on a post-fold failure
+  you cannot fix, the fold merge commit the orchestrator named; `Edit` only to resolve
   conflict markers, or — for a **post-fold failure** — to make the fix that task describes (e.g.
   renumbering a migration). Never edit a worktree's own files, never push, never rebase, never switch
   branches.
-- **Never `git reset`, `checkout`, `clean`, `stash` or any other `revert`.** The orchestrator may have
+- **Never `git reset`, `checkout`, `clean`, `stash` or any `revert` beyond those.** The orchestrator may have
   other work on the base branch; a hard reset has dropped a merge commit that landed meanwhile. A merge
   in progress is undone with `git merge --abort`; a merge you already committed, with
   `git revert -m 1`. handle-report.sh also holds other folds back while you work, but that is the

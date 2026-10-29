@@ -76,6 +76,14 @@ safe_git() {
 # hands the issue to the merger), all called with <runid> <issue> <worktree>.
 repo_hook() { git -C "$BASE_REPO" show "$BASE_SHA:.orchestrate/$1.sh" >"$2" 2>/dev/null; }
 
+# hook_timeout <seconds> — a hook's timeout, held under what one call's budget can ever give it, so
+# "not enough budget left" always means "wait for the next call", never "never".
+hook_timeout() {
+    local cap=$(( ${ORCH_BUDGET:-570} - 40 ))
+    [ "$cap" -ge 30 ] || cap=30
+    if [ "$1" -le "$cap" ]; then echo "$1"; else echo "$cap"; fi
+}
+
 # env_args <N> — ENV_ARGS=(--env K=V ...) from the issue's provisioned pairs. Values never
 # leave this array: not argv of anything but the worker launch, never printed, never logged.
 env_args() {

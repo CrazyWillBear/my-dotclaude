@@ -23,7 +23,7 @@ cd "${2:-.}" || exit 1
 command -v gh >/dev/null 2>&1 || exit 0
 
 UPD="{}"
-for n in $(jq -r '[.issues[].n | tostring] as $own | .blockerStates // {} | to_entries[] | select(.value != "closed" and ([.key] | inside($own) | not)) | .key' "$GRAPH"); do
+for n in $(jq -r '[.issues[].n | tostring] as $own | .blockerStates // {} | to_entries[] | select(.value != "closed" and (.key as $k | any($own[]; . == $k) | not)) | .key' "$GRAPH"); do
     s="$(gh issue view "$n" --json state -q .state 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     case "$s" in
         open|closed) UPD="$(jq -c --arg n "$n" --arg s "$s" '. + {($n): $s}' <<<"$UPD")"

@@ -222,9 +222,12 @@ cat >"$GRAPH" <<'JSON'
 JSON
 mkenv r11 3; git -C "$REPO" branch orchestrate-r11; sed -i "s/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r11/" "$CODEX_RUN_ROOT/r11/run.env"
 PATH="$WORK/bin:$PATH" run r11 --next
-assert_contains "#20 admitted though #99 was open at launch" "$OUT" "admitted #20 tier=trivial attempt=0"
-assert_contains "and says its code may not be on the run branch" "$OUT" "note: blocker #99 closed after launch"
+assert_contains "says its code may not be on the run branch" "$OUT" "note: blocker #99 closed after launch"
+assert_not_contains "and admits nothing in that pass (the orchestrator acts first)" "$OUT" "admitted #"
 assert_equals "graph now records #99 closed" "$(jq -r '.blockerStates["99"]' "$GRAPH")" "closed"
+PATH="$WORK/bin:$PATH" run r11 --next
+assert_contains "#20 admitted on the next call, though #99 was open at launch" "$OUT" "admitted #20 tier=trivial attempt=0"
+assert_not_contains "and the note is said once" "$OUT" "note: blocker"
 
 echo "test: the repo's provision.sh runs before the first spawn; its pairs ride on the worker"
 REPO_MAIN="$REPO"; REPO="$WORK/repo-prov"
@@ -285,13 +288,36 @@ run r12 --next
 assert_contains "a stray line holds it" "$OUT" "held #33 provision.sh printed a line that is not a valid NAME=VALUE pair"
 assert_not_contains "without quoting the credential" "$OUT$(cat "$CODEX_RUN_ROOT/r12/log.jsonl" 2>/dev/null)" "pw@h"
 
+echo "test: a deferred pick with nothing in flight stops instead of re-running itself forever"
+GRAPH="$WORK/graph-defer.json"
+cat >"$GRAPH" <<'JSON'
+{"issues":[
+ {"n":41,"title":"d","state":"open","labels":["ready-for-agent"],"tier":"trivial","body":"","comments":"","blockedBy":[]}
+],"blockerStates":{},"mockDebtOpen":[]}
+JSON
+mkenv r14 3
+OUT="$(cd "$REPO" && ORCH_BUDGET=40 timeout 60 bash "$ADMIT" r14 --next 2>&1)"; RC=$?
+assert_equals "it terminates" "$RC" "0"
+assert_contains "says it deferred" "$OUT" "deferred #41"
+assert_contains "and to call again" "$OUT" "waiting: a pick was deferred"
+
 echo "test: a pending post-fold fix pauses admission and plan collection"
-mkdir -p "$CODEX_RUN_ROOT/r12/issue-99"; printf 'post-fold\n' >"$CODEX_RUN_ROOT/r12/issue-99/paused"
+GRAPH="$WORK/graph-pf.json"
+cat >"$GRAPH" <<'JSON'
+{"issues":[
+ {"n":40,"title":"e","state":"open","labels":["ready-for-agent"],"tier":"trivial","body":"","comments":"","blockedBy":[]}
+],"blockerStates":{},"mockDebtOpen":[]}
+JSON
+mkenv r13 3
+mkdir -p "$CODEX_RUN_ROOT/r13/issue-99"; printf 'post-fold\n' >"$CODEX_RUN_ROOT/r13/issue-99/paused"
 : >"$STUB_LOG.spawn"
-run r12 --next
-assert_contains "says why it waits" "$OUT" "#99's merge failed the repo's post-fold check"
-assert_not_contains "admits nothing" "$OUT" "admitted"
-rm -f "$CODEX_RUN_ROOT/r12/issue-99/paused"
+run r13 --next
+assert_contains "says why it waits" "$OUT" "while #99's post-fold fix is pending"
+assert_not_contains "admits nothing" "$OUT" "admitted #"
+assert_equals "and spawns nothing" "$(cat "$STUB_LOG.spawn")" ""
+rm -f "$CODEX_RUN_ROOT/r13/issue-99/paused"
+run r13 --next
+assert_contains "it admits once the fix landed (so the guard was what stopped it)" "$OUT" "admitted #40"
 REPO="$REPO_MAIN"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

@@ -108,14 +108,14 @@ mkbranch() {
     git -C "$REPO/.worktrees/r1/issue-$1" add -A; git -C "$REPO/.worktrees/r1/issue-$1" commit -qm "issue $1"
 }
 for n in 11 12 13 14 15 16 17 18 21 22; do mkbranch "$n"; done
-mkbranch 19 nineteen f; mkbranch 20 twenty f; mkbranch 23
+mkbranch 19 nineteen f; mkbranch 20 twenty f; mkbranch 23; mkbranch 24
 
 GRAPH="$WORK/graph.json"
 python3 - "$GRAPH" <<'PY'
 import json, sys
 tiers = {11: "standard", 12: "standard", 13: "standard", 14: "standard", 15: "standard",
          16: "complex", 17: "trivial", 18: "standard", 19: "standard", 20: "standard",
-         21: "standard", 22: "standard", 23: "standard", 30: "standard"}
+         21: "standard", 22: "standard", 23: "standard", 24: "standard", 30: "standard"}
 issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"],
            "tier": t, "body": "", "comments": "", "blockedBy": ([14] if n == 30 else [])}
           for n, t in tiers.items()]
@@ -246,6 +246,16 @@ echo "test: the post-fold hook runs without the run lock's fd 9"
 reset; rl append r1 admitted '{"n":23,"tier":"x"}' >/dev/null; mkrun 23 0 build ''
 STUB_FD9=1 STUB_REPORT="issue 23 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
 assert_contains "no leak: it folded" "$OUT" "merged #23"
+
+echo "test: a fold whose post-fold check cannot finish in this call is deferred, not merged and misread as a failure"
+reset; rl append r1 admitted '{"n":24,"tier":"x"}' >/dev/null; mkrun 24 0 build ''
+ORCH_BUDGET=40 STUB_REPORT="issue 24 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "deferred" "$OUT" "deferred #24"
+assert_not_contains "no merge, no merger hand-off" "$OUT" "conflict #24"
+assert_not_contains "and not logged merged" "$(state | grep '^merged=')" "24"
+assert_equals "still unpaused, so the next call reports it again" "$(ls "$CODEX_RUN_ROOT/r1/issue-24" | grep -c '^paused$')" "0"
+STUB_REPORT="issue 24 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "it folds on a call with a full budget" "$OUT" "merged #24"
 
 echo "test: a conflict pauses for the merger; --merged lands it"
 reset; mkrun 19 0 build ''
@@ -494,6 +504,14 @@ kill -- -"$LEADER" 2>/dev/null
 assert_contains "still held" "$OUT" "held #17"
 if git -C "$REPO" rev-parse --verify -q prev/issue-17-r1 >/dev/null; then no "a live worker's work was salvaged"; else ok "no salvage branch for a live worker"; fi
 assert_equals "its dirty file is still uncommitted" "$(git -C "$REPO/.worktrees/r1/issue-17" status --porcelain | tr -d ' ')" "??dirty"
+
+echo "test: --retry refuses an issue whose fold was merged and then reverted"
+rl append r1 admitted '{"n":51,"tier":"standard"}' >/dev/null; rl append r1 held '{"n":51,"why":"merger stopped"}' >/dev/null
+run --retry 51; assert_contains "a hold with no fold on the run branch is released" "$OUT" "released #51"
+rl append r1 held '{"n":51,"why":"merger stopped"}' >/dev/null
+git -C "$ORCH_WT" commit -q --allow-empty -m "Merge branch 'issue-51' into orchestrate-r1"
+run --retry 51; assert_equals "refused once its fold is on the run branch" "$RC" "1"
+assert_contains "and says why" "$ERR" "folded into orchestrate-r1 and then reverted"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

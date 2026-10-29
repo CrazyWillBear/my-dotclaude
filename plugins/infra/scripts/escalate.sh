@@ -207,8 +207,8 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_REVIEW_CAP="$ESC_REVIEW_CAP" \
        ESC_COMMENT="$RUNDIR/handoff-comment.md"
 
-# A dry run writes NOTHING to the run dir — its stderr goes to the caller's, and the
-# python block skips the comment file and the mark.
+# A dry run writes only `cpu-ticks` (its samples are what arm the CPU guard) — its stderr goes to the
+# caller's, and the python block skips the comment file and the mark.
 ESC_ERR="$RUNDIR/escalate-stderr.log"; [ -z "$DRY" ] || ESC_ERR=/dev/stderr
 REASON="$(python3 2>"$ESC_ERR" <<'PY'
 import datetime, glob, json, os, re, subprocess, sys, time

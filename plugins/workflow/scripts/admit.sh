@@ -70,16 +70,17 @@ prepare() {
 # pairs `--resource` stores; values are never printed or logged). Skipped when the issue already
 # has env (a retry, or a human's --resource). Fails (→ held) on a non-zero exit or a bad pair.
 provision() {
-    local n="$1" hook="$TMP/provision.sh" out line pairs=() t="${PROVISION_TIMEOUT:-300}" left
+    local n="$1" hook="$TMP/provision.sh" line pairs=() t
     repo_hook provision "$hook" || return 0
     [ ! -f "$(issue_dir "$n")/env" ] || return 0
-    # Inside this call's budget, or defer (2): a hook that outlives the call loses its output lines.
-    left=$(( $(budget_left) - 20 )); [ "$left" -ge "$t" ] || t="$left"
-    [ "$t" -ge 30 ] || return 2
+    # Whole timeout inside this call's budget, or defer (2): a hook that outlives the call loses its
+    # output lines. Output goes to a file, not a pipe a daemon the hook starts could hold open.
+    t="$(hook_timeout "${PROVISION_TIMEOUT:-300}")"
+    [ $(( $(budget_left) - 20 )) -ge "$t" ] || return 2
     mkdir -p "$(issue_dir "$n")"
-    out="$(cd "$BASE_REPO" && timeout "$t" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" 2>"$TMP/prov-$n.err" </dev/null 9>&-)" \
+    (cd "$BASE_REPO" && timeout "$t" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" >"$TMP/prov-$n.out" 2>"$TMP/prov-$n.err" </dev/null 9>&-) \
         || { echo "provision.sh failed: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
-    while IFS= read -r line; do [ -z "$line" ] || pairs+=("$line"); done <<<"$out"
+    while IFS= read -r line; do [ -z "$line" ] || pairs+=("$line"); done <"$TMP/prov-$n.out"
     [ "${#pairs[@]}" -gt 0 ] || return 0
     # Never echo env-pairs.sh's complaint: for a stray stdout line it quotes the text before the first `=`.
     bash "$INFRA/env-pairs.sh" "${pairs[@]}" >/dev/null 2>&1 \
@@ -167,7 +168,7 @@ PF="$(grep -lx 'post-fold' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed
 [ -n "$PF" ] || collect
 
 if [ -n "$PF" ]; then
-    echo "paused: no new work — #$PF's merge failed the repo's post-fold check; spawn workflow:merger to fix it, then handle-report.sh $RUNID --merged $PF"
+    echo "paused: no new work while #$PF's post-fold fix is pending (see its conflict line; --merged $PF lifts this)"
     final_line || echo "waiting: the post-fold fix on #$PF"
     exit 0
 fi
@@ -190,9 +191,16 @@ fi
 
 # Blockers can close mid-run. Said once, when it happens: their code is on the base branch, not on
 # the run branch, so a dependent that needs it must be built on a run branch that has merged it.
+# Nothing is admitted in the pass that says it, so the orchestrator can act first.
+CLOSED=0
 for b in $(bash "$WF/refresh-blockers.sh" "$GRAPH" "$BASE_REPO" 2>/dev/null | sed -n 's/^blocker-closed //p'); do
-    echo "note: blocker $b closed after launch — its code may be on $BASE_BRANCH but not on $ORCH_BRANCH; merge $BASE_BRANCH into it before a dependent that needs $b"
+    echo "note: blocker $b closed after launch — its code may be on $BASE_BRANCH but not on $ORCH_BRANCH; if a dependent needs $b, merge $BASE_BRANCH into $ORCH_BRANCH, then call --next again (dependents are admitted on that call)"
+    CLOSED=1
 done
+if [ "$CLOSED" -eq 1 ]; then
+    final_line || echo "waiting: admission resumes on the next --next call"
+    exit 0
+fi
 ARGS=()
 for n in $(run_state merged);                   do ARGS+=(--merged "$n"); done
 for n in $(run_state held);                     do ARGS+=(--held "$n"); done
@@ -206,18 +214,25 @@ if [ "$RC" -ne 0 ]; then
     exit 1
 fi
 
-BUSY=0
+BUSY=0; DEFERRED=0
 for n in $(run_state in_flight) $(planning); do BUSY=$((BUSY + 1)); done
 for n in $READY; do
     [ "$BUSY" -lt "$MAX" ] || break
-    ! start "$n" || BUSY=$((BUSY + 1))
+    start "$n"; rc=$?
+    [ "$rc" -ne 0 ] || BUSY=$((BUSY + 1))
+    [ "$rc" -ne 2 ] || DEFERRED=1
 done
 # Every pick held and nothing running: the next pass sees them held and may find others.
-# It terminates — each pass holds at least one more issue or starts one.
+# It terminates — each pass holds at least one more issue or starts one. A DEFERRED pick does
+# neither (the call's budget did not change), so that case stops and waits for a fresh call.
 if ! final_line; then
-    if [ -n "$READY" ]; then
-        rm -rf "${TMP:?}"
-        exec bash "$0" "$RUNID" --next
+    if [ "$DEFERRED" -eq 1 ]; then
+        echo "waiting: a pick was deferred for lack of call budget — call handle-report.sh $RUNID --wait (or admit.sh --next) again"
+    else
+        if [ -n "$READY" ]; then
+            rm -rf "${TMP:?}"
+            exec bash "$0" "$RUNID" --next
+        fi
+        echo "${WHY:-nothing-to-do: nothing admissible}"
     fi
-    echo "${WHY:-nothing-to-do: nothing admissible}"
 fi

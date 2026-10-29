@@ -188,13 +188,11 @@ drain_folds() {
 # post_fold <N> — the repo's .orchestrate/post-fold.sh (launch commit), run in the orchestration
 # worktree after a clean fold. No hook: fine. Prints the failure's last line when it fails.
 post_fold() {
-    local hook="$TMP/post-fold.sh" t="${POSTFOLD_TIMEOUT:-300}" left
+    local hook="$TMP/post-fold.sh"
     repo_hook post-fold "$hook" || return 0
-    # Inside this call's budget (a hook that outlives it loses every line the call printed); 9>&-
-    # so a daemon the hook starts cannot keep the run lock; output to a file, not a pipe it could hold open.
-    left=$(( $(budget_left) - 20 )); [ "$left" -ge "$t" ] || t="$left"
-    [ "$t" -ge 10 ] || { echo "no time left in this call for the post-fold check — retry"; return 1; }
-    (cd "$ORCH_WT" && timeout "$t" bash "$hook" "$RUNID" "$1" "$ORCH_WT" >"$TMP/post-fold.out" 2>&1 </dev/null 9>&-) && return 0
+    # fold() already checked the budget. 9>&- so a daemon the hook starts cannot keep the run
+    # lock; output to a file, not a pipe it could hold open.
+    (cd "$ORCH_WT" && timeout "$(hook_timeout "${POSTFOLD_TIMEOUT:-300}")" bash "$hook" "$RUNID" "$1" "$ORCH_WT" >"$TMP/post-fold.out" 2>&1 </dev/null 9>&-) && return 0
     tail -1 "$TMP/post-fold.out" | tr -d '\n'; return 1
 }
 
@@ -205,6 +203,11 @@ fold() {
     if [ -n "$m" ] && [ "$m" != "$n" ]; then
         pause "$n" fold-queued
         echo "queued #$n its fold waits for the merger on #$m; it lands after handle-report.sh $RUNID --merged $m"; return
+    fi
+    # A post-fold check that cannot finish in this call must not run after the merge and be read as a
+    # failure: leave the issue as it is (still reported next call) and fold it then.
+    if repo_hook post-fold "$TMP/post-fold.sh" && [ $(( $(budget_left) - 20 )) -lt "$(hook_timeout "${POSTFOLD_TIMEOUT:-300}")" ]; then
+        echo "deferred #$n not enough call budget left for its post-fold check; it folds on the next call"; return
     fi
     out="$(cd "$ORCH_WT" && bash "$WF/merge-fold.sh" --allow-behind "$ORCH_BRANCH" "issue-$n" 2>&1)"
     case "$(printf '%s\n' "$out" | awk -v b="issue-$n" '$2 == b {print $1; exit}')" in
@@ -500,6 +503,10 @@ case "$MODE" in
     [ $# -eq 1 ] || die "$USAGE"
     N="${1#\#}"; case "$N" in ''|*[!0-9]*) die "issue must be a number" ;; esac
     case " $(run_state held) " in *" $N "*) ;; *) die "#$N is not held" ;; esac
+    # Folded, then undone by a merger's revert: git counts issue-N's old commits as already merged,
+    # so rebuilding on that branch would fold only the new ones and log the whole slice merged.
+    git -C "$ORCH_WT" log --first-parent --format=%s "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null | grep -q "^Merge branch 'issue-$N'" \
+        && die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Revert the revert and use --merged $N, or delete issue-$N and its worktree so it rebuilds from the run branch"
     kill_worker "$N" || die "could not stop #$N's worker"
     d="$(issue_dir "$N")"
     if [ -d "$d" ]; then
