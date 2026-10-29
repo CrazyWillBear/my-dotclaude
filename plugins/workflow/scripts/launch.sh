@@ -39,7 +39,7 @@ set -uo pipefail
 USAGE="usage: launch.sh <runid> (--prd N | --issues N,N,...) [--max N] [--allow-behind] [--skip-unknown]"
 RUNID="${1:-}"; [ $# -gt 0 ] && shift
 check_runid "$RUNID"
-PRD=""; ISSUES=""; MAX=8; BEHIND=""; SKIP=""
+PRD=""; ISSUES=""; MAX=6; BEHIND=""; SKIP=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --prd)          [ $# -ge 2 ] || die "$USAGE"; PRD="${2#\#}"; shift 2 ;;

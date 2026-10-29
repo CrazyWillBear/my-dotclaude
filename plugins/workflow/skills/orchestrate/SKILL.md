@@ -1,7 +1,7 @@
 ---
 name: orchestrate
 description: Dispatcher for agent work, routed by shape: one unit of work runs as a subagent chain; an issue graph or PRD (--issues or --prd N) runs one boxed worker per issue in its own worktree, tier-routed from each issue's tier label, gated by ready.sh, fold-merged, and reviewed; ambiguous work is discussed, not built. Use for "/orchestrate", "run the loop", "build the ready issues".
-argument-hint: "[--prd N | --issues N,N,...] [--max N=8] [--allow-behind] [--skip-unknown]"
+argument-hint: "[--prd N | --issues N,N,...] [--max N=6] [--allow-behind] [--skip-unknown]"
 model: sonnet
 effort: medium
 allowed-tools: Read, Grep, Bash, Agent, Skill, AskUserQuestion
@@ -17,7 +17,7 @@ worker's report means, when to escalate, when to merge — is made by a script w
 scripts, relay what they print for a human, and act on three kinds of line. Why it is built this
 way is in the workflow README's [Design notes](../../README.md#design-notes).
 
-`$ARGUMENTS` = `[--prd N | --issues N,N,...] [--max N=8] [--allow-behind] [--skip-unknown]`.
+`$ARGUMENTS` = `[--prd N | --issues N,N,...] [--max N=6] [--allow-behind] [--skip-unknown]`.
 Backend is **GitHub Issues via `gh`**. Never touch issues labeled `hitl` or `prd`.
 
 ---
@@ -50,7 +50,7 @@ exactly one → use it and say so; several → AskUserQuestion with the titles; 
 From the checkout whose branch the run builds on, with a fresh run id `$(date +%Y%m%d-%H%M%S)-<repo dir name>` (the run root is shared by every repo, so the suffix keeps two peers launching in the same second apart; `launch.sh` refuses an id already claimed — pick another):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh" <runid> --prd <N> [--max 8] [--allow-behind] [--skip-unknown]
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/launch.sh" <runid> --prd <N> [--max 6] [--allow-behind] [--skip-unknown]
 ```
 
 | launch.sh prints | you do |

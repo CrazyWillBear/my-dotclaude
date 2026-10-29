@@ -107,6 +107,11 @@ assert_equals "run.env round-trips" "$(cat "$WORK/envvals")" "dev|$REPO|orchestr
 assert_contains "the graph is kept in the run dir" "$(cat "$CODEX_RUN_ROOT/r1/graph.json")" '"n":12'
 assert_contains "scope is in the run log" "$(cd "$REPO" && bash "$WF/run-log.sh" state r1)" "scope=12,13"
 
+echo "test: --max defaults to 6, the global worker cap"
+graph 12:standard:open
+run r-default --issues 12
+assert_contains "max=6" "$OUT" "max=6"
+
 echo "test: the same runid cannot launch twice"
 run r1 --issues 12
 assert_equals "exit 1" "$RC" "1"

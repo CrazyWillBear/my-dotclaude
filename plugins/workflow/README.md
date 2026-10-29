@@ -57,7 +57,7 @@ and acts on three kinds of line. Every decision is a script's, with a real test.
    skill backfills with `/classify-task` and reruns), the launch fetch check (`merge-fold.sh`), the
    orchestration worktree `orchestrate-<runid>`, and `run.env` for every later script.
 2. **`admit.sh --next`** — `ready.sh` over the frozen graph, minus what is merged, held or in flight
-   (all from `run-log.sh`); the lowest ready issues fill `--max` (default 8) slots: a worktree off
+   (all from `run-log.sh`); the lowest ready issues fill `--max` (default 6) slots: a worktree off
    the orchestration branch, a `**Plan**` from `consult.sh` for standard and complex, then
    `spawn.sh` at attempt 0. Blocker states are re-read live first, so a blocker that closes
    mid-run unblocks its dependents. A repo may ship `.orchestrate/provision.sh` (run by `admit.sh`
