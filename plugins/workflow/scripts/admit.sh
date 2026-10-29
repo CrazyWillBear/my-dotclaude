@@ -19,8 +19,10 @@
 # existing issue-<N> BRANCH is reused only when it grew from this run's base — a stale one
 # from an earlier run is held, never built on.
 #
-# --next first refreshes blocker states (refresh-blockers.sh), then reads merged / held / in-flight from run-log.sh and asks ready.sh what is
-# admissible; readiness is never computed here. A recorded drain (`decision` "drain: …")
+# A worker is spawned only after the repo's .orchestrate/provision.sh (if it has one) ran: see provision().
+#
+# --next first refreshes blocker states (refresh-blockers.sh), then reads merged / held /
+# in-flight from run-log.sh and asks ready.sh what is admissible; readiness is never computed here. A recorded drain (`decision` "drain: …")
 # stops all admission (finished plans are still collected, never spawned).
 #
 # Output, one line per outcome:
@@ -63,7 +65,25 @@ prepare() {
     fi || { hold "$n" "worktree: $(tail -1 "$TMP/wt-$n.err")"; return 1; }
 }
 
+# provision <N> — run the repo's .orchestrate/provision.sh (if any) BEFORE the first spawn, so the
+# worker's tests find their DBs/Redis/S3 on attempt 0. Its stdout is NAME=VALUE lines (the same
+# pairs `--resource` stores; values are never printed or logged). Skipped when the issue already
+# has env (a retry, or a human's --resource). Fails (→ held) on a non-zero exit or a bad pair.
+provision() {
+    local n="$1" hook="$TMP/provision.sh" out line pairs=()
+    repo_hook provision "$hook" || return 0
+    [ ! -f "$(issue_dir "$n")/env" ] || return 0
+    mkdir -p "$(issue_dir "$n")"
+    out="$(cd "$BASE_REPO" && timeout "${PROVISION_TIMEOUT:-300}" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" 2>"$TMP/prov-$n.err" </dev/null 9>&-)" \
+        || { echo "provision.sh failed: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
+    while IFS= read -r line; do [ -z "$line" ] || pairs+=("$line"); done <<<"$out"
+    [ "${#pairs[@]}" -gt 0 ] || return 0
+    bash "$INFRA/env-pairs.sh" "${pairs[@]}" 2>"$TMP/prov-$n.err" || { echo "provision.sh gave a bad pair: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
+    ( umask 077; printf '%s\0' "${pairs[@]}" >"$(issue_dir "$n")/env" ) || { echo "cannot store the pairs" >&2; return 1; }
+}
+
 spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead
+    provision "$1" 2>"$TMP/prov-$1.msg" || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
     spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
         || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
     runlog append "$RUNID" admitted "{\"n\":$1,\"tier\":\"$(tier_of "$1")\"}" >/dev/null

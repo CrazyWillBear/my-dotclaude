@@ -172,13 +172,22 @@ assert_contains "no integration review either" "$OUT" "integration review: nothi
 echo "test: no origin remote — the work stays on the branch, and it says so"
 REPO3="$WORK/repo3"; git init -q -b dev "$REPO3"
 git -C "$REPO3" config user.email t@t.t; git -C "$REPO3" config user.name t
-printf 'x\n' >"$REPO3/f"; git -C "$REPO3" add f; git -C "$REPO3" commit -qm init
+printf 'x\n' >"$REPO3/f"; mkdir "$REPO3/.orchestrate"
+printf '#!/usr/bin/env bash\necho "$*" >>"$STUB_LOG.teardown"\n[ "$2" != 12 ]\n' >"$REPO3/.orchestrate/teardown.sh"
+git -C "$REPO3" add f .orchestrate; git -C "$REPO3" commit -qm init
 ORCH3="$WORK/orch3"; git -C "$REPO3" worktree add -q -b orchestrate-r3 "$ORCH3" dev
 printf 'b\n' >"$ORCH3/b"; git -C "$ORCH3" add b; git -C "$ORCH3" -c user.email=t@t.t -c user.name=t commit -qm m
 mkrunenv r3 "$ORCH3"; sed -i "s|^BASE_REPO=.*|BASE_REPO=$REPO3|; s|^BASE_SHA=.*|BASE_SHA=$(git -C "$REPO3" rev-parse dev)|" "$CODEX_RUN_ROOT/r3/run.env"
 (cd "$REPO3" && bash "$WF/run-log.sh" append r3 merged '{"n":11,"sha":"c"}' >/dev/null)
+mkdir -p "$CODEX_RUN_ROOT/r3/issue-11" "$CODEX_RUN_ROOT/r3/issue-12"
 OUT="$(bash "$WF/end-run.sh" r3 2>/dev/null)"
 assert_contains "names the gap" "$OUT" "pr: none — no origin remote"
+
+echo "test: the repo's teardown.sh runs once per issue with a run dir; a failure is reported"
+assert_equals "called with runid, issue and worktree, in order" "$(cat "$STUB_LOG.teardown")" \
+    "r3 11 $REPO3/.worktrees/r3/issue-11
+r3 12 $REPO3/.worktrees/r3/issue-12"
+assert_contains "and the failure is counted" "$OUT" "teardown ran for 1 issue(s), 1 FAILED"
 
 echo "test: bad usage fails loud"
 bash "$WF/end-run.sh" >/dev/null 2>&1; assert_equals "no runid" "$?" "1"

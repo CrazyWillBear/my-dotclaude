@@ -17,6 +17,7 @@
 #      drops issues already merged into its branch). The run never closes an issue and never
 #      merges the PR.
 #   4. cleanup: session-gc.sh --run <runid>; every issue's provisioned env file; this run's
+#      the repo's .orchestrate/teardown.sh per issue (the other half of admit.sh's provision.sh);
 #      worker transcripts in the boxes (by the session ids in its event logs); every worker
 #      worktree and branch (`issue-N`, `prev/issue-N-<runid>`) whose work is already on the run
 #      branch. One holding unmerged commits, or a dirty worktree, is kept and counted.
@@ -119,6 +120,19 @@ GC_OUT="$(bash "$INFRA/session-gc.sh" --run "$RUNID" 2>&1)"; GC_RC=$?
 if [ "$GC_RC" -eq 0 ]; then GC="$(printf '%s\n' "$GC_OUT" | tail -1)"
 else GC="session-gc FAILED (exit $GC_RC): $(printf '%s\n' "$GC_OUT" | grep '^error:' | tr '\n' ';')"; fi
 REAPED="$(bash "$INFRA/reap.sh" "$RUNID/" 2>&1 | tail -1)"
+# Test infra the repo's provision.sh stood up (containers, DBs): its teardown.sh, once per issue
+# that has a run dir, from the launch commit. Before the env files go — teardown may want them.
+TORN=0; TFAIL=0; TEARDOWN=""
+if repo_hook teardown "$TMP/teardown.sh"; then
+    for d in "$RUN_DIR"/issue-*/; do
+        [ -d "$d" ] || continue
+        n="$(basename "$d")"; n="${n#issue-}"
+        case "$n" in ''|*[!0-9]*) continue ;; esac
+        if (cd "$BASE_REPO" && timeout "${TEARDOWN_TIMEOUT:-300}" bash "$TMP/teardown.sh" "$RUNID" "$n" "$(worktree_of "$n")" >/dev/null 2>&1 </dev/null); then
+            TORN=$((TORN + 1)); else TFAIL=$((TFAIL + 1)); fi
+    done
+    TEARDOWN="teardown ran for $TORN issue(s)$([ "$TFAIL" -eq 0 ] || echo ", $TFAIL FAILED"); "
+fi
 # Worker worktrees and branches. Only what the run branch already contains goes: a later run
 # on the same issue is otherwise held as "a stale issue-N branch exists". Unmerged work
 # (a held slice, a prev/ snapshot) and a dirty worktree stay.
@@ -154,6 +168,6 @@ echo
 echo "$INTEG"
 echo "$PREVIEW"
 [ -z "$UNFILED" ] || printf '%s\n' "$UNFILED"
-echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; worktrees/branches: $TIDIED removed, $KEPT kept (unmerged work); $GONE worker transcript path(s) removed"
+echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; ${TEARDOWN}worktrees/branches: $TIDIED removed, $KEPT kept (unmerged work); $GONE worker transcript path(s) removed"
 [ -z "$NOCLOSE" ] || echo "$NOCLOSE"
 echo "$PR"

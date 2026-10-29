@@ -59,7 +59,11 @@ and acts on three kinds of line. Every decision is a script's, with a real test.
 2. **`admit.sh --next`** — `ready.sh` over the frozen graph, minus what is merged, held or in flight
    (all from `run-log.sh`); the lowest ready issues fill `--max` (default 8) slots: a worktree off
    the orchestration branch, a `**Plan**` from `consult.sh` for standard and complex, then
-   `spawn.sh` at attempt 0.
+   `spawn.sh` at attempt 0. Blocker states are re-read live first, so a blocker that closes
+   mid-run unblocks its dependents. A repo may ship `.orchestrate/provision.sh` (run by `admit.sh`
+   before the first spawn: `<runid> <issue> <worktree>` in, `NAME=VALUE` lines out, stored as that
+   issue's env) and `.orchestrate/teardown.sh` (same args, run per issue by `end-run.sh`); both
+   are read from the launch commit, never a worktree.
 3. **`handle-report.sh --wait`** — blocks on the in-flight workers (`worker-report.sh --any`) and
    handles the first report by table: clean → fold it in; findings → a fix round on the same model;
    `escalate.sh` says otherwise → a decide, a capped merge with a follow-up, or a respawn on the next
@@ -67,7 +71,8 @@ and acts on three kinds of line. Every decision is a script's, with a real test.
    worker; a question, a missing resource or a merge conflict → printed for the human or the
    `merger` agent. Then `admit.sh --next` refills the slot.
 4. **`end-run.sh`** — the integration review, the end-merge preview, a push and **one PR** into the
-   launch branch with `Closes #N` per merged slice, then cleanup.
+   launch branch with `Closes #N` per merged slice, then cleanup (teardown hook, env files, and the
+   worker worktrees and branches whose work is already on the run branch).
 
 **A worker is a process, not a session.** Codex workers are `codex exec`; claude workers are
 `claude -p` in the **implementer box** (`~/.claude/kit/boxes/implementer`, a per-role config dir with

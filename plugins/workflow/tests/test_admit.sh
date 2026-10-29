@@ -25,6 +25,7 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok 
 export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs"
 unset CLAUDE_PROJECT_DIR ORCH_LOCKED ORCH_DEADLINE
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
+cp "$SCRIPT_DIR/../../infra/scripts/env-pairs.sh" "$INFRA/"   # the real validator, as handle-report.sh uses it
 cat >"$INFRA/consult.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.consult"
@@ -222,6 +223,36 @@ mkenv r11 3; git -C "$REPO" branch orchestrate-r11; sed -i "s/^ORCH_BRANCH=.*/OR
 PATH="$WORK/bin:$PATH" run r11 --next
 assert_contains "#20 admitted though #99 was open at launch" "$OUT" "admitted #20 tier=trivial attempt=0"
 assert_equals "graph now records #99 closed" "$(jq -r '.blockerStates["99"]' "$GRAPH")" "closed"
+
+echo "test: the repo's provision.sh runs before the first spawn; its pairs ride on the worker"
+REPO_MAIN="$REPO"; REPO="$WORK/repo-prov"
+git init -q -b dev "$REPO"; git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
+mkdir "$REPO/.orchestrate"
+cat >"$REPO/.orchestrate/provision.sh" <<'HOOK'
+#!/usr/bin/env bash
+echo "$*" >>"$STUB_LOG.provision"
+[ "$2" != 31 ] || { echo "no postgres" >&2; exit 3; }
+echo "DATABASE_URL=postgres://secret/db$2"
+HOOK
+printf 'x\n' >"$REPO/f"; git -C "$REPO" add -A; git -C "$REPO" commit -qm init; git -C "$REPO" branch orchestrate-r1
+GRAPH="$WORK/graph-prov.json"
+cat >"$GRAPH" <<'JSON'
+{"issues":[
+ {"n":30,"title":"p","state":"open","labels":["ready-for-agent"],"tier":"trivial","body":"","comments":"","blockedBy":[]},
+ {"n":31,"title":"q","state":"open","labels":["ready-for-agent"],"tier":"trivial","body":"","comments":"","blockedBy":[]}
+],"blockerStates":{},"mockDebtOpen":[]}
+JSON
+mkenv r12 3
+: >"$STUB_LOG.spawn"
+run r12 --next
+assert_contains "#30 admitted" "$OUT" "admitted #30 tier=trivial attempt=0"
+assert_contains "provision ran with runid, issue, worktree" "$(cat "$STUB_LOG.provision")" "r12 30 $REPO/.worktrees/r12/issue-30"
+assert_contains "the pair rides on the spawn" "$(cat "$STUB_LOG.spawn")" "--env DATABASE_URL=postgres://secret/db30"
+assert_contains "a failing hook holds the issue with its message" "$OUT" "held #31 provision.sh failed: no postgres"
+assert_not_contains "and nothing is spawned for it" "$(cat "$STUB_LOG.spawn")" " 31 "
+assert_not_contains "values never reach the output" "$OUT" "postgres://secret"
+assert_equals "the pairs file is 0600" "$(stat -c %a "$CODEX_RUN_ROOT/r12/issue-30/env")" "600"
+REPO="$REPO_MAIN"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
