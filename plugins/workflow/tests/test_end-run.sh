@@ -138,7 +138,7 @@ if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-other.jsonl" ]; then ok "an
 assert_contains "and says what it cleaned" "$OUT" "2 worker transcript path(s) removed"
 
 echo "test: merged worker worktrees and branches go; unmerged work stays"
-for x in "$REPO/.worktrees/r1/issue-11"; do if [ -e "$x" ]; then no "merged worktree left"; else ok "merged worktree removed"; fi; done
+x="$REPO/.worktrees/r1/issue-11"; if [ -e "$x" ]; then no "merged worktree left"; else ok "merged worktree removed"; fi
 for br in issue-11 prev/issue-11-r1; do
     if git -C "$REPO" show-ref --verify --quiet "refs/heads/$br"; then no "merged $br left"; else ok "merged $br deleted"; fi
 done
