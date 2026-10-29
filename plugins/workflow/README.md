@@ -62,8 +62,12 @@ and acts on three kinds of line. Every decision is a script's, with a real test.
    `spawn.sh` at attempt 0. Blocker states are re-read live first, so a blocker that closes
    mid-run unblocks its dependents. A repo may ship `.orchestrate/provision.sh` (run by `admit.sh`
    before the first spawn: `<runid> <issue> <worktree>` in, `NAME=VALUE` lines out, stored as that
-   issue's env) and `.orchestrate/teardown.sh` (same args, run per issue by `end-run.sh`); both
-   are read from the launch commit, never a worktree.
+   issue's env) and `.orchestrate/teardown.sh` (same args, run per issue by `end-run.sh` with that issue's env
+   exported); both are read from the launch commit, never a worktree. A third,
+   `.orchestrate/post-fold.sh`, runs in the orchestration worktree after every clean fold (args
+   `<runid> <issue> <worktree>`, no provisioned env); non-zero hands the already-committed merge to
+   the merger and holds other folds and new admissions until it is fixed. `provision.sh`'s stdout is
+   reserved for `NAME=VALUE` lines.
 3. **`handle-report.sh --wait`** — blocks on the in-flight workers (`worker-report.sh --any`) and
    handles the first report by table: clean → fold it in; findings → a fix round on the same model;
    `escalate.sh` says otherwise → a decide, a capped merge with a follow-up, or a respawn on the next

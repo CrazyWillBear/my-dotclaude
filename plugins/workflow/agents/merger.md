@@ -86,8 +86,9 @@ For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
    - **Gate:** run the **done-check** on the base branch.
      - **green** → keep the merge, continue.
      - **red, or the conflict is genuinely unresolvable** (a real semantic incompatibility you
-       cannot reconcile — *not* the mere presence of conflict markers) → `git -C <base> merge
-       --abort`, leave that issue's worktree intact, and record it as a **conflict-stop** for the
+       cannot reconcile — *not* the mere presence of conflict markers) → undo it (`git -C <base> merge
+       --abort` while the merge is uncommitted; once you committed it, `git -C <base> revert -m 1
+       <your merge commit>`), leave that issue's worktree intact, and record it as a **conflict-stop** for the
        orchestrator. **Never keep an unverified resolution.**
    - **Post-fold failure:** if the orchestrator says `issue-N` is *already merged* and the repo's
      post-fold check failed (e.g. two migrations share a number and the tree has two heads), there is
@@ -98,14 +99,16 @@ For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
    its result.
 
 ## Boundaries
-- Only `git -C <base> merge` / `add` / `commit --no-edit` / `merge --abort` on the **base branch**,
-  and `Edit` strictly to resolve conflict markers. Never edit a worktree's own files, never push,
-  never rebase, never switch branches.
-- **Never `git reset`, `checkout`, `clean`, `stash` or `revert` on the base branch.** The orchestrator
-  may have other work on it; a hard reset has dropped a merge commit that landed meanwhile. Undo only
-  with `git merge --abort` (a merge in progress) or `git revert -m 1 <your merge commit>` (one you
-  already committed and the gate rejected). handle-report.sh also holds other folds back while you
-  work, but that is the backstop, not the rule.
+- On the **base branch**, only `git -C <base> merge` / `add` / `commit` / `merge --abort`, plus
+  `git revert -m 1 <a merge commit YOU made>` to undo it once committed; `Edit` only to resolve
+  conflict markers, or — for a **post-fold failure** — to make the fix that task describes (e.g.
+  renumbering a migration). Never edit a worktree's own files, never push, never rebase, never switch
+  branches.
+- **Never `git reset`, `checkout`, `clean`, `stash` or any other `revert`.** The orchestrator may have
+  other work on the base branch; a hard reset has dropped a merge commit that landed meanwhile. A merge
+  in progress is undone with `git merge --abort`; a merge you already committed, with
+  `git revert -m 1`. handle-report.sh also holds other folds back while you work, but that is the
+  backstop, not the rule.
 - **Never run `git worktree add` or create a worktree under any circumstances** — operate only on
   the base repo and worktrees you're given. The global "worktree per coding task" rule does **not**
   apply to you.

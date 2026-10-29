@@ -17,7 +17,8 @@
 #      drops issues already merged into its branch). The run never closes an issue and never
 #      merges the PR.
 #   4. cleanup: session-gc.sh --run <runid>; every issue's provisioned env file; this run's
-#      the repo's .orchestrate/teardown.sh per issue (the other half of admit.sh's provision.sh);
+#      the repo's .orchestrate/teardown.sh per issue, with that issue's provisioned env (the other half of
+#      admit.sh's provision.sh);
 #      worker transcripts in the boxes (by the session ids in its event logs); every worker
 #      worktree and branch (`issue-N`, `prev/issue-N-<runid>`) whose work is already on the run
 #      branch. One holding unmerged commits, or a dirty worktree, is kept and counted.
@@ -128,7 +129,7 @@ if repo_hook teardown "$TMP/teardown.sh"; then
         [ -d "$d" ] || continue
         n="$(basename "$d")"; n="${n#issue-}"
         case "$n" in ''|*[!0-9]*) continue ;; esac
-        if (cd "$BASE_REPO" && timeout "${TEARDOWN_TIMEOUT:-300}" bash "$TMP/teardown.sh" "$RUNID" "$n" "$(worktree_of "$n")" >/dev/null 2>&1 </dev/null); then
+        if (cd "$BASE_REPO" && timeout "${TEARDOWN_TIMEOUT:-300}" bash "$WF/with-env.sh" "$RUNID" "$n" -- bash "$TMP/teardown.sh" "$RUNID" "$n" "$(worktree_of "$n")" >/dev/null 2>&1 </dev/null); then
             TORN=$((TORN + 1)); else TFAIL=$((TFAIL + 1)); fi
     done
     TEARDOWN="teardown ran for $TORN issue(s)$([ "$TFAIL" -eq 0 ] || echo ", $TFAIL FAILED"); "

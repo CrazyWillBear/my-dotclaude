@@ -172,7 +172,7 @@ follow_up() {
 # merger_holds — the issue whose conflict a merger is resolving on the orchestration branch,
 # if any. While one is, nothing else may land there: a fold that arrives mid-merge is undone by
 # the merger's own reset/abort (a lost merge commit, seen twice).
-merger_holds() { grep -l '^conflict$' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed 's|.*/issue-\([0-9]*\)/paused|\1|'; }
+merger_holds() { grep -lE '^(conflict|post-fold)$' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed 's|.*/issue-\([0-9]*\)/paused|\1|'; }
 # drain_folds — once the merger is done, land the folds that waited for it (one at a time: a
 # conflict among them pauses the rest again).
 drain_folds() {
@@ -188,10 +188,14 @@ drain_folds() {
 # post_fold <N> — the repo's .orchestrate/post-fold.sh (launch commit), run in the orchestration
 # worktree after a clean fold. No hook: fine. Prints the failure's last line when it fails.
 post_fold() {
-    local hook="$TMP/post-fold.sh" o
+    local hook="$TMP/post-fold.sh" t="${POSTFOLD_TIMEOUT:-300}" left
     repo_hook post-fold "$hook" || return 0
-    o="$(cd "$ORCH_WT" && timeout "${POSTFOLD_TIMEOUT:-600}" bash "$hook" "$RUNID" "$1" "$ORCH_WT" 2>&1 </dev/null)" && return 0
-    printf '%s' "$(printf '%s\n' "$o" | tail -1)"; return 1
+    # Inside this call's budget (a hook that outlives it loses every line the call printed); 9>&-
+    # so a daemon the hook starts cannot keep the run lock; output to a file, not a pipe it could hold open.
+    left=$(( $(budget_left) - 20 )); [ "$left" -ge "$t" ] || t="$left"
+    [ "$t" -ge 10 ] || { echo "no time left in this call for the post-fold check — retry"; return 1; }
+    (cd "$ORCH_WT" && timeout "$t" bash "$hook" "$RUNID" "$1" "$ORCH_WT" >"$TMP/post-fold.out" 2>&1 </dev/null 9>&-) && return 0
+    tail -1 "$TMP/post-fold.out" | tr -d '\n'; return 1
 }
 
 # fold <N> — land issue-<N> on the orchestration branch with plain git, or hand it to the merger.
@@ -210,7 +214,7 @@ fold() {
             # claim the next number: different files, no conflict, two heads). The repo's own
             # post-fold.sh decides; a failure goes to the merger, with the merge already committed.
             if ! chk="$(post_fold "$n")"; then
-                pause "$n" conflict
+                pause "$n" post-fold
                 echo "conflict #$n post-fold — issue-$n is merged into $ORCH_BRANCH but the repo's post-fold check failed ($chk): spawn workflow:merger to FIX it with a new commit in $ORCH_WT (no reset), then: handle-report.sh $RUNID --merged $n"
                 return
             fi

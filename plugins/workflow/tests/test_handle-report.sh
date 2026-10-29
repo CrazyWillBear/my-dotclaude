@@ -96,7 +96,7 @@ REPO="$WORK/repo"
 git init -q -b dev "$REPO"
 git -C "$REPO" config user.email t@t.t; git -C "$REPO" config user.name t
 printf 'x\n' >"$REPO/f"; mkdir "$REPO/.orchestrate"
-printf '#!/usr/bin/env bash\n[ -z "${STUB_POSTFOLD_FAIL:-}" ] || { echo "two alembic heads" >&2; exit 1; }\n' >"$REPO/.orchestrate/post-fold.sh"
+printf '#!/usr/bin/env bash\n[ -z "${STUB_FD9:-}" ] || { ( : >&9 ) 2>/dev/null && { echo "fd 9 leaked"; exit 1; }; }\n[ -z "${STUB_POSTFOLD_FAIL:-}" ] || { echo "two alembic heads" >&2; exit 1; }\n' >"$REPO/.orchestrate/post-fold.sh"
 git -C "$REPO" add f .orchestrate; git -C "$REPO" commit -qm init
 ORCH_WT="$WORK/orchwt"
 git -C "$REPO" worktree add -q -b orchestrate-r1 "$ORCH_WT" dev
@@ -108,14 +108,14 @@ mkbranch() {
     git -C "$REPO/.worktrees/r1/issue-$1" add -A; git -C "$REPO/.worktrees/r1/issue-$1" commit -qm "issue $1"
 }
 for n in 11 12 13 14 15 16 17 18 21 22; do mkbranch "$n"; done
-mkbranch 19 nineteen f; mkbranch 20 twenty f
+mkbranch 19 nineteen f; mkbranch 20 twenty f; mkbranch 23
 
 GRAPH="$WORK/graph.json"
 python3 - "$GRAPH" <<'PY'
 import json, sys
 tiers = {11: "standard", 12: "standard", 13: "standard", 14: "standard", 15: "standard",
          16: "complex", 17: "trivial", 18: "standard", 19: "standard", 20: "standard",
-         21: "standard", 22: "standard", 30: "standard"}
+         21: "standard", 22: "standard", 23: "standard", 30: "standard"}
 issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"],
            "tier": t, "body": "", "comments": "", "blockedBy": ([14] if n == 30 else [])}
           for n, t in tiers.items()]
@@ -238,8 +238,14 @@ STUB_POSTFOLD_FAIL=1 STUB_REPORT="issue 16 built head=abc1234 review=0 high, 0 m
 assert_contains "handed to the merger with the check's message" "$OUT" "conflict #16 post-fold"
 assert_contains "naming the failure" "$OUT" "two alembic heads"
 assert_not_contains "and not logged merged" "$(state | grep '^merged=')" "16"
+assert_equals "and parks it as post-fold (admission and other folds wait)" "$(cat "$CODEX_RUN_ROOT/r1/issue-16/paused")" "post-fold"
 run --merged 16
 assert_contains "--merged records it once the merger's fix is in" "$OUT" "merged #16"
+
+echo "test: the post-fold hook runs without the run lock's fd 9"
+reset; rl append r1 admitted '{"n":23,"tier":"x"}' >/dev/null; mkrun 23 0 build ''
+STUB_FD9=1 STUB_REPORT="issue 23 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "no leak: it folded" "$OUT" "merged #23"
 
 echo "test: a conflict pauses for the merger; --merged lands it"
 reset; mkrun 19 0 build ''
@@ -259,7 +265,7 @@ assert_equals "--merged refuses an unmerged branch" "$RC" "1"
 run --merged 20
 assert_contains "--merged logs it" "$OUT" "merged #20"
 assert_contains "and lands the queued fold" "$OUT" "merged #21"
-assert_contains "and the log agrees" "$(state)" "merged=11,12,14,16,19,20,21"
+assert_contains "and the log agrees" "$(state)" "merged=11,12,14,16,19,20,21,23"
 
 echo "test: a timeout says waiting; an unreadable report holds the issue"
 reset

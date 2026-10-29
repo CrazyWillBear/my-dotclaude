@@ -92,7 +92,7 @@ file_issue() {
                 echo
                 echo "Reviewer's full text for the latest round (authoritative where it differs from a title above):"
                 echo
-                awk '/^[ \t]*[-*][ \t]*\[P/ { keep = ($0 ~ /\[P[012]\]/) } keep' "$RUNDIR/review.txt"
+                awk '/^[ \t]*[-*][ \t]*\[/ { keep = ($0 ~ /\[P[012]\]/) } keep' "$RUNDIR/review.txt"
             fi
         fi
         echo

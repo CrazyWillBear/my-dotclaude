@@ -70,23 +70,31 @@ prepare() {
 # pairs `--resource` stores; values are never printed or logged). Skipped when the issue already
 # has env (a retry, or a human's --resource). Fails (→ held) on a non-zero exit or a bad pair.
 provision() {
-    local n="$1" hook="$TMP/provision.sh" out line pairs=()
+    local n="$1" hook="$TMP/provision.sh" out line pairs=() t="${PROVISION_TIMEOUT:-300}" left
     repo_hook provision "$hook" || return 0
     [ ! -f "$(issue_dir "$n")/env" ] || return 0
+    # Inside this call's budget, or defer (2): a hook that outlives the call loses its output lines.
+    left=$(( $(budget_left) - 20 )); [ "$left" -ge "$t" ] || t="$left"
+    [ "$t" -ge 30 ] || return 2
     mkdir -p "$(issue_dir "$n")"
-    out="$(cd "$BASE_REPO" && timeout "${PROVISION_TIMEOUT:-300}" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" 2>"$TMP/prov-$n.err" </dev/null 9>&-)" \
+    out="$(cd "$BASE_REPO" && timeout "$t" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" 2>"$TMP/prov-$n.err" </dev/null 9>&-)" \
         || { echo "provision.sh failed: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
     while IFS= read -r line; do [ -z "$line" ] || pairs+=("$line"); done <<<"$out"
     [ "${#pairs[@]}" -gt 0 ] || return 0
-    bash "$INFRA/env-pairs.sh" "${pairs[@]}" 2>"$TMP/prov-$n.err" || { echo "provision.sh gave a bad pair: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
+    # Never echo env-pairs.sh's complaint: for a stray stdout line it quotes the text before the first `=`.
+    bash "$INFRA/env-pairs.sh" "${pairs[@]}" >/dev/null 2>&1 \
+        || { echo "provision.sh printed a line that is not a valid NAME=VALUE pair (its stdout is reserved for pairs)" >&2; return 1; }
     ( umask 077; printf '%s\0' "${pairs[@]}" >"$(issue_dir "$n")/env" ) || { echo "cannot store the pairs" >&2; return 1; }
 }
 
-spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead
+spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead, 2 when deferred
+    local rc
     # A plan can take a while and the run branch moves meanwhile: a clean worktree catches up here
     # so the worker never needs `git merge` (its permission layer denies it). Diverged/dirty: left alone.
     safe_git "$(worktree_of "$1")" merge -q --ff-only "$ORCH_BRANCH" >/dev/null 2>&1 || :
-    provision "$1" 2>"$TMP/prov-$1.msg" || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
+    provision "$1" 2>"$TMP/prov-$1.msg"; rc=$?
+    [ "$rc" -ne 2 ] || { echo "deferred #$1 no time left in this call to provision its env; admitted on the next pass"; return 2; }
+    [ "$rc" -eq 0 ] || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
     spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
         || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
     runlog append "$RUNID" admitted "{\"n\":$1,\"tier\":\"$(tier_of "$1")\"}" >/dev/null
@@ -125,7 +133,9 @@ collect() {
         elif [ "$rc" = 0 ]; then
             if [ "$live" -ge "$MAX" ]; then mv -f "$f" "$f.deferred"; continue; fi
             runlog append "$RUNID" planned "{\"n\":$n}" >/dev/null
-            ! spawn_now "$n" || live=$((live + 1))
+            spawn_now "$n"; rc=$?
+            [ "$rc" -ne 2 ] || { mv -f "$f" "$f.deferred"; continue; }
+            [ "$rc" -ne 0 ] || live=$((live + 1))
         elif [ "$rc" = 124 ]; then
             hold "$n" "plan timed out after ${PLAN_TIMEOUT:-1800}s"
         else
@@ -151,7 +161,16 @@ final_line() {
 
 STATE="$(runlog state "$RUNID" 2>/dev/null)"
 DRAIN="$(printf '%s\n' "$STATE" | sed -n 's/^decision=\(drain: .*\)$/\1/p' | head -1)"
-collect
+# A fold whose post-fold check failed is committed on the run branch until the merger fixes it: no
+# new worktree, plan collection or fast-forward may start from that tree meanwhile.
+PF="$(grep -lx 'post-fold' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed 's|.*/issue-\([0-9]*\)/paused|\1|')"
+[ -n "$PF" ] || collect
+
+if [ -n "$PF" ]; then
+    echo "paused: no new work — #$PF's merge failed the repo's post-fold check; spawn workflow:merger to fix it, then handle-report.sh $RUNID --merged $PF"
+    final_line || echo "waiting: the post-fold fix on #$PF"
+    exit 0
+fi
 
 if [ "$2" != --next ]; then
     N="${2#\#}"

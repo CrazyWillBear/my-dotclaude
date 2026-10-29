@@ -25,14 +25,14 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok 
 export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs" STUB_LOG="$WORK/log" CLAUDE_BOX_ROOT="$WORK/boxes"
 unset CLAUDE_PROJECT_DIR
 WF="$WORK/wf"; mkdir -p "$WF"
-for f in end-run.sh run-env.sh run-log.sh merge-fold.sh; do cp "$REAL_WF/$f" "$WF/"; done
+for f in end-run.sh run-env.sh run-log.sh merge-fold.sh with-env.sh; do cp "$REAL_WF/$f" "$WF/"; done
 cat >"$WF/follow-up.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_LOG.followup"
 echo "integration: 0 high, 0 medium, 1 low — nothing filed"
 STUB
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
-cp "$SCRIPT_DIR/../../infra/scripts/common-git-dir.sh" "$INFRA/"   # the containment tripwire safe_git runs
+cp "$SCRIPT_DIR/../../infra/scripts/common-git-dir.sh" "$SCRIPT_DIR/../../infra/scripts/env-pairs.sh" "$INFRA/"   # the containment tripwire safe_git runs
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\nif [ -n "${STUB_GC_FAIL:-}" ]; then echo "removed a x"; echo "error: could not remove b y" >&2; exit 1; fi\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.reap"\necho "reaped 2 process(es)"\n' >"$INFRA/reap.sh"
 BIN="$WORK/bin"; mkdir -p "$BIN"
@@ -178,20 +178,20 @@ echo "test: no origin remote — the work stays on the branch, and it says so"
 REPO3="$WORK/repo3"; git init -q -b dev "$REPO3"
 git -C "$REPO3" config user.email t@t.t; git -C "$REPO3" config user.name t
 printf 'x\n' >"$REPO3/f"; mkdir "$REPO3/.orchestrate"
-printf '#!/usr/bin/env bash\necho "$*" >>"$STUB_LOG.teardown"\n[ "$2" != 12 ]\n' >"$REPO3/.orchestrate/teardown.sh"
+printf '#!/usr/bin/env bash\necho "$* ${DATABASE_URL:-noenv}" >>"$STUB_LOG.teardown"\n[ "$2" != 12 ]\n' >"$REPO3/.orchestrate/teardown.sh"
 git -C "$REPO3" add f .orchestrate; git -C "$REPO3" commit -qm init
 ORCH3="$WORK/orch3"; git -C "$REPO3" worktree add -q -b orchestrate-r3 "$ORCH3" dev
 printf 'b\n' >"$ORCH3/b"; git -C "$ORCH3" add b; git -C "$ORCH3" -c user.email=t@t.t -c user.name=t commit -qm m
 mkrunenv r3 "$ORCH3"; sed -i "s|^BASE_REPO=.*|BASE_REPO=$REPO3|; s|^BASE_SHA=.*|BASE_SHA=$(git -C "$REPO3" rev-parse dev)|" "$CODEX_RUN_ROOT/r3/run.env"
 (cd "$REPO3" && bash "$WF/run-log.sh" append r3 merged '{"n":11,"sha":"c"}' >/dev/null)
-mkdir -p "$CODEX_RUN_ROOT/r3/issue-11" "$CODEX_RUN_ROOT/r3/issue-12"
+mkdir -p "$CODEX_RUN_ROOT/r3/issue-11" "$CODEX_RUN_ROOT/r3/issue-12"; printf 'DATABASE_URL=pg-11\0' >"$CODEX_RUN_ROOT/r3/issue-11/env"
 OUT="$(bash "$WF/end-run.sh" r3 2>/dev/null)"
 assert_contains "names the gap" "$OUT" "pr: none — no origin remote"
 
 echo "test: the repo's teardown.sh runs once per issue with a run dir; a failure is reported"
-assert_equals "called with runid, issue and worktree, in order" "$(cat "$STUB_LOG.teardown")" \
-    "r3 11 $REPO3/.worktrees/r3/issue-11
-r3 12 $REPO3/.worktrees/r3/issue-12"
+assert_equals "called with runid, issue and worktree, in order — with that issue's provisioned env" "$(cat "$STUB_LOG.teardown")" \
+    "r3 11 $REPO3/.worktrees/r3/issue-11 pg-11
+r3 12 $REPO3/.worktrees/r3/issue-12 noenv"
 assert_contains "and the failure is counted" "$OUT" "teardown ran for 1 issue(s), 1 FAILED"
 
 echo "test: bad usage fails loud"

@@ -234,6 +234,7 @@ cat >"$REPO/.orchestrate/provision.sh" <<'HOOK'
 #!/usr/bin/env bash
 echo "$*" >>"$STUB_LOG.provision"
 [ "$2" != 31 ] || { echo "no postgres" >&2; exit 3; }
+[ "$2" != 33 ] || { echo "postgres://u:pw@h/db"; exit 0; }
 echo "DATABASE_URL=postgres://secret/db$2"
 HOOK
 printf 'x\n' >"$REPO/f"; git -C "$REPO" add -A; git -C "$REPO" commit -qm init; git -C "$REPO" branch orchestrate-r1
@@ -269,6 +270,28 @@ git -C "$REPO" update-ref refs/heads/orchestrate-r1 "$NEW"
 settle r12; run r12 --next
 assert_contains "#32 admitted" "$OUT" "admitted #32"
 assert_equals "its worktree caught up with the run branch" "$(git -C "$REPO/.worktrees/r12/issue-32" rev-parse HEAD)" "$NEW"
+
+echo "test: a stray provision.sh stdout line holds the issue without quoting it; a spent budget defers"
+python3 - "$GRAPH" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1]))
+g["issues"] += [{"n": n, "title": "s", "state": "open", "labels": ["ready-for-agent"], "tier": "trivial", "body": "", "comments": "", "blockedBy": []} for n in (33, 34)]
+json.dump(g, open(sys.argv[1], "w"))
+PY
+ORCH_BUDGET=40 run r12 --next
+assert_contains "no time left → deferred, not held" "$OUT" "deferred #33"
+assert_not_contains "and not held" "$OUT" "held #33"
+run r12 --next
+assert_contains "a stray line holds it" "$OUT" "held #33 provision.sh printed a line that is not a valid NAME=VALUE pair"
+assert_not_contains "without quoting the credential" "$OUT$(cat "$CODEX_RUN_ROOT/r12/log.jsonl" 2>/dev/null)" "pw@h"
+
+echo "test: a pending post-fold fix pauses admission and plan collection"
+mkdir -p "$CODEX_RUN_ROOT/r12/issue-99"; printf 'post-fold\n' >"$CODEX_RUN_ROOT/r12/issue-99/paused"
+: >"$STUB_LOG.spawn"
+run r12 --next
+assert_contains "says why it waits" "$OUT" "#99's merge failed the repo's post-fold check"
+assert_not_contains "admits nothing" "$OUT" "admitted"
+rm -f "$CODEX_RUN_ROOT/r12/issue-99/paused"
 REPO="$REPO_MAIN"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
