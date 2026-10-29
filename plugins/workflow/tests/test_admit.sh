@@ -281,7 +281,7 @@ g = json.load(open(sys.argv[1]))
 g["issues"] += [{"n": n, "title": "s", "state": "open", "labels": ["ready-for-agent"], "tier": "trivial", "body": "", "comments": "", "blockedBy": []} for n in (33, 34)]
 json.dump(g, open(sys.argv[1], "w"))
 PY
-ORCH_BUDGET=40 run r12 --next
+ORCH_BUDGET=30 run r12 --next
 assert_contains "no time left → deferred, not held" "$OUT" "deferred #33"
 assert_not_contains "and not held" "$OUT" "held #33"
 run r12 --next
@@ -296,7 +296,7 @@ cat >"$GRAPH" <<'JSON'
 ],"blockerStates":{},"mockDebtOpen":[]}
 JSON
 mkenv r14 3
-OUT="$(cd "$REPO" && ORCH_BUDGET=40 timeout 60 bash "$ADMIT" r14 --next 2>&1)"; RC=$?
+OUT="$(cd "$REPO" && ORCH_BUDGET=30 timeout 60 bash "$ADMIT" r14 --next 2>&1)"; RC=$?
 assert_equals "it terminates" "$RC" "0"
 assert_contains "says it deferred" "$OUT" "deferred #41"
 assert_contains "and to call again" "$OUT" "waiting: a pick was deferred"

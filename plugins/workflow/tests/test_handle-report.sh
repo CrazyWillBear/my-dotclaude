@@ -108,14 +108,14 @@ mkbranch() {
     git -C "$REPO/.worktrees/r1/issue-$1" add -A; git -C "$REPO/.worktrees/r1/issue-$1" commit -qm "issue $1"
 }
 for n in 11 12 13 14 15 16 17 18 21 22; do mkbranch "$n"; done
-mkbranch 19 nineteen f; mkbranch 20 twenty f; mkbranch 23; mkbranch 24
+mkbranch 19 nineteen f; mkbranch 20 twenty f; mkbranch 23; mkbranch 24; mkbranch 25
 
 GRAPH="$WORK/graph.json"
 python3 - "$GRAPH" <<'PY'
 import json, sys
 tiers = {11: "standard", 12: "standard", 13: "standard", 14: "standard", 15: "standard",
          16: "complex", 17: "trivial", 18: "standard", 19: "standard", 20: "standard",
-         21: "standard", 22: "standard", 23: "standard", 24: "standard", 30: "standard"}
+         21: "standard", 22: "standard", 23: "standard", 24: "standard", 25: "standard", 30: "standard"}
 issues = [{"n": n, "title": "t%d" % n, "state": "open", "labels": ["ready-for-agent"],
            "tier": t, "body": "", "comments": "", "blockedBy": ([14] if n == 30 else [])}
           for n, t in tiers.items()]
@@ -249,13 +249,19 @@ assert_contains "no leak: it folded" "$OUT" "merged #23"
 
 echo "test: a fold whose post-fold check cannot finish in this call is deferred, not merged and misread as a failure"
 reset; rl append r1 admitted '{"n":24,"tier":"x"}' >/dev/null; mkrun 24 0 build ''
-ORCH_BUDGET=40 STUB_REPORT="issue 24 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+ORCH_BUDGET=30 STUB_REPORT="issue 24 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
 assert_contains "deferred" "$OUT" "deferred #24"
 assert_not_contains "no merge, no merger hand-off" "$OUT" "conflict #24"
 assert_not_contains "and not logged merged" "$(state | grep '^merged=')" "24"
 assert_equals "still unpaused, so the next call reports it again" "$(ls "$CODEX_RUN_ROOT/r1/issue-24" | grep -c '^paused$')" "0"
 STUB_REPORT="issue 24 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
 assert_contains "it folds on a call with a full budget" "$OUT" "merged #24"
+
+echo "test: a capped report whose fold is deferred counts the cap once, however often it is re-reported"
+reset; rl append r1 admitted '{"n":25,"tier":"x"}' >/dev/null; mkrun 25 0 build ''
+for _ in 1 2; do ORCH_BUDGET=30 STUB_ESC="no-progress: review 3 has 1 high+medium" STUB_REPORT="issue 25 built head=abc1234 review=1 high, 0 medium, 0 low" run --wait; done
+assert_contains "deferred" "$OUT" "deferred #25"
+assert_equals "one escalated event" "$(rl replay r1 | jq -c 'select(.event == "escalated" and .n == 25)' | wc -l | tr -d ' ')" "1"
 
 echo "test: a conflict pauses for the merger; --merged lands it"
 reset; mkrun 19 0 build ''
@@ -509,9 +515,12 @@ echo "test: --retry refuses an issue whose fold was merged and then reverted"
 rl append r1 admitted '{"n":51,"tier":"standard"}' >/dev/null; rl append r1 held '{"n":51,"why":"merger stopped"}' >/dev/null
 run --retry 51; assert_contains "a hold with no fold on the run branch is released" "$OUT" "released #51"
 rl append r1 held '{"n":51,"why":"merger stopped"}' >/dev/null
+git -C "$REPO" branch issue-51 orchestrate-r1
 git -C "$ORCH_WT" commit -q --allow-empty -m "Merge branch 'issue-51' into orchestrate-r1"
 run --retry 51; assert_equals "refused once its fold is on the run branch" "$RC" "1"
 assert_contains "and says why" "$ERR" "folded into orchestrate-r1 and then reverted"
+git -C "$REPO" branch -q -D issue-51
+run --retry 51; assert_contains "deleting issue-51 (the remedy it names) lifts the refusal" "$OUT" "released #51"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

@@ -218,7 +218,7 @@ fold() {
             # post-fold.sh decides; a failure goes to the merger, with the merge already committed.
             if ! chk="$(post_fold "$n")"; then
                 pause "$n" post-fold
-                echo "conflict #$n post-fold — issue-$n is merged into $ORCH_BRANCH but the repo's post-fold check failed ($chk): spawn workflow:merger to FIX it with a new commit in $ORCH_WT (no reset), then: handle-report.sh $RUNID --merged $n"
+                echo "conflict #$n post-fold — issue-$n is merged into $ORCH_BRANCH (merge commit ${sha:0:7}) but the repo's post-fold check failed ($chk): spawn workflow:merger to FIX it with a new commit in $ORCH_WT (no reset), then: handle-report.sh $RUNID --merged $n"
                 return
             fi
             unpause "$n"
@@ -323,7 +323,8 @@ handle() {
                 || { hold "$n" "fix round failed to spawn: $(tail -1 "$TMP/spawn.err")"; return; }
             echo "fix #$n round=$k attempt=$a (after the decision)" ;;
         no-progress|backstop)
-            runlog append "$RUNID" escalated "$(jq -cn --argjson n "$n" --arg r "$key" --argjson a "$a" '{n: $n, reason: $r, attempt: $a}')" >/dev/null
+            # Once: a deferred fold is re-reported, and the cap must not be counted again.
+            capped "$n" || runlog append "$RUNID" escalated "$(jq -cn --argjson n "$n" --arg r "$key" --argjson a "$a" '{n: $n, reason: $r, attempt: $a}')" >/dev/null
             echo "capped #$n $reason"
             fold "$n" ;;
         *)
@@ -505,8 +506,13 @@ case "$MODE" in
     case " $(run_state held) " in *" $N "*) ;; *) die "#$N is not held" ;; esac
     # Folded, then undone by a merger's revert: git counts issue-N's old commits as already merged,
     # so rebuilding on that branch would fold only the new ones and log the whole slice merged.
-    git -C "$ORCH_WT" log --first-parent --format=%s "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null | grep -q "^Merge branch 'issue-$N'" \
-        && die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Revert the revert and use --merged $N, or delete issue-$N and its worktree so it rebuilds from the run branch"
+    # Only while that branch still exists: one cut fresh from the run branch already carries the revert.
+    if git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$N"; then
+        folds="$(git -C "$ORCH_WT" log --first-parent --format=%s "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null)"   # not piped: see salvage()
+        case "$folds" in *"Merge branch 'issue-$N'"*)
+            die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Delete issue-$N and its worktree so it rebuilds from the run branch, then --retry $N" ;;
+        esac
+    fi
     kill_worker "$N" || die "could not stop #$N's worker"
     d="$(issue_dir "$N")"
     if [ -d "$d" ]; then
