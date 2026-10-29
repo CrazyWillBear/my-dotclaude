@@ -521,6 +521,8 @@ run --retry 51; assert_equals "refused once its fold is on the run branch" "$RC"
 assert_contains "and says why" "$ERR" "folded into orchestrate-r1 and then reverted"
 git -C "$REPO" branch -q -D issue-51
 run --retry 51; assert_contains "deleting issue-51 (the remedy it names) lifts the refusal" "$OUT" "released #51"
+rl append r1 held '{"n":51,"why":"held again"}' >/dev/null; git -C "$REPO" branch issue-51 orchestrate-r1
+run --retry 51; assert_contains "a branch re-cut after the fold is not refused again" "$OUT" "released #51"
 
 echo "test: bad usage fails loud"
 run; assert_equals "no mode" "$RC" "1"

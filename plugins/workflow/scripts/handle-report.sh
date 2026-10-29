@@ -506,12 +506,12 @@ case "$MODE" in
     case " $(run_state held) " in *" $N "*) ;; *) die "#$N is not held" ;; esac
     # Folded, then undone by a merger's revert: git counts issue-N's old commits as already merged,
     # so rebuilding on that branch would fold only the new ones and log the whole slice merged.
-    # Only while that branch still exists: one cut fresh from the run branch already carries the revert.
-    if git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$N"; then
-        folds="$(git -C "$ORCH_WT" log --first-parent --format=%s "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null)"   # not piped: see salvage()
-        case "$folds" in *"Merge branch 'issue-$N'"*)
-            die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Delete issue-$N and its worktree so it rebuilds from the run branch, then --retry $N" ;;
-        esac
+    # Only while issue-N predates its newest fold: a branch cut from the run branch afterwards
+    # already carries the revert.
+    fold_sha="$(git -C "$ORCH_WT" log --first-parent -1 --format=%H -F --grep="Merge branch 'issue-$N'" "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null)"
+    if [ -n "$fold_sha" ] && git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$N" \
+        && ! git -C "$BASE_REPO" merge-base --is-ancestor "$fold_sha" "issue-$N" 2>/dev/null; then
+        die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Delete issue-$N and its worktree so it rebuilds from the run branch, then --retry $N"
     fi
     kill_worker "$N" || die "could not stop #$N's worker"
     d="$(issue_dir "$N")"
