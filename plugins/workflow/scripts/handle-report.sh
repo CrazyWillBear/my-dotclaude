@@ -508,7 +508,7 @@ case "$MODE" in
     # so rebuilding on that branch would fold only the new ones and log the whole slice merged.
     # Only while issue-N predates its newest fold: a branch cut from the run branch afterwards
     # already carries the revert.
-    fold_sha="$(git -C "$ORCH_WT" log --first-parent -1 --format=%H -F --grep="Merge branch 'issue-$N'" "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null)"
+    fold_sha="$(git -C "$ORCH_WT" log --first-parent -1 --format=%H --grep="^Merge branch 'issue-$N'" "$BASE_SHA..$ORCH_BRANCH" 2>/dev/null)"
     if [ -n "$fold_sha" ] && git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$N" \
         && ! git -C "$BASE_REPO" merge-base --is-ancestor "$fold_sha" "issue-$N" 2>/dev/null; then
         die "#$N was folded into $ORCH_BRANCH and then reverted — retrying on its branch would re-fold only new commits. Delete issue-$N and its worktree so it rebuilds from the run branch, then --retry $N"
