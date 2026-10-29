@@ -54,6 +54,13 @@ ORCH_WT="$WORK/orchwt"; git -C "$REPO" worktree add -q -b orchestrate-r1 "$ORCH_
 git -C "$ORCH_WT" config user.email t@t.t; git -C "$ORCH_WT" config user.name t
 printf 'a\n' >"$ORCH_WT/a"; git -C "$ORCH_WT" add a; git -C "$ORCH_WT" commit -qm "merge issue-11"
 
+# Worker leftovers: #11 merged into the run branch (worktree + issue + prev branch), #13 holds unmerged work.
+git -C "$REPO" branch issue-11 orchestrate-r1; git -C "$REPO" branch prev/issue-11-r1 orchestrate-r1
+git -C "$REPO" worktree add -q "$REPO/.worktrees/r1/issue-11" issue-11
+git -C "$REPO" worktree add -q -b issue-13 "$REPO/.worktrees/r1/issue-13" dev
+git -C "$REPO/.worktrees/r1/issue-13" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m unmerged
+git -C "$REPO" branch prev/issue-13-r1 issue-13
+
 GRAPH="$WORK/graph.json"
 printf '%s' '{"issues":[{"n":11,"title":"one","tier":"standard","labels":[]},{"n":12,"title":"two","tier":"trivial","labels":[]},{"n":13,"title":"three","tier":"complex","labels":[]},{"n":14,"title":"four","tier":"standard","labels":[]}],"blockerStates":{},"mockDebtOpen":[]}' >"$GRAPH"
 mkrunenv() {
@@ -125,6 +132,17 @@ if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-aaa.jsonl" ] || [ -e "$CLAU
     no "this run's transcript survived"; else ok "this run's transcript removed"; fi
 if [ -e "$CLAUDE_BOX_ROOT/implementer/projects/p/sid-other.jsonl" ]; then ok "an unrelated transcript kept"; else no "an unrelated transcript was removed"; fi
 assert_contains "and says what it cleaned" "$OUT" "2 worker transcript path(s) removed"
+
+echo "test: merged worker worktrees and branches go; unmerged work stays"
+for x in "$REPO/.worktrees/r1/issue-11"; do if [ -e "$x" ]; then no "merged worktree left"; else ok "merged worktree removed"; fi; done
+for br in issue-11 prev/issue-11-r1; do
+    if git -C "$REPO" show-ref --verify --quiet "refs/heads/$br"; then no "merged $br left"; else ok "merged $br deleted"; fi
+done
+for br in issue-13 prev/issue-13-r1; do
+    if git -C "$REPO" show-ref --verify --quiet "refs/heads/$br"; then ok "unmerged $br kept"; else no "unmerged $br deleted"; fi
+done
+if [ -d "$REPO/.worktrees/r1/issue-13" ]; then ok "unmerged worktree kept"; else no "unmerged worktree removed"; fi
+assert_contains "and the counts are reported" "$OUT" "worktrees/branches: 3 removed, 2 kept"
 
 assert_not_contains "on the default branch, no close warning" "$OUT" "will NOT close"
 assert_not_contains "a clean cleanup does not claim a failure" "$OUT" "FAILED"

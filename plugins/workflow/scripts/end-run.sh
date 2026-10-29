@@ -17,7 +17,9 @@
 #      drops issues already merged into its branch). The run never closes an issue and never
 #      merges the PR.
 #   4. cleanup: session-gc.sh --run <runid>; every issue's provisioned env file; this run's
-#      worker transcripts in the boxes (by the session ids in its event logs).
+#      worker transcripts in the boxes (by the session ids in its event logs); every worker
+#      worktree and branch (`issue-N`, `prev/issue-N-<runid>`) whose work is already on the run
+#      branch. One holding unmerged commits, or a dirty worktree, is kept and counted.
 #
 # Nothing merged → nothing pushed and no PR, and it says so.
 # Output: the table, the review / preview lines, then `pr: <url>` (or why there is none).
@@ -117,6 +119,24 @@ GC_OUT="$(bash "$INFRA/session-gc.sh" --run "$RUNID" 2>&1)"; GC_RC=$?
 if [ "$GC_RC" -eq 0 ]; then GC="$(printf '%s\n' "$GC_OUT" | tail -1)"
 else GC="session-gc FAILED (exit $GC_RC): $(printf '%s\n' "$GC_OUT" | grep '^error:' | tr '\n' ';')"; fi
 REAPED="$(bash "$INFRA/reap.sh" "$RUNID/" 2>&1 | tail -1)"
+# Worker worktrees and branches. Only what the run branch already contains goes: a later run
+# on the same issue is otherwise held as "a stale issue-N branch exists". Unmerged work
+# (a held slice, a prev/ snapshot) and a dirty worktree stay.
+TIDIED=0; KEPT=0
+merged_in_run() { git -C "$BASE_REPO" merge-base --is-ancestor "$1" "$ORCH_BRANCH" 2>/dev/null; }
+for wt in "$BASE_REPO/.worktrees/$RUNID"/issue-*; do
+    [ -d "$wt" ] || continue
+    if merged_in_run "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" \
+            && git -C "$BASE_REPO" worktree remove "$wt" >/dev/null 2>&1; then TIDIED=$((TIDIED + 1)); else KEPT=$((KEPT + 1)); fi
+done
+rmdir "$BASE_REPO/.worktrees/$RUNID" 2>/dev/null
+for n in $(jq -r '.issues[].n' "$GRAPH"); do   # this run's issues only: a concurrent run's branch is not ours
+    for br in "issue-$n" "prev/issue-$n-$RUNID"; do
+        git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/$br" || continue
+        [ ! -d "$(worktree_of "$n")" ] || [ "$br" != "issue-$n" ] || continue   # worktree kept → branch stays
+        if merged_in_run "$br" && git -C "$BASE_REPO" branch -D "$br" >/dev/null 2>&1; then TIDIED=$((TIDIED + 1)); else KEPT=$((KEPT + 1)); fi
+    done
+done
 find "$RUN_DIR" -mindepth 2 -maxdepth 2 -path '*/issue-*/env' -type f -delete 2>/dev/null
 BOXES="${CLAUDE_BOX_ROOT:-${HOME:-/nonexistent}/.claude/kit/boxes}"
 GONE=0
@@ -134,6 +154,6 @@ echo
 echo "$INTEG"
 echo "$PREVIEW"
 [ -z "$UNFILED" ] || printf '%s\n' "$UNFILED"
-echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; $GONE worker transcript path(s) removed"
+echo "cleanup: ${GC:-session-gc gave no output}; ${REAPED:-reap.sh gave no output}; env files removed; worktrees/branches: $TIDIED removed, $KEPT kept (unmerged work); $GONE worker transcript path(s) removed"
 [ -z "$NOCLOSE" ] || echo "$NOCLOSE"
 echo "$PR"
