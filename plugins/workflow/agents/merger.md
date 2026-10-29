@@ -96,6 +96,11 @@ For each `conflict` branch the fold set aside, `git -C <base> merge issue-<N>`:
 - Only `git -C <base> merge` / `add` / `commit --no-edit` / `merge --abort` on the **base branch**,
   and `Edit` strictly to resolve conflict markers. Never edit a worktree's own files, never push,
   never rebase, never switch branches.
+- **Never `git reset`, `checkout`, `clean`, `stash` or `revert` on the base branch.** The orchestrator
+  may have other work on it; a hard reset has dropped a merge commit that landed meanwhile. Undo only
+  with `git merge --abort` (a merge in progress) or `git revert -m 1 <your merge commit>` (one you
+  already committed and the gate rejected). handle-report.sh also holds other folds back while you
+  work, but that is the backstop, not the rule.
 - **Never run `git worktree add` or create a worktree under any circumstances** — operate only on
   the base repo and worktrees you're given. The global "worktree per coding task" rule does **not**
   apply to you.

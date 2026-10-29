@@ -237,12 +237,18 @@ assert_contains "19 merges" "$OUT" "merged #19"
 reset; mkrun 20 0 build ''
 STUB_REPORT="issue 20 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
 assert_contains "20 conflicts, and the caller is told what to do" "$OUT" "conflict #20 f — spawn workflow:merger"
+echo "test: while a merger holds the base branch a clean fold waits, and lands after --merged"
+reset; mkrun 21 0 build ''
+STUB_REPORT="issue 21 built head=abc1234 review=0 high, 0 medium, 0 low" run --wait
+assert_contains "21 is queued behind the merger on #20" "$OUT" "queued #21 its fold waits for the merger on #20"
+assert_not_contains "and is not merged" "$(state | grep "^merged=")" "21"
 run --merged 20
 assert_equals "--merged refuses an unmerged branch" "$RC" "1"
 (cd "$ORCH_WT" && git merge -q -X theirs --no-edit issue-20 >/dev/null 2>&1)
 run --merged 20
 assert_contains "--merged logs it" "$OUT" "merged #20"
-assert_contains "and the log agrees" "$(state)" "merged=11,12,14,19,20"
+assert_contains "and lands the queued fold" "$OUT" "merged #21"
+assert_contains "and the log agrees" "$(state)" "merged=11,12,14,19,20,21"
 
 echo "test: a timeout says waiting; an unreadable report holds the issue"
 reset

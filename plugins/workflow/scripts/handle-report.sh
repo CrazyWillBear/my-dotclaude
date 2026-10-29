@@ -169,9 +169,30 @@ follow_up() {
     fi
 }
 
+# merger_holds — the issue whose conflict a merger is resolving on the orchestration branch,
+# if any. While one is, nothing else may land there: a fold that arrives mid-merge is undone by
+# the merger's own reset/abort (a lost merge commit, seen twice).
+merger_holds() { grep -l '^conflict$' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed 's|.*/issue-\([0-9]*\)/paused|\1|'; }
+# drain_folds — once the merger is done, land the folds that waited for it (one at a time: a
+# conflict among them pauses the rest again).
+drain_folds() {
+    local f n
+    for f in "$RUN_DIR"/issue-*/paused; do
+        [ -f "$f" ] && [ "$(head -1 "$f")" = fold-queued ] || continue
+        n="${f%/paused}"; n="${n##*/issue-}"
+        [ -z "$(merger_holds)" ] || return 0
+        unpause "$n"; fold "$n"
+    done
+}
+
 # fold <N> — land issue-<N> on the orchestration branch with plain git, or hand it to the merger.
 fold() {
-    local n="$1" out
+    local n="$1" out m
+    m="$(merger_holds)"
+    if [ -n "$m" ] && [ "$m" != "$n" ]; then
+        pause "$n" fold-queued
+        echo "queued #$n its fold waits for the merger on #$m; it lands after handle-report.sh $RUNID --merged $m"; return
+    fi
     out="$(cd "$ORCH_WT" && bash "$WF/merge-fold.sh" --allow-behind "$ORCH_BRANCH" "issue-$n" 2>&1)"
     case "$(printf '%s\n' "$out" | awk -v b="issue-$n" '$2 == b {print $1; exit}')" in
         merged)
@@ -411,6 +432,7 @@ case "$MODE" in
     runlog append "$RUNID" merged "$(jq -cn --argjson n "$N" --arg s "$(git -C "$ORCH_WT" rev-parse HEAD)" '{n: $n, sha: $s}')" >/dev/null
     echo "merged #$N $(git -C "$ORCH_WT" rev-parse --short=7 HEAD)"
     ! capped "$N" || follow_up "$N"
+    drain_folds
     next ;;
 --answer)
     [ $# -eq 2 ] || die "$USAGE"
@@ -447,6 +469,7 @@ case "$MODE" in
     kill_worker "$N" || die "could not stop #$N's worker"
     unpause "$N"
     hold "$N" "${*:-held by the operator}"
+    drain_folds
     next ;;
 --retry)
     # A hold is the run's judgment, not the issue's: once its cause is fixed (a stale branch
