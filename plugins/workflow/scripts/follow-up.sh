@@ -85,6 +85,15 @@ file_issue() {
         else
             awk -F'\t' -v r="$round" '{ printf "- [%s] %s", $3, $4; if ($5 != "") printf " — %s", $5
                 if ($2 != r) printf " (round %s — may already be fixed; verify first)", $2; print "" }' "$TMP/findings"
+            # The ledger keeps a title and a location only, and a reviewer can reuse a title for a
+            # different finding (#44 round 3 kept round 2's title over a new cause). The latest
+            # review's own text is authoritative, so it rides along: P0-P2 blocks, never P3.
+            if [ -s "$RUNDIR/review.txt" ]; then
+                echo
+                echo "Reviewer's full text for the latest round (authoritative where it differs from a title above):"
+                echo
+                awk '/^[ \t]*[-*][ \t]*\[P/ { keep = ($0 ~ /\[P[012]\]/) } keep' "$RUNDIR/review.txt"
+            fi
         fi
         echo
         if [ "$MODE" = integration ]; then
