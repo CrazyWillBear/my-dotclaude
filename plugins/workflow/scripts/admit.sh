@@ -55,7 +55,7 @@ prepare() {
     local n="$1" wt
     [ -n "$(tier_of "$n")" ] || { hold "$n" "no tier in the graph (not in scope?)"; return 1; }
     wt="$(worktree_of "$n")"
-    if [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "issue-$n" ]; then return 0; fi
+    if [ "$(safe_git "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "issue-$n" ]; then return 0; fi
     if git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$n"; then
         git -C "$BASE_REPO" merge-base --is-ancestor "$BASE_SHA" "issue-$n" 2>/dev/null \
             || { hold "$n" "a stale issue-$n branch from an earlier run exists — delete or rename it"; return 1; }
@@ -85,7 +85,7 @@ provision() {
 spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead
     # A plan can take a while and the run branch moves meanwhile: a clean worktree catches up here
     # so the worker never needs `git merge` (its permission layer denies it). Diverged/dirty: left alone.
-    git -C "$(worktree_of "$1")" merge -q --ff-only "$ORCH_BRANCH" >/dev/null 2>&1 || :
+    safe_git "$(worktree_of "$1")" merge -q --ff-only "$ORCH_BRANCH" >/dev/null 2>&1 || :
     provision "$1" 2>"$TMP/prov-$1.msg" || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
     spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
         || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
@@ -169,7 +169,11 @@ if [ -n "$DRAIN" ]; then
     exit 0
 fi
 
-bash "$WF/refresh-blockers.sh" "$GRAPH" "$BASE_REPO" 2>/dev/null   # blockers can close mid-run
+# Blockers can close mid-run. Said once, when it happens: their code is on the base branch, not on
+# the run branch, so a dependent that needs it must be built on a run branch that has merged it.
+for b in $(bash "$WF/refresh-blockers.sh" "$GRAPH" "$BASE_REPO" 2>/dev/null | sed -n 's/^blocker-closed //p'); do
+    echo "note: blocker $b closed after launch — its code may be on $BASE_BRANCH but not on $ORCH_BRANCH; merge $BASE_BRANCH into it before a dependent that needs $b"
+done
 ARGS=()
 for n in $(run_state merged);                   do ARGS+=(--merged "$n"); done
 for n in $(run_state held);                     do ARGS+=(--held "$n"); done

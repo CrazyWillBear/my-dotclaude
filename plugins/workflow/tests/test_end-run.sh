@@ -32,6 +32,7 @@ printf '%s\n' "$*" >>"$STUB_LOG.followup"
 echo "integration: 0 high, 0 medium, 1 low — nothing filed"
 STUB
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
+cp "$SCRIPT_DIR/../../infra/scripts/common-git-dir.sh" "$INFRA/"   # the containment tripwire safe_git runs
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.gc"\nif [ -n "${STUB_GC_FAIL:-}" ]; then echo "removed a x"; echo "error: could not remove b y" >&2; exit 1; fi\necho "nothing to remove"\n' >"$INFRA/session-gc.sh"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>"$STUB_LOG.reap"\necho "reaped 2 process(es)"\n' >"$INFRA/reap.sh"
 BIN="$WORK/bin"; mkdir -p "$BIN"
@@ -60,6 +61,9 @@ git -C "$REPO" worktree add -q "$REPO/.worktrees/r1/issue-11" issue-11
 git -C "$REPO" worktree add -q -b issue-13 "$REPO/.worktrees/r1/issue-13" dev
 git -C "$REPO/.worktrees/r1/issue-13" -c user.email=t@t.t -c user.name=t commit -q --allow-empty -m unmerged
 git -C "$REPO" branch prev/issue-13-r1 issue-13
+git -C "$REPO" branch issue-14 orchestrate-r1
+git -C "$REPO" worktree add -q "$REPO/.worktrees/r1/issue-14" issue-14
+mkdir -p "$WORK/planted"; printf '%s\n' "$WORK/planted" >"$REPO/.git/worktrees/issue-14/commondir"   # a worker rewrote commondir
 
 GRAPH="$WORK/graph.json"
 printf '%s' '{"issues":[{"n":11,"title":"one","tier":"standard","labels":[]},{"n":12,"title":"two","tier":"trivial","labels":[]},{"n":13,"title":"three","tier":"complex","labels":[]},{"n":14,"title":"four","tier":"standard","labels":[]}],"blockerStates":{},"mockDebtOpen":[]}' >"$GRAPH"
@@ -142,7 +146,8 @@ for br in issue-13 prev/issue-13-r1; do
     if git -C "$REPO" show-ref --verify --quiet "refs/heads/$br"; then ok "unmerged $br kept"; else no "unmerged $br deleted"; fi
 done
 if [ -d "$REPO/.worktrees/r1/issue-13" ]; then ok "unmerged worktree kept"; else no "unmerged worktree removed"; fi
-assert_contains "and the counts are reported" "$OUT" "worktrees/branches: 3 removed, 2 kept"
+if [ -d "$REPO/.worktrees/r1/issue-14" ]; then ok "a worktree failing the containment check is left alone"; else no "a tampered worktree was removed"; fi
+assert_contains "and the counts are reported" "$OUT" "worktrees/branches: 3 removed, 3 kept"
 
 assert_not_contains "on the default branch, no close warning" "$OUT" "will NOT close"
 assert_not_contains "a clean cleanup does not claim a failure" "$OUT" "FAILED"

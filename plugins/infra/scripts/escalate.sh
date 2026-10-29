@@ -93,7 +93,7 @@
 #                  frozen then by design, and `exit` lands only after the review.
 #                  NOR while the worker's process tree is busy: a long test run is one tool
 #                  call and writes no events. "Busy" = it used >= ESCALATE_ACTIVE_TICKS
-#                  (100 = 1 CPU-second) since the previous call's sample (`cpu-ticks`).
+#                  (100 = 1 CPU-second) since an earlier sample (`cpu-ticks`, taken by dry runs too).
 #
 # WHERE OCCUPANCY COMES FROM. A CLAUDE worker's stream carries `message.usage` on every
 # `assistant` event; the last one's input + cache_read + cache_creation is the live context.
@@ -199,7 +199,7 @@ export ESC_RUNDIR="$RUNDIR" ESC_THREAD="$THREAD" ESC_ATTEMPT="$ATTEMPT" ESC_COMM
        ESC_SESSIONS="${CODEX_SESSIONS_ROOT:-${HOME:-/nonexistent}/.codex/sessions}" \
        ESC_STALL="${ESCALATE_STALL_MINUTES:-20}" \
        ESC_REVIEW="${ESCALATE_REVIEW_MINUTES:-45}" \
-       ESC_ACTIVE_TICKS="${ESCALATE_ACTIVE_TICKS:-100}" \
+       ESC_ACTIVE_TICKS="${ESCALATE_ACTIVE_TICKS:-100}" ESC_SAMPLE_S="${ESCALATE_SAMPLE_SECONDS:-60}" \
        ESC_OCC="${ESCALATE_OCCUPANCY_TOKENS:-256000}" \
        ESC_CAP="${ESCALATE_CONSULT_CAP:-2}" \
        ESC_WINDOW="${ESCALATE_RECURRENCE_WINDOW:-2}" \
@@ -218,6 +218,7 @@ attempt = int(os.environ["ESC_ATTEMPT"])
 stall_s = float(os.environ["ESC_STALL"]) * 60
 review_s = float(os.environ["ESC_REVIEW"]) * 60
 active_ticks = int(os.environ["ESC_ACTIVE_TICKS"])
+sample_s = float(os.environ["ESC_SAMPLE_S"])
 occ_max = int(os.environ["ESC_OCC"])
 cap     = int(os.environ["ESC_CAP"])
 window  = int(os.environ["ESC_WINDOW"])
@@ -463,18 +464,33 @@ def tree_ticks(root):
     return sum(ticks.get(n, 0) for n in seen)
 
 # A long test or recording run writes nothing to the event log for minutes (one tool call).
-# That is work, not a stall: the worker's process tree is still burning CPU. Compared with
-# the sample the previous call left behind, so a wedged process (no CPU) still stalls.
+# That is work, not a stall: the worker's process tree is still burning CPU.
+#
+# `cpu-ticks` holds two samples, "ticks epoch" per line: the previous one and the newest. A call
+# compares against the newest sample that is at least ESC_SAMPLE_S old (else the one before it),
+# and takes a new sample only when the newest is that old. handle-report.sh scans with a DRY run
+# and then repeats the call for real seconds later; both must judge against the same earlier
+# sample, so a dry run records samples too (an observation, not a decision mark). A wedged
+# process (no CPU) still stalls.
 busy = False
 if reason is None and running and pid.isdigit():
-    now_ticks = tree_ticks(int(pid))
-    try:
-        busy = now_ticks - int((read("cpu-ticks") or "").split()[0]) >= active_ticks
-    except (IndexError, ValueError):
-        pass
-    if not dry:
+    now_t, now_ticks = time.time(), tree_ticks(int(pid))
+    samples = []
+    for line in (read("cpu-ticks") or "").splitlines():
+        try:
+            tk, ts = line.split()
+            samples.append((int(tk), float(ts)))
+        except ValueError:
+            pass
+    samples = samples[-2:]
+    if samples:
+        newest_old = now_t - samples[-1][1] >= sample_s
+        ref = samples[-1] if newest_old or len(samples) < 2 else samples[-2]
+        busy = now_ticks - ref[0] >= active_ticks
+    if not samples or now_t - samples[-1][1] >= sample_s:
+        samples = (samples[-1:] if samples else []) + [(now_ticks, now_t)]
         with open(os.path.join(rundir, "cpu-ticks"), "w") as fh:
-            fh.write("%d\n" % now_ticks)
+            fh.write("".join("%d %.0f\n" % x for x in samples))
 
 if reason is None and running and not busy:
     try:

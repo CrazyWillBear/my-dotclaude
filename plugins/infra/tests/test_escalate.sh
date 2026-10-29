@@ -513,10 +513,14 @@ echo "test: a worker whose process tree is burning CPU is not stalled (a long te
 bash -c 'while :; do :; done' & BUSY=$!
 mkrun "" "" "$BUSY"
 age_file "$RUNDIR/events.jsonl" 30
-run r1 12 standard "$REPO" --base base      # first sample: nothing to compare with yet
+export ESCALATE_SAMPLE_SECONDS=1
+run r1 12 standard "$REPO" --base base --dry-run   # handle-report.sh scans dry first: first sample, nothing to compare
 sleep 2
-run r1 12 standard "$REPO" --base base
-assert_empty "stale log but CPU advanced since the last call: not a stall" "$OUT"
+run r1 12 standard "$REPO" --base base --dry-run
+assert_empty "dry scan: stale log but CPU advanced since the earlier sample" "$OUT"
+run r1 12 standard "$REPO" --base base             # ...then repeats the call for real, seconds later
+assert_empty "and the real call judges against the same earlier sample: not a stall" "$OUT"
+unset ESCALATE_SAMPLE_SECONDS
 kill "$BUSY" 2>/dev/null; wait "$BUSY" 2>/dev/null
 
 echo "test: stall — alive, unfinished, event log untouched for the window"

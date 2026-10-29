@@ -59,6 +59,16 @@ spawn_issue() {
         --role "$role" --round "$round" --attempt "$attempt" ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} >/dev/null 9>&-
 }
 
+# safe_git <worktree> <git args…> — host git inside a WORKER's worktree. The worker can write that
+# worktree's git admin dir (commondir, config), so first re-run the containment check spawn.sh
+# runs before its own first host git, and switch off the config-driven code paths (fsmonitor,
+# hooks) as salvage() does. Fails (1) when the check refuses: the caller leaves that worktree alone.
+safe_git() {
+    local wt="$1"; shift
+    bash "$INFRA/common-git-dir.sh" --roots "$wt" >/dev/null 2>&1 || return 1
+    git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+}
+
 # repo_hook <name> <dest> — copy the repo's .orchestrate/<name>.sh, as of the LAUNCH commit, to
 # <dest>; fails when it has none. Never read from a worktree: workers write those, and the hook
 # runs on the host. Hooks: `provision.sh` (admit.sh, before a worker's first spawn),

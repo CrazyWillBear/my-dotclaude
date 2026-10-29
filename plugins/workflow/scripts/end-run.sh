@@ -140,8 +140,9 @@ TIDIED=0; KEPT=0
 merged_in_run() { git -C "$BASE_REPO" merge-base --is-ancestor "$1" "$ORCH_BRANCH" 2>/dev/null; }
 for wt in "$BASE_REPO/.worktrees/$RUNID"/issue-*; do
     [ -d "$wt" ] || continue
-    if merged_in_run "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" \
-            && git -C "$BASE_REPO" worktree remove "$wt" >/dev/null 2>&1; then TIDIED=$((TIDIED + 1)); else KEPT=$((KEPT + 1)); fi
+    # safe_git: the worker wrote this worktree's git dir; `worktree remove` runs a git status in it.
+    if merged_in_run "$(safe_git "$wt" rev-parse HEAD 2>/dev/null)" \
+            && git -C "$BASE_REPO" -c core.fsmonitor=false -c core.hooksPath=/dev/null worktree remove "$wt" >/dev/null 2>&1; then TIDIED=$((TIDIED + 1)); else KEPT=$((KEPT + 1)); fi
 done
 rmdir "$BASE_REPO/.worktrees/$RUNID" 2>/dev/null
 for n in $(jq -r '.issues[].n' "$GRAPH"); do   # this run's issues only: a concurrent run's branch is not ours

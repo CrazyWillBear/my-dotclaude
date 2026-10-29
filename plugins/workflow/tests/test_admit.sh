@@ -25,6 +25,7 @@ assert_not_contains() { case "$2" in *"$3"*) no "$1 (unexpected '$3')" ;; *) ok 
 export HOME="$WORK/home" CODEX_RUN_ROOT="$WORK/runs"
 unset CLAUDE_PROJECT_DIR ORCH_LOCKED ORCH_DEADLINE
 INFRA="$WORK/infra"; mkdir -p "$INFRA"; export ORCH_INFRA="$INFRA"
+cp "$SCRIPT_DIR/../../infra/scripts/common-git-dir.sh" "$INFRA/"   # the containment tripwire safe_git runs
 cp "$SCRIPT_DIR/../../infra/scripts/env-pairs.sh" "$INFRA/"   # the real validator, as handle-report.sh uses it
 cat >"$INFRA/consult.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -222,6 +223,7 @@ JSON
 mkenv r11 3; git -C "$REPO" branch orchestrate-r11; sed -i "s/^ORCH_BRANCH=.*/ORCH_BRANCH=orchestrate-r11/" "$CODEX_RUN_ROOT/r11/run.env"
 PATH="$WORK/bin:$PATH" run r11 --next
 assert_contains "#20 admitted though #99 was open at launch" "$OUT" "admitted #20 tier=trivial attempt=0"
+assert_contains "and says its code may not be on the run branch" "$OUT" "note: blocker #99 closed after launch"
 assert_equals "graph now records #99 closed" "$(jq -r '.blockerStates["99"]' "$GRAPH")" "closed"
 
 echo "test: the repo's provision.sh runs before the first spawn; its pairs ride on the worker"
