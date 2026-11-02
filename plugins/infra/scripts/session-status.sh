@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# session-status.sh — the state of one run's `claude --bg` worker sessions.
+# session-status.sh — the state of one run's workers (and of swarm peers).
 #
 # /orchestrate gives each worker attempt a distinct name:
 # `orch-<runid>-issue-<N>-a<attempt>` (fix rounds add `-r<round>`).
@@ -49,11 +49,12 @@
 #   failed   codex workers only: exited non-zero, or died without recording an exit code
 #   gone     expected (a positional N) but not listed at all — it never came up
 #
-# A CODEX-backed worker is in no agent list — it is a process. It is read instead from
-# `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/`, where spawn.sh leaves a
-# pid file and an exit file beside the event log, and it reports in the SAME vocabulary
+# A WORKER — codex or boxed `claude -p` — is in no agent list: it is a process. It is read
+# from `${CODEX_RUN_ROOT:-~/.claude/codex-runs}/<runid>/issue-<N>/`, where spawn.sh leaves
+# a pid file and an exit file beside the event log, and it reports in the SAME vocabulary
 # (live pid -> busy, exit 0 -> done or blocked, anything else -> failed) with the PID in
-# column 2. For codex, blocked means it exited clean reporting blocked infra:.
+# column 2 and the run dir's `backend` file (codex when absent) in column 3. Blocked means
+# it exited clean reporting blocked infra:.
 #
 # NEVER parse `claude logs`: it is a raw ANSI screen dump, cursor moves and spinner
 # frames, not a transcript.
@@ -289,9 +290,12 @@ if not (self_mode or peers_mode) and os.path.isdir(codex_root):
             except (OSError, TypeError, ValueError):
                 alive = False
             raw = "working" if alive else "failed"
+        backend = read("backend") or "codex"
+        if backend not in ("codex", "claude"):
+            backend = "codex"
         seen.add(name)
         seen_issues.add(issue)
-        lines.append("%s %s codex %s" % (name, pid or "-", state_of({"state": raw})))
+        lines.append("%s %s %s %s" % (name, pid or "-", backend, state_of({"state": raw})))
 
 for n in expect:
     if n not in seen_issues:

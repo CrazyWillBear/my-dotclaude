@@ -2,14 +2,11 @@
 #
 # prd-children.sh — resolve the genuine child slices of a PRD.
 #
-# The single source of truth for "which issues belong to PRD #N".  Two callers
-# share it:
-#
-#   * prd-reap.sh  — to decide whether every child is closed (PRD ready to close).
-#   * /orchestrate — to scope the run's allowlist to the PRD being built, rather
-#                    than sweeping every `ready-for-agent` issue in the repo.
-#                    (#77 defect A: the repo-wide sweep built an unrelated issue
-#                    into a PRD's branch.)
+# The single source of truth for "which issues belong to PRD #N". launch.sh uses it
+# to scope the run's allowlist to the PRD being built, rather than sweeping every
+# `ready-for-agent` issue in the repo (#77 defect A: the repo-wide sweep built an
+# unrelated issue into a PRD's branch), and to count the PRD's open children — at zero
+# the caller offers to close the PRD.
 #
 # Usage:
 #   bash prd-children.sh <prd_number>
@@ -17,8 +14,7 @@
 # Output (machine-readable, one line per child):
 #   <number> <state> <labels-csv>        # labels-csv is "-" when unlabeled
 #
-# Callers filter from there: /orchestrate wants open + ready-for-agent + not
-# hitl/prd; prd-reap wants the open/closed split and the hitl label.
+# launch.sh filters from there: open + ready-for-agent + not hitl/prd.
 #
 # A "genuine" child carries a real `Part of #N` trailer on its own line.  GitHub's
 # --search is tokenized full-text, so it also returns prefix collisions (a slice
@@ -29,8 +25,7 @@
 #
 # Backend: GitHub Issues via `gh` only — no `gh api`, no PR operations.
 # Fail open: missing dependencies, a missing argument, or gh errors exit 0
-# silently.  For /orchestrate an empty scope means "build nothing" (safe); for
-# prd-reap it means "emit no verdict" (safe).  Both beat guessing.
+# silently.  An empty scope means "build nothing" (safe), which beats guessing.
 
 command -v python3 >/dev/null 2>&1 || exit 0
 command -v gh      >/dev/null 2>&1 || exit 0
@@ -74,7 +69,7 @@ def get_body(issue_number):
     The None-vs-'' distinction matters: an empty body means "no trailer, not a
     child", while a failed fetch means "cannot tell" — and the caller keeps
     those, because silently dropping a genuine child would narrow /orchestrate's
-    scope and make prd-reap claim 'ready' too early.
+    scope.
     """
     out = gh("issue", "view", str(issue_number), "--json", "body")
     if out is None:

@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Plans ONE task before any code exists — reads the repo, writes an ordered implementation plan with file paths, function signatures, the tests to write first, testable acceptance criteria, the project done-check, and the assumptions it rests on. In /orchestrate's session lane the plan is written by consult.sh as a one-shot call on the tier's planner cell and POSTED TO THE ISSUE THREAD as the **Plan** comment before the build worker is spawned (standard and complex); in the ad-hoc lane this agent is spawned directly for complex work. Read-only — it plans, never edits.
+description: Plans ONE task before any code exists — reads the repo and writes an ordered plan: file paths, function signatures, tests to write first, testable acceptance criteria, the done-check, and its assumptions. Spawned directly for complex ad-hoc work; /orchestrate's session lane gets the same plan from consult.sh as a **Plan** comment before the build worker is spawned. Read-only.
 tools: Read, Grep, Glob, Bash(git:*)
 model: opus
 effort: high

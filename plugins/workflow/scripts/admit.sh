@@ -1,0 +1,238 @@
+#!/usr/bin/env bash
+#
+# admit.sh — admit scoped issues into a launched /orchestrate run.
+#
+# Usage:
+#   bash admit.sh <runid> <N>        # admit one issue
+#   bash admit.sh <runid> --next     # collect finished plans, then fill every free slot
+#
+# Admitting an issue: cut its worktree (`issue-<N>` off the orchestration branch, at
+# <repo>/.worktrees/<runid>/issue-<N>); a trivial issue is spawned at once (spawn.sh,
+# attempt 0, run-log `admitted`). A standard or complex one first needs a **Plan**:
+# consult.sh runs DETACHED (its own process group, PLAN_TIMEOUT cap, default 30 min) and
+# this call returns — an opus plan outlasts any Bash call. Each later pass COLLECTS finished
+# plans: exit 0 → run-log `planned`, spawn, `admitted`; anything else → `held` (nothing is
+# ever spawned onto an issue with no plan). A planning issue holds its slot and counts as in
+# flight for ready.sh, so it is never admitted twice.
+#
+# One call at a time per run (run_lock). An existing issue-<N> worktree is reused; an
+# existing issue-<N> BRANCH is reused only when it grew from this run's base — a stale one
+# from an earlier run is held, never built on.
+#
+# A worker is spawned only after the repo's .orchestrate/provision.sh (if it has one) ran: see provision().
+#
+# --next first refreshes blocker states (refresh-blockers.sh), then reads merged / held /
+# in-flight from run-log.sh and asks ready.sh what is admissible; readiness is never computed here. A recorded drain (`decision` "drain: …")
+# stops all admission (finished plans are still collected, never spawned).
+#
+# Output, one line per outcome:
+#   admitted #N tier=<t> attempt=0      planning #N tier=<t>      held #N <why>
+# then exactly one of:
+#   in-flight: 12,13            something is running (workers, or plans with planning: …)
+#   waiting: planning #N …      only plans are running — call again
+#   nothing-to-do: <why>        nothing running and nothing admissible (ready.sh's reason)
+#   error: <why>                ready.sh's unexplained empty — stop and report (exit 1)
+
+set -uo pipefail
+# shellcheck source=run-env.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-env.sh"
+
+[ $# -eq 2 ] || die "usage: admit.sh <runid> <N> | admit.sh <runid> --next"
+load_run "$1"
+run_lock
+TMP="$(mktemp -d)" || die "cannot create a temp dir"
+trap 'rm -rf "${TMP:?}"' EXIT
+PLANS="$RUN_DIR/plans"
+mkdir -p "$PLANS" || die "cannot create $PLANS"
+
+hold() {
+    runlog append "$RUNID" held "$(jq -cn --argjson n "$1" --arg why "$2" '{n: $n, why: $why}')" >/dev/null
+    echo "held #$1 $2"
+}
+
+# prepare <N> — validate and cut (or reuse) the worktree. Prints a held line on failure.
+prepare() {
+    local n="$1" wt
+    [ -n "$(tier_of "$n")" ] || { hold "$n" "no tier in the graph (not in scope?)"; return 1; }
+    wt="$(worktree_of "$n")"
+    if [ "$(safe_git "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "issue-$n" ]; then return 0; fi
+    if git -C "$BASE_REPO" show-ref --verify --quiet "refs/heads/issue-$n"; then
+        git -C "$BASE_REPO" merge-base --is-ancestor "$BASE_SHA" "issue-$n" 2>/dev/null \
+            || { hold "$n" "a stale issue-$n branch from an earlier run exists — delete or rename it"; return 1; }
+        git -C "$BASE_REPO" worktree add -q "$wt" "issue-$n" >/dev/null 2>"$TMP/wt-$n.err"
+    else
+        git -C "$BASE_REPO" worktree add -q -b "issue-$n" "$wt" "$ORCH_BRANCH" >/dev/null 2>"$TMP/wt-$n.err"
+    fi || { hold "$n" "worktree: $(tail -1 "$TMP/wt-$n.err")"; return 1; }
+}
+
+# provision <N> — run the repo's .orchestrate/provision.sh (if any) BEFORE the first spawn, so the
+# worker's tests find their DBs/Redis/S3 on attempt 0. Its stdout is NAME=VALUE lines (the same
+# pairs `--resource` stores; values are never printed or logged). Skipped when the issue already
+# has env (a retry, or a human's --resource). Fails (→ held) on a non-zero exit or a bad pair.
+provision() {
+    local n="$1" hook="$TMP/provision.sh" line pairs=() t
+    repo_hook provision "$hook" || return 0
+    [ ! -f "$(issue_dir "$n")/env" ] || return 0
+    # Whole timeout inside this call's budget, or defer (2): a hook that outlives the call loses its
+    # output lines. Output goes to a file, not a pipe a daemon the hook starts could hold open.
+    t="$(hook_timeout "${PROVISION_TIMEOUT:-300}")"
+    [ $(( $(budget_left) - 20 )) -ge "$t" ] || return 2
+    mkdir -p "$(issue_dir "$n")"
+    (cd "$BASE_REPO" && timeout "$t" bash "$hook" "$RUNID" "$n" "$(worktree_of "$n")" >"$TMP/prov-$n.out" 2>"$TMP/prov-$n.err" </dev/null 9>&-) \
+        || { echo "provision.sh failed: $(tail -1 "$TMP/prov-$n.err")" >&2; return 1; }
+    while IFS= read -r line; do [ -z "$line" ] || pairs+=("$line"); done <"$TMP/prov-$n.out"
+    [ "${#pairs[@]}" -gt 0 ] || return 0
+    # Never echo env-pairs.sh's complaint: for a stray stdout line it quotes the text before the first `=`.
+    bash "$INFRA/env-pairs.sh" "${pairs[@]}" >/dev/null 2>&1 \
+        || { echo "provision.sh printed a line that is not a valid NAME=VALUE pair (its stdout is reserved for pairs)" >&2; return 1; }
+    ( umask 077; printf '%s\0' "${pairs[@]}" >"$(issue_dir "$n")/env" ) || { echo "cannot store the pairs" >&2; return 1; }
+}
+
+spawn_now() {   # spawn_now <N> — attempt 0, logged; 1 when it was held instead, 2 when deferred
+    local rc
+    # A plan can take a while and the run branch moves meanwhile: a clean worktree catches up here
+    # so the worker never needs `git merge` (its permission layer denies it). Diverged/dirty: left alone.
+    safe_git "$(worktree_of "$1")" merge -q --ff-only "$ORCH_BRANCH" >/dev/null 2>&1 || :
+    provision "$1" 2>"$TMP/prov-$1.msg"; rc=$?
+    [ "$rc" -ne 2 ] || { echo "deferred #$1 no time left in this call to provision its env; admitted on the next pass"; return 2; }
+    [ "$rc" -eq 0 ] || { hold "$1" "$(tail -1 "$TMP/prov-$1.msg")"; return 1; }
+    spawn_issue "$1" build 1 0 2>"$TMP/spawn-$1.err" </dev/null \
+        || { hold "$1" "spawn failed: $(tail -1 "$TMP/spawn-$1.err")"; return 1; }
+    runlog append "$RUNID" admitted "{\"n\":$1,\"tier\":\"$(tier_of "$1")\"}" >/dev/null
+    echo "admitted #$1 tier=$(tier_of "$1") attempt=0"
+}
+
+# start <N> — prepare, then spawn (trivial) or start the detached plan. Fails when the issue
+# was held instead: a held pick must not use up a slot.
+start() {
+    local n="$1" tier
+    prepare "$n" || return
+    tier="$(tier_of "$n")"
+    if [ "$tier" = trivial ]; then spawn_now "$n"; return; fi
+    rm -f "$PLANS/$n.rc" "$PLANS/$n.out" "$PLANS/$n.err"
+    : >"$PLANS/$n.started"
+    # Detached: its own group (set -m), no stdin, and fd 9 (the run lock) closed, so it
+    # neither blocks the next call nor dies with this one.
+    ( set -m; nohup bash -c 'timeout "$1" bash "$2" plan "$3" "$4" "$5" "$6" >"$7.out" 2>"$7.err" </dev/null
+                             echo $? >"$7.rc.tmp" && mv -f "$7.rc.tmp" "$7.rc"' _ "${PLAN_TIMEOUT:-1800}" "$INFRA/consult.sh" \
+        "$RUNID" "$n" "$tier" "$(worktree_of "$n")" "$PLANS/$n" </dev/null >/dev/null 2>&1 9>&- & )
+    echo "planning #$n tier=$tier"
+}
+
+# collect — every finished plan becomes a spawn or a hold. A good plan needs a free worker
+# slot: when --max was lowered under it, it waits (`.rc.deferred`, still counted as planning)
+# and is looked at again on the next pass.
+collect() {
+    local f n rc live
+    live="$(run_state in_flight | wc -w)"
+    for f in "$PLANS"/*.rc.deferred; do [ -e "$f" ] && mv -f "$f" "${f%.deferred}"; done
+    for f in "$PLANS"/*.rc; do
+        [ -e "$f" ] || continue
+        n="$(basename "$f" .rc)"; rc="$(head -1 "$f")"
+        if [ -n "$DRAIN" ]; then
+            hold "$n" "plan finished after the drain — not spawned"
+        elif [ "$rc" = 0 ]; then
+            if [ "$live" -ge "$MAX" ]; then mv -f "$f" "$f.deferred"; continue; fi
+            runlog append "$RUNID" planned "{\"n\":$n}" >/dev/null
+            spawn_now "$n"; rc=$?
+            [ "$rc" -ne 2 ] || { mv -f "$f" "$f.deferred"; continue; }
+            [ "$rc" -ne 0 ] || live=$((live + 1))
+        elif [ "$rc" = 124 ]; then
+            hold "$n" "plan timed out after ${PLAN_TIMEOUT:-1800}s"
+        else
+            hold "$n" "plan failed: $(tail -1 "$PLANS/$n.err" 2>/dev/null)"
+        fi
+        rm -f "$PLANS/$n".*
+    done
+}
+
+planning() { for f in "$PLANS"/*.started; do [ -e "$f" ] && basename "$f" .started; done; }
+
+final_line() {
+    local f p
+    f="$(run_state in_flight | xargs)"; p="$(planning | xargs)"
+    if [ -n "$f" ]; then
+        echo "in-flight: ${f// /,}${p:+ planning: ${p// /,}}"
+    elif [ -n "$p" ]; then
+        echo "waiting: planning #${p// /, #} — call handle-report.sh $RUNID --wait again"
+    else
+        return 1
+    fi
+}
+
+STATE="$(runlog state "$RUNID" 2>/dev/null)"
+DRAIN="$(printf '%s\n' "$STATE" | sed -n 's/^decision=\(drain: .*\)$/\1/p' | head -1)"
+# A fold whose post-fold check failed is committed on the run branch until the merger fixes it: no
+# new worktree, plan collection or fast-forward may start from that tree meanwhile.
+PF="$(grep -lx 'post-fold' "$RUN_DIR"/issue-*/paused 2>/dev/null | head -1 | sed 's|.*/issue-\([0-9]*\)/paused|\1|')"
+[ -n "$PF" ] || collect
+
+if [ -n "$PF" ]; then
+    echo "paused: no new work while #$PF's post-fold fix is pending (see its conflict line; --merged $PF lifts this)"
+    final_line || echo "waiting: the post-fold fix on #$PF"
+    exit 0
+fi
+
+if [ "$2" != --next ]; then
+    N="${2#\#}"
+    case "$N" in ''|*[!0-9]*) die "issue must be a number, got '$2'" ;; esac
+    case " $(run_state in_flight) $(run_state merged) $(planning | xargs) " in
+        *" $N "*) die "#$N is already admitted" ;;
+    esac
+    start "$N"
+    final_line
+    exit 0
+fi
+
+if [ -n "$DRAIN" ]; then
+    final_line || echo "nothing-to-do: drained ($DRAIN)"
+    exit 0
+fi
+
+# Blockers can close mid-run. Said once, when it happens: their code is on the base branch, not on
+# the run branch, so a dependent that needs it must be built on a run branch that has merged it.
+# Nothing is admitted in the pass that says it, so the orchestrator can act first.
+CLOSED=0
+for b in $(bash "$WF/refresh-blockers.sh" "$GRAPH" "$BASE_REPO" 2>/dev/null | sed -n 's/^blocker-closed //p'); do
+    echo "note: blocker $b closed after launch — its code may be on $BASE_BRANCH but not on $ORCH_BRANCH; if a dependent needs $b, merge $BASE_BRANCH into $ORCH_BRANCH, then call --next again (dependents are admitted on that call)"
+    CLOSED=1
+done
+if [ "$CLOSED" -eq 1 ]; then
+    final_line || echo "waiting: admission resumes on the next --next call"
+    exit 0
+fi
+ARGS=()
+for n in $(run_state merged);                   do ARGS+=(--merged "$n"); done
+for n in $(run_state held);                     do ARGS+=(--held "$n"); done
+for n in $(run_state in_flight) $(planning);    do ARGS+=(--in-flight "$n"); done
+[ -z "${SKIP_UNKNOWN:-}" ] || ARGS+=(--skip-unknown)
+READY="$(bash "$WF/ready.sh" "$GRAPH" ${ARGS[@]+"${ARGS[@]}"} 2>"$TMP/ready.err")"; RC=$?
+WHY="$(head -1 "$TMP/ready.err")"
+if [ "$RC" -ne 0 ]; then
+    final_line
+    echo "${WHY:-error: ready.sh failed}"
+    exit 1
+fi
+
+BUSY=0; DEFERRED=0
+for n in $(run_state in_flight) $(planning); do BUSY=$((BUSY + 1)); done
+for n in $READY; do
+    [ "$BUSY" -lt "$MAX" ] || break
+    start "$n"; rc=$?
+    [ "$rc" -ne 0 ] || BUSY=$((BUSY + 1))
+    [ "$rc" -ne 2 ] || DEFERRED=1
+done
+# Every pick held and nothing running: the next pass sees them held and may find others.
+# It terminates — each pass holds at least one more issue or starts one. A DEFERRED pick does
+# neither (the call's budget did not change), so that case stops and waits for a fresh call.
+if ! final_line; then
+    if [ "$DEFERRED" -eq 1 ]; then
+        echo "waiting: a pick was deferred for lack of call budget — call handle-report.sh $RUNID --wait (or admit.sh --next) again"
+    else
+        if [ -n "$READY" ]; then
+            rm -rf "${TMP:?}"
+            exec bash "$0" "$RUNID" --next
+        fi
+        echo "${WHY:-nothing-to-do: nothing admissible}"
+    fi
+fi

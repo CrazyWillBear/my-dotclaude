@@ -12,15 +12,16 @@
 # reviewed by `codex exec review`, which cannot be pointed at a claude model — so the
 # roster's "reviewer: opus" was silently false for every codex worker, and the review ran
 # on codex's default model with a fixed prompt nobody could shape (docs/swarm-design.md
-# § Codex backend, #100). This argv is `claude -p` at the reviewer cell's MODEL, spawning
-# the `personal-tools/my-review` agent on the commit range — the same reviewer and the
-# same central-mechanism audit a claude-built branch gets. The codex review path is
-# retired for workers.
+# § Codex backend, #100). This argv is `claude -p` IN THE REVIEWER BOX (a per-role
+# CLAUDE_CONFIG_DIR link-kit.sh builds: the user's credentials, a reviewer CLAUDE.md, no user
+# hooks or MCP servers, and of the plugins only personal-tools — whose own hooks therefore
+# load too; none is a Stop hook), running AS the `my-review` agent — `--plugin-dir
+# ~/.claude/kit/personal-tools --agent my-review` — on the commit range: one session, not a
+# launcher that spawns a subagent. ~7k tokens to start instead of a full user config's ~44k.
 #
-# EFFORT: the cell's effort is passed to the launcher session, but the review itself runs in
-# the my-review AGENT, whose frontmatter pins its own effort (xhigh) — the Agent tool has no
-# effort parameter. So the roster's reviewer effort governs only the launcher; the model is
-# what the cell decides. Said here so nothing downstream claims otherwise.
+# MODEL AND EFFORT are the reviewer cell's: `--model` and `--effort` on the command line beat
+# the agent frontmatter's `model: opus` / `effort: xhigh` (verified 2026-10-17 with haiku:
+# `--effort low` thought 289 tokens, `--effort max` 18,261, on the same review).
 #
 # Usage:
 #   bash review-cmd.sh <tier> <base-sha> <issue> [--scoped <rundir>]
@@ -145,17 +146,18 @@ high downstream):
 
 Silent data loss, data corruption, and any denial-of-service (an input that stalls or exhausts a shared worker) are ALWAYS high (P1), whatever their apparent size."
 
-if [ "$MODE" = integration ]; then
-    FULL_INTRO="You are the INTEGRATION REVIEWER for an /orchestrate run. Per-issue reviews already happened on every slice; do NOT re-review single-issue problems. Spawn personal-tools:my-review (model $MODEL) on the commit range $BASE_SHA..$HEAD_SHA as ONE unit, and report ONLY cross-issue problems: one slice breaking another's assumption, two slices changing the same contract, seams between issues no single review saw. Nothing on GitHub."
-else
-    FULL_INTRO="You are the INDEPENDENT REVIEWER for issue #$ISSUE. This checkout is a disposable clone
-of the worker's branch; you did not write this code and you change nothing here.
+# The session already IS my-review (--agent), so the prompt never asks it to spawn one.
+SELF="You ARE the my-review agent. Spawn no subagents. Your ENTIRE output is the findings list below."
 
-Spawn the personal-tools:my-review agent (Agent tool, subagent_type personal-tools:my-review,
-model $MODEL) with this target: the commit range $BASE_SHA..HEAD, reviewed as ONE unit, for
-issue #$ISSUE — so it also runs the central-mechanism / mock-drift audit against the
-issue's \`## Central mechanism\` line (\`gh issue view $ISSUE\`). It may file a mock-debt
-follow-up; nothing else on GitHub."
+if [ "$MODE" = integration ]; then
+    FULL_INTRO="You are the INTEGRATION REVIEWER for an /orchestrate run. $SELF Per-issue reviews already happened on every slice; do NOT re-review single-issue problems. Review the commit range $BASE_SHA..$HEAD_SHA as ONE unit, and report ONLY cross-issue problems: one slice breaking another's assumption, two slices changing the same contract, seams between issues no single review saw. Nothing on GitHub."
+else
+    FULL_INTRO="You are the INDEPENDENT REVIEWER for issue #$ISSUE. $SELF This checkout is a
+disposable clone of the worker's branch; you did not write this code and you change nothing here.
+
+Review the commit range $BASE_SHA..HEAD as ONE unit, for issue #$ISSUE — including the
+central-mechanism / mock-drift audit against the issue's \`## Central mechanism\` line
+(\`gh issue view $ISSUE\`). You may file a mock-debt follow-up; nothing else on GitHub."
 fi
 
 FULL_CLOSE="- [P1] <one-line title> — <path>:<line>
@@ -178,18 +180,16 @@ $FULL_CLOSE"
 
 if [ -n "$PRIOR" ]; then
     PROMPT="You are the INDEPENDENT REVIEWER for issue #$ISSUE, on a FIX ROUND — a RE-REVIEW, not a full review.
-This checkout is a disposable clone of the worker's branch; you did not write this code and you change nothing here.
+$SELF This checkout is a disposable clone of the worker's branch; you did not write this code and you change nothing here.
 
 The previous review round reported these findings (severity: title — path:line):
 
 $PRIOR
 
-Spawn the personal-tools:my-review agent (Agent tool, subagent_type personal-tools:my-review,
-model $MODEL) with this target: the fix, commit range $FIX_SHA..HEAD, reviewed as ONE unit,
-for issue #$ISSUE, and hand it the list above. Its job is exactly two things: for EACH finding
-above, decide whether the fix resolved it or it is still open; and report anything the fix
-itself broke. Do NOT re-review the rest of the branch ($BASE_SHA..$FIX_SHA was already reviewed).
-It may file a mock-debt follow-up; nothing else on GitHub.
+Review the fix — commit range $FIX_SHA..HEAD, as ONE unit, for issue #$ISSUE. Your job is exactly
+two things: for EACH finding above, decide whether the fix resolved it or it is still open; and
+report anything the fix itself broke. Do NOT re-review the rest of the branch
+($BASE_SHA..$FIX_SHA was already reviewed). You may file a mock-debt follow-up; nothing else on GitHub.
 
 $DATA
 
@@ -212,11 +212,15 @@ Never write \`[P\` or \`[fixed]\` anywhere except in those list items. This outp
 a review it cannot parse is refused and the run stops, so keep the shape exact."
 fi
 
-# `--` before the prompt: --disallowedTools is variadic and would eat it (spawn.sh has the
-# full story). No --add-dir: the callers cd into the clone, which is the session's cwd.
-set -- claude -p \
+# `--` before the prompt: --disallowedTools is variadic and would eat it (worker-cmd.sh has
+# the full story). No --add-dir: the callers cd into the clone, which is the session's cwd.
+KIT="${HOME:-/nonexistent}/.claude/kit"
+BOX="${CLAUDE_BOX_ROOT:-$KIT/boxes}/reviewer"
+set -- env "CLAUDE_CONFIG_DIR=$BOX" claude -p \
     --model "$MODEL" --effort "$EFFORT" \
     --permission-mode bypassPermissions \
+    --plugin-dir "$KIT/personal-tools" --agent my-review \
+    --mcp-config '{"mcpServers":{}}' --strict-mcp-config \
     --disallowedTools Edit Write NotebookEdit \
         "Bash(git commit:*)" "Bash(git push:*)" "Bash(git merge:*)" "Bash(git worktree:*)" \
         "Bash(gh issue comment:*)" "Bash(gh issue close:*)" "Bash(gh issue edit:*)" "Bash(gh pr:*)" \

@@ -185,9 +185,9 @@ peer_roles() {
     local out role
     out="$( { roster list manager && roster list doer; } )" || exit 1
     PEER_LIST=()
-    # NOT `mapfile`: it is bash 4+, and macOS ships bash 3.2 while README.md and
-    # AGENT_SETUP.md both promise macOS. A missing builtin fails SILENTLY here — there is
-    # no `set -e` and the explicit `return 0` swallows it — leaving PEER_LIST empty, which
+    # NOT `mapfile`: it is bash 4+, and staying bash-3.2-clean costs nothing. A missing
+    # builtin fails SILENTLY here — there is no `set -e` and the explicit `return 0`
+    # swallows it — leaving PEER_LIST empty, which
     # `up` reads as "every peer is already live" (it execs the orchestrator into an empty
     # swarm, reporting success) and `down` reads as "nothing to stop" (it returns 0 while
     # every peer keeps running, and the next `up` then treats each survivor as live).

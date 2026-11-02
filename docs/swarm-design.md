@@ -37,8 +37,10 @@ Three levels. Each level talks only to the one above and the one below.
   over them. It never builds in its own context.
 - A **doer** peer (performance-engineer) does its own work and may spawn workers for research
   or measurement, but does not own a build loop.
-- A **worker** is either a `claude --bg` session or a `codex exec` process. The manager does not
-  care which; the roster's backend column decides.
+- A **worker** is a one-shot process: `codex exec`, or `claude -p` in a per-role **box**
+  (`~/.claude/kit/boxes/<role>`, a lean `CLAUDE_CONFIG_DIR` built by infra's `link-kit.sh`). The
+  manager does not care which; the roster's backend column decides. Workers are never sessions:
+  no inbox, no registry row, nothing to attach to.
 
 The orchestrator never reads source, never runs a diff, never runs a done-check. Peers report
 fixed-shape summaries; artifacts go to files and issue threads. This is `/orchestrate`'s
@@ -53,7 +55,7 @@ plugin holds every script other plugins need, and nothing else calls across.
 | plugin | holds | calls into |
 |---|---|---|
 | **context** | the four hooks (watchdog, resume, save-handoff, suggest-docs) + `/handoff`, `/handoff-plan` | nothing |
-| **infra** | scripts only: `spawn.sh`, `session-status.sh`, `check-inbound.sh`, the backend switch, `model-tiers.json` + `resolve-tier.sh`, and `link-kit.sh` (the stable-address hook) | nothing |
+| **infra** | scripts only: `spawn.sh` + `worker-cmd.sh`, `session-status.sh`, the backend switch, the worker boxes, `model-tiers.json` + `resolve-tier.sh`, and `link-kit.sh` (the stable-address hook) | nothing |
 | **workflow** | `/orchestrate`, `/classify-task`, `/to-prd`, `/to-issues`, the graph + merge scripts, the three agents | infra |
 | **swarm** | `/init-swarm`, `swarm.sh up|down|rotate|attach|brief`, charter + brief templates, memory tiers | infra |
 | **personal-tools** | everything left | nothing |
@@ -93,6 +95,12 @@ gains a backend column:
 **Updated 2026-10-06 (the user table becomes the shipped default):** sonnet is back — it tops
 the trivial chain (6-luna → sonnet medium) and builds complex at high behind an opus-high plan;
 fable leaves the shipped table. Standard is unchanged (6-luna → opus).
+
+**Updated 2026-10-17 (boxed workers, review-cap 2, backstop 6):** every worker — codex or
+`claude -p` in the implementer box — is judged by `escalate.sh`, so the claude-only "five fix
+rounds" rule is gone. `ESCALATE_REVIEW_CAP` defaults to 2 (one fix round on the same model before
+the chain moves), review-cap never fires at the top of a chain, and `ESCALATE_ROUND_BACKSTOP=6`
+bounds every issue's loop across attempts and backends.
 
 **Updated 2026-09-23 (6-sol dropped, opus fixes from round 1):** PRD #70's run showed luna
 builds fine but its fix rounds do not converge (5–6 review rounds per issue, fix rounds adding
@@ -288,11 +296,18 @@ Claude's auto-memory, which is shared by cwd and cannot be scoped.
 
 Nothing rotates automatically. The context plugin's watchdog advises; the orchestrator asks.
 
-Claude background sessions do not reliably inherit arbitrary launcher variables; worker `--env`
-values travel in per-session settings to avoid daemon filtering or cross-session leakage.
-The shared validator reserves shell launch controls, Git routing/configuration names and infra-owned variables before export.
+Worker `--env` values are exported into the worker's own process only — never argv, never the run
+dir — and unset before the host-side reviewer runs. The shared validator reserves shell launch
+controls, Git routing/configuration names and infra-owned variables before export.
 
 ## Codex backend
+
+**Since 2026-10-17 this is every worker's shape.** A claude worker is `claude -p` in the
+implementer box, launched through the same wrapper into the same run dir (plus a `backend` file),
+its report extracted from the stream's final `result` event; it resumes with `claude -p --resume
+<session_id>` from the stream's `system/init` event. Everything below about the run dir, the
+sibling reviewer, the pinned base, the group kill and escalation-by-ending-the-turn applies to
+both backends; the sandbox and `resume` flag details are codex's own.
 
 Verified on codex-cli 0.154 with real luna runs (2026-09-15), not from docs. A worker is
 one-shot, so it maps onto `codex exec`:
@@ -355,9 +370,9 @@ one-shot, so it maps onto `codex exec`:
   must be re-passed through `-c` and the resume launched from the worktree directory. `-m` must
   be re-passed for the same reason it must on a fresh run.
 - **Review.** **Superseded by #104: a codex-built branch is reviewed by the CLAUDE reviewer** —
-  `review-cmd.sh` builds a `claude -p` call at the reviewer cell's model (its effort reaches only
-  the launcher; the my-review agent's frontmatter pins its own) that spawns
-  `personal-tools:my-review` on the commit range, in the disposable clone, and emits
+  `review-cmd.sh` builds a `claude -p` call in the reviewer box at the reviewer cell's model and
+  effort, running AS `my-review` (`--plugin-dir ~/.claude/kit/personal-tools --agent my-review`)
+  on the commit range, in the disposable clone, and emits
   `- [Pn] title — path:line` items or the literal `No findings.` for `review-counts.sh`.
   In scoped fix reviews (#115), `review-counts.sh` refuses the verdict unless every open finding in the last ledger round reappears with the same title and path, either `[fixed]` or `[Pn]`.
   `codex exec review` was a working reviewer, but it could not be pointed at a claude model, so
@@ -460,7 +475,7 @@ with `kill`, not `claude stop`, there is nothing to `claude attach`, and with no
 worker cannot be spoken to mid-run — it escalates by ENDING its turn (`status: escalate`, the
 question in `note`) and is answered by resuming its thread, which keeps everything it had. That PID is `spawn.sh`'s wrapper, not `codex` itself, so the stop
 is a **group** kill — `kill -- -<pid>`: `spawn.sh` starts the wrapper under bash job control
-(`set -m`, a builtin — `setsid` is Linux-only and the kit runs on macOS too) so it leads its own
+(`set -m`, a bash builtin, so no external `setsid` is needed) so it leads its own
 process group, because killing the wrapper alone orphans codex onto the worktree and
 leaves no exit file, which reads as `failed` and frees the orchestrator to respawn on top of it.
 
@@ -472,10 +487,9 @@ issue), `review-stderr.log` (why it did not run, quoted back
 when worker-report.sh refuses the run), `pid` and `exit` — which is written LAST, after the
 review, so a run that reads terminal always has its verdict on disk. A live pid reports `busy`, exit 0
 `done`, anything else `failed` — the same vocabulary the agent list normalizes into, because
-`/orchestrate`'s liveness loop waits on `busy`. A codex worker never goes `idle`. Its prompt
-also swaps two steps: a sibling claude reviewer replaces the in-session `my-review` subagent —
-run for the worker rather than by it, see § Review — and the schema'd final message replaces
-`SendMessage`, which codex does not have.
+`/orchestrate`'s liveness loop waits on `busy`. A worker never goes `idle`. Its prompt says the
+sibling claude reviewer runs for it, not by it (see § Review), and that its schema'd final
+message is its report.
 
 ## Rotation
 

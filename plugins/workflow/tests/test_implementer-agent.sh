@@ -23,6 +23,9 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENT_FILE="$PLUGIN_ROOT/agents/implementer.md"
+# The contract body lives in infra's implementer box (one source for the subagent and the
+# session-lane workers); the agent keeps frontmatter, Input and Output and points at it.
+BOX_FILE="$PLUGIN_ROOT/../infra/boxes/implementer/CLAUDE.md"
 
 pass=0
 fail=0
@@ -41,9 +44,16 @@ else
 fi
 
 content=""
+agent=""
 if [ -f "$AGENT_FILE" ]; then
-    content="$(cat "$AGENT_FILE")"
+    agent="$(cat "$AGENT_FILE")"
 fi
+if [ -f "$BOX_FILE" ]; then ok "box contract present"; else no "box contract missing at $BOX_FILE"; fi
+content="$agent
+$(cat "$BOX_FILE" 2>/dev/null)"
+
+echo "test: the agent points at the box contract by its stable kit path"
+assert_contains "reads the box file first" "$agent" "~/.claude/kit/infra/boxes/implementer/CLAUDE.md"
 
 # ---------------------------------------------------------------------------
 echo "test: frontmatter — name, model: opus pin, and max effort survive"
@@ -68,7 +78,7 @@ assert_contains "commit-scope hint input" "$content" "commit-scope hint"
 # ---------------------------------------------------------------------------
 echo "test: orchestrate obligations intact — dedup-search step"
 assert_contains "dedup-search skill invoked" "$content" "dedup-search"
-assert_contains "dedup fallback path present" "$content" "plugins/personal-tools/skills/dedup-search/SKILL.md"
+assert_contains "dedup method read by stable kit path" "$content" "~/.claude/kit/personal-tools/skills/dedup-search/SKILL.md"
 
 # ---------------------------------------------------------------------------
 echo "test: orchestrate obligations intact — TDD-first"
@@ -119,31 +129,28 @@ assert_contains "the Deviation comment" "$content" "**Deviation**"
 assert_contains "names which step" "$content" "which step"
 assert_contains "what was found" "$content" "what you found"
 assert_contains "what was tried" "$content" "what you tried"
-assert_contains "a session pauses by escalating WITH the deviation: prefix" "$content" "issue <N> escalate deviation: <the same"
-assert_contains "a codex worker pauses with the escalate status" "$content" '"status": "escalate"'
+assert_contains "a worker pauses with the escalate status" "$content" '"status": "escalate"'
 assert_contains "and the same prefix in note" "$content" '"note": "deviation: <the same three lines>"'
 assert_contains "the prefix is named as the dispatch key" "$content" "prefix is load-bearing"
 assert_contains "the Consult answers it" "$content" "**Consult N**"
 assert_contains "and the decision is followed" "$content" "Follow it.**"
 assert_contains "the consult cap is stated" "$content" "capped"
 
-echo "test: the context map is a hint the implementer may ignore"
-assert_contains "reads CONTEXT-MAP.md if present" "$content" "CONTEXT-MAP.md"
-assert_contains "hint, not a contract" "$content" "hint, not a contract"
-assert_contains "does not maintain it" "$content" "Do not try to repair or update it"
+echo "test: the context map is gone"
+assert_not_contains "no CONTEXT-MAP.md" "$content" "CONTEXT-MAP"
 
 echo "test: commit-per-green-sub-step is framed as RECOVERY, not hygiene"
 assert_contains "commits after every green sub-step" "$content" "Commit after every green sub-step"
 assert_contains "names it the recovery mechanism" "$content" "recovery mechanism"
 assert_contains "explains the resume-from-last-commit property" "$content" "resumes from your **last commit**"
 
-echo "test: a session implementer is told its plain output is invisible"
-assert_contains "says output is invisible" "$content" "invisible to the orchestrator"
-assert_contains "reports with SendMessage" "$content" "SendMessage"
-assert_contains "fixed-shape built line" "$content" "issue <N> built head="
-assert_contains "fixed-shape failure line" "$content" "issue <N> failed"
-assert_contains "escalation line" "$content" "issue <N> escalate"
-assert_contains "and a subagent reports in its final text instead" "$content" "running as a subagent"
+echo "test: a worker's final message is the JSON report; a subagent reports in its own shape"
+assert_contains "nobody reads the transcript" "$content" "Nobody reads your transcript"
+assert_contains "final message is the report" "$content" "Your final message is the report"
+assert_contains "status vocabulary" "$content" '`built`, `fixed`, `failed`, `escalate`'
+assert_contains "blocked infra note" "$content" "infra: <what is missing>"
+assert_not_contains "no SendMessage" "$content" "SendMessage"
+assert_contains "and a subagent reports in its final text instead" "$agent" "running as a subagent"
 
 # ---------------------------------------------------------------------------
 echo "test: done-check obligation intact"

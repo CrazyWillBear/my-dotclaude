@@ -226,6 +226,8 @@ mkcodex 23 "$D2" 3                # exited non-zero
 mkcodex 24 "$D3" -                # died without recording a code
 mkcodex 26 "$D4" 0                # exited clean after reporting blocked infrastructure
 mkcodex 27 "$D1" 0                # a respawned worker records its full session name
+mkcodex 28 "$D1" 0                # a claude -p worker: same run dir, backend recorded
+printf 'claude\n' >"$CODEX_ROOT/rc1/issue-28/backend"
 printf '%s\n' 'orch-rc1-issue-27-a1-r2' >"$CODEX_ROOT/rc1/issue-27/session-name"
 printf '%s' '{"issue":26,"status":"blocked","round":0,"head":"","review":"","note":"infra: postgres"}' \
     >"$CODEX_ROOT/rc1/issue-26/last-message.txt"
@@ -233,12 +235,13 @@ stub_claude 0 '[]'
 out=$(CODEX_RUN_ROOT="$CODEX_ROOT" bash "$STATUS" rc1 2>"$WORK/err")
 assert_contains "a live pid is busy" "$out" "orch-rc1-issue-21 $LIVE_PID codex busy"
 assert_contains "exit 0 is done" "$out" "orch-rc1-issue-22 $D1 codex done"
+assert_contains "column 3 is the recorded backend" "$out" "orch-rc1-issue-28 $D1 claude done"
 assert_contains "a clean blocked report stays blocked" "$out" "orch-rc1-issue-26 $D4 codex blocked"
 assert_contains "a non-zero exit is failed" "$out" "orch-rc1-issue-23 $D2 codex failed"
 assert_contains "codex status uses the recorded suffixed session name" "$out" "orch-rc1-issue-27-a1-r2 $D1 codex done"
 assert_contains "a dead pid with no exit code is failed, never silently fine" \
     "$out" "orch-rc1-issue-24 $D3 codex failed"
-assert_equals "six lines" "$(printf '%s\n' "$out" | wc -l)" "6"
+assert_equals "seven lines" "$(printf '%s\n' "$out" | wc -l)" "7"
 assert_equals "sorted with everything else" "$(printf '%s\n' "$out" | sort)" "$out"
 kill "$LIVE_PID" 2>/dev/null
 
@@ -317,7 +320,7 @@ git -C "$ORIGIN" branch base
 REPO="$WORK/repo"
 git -C "$ORIGIN" worktree add -q -b wt7 "$REPO" >/dev/null 2>&1
 HOME="$FAKE_HOME" RESOLVE_TIER_ROOT="$CFG" \
-    bash "$SPAWN" r7 31 standard "$REPO" base --orchestrator orch-main >/dev/null 2>&1
+    bash "$SPAWN" r7 31 standard "$REPO" base >/dev/null 2>&1
 for _ in 1 2 3 4 5 6 7 8 9 10; do
     [ -f "$FAKE_HOME/.claude/codex-runs/r7/issue-31/exit" ] && break; sleep 0.2
 done

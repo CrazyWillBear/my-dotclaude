@@ -1,6 +1,6 @@
 ---
 name: to-issues
-description: Slice a feature into tracer-bullet vertical-slice GitHub issues via gh — each slice cuts every layer and is demoable alone, published in dependency order so Blocked by refs resolve, labeled for the agent loop and tagged with its complexity tier (tier:trivial|standard|complex — what routes /orchestrate's models later). Works from a PRD issue, a .md spec, or the current discussion. Use for "/to-issues", "break the PRD into issues", "slice this".
+description: Slice a feature into tracer-bullet vertical-slice GitHub issues via gh — each cuts every layer and is demoable alone, published in dependency order so Blocked by refs resolve, labeled for the agent loop and tagged tier:trivial|standard|complex. Works from a PRD issue, a .md spec, or the discussion. Use for "/to-issues", "break the PRD into issues", "slice this".
 argument-hint: "[PRD issue number/URL, or .md file path; empty = current discussion]"
 model: inherit
 effort: xhigh

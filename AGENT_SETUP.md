@@ -44,7 +44,7 @@ timestamped backup — so the kit never silently eats config the user already ha
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-dev.sh | bash
 ```
 
-macOS / Linux / WSL only (on Windows, run under WSL).
+Linux / WSL only (on Windows, run under WSL). Not macOS: its Claude Code credentials live in the Keychain, and `/orchestrate`'s worker boxes link the credentials file.
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
@@ -115,7 +115,7 @@ technical work yourself, and confirm before anything that can't be undone.
 curl -fsSL https://raw.githubusercontent.com/CrazyWillBear/my-dotclaude/main/setup/setup-simple.sh | bash
 ```
 
-macOS / Linux / WSL only (on Windows, run under WSL).
+Linux / WSL only (on Windows, run under WSL). Not macOS: its Claude Code credentials live in the Keychain, and `/orchestrate`'s worker boxes link the credentials file.
 
 **Fallback — if you cannot run that script**, do these yourself (all user-scope):
 
